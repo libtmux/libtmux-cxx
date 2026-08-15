@@ -434,7 +434,12 @@ execute_process(
 if(NOT LIBTMUX_TEST_TMUX_RESULT EQUAL 0)
   message(FATAL_ERROR "tmux -V failed for ${LIBTMUX_TEST_TMUX}")
 endif()
-if(NOT LIBTMUX_TEST_TMUX_VERSION MATCHES "^tmux (3\\.[2-9]|3\\.[1-9][0-9]|[4-9]\\.)")
+# `master` and `next-3.8` are what tmux built from git calls itself, and both
+# are newer than every numbered release — the library's own `Version` orders
+# them that way. A guard that only understands numbered releases turns the
+# newest tmux there is into "too old to test".
+if(NOT LIBTMUX_TEST_TMUX_VERSION MATCHES
+   "^tmux (master|next-|3\\.[2-9]|3\\.[1-9][0-9]|[4-9]\\.)")
   message(
     FATAL_ERROR
       "control-mode tests need tmux 3.2 or newer, found ${LIBTMUX_TEST_TMUX_VERSION}")
