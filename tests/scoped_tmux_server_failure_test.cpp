@@ -94,6 +94,23 @@ std::filesystem::path unique_test_directory(std::string_view stem) {
   return path;
 }
 
+// A root short enough that a socket underneath it still fits in `sun_path`.
+//
+// `sun_path` is 108 bytes on Linux and 104 on macOS, and macOS puts the
+// per-user temporary directory at something like
+// /var/folders/xx/<28 characters>/T/ — so a test that nests a few directories
+// under it and then asks for a socket runs out of room, and the fixture
+// correctly refuses to start. That refusal is right, and it is not what these
+// tests are about.
+std::filesystem::path short_test_directory(std::string_view stem) {
+  static std::atomic<unsigned long> sequence{0};
+  auto path = std::filesystem::path{"/tmp"} /
+              (std::string{stem} + "-" + std::to_string(::getpid()) + "-" +
+               std::to_string(sequence.fetch_add(1)));
+  std::filesystem::create_directories(path);
+  return path;
+}
+
 std::vector<std::string> read_lines(const std::filesystem::path& path) {
   std::ifstream input{path};
   std::vector<std::string> lines;
@@ -328,7 +345,7 @@ TEST(ScopedTmuxServerFailure, ReboundAfterPidQueryCannotCreateSession) {
 }
 
 TEST(ScopedTmuxServerFailure, RelativeTmpdirCannotRedirectCleanupAfterCwdChange) {
-  const auto root = unique_test_directory("libtmux-relative-tmpdir");
+  const auto root = short_test_directory("libtmux-relative-tmpdir");
   const auto original_root = root / "original";
   const auto rebound_root = root / "rebound";
   std::filesystem::create_directories(original_root / "relative-tmp");
