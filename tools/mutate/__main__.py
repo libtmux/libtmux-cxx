@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import pathlib
+import subprocess
 import sys
 import typing as t
 
@@ -53,6 +54,15 @@ def main(argv: t.Sequence[str] | None = None) -> int:
         run(mutation, parsed.repository, parsed.preset, build_root=parsed.build_root)
         for mutation in wanted
     ]
+    # The last mutation restored its source but left its binary in the tree,
+    # so the next `ctest` would run code nobody has any more. Build once on
+    # the way out and the tree is honest again.
+    subprocess.run(
+        ["cmake", "--build", "--preset", parsed.preset],
+        cwd=parsed.build_root or parsed.repository,
+        capture_output=True,
+        check=False,
+    )
     print(report(outcomes))
     return int(failed(outcomes))
 

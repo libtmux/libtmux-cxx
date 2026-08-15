@@ -78,6 +78,9 @@ Three outcomes, and only the first is a pass:
 > commit or build from the tree while it runs. A commit taken during a run once
 > captured a `load-buffer` without the flag naming its buffer, and the diff read
 > like ordinary work.
+>
+> It rebuilds once on the way out, so a `ctest` straight afterwards runs the
+> code that is in the tree rather than the last mutation's binary.
 
 ## Related
 
