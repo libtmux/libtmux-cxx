@@ -1,0 +1,208 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  source:
+    # What package managers actually consume. A C++ library has no stable ABI
+    # across compiler, standard library, standard version or sanitizer flags,
+    # and this one carries two ABI namespaces deliberately — so the artifact
+    # that matters is the source, and its hash.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      sha512: ${{ steps.archive.outputs.sha512 }}
+      version: ${{ steps.archive.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build the source archive and hash it
+        id: archive
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          # `git archive` rather than a tarball of the working tree: it takes
+          # exactly what is committed at the tag, reproducibly, with no build
+          # output or local scratch in it.
+          git archive --format=tar.gz --prefix="libtmux-cxx-${version}/" \
+            -o "libtmux-cxx-${version}.tar.gz" "${GITHUB_REF_NAME}"
+          sha512="$(sha512sum "libtmux-cxx-${version}.tar.gz" | cut -d' ' -f1)"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "sha512=${sha512}" >> "$GITHUB_OUTPUT"
+          # The vcpkg port needs this exact value; printing it in the log means
+          # nobody has to recompute it to publish the port.
+          echo "SHA512 for ports/libtmux/portfile.cmake: ${sha512}"
+
+      - name: The archive builds and installs on its own
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build g++
+          version="${{ steps.archive.outputs.version }}"
+          tar -xzf "libtmux-cxx-${version}.tar.gz" -C /tmp
+          cmake -S "/tmp/libtmux-cxx-${version}" -B /tmp/rel -G Ninja \
+            -DLIBTMUX_BUILD_TESTS=OFF -DLIBTMUX_BUILD_EXAMPLES=OFF
+          cmake --build /tmp/rel
+          cmake --install /tmp/rel --prefix /tmp/relprefix
+          test -f /tmp/relprefix/lib/cmake/libtmux/libtmuxConfig.cmake
+          test -f /tmp/relprefix/share/licenses/libtmux/LICENSE
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: source
+          path: libtmux-cxx-*.tar.gz
+          if-no-files-found: error
+
+  server:
+    # The one thing here worth shipping compiled. Nobody links the MCP server;
+    # they run it, and someone wiring up an agent CLI wants a binary rather
+    # than a CMake invocation.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            name: linux-x86_64
+          - runner: macos-latest
+            name: macos-arm64
+          - runner: macos-15-intel
+            name: macos-x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Ninja
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y ninja-build g++
+          else
+            brew install ninja
+          fi
+
+      - name: Build the server
+        run: |
+          # GCC with its runtime linked in on Linux, so the binary does not
+          # need a matching libstdc++ on the machine that runs it. A library
+          # could not ship this way; a program can.
+          # An array, because the linker flags are one argument containing a
+          # space: unquoted, `-static-libgcc` would arrive as a CMake argument
+          # of its own.
+          extra=()
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            extra=(-DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc")
+          fi
+          cmake -S . -B build/rel -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLIBTMUX_BUILD_MCP_SERVER=ON -DLIBTMUX_FETCH_DEPS=ON \
+            -DLIBTMUX_BUILD_TESTS=OFF -DLIBTMUX_BUILD_EXAMPLES=OFF \
+            "${extra[@]}"
+          cmake --build build/rel
+
+      - name: It answers before it is published
+        run: |
+          binary=build/rel/apps/mcp/libtmux-mcp-server
+          test -x "$binary"
+          printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"release","version":"1"}}}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+            | "$binary" > replies.jsonl
+          python3 - <<'PROBE'
+          import json, pathlib, sys
+          replies = {json.loads(line)["id"]: json.loads(line)
+                     for line in pathlib.Path("replies.jsonl").read_text().splitlines()
+                     if line.strip()}
+          if sorted(replies) != [1, 2]:
+              sys.exit(f"expected two replies, got {sorted(replies)}")
+          tools = [tool["name"] for tool in replies[2]["result"]["tools"]]
+          if not tools:
+              sys.exit("the server advertised no tools")
+          print("tools:", ", ".join(tools))
+          PROBE
+
+      - name: Name it for the platform it was built on
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          out="libtmux-mcp-server-${version}-${{ matrix.name }}"
+          cp build/rel/apps/mcp/libtmux-mcp-server "$out"
+          sha256sum "$out" > "$out.sha256" 2>/dev/null || shasum -a 256 "$out" > "$out.sha256"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: server-${{ matrix.name }}
+          path: |
+            libtmux-mcp-server-*
+          if-no-files-found: error
+
+  publish:
+    needs: [source, server]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      # Both needed by the attestation: it signs with a short-lived OIDC
+      # identity rather than a stored key.
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: What is being published
+        run: ls -l artifacts
+
+      - name: Describe what is in the archive
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: .
+          format: spdx-json
+          output-file: artifacts/libtmux-cxx.spdx.json
+
+      - name: Attest what built these
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: artifacts/*
+
+      - name: Publish
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        with:
+          files: artifacts/*
+          draft: true
+          generate_release_notes: true
+          body: |
+            ## Installing
+
+            A C++ library is published as source: there is no ABI shared
+            across compilers, standard libraries or standard versions, and
+            this one carries two ABI namespaces on purpose.
+
+            ```console
+            $ vcpkg install libtmux
+            ```
+
+            The `libtmux-mcp-server-*` binaries below are the exception —
+            that is a program, not a library. Verify one with
+            `gh attestation verify <file> --repo ${{ github.repository }}`.
+
+            ## For the vcpkg port
+
+            `SHA512` of the source archive:
+
+            ```
+            ${{ needs.source.outputs.sha512 }}
+            ```
