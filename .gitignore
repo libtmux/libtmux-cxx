@@ -1,0 +1,52 @@
+# Build trees. Every preset in CMakePresets.json puts its tree under here,
+# and a coverage or sanitizer lane is several gigabytes of it.
+/build/
+build/
+
+# CMake leavings when somebody configures in place rather than in a preset.
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+compile_commands.json
+Testing/
+_deps/
+install_manifest.txt
+
+# Coverage.
+*.gcda
+*.gcno
+*.profraw
+*.profdata
+coverage/
+
+# Compiled objects and libraries, for the same in-place case.
+*.o
+*.a
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+
+# The Python tooling beside the library: the parity ledger, the mutation
+# catalogue, the reference generator.
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Editors and desktops.
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Scratch. A spike writes its tmux socket tree under $TMPDIR, but anything
+# left in the checkout should not be committed by accident.
+/scratch/
+*.log
