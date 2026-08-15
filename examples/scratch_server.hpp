@@ -17,6 +17,12 @@
 #include <string>
 #include <utility>
 
+// `mkdtemp` is POSIX, but the platforms disagree about where it is declared:
+// glibc puts it in <stdlib.h> and macOS in <unistd.h>. `<cstdlib>` alone
+// promises only the `std::` names.
+#include <stdlib.h>
+#include <unistd.h>
+
 #include <libtmux/libtmux.hpp>
 
 namespace example {
