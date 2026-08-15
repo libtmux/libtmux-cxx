@@ -1147,7 +1147,7 @@ def _file_sha256(path: pathlib.Path) -> str:
 
     Examples
     --------
-    >>> _file_sha256(pathlib.Path("cxx/parity/inputs.json"))[:7]
+    >>> _file_sha256(pathlib.Path("tools/parity/data/inputs.json"))[:7]
     'sha256:'
     """
     return f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"

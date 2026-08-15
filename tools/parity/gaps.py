@@ -185,7 +185,7 @@ def cpp_callables(headers: pathlib.Path) -> frozenset[str]:
 
     Examples
     --------
-    >>> "windows" in cpp_callables(pathlib.Path("cxx/include/libtmux"))
+    >>> "windows" in cpp_callables(pathlib.Path("include/libtmux"))
     True
     """
     found: set[str] = set()
@@ -262,7 +262,7 @@ def find_gaps(
     ...         {"entry_id": "libtmux.server:function:Server.list_sessions"},
     ...     ]
     ... }
-    >>> find_gaps(ledger, pathlib.Path("cxx/include/libtmux"))
+    >>> find_gaps(ledger, pathlib.Path("include/libtmux"))
     {'Server': ('lock_server',)}
     """
     declared = cpp_callables(headers)
@@ -330,8 +330,8 @@ def survey(mapping_path: pathlib.Path, headers: pathlib.Path) -> str:
     Examples
     --------
     >>> text = survey(
-    ...     pathlib.Path("cxx/parity/mapping.json"),
-    ...     pathlib.Path("cxx/include/libtmux"),
+    ...     pathlib.Path("tools/parity/data/mapping.json"),
+    ...     pathlib.Path("include/libtmux"),
     ... )
     >>> text.endswith("no C++ counterpart under any name") or "(" in text
     True
@@ -430,8 +430,8 @@ def coverage(
     Examples
     --------
     >>> measured = coverage(
-    ...     json.loads(pathlib.Path("cxx/parity/mapping.json").read_text()),
-    ...     pathlib.Path("cxx/include/libtmux"),
+    ...     json.loads(pathlib.Path("tools/parity/data/mapping.json").read_text()),
+    ...     pathlib.Path("include/libtmux"),
     ... )
     >>> measured.classified <= measured.answered <= measured.total
     True

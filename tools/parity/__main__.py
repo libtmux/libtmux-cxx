@@ -47,14 +47,14 @@ def build_parser() -> argparse.ArgumentParser:
     >>> build_parser().parse_args(args).command
     'verify'
     """
-    parser = argparse.ArgumentParser(prog="python -m cxx.tools.parity")
+    parser = argparse.ArgumentParser(prog="python -m tools.parity")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     generate = subparsers.add_parser("generate")
     generate.add_argument("--release")
     generate.add_argument("--development")
     generate.add_argument(
-        "--output", type=pathlib.Path, default=pathlib.Path("cxx/parity")
+        "--output", type=pathlib.Path, default=pathlib.Path("tools/parity/data")
     )
     generate.add_argument("--inputs", type=pathlib.Path)
     generate.add_argument("--check", type=pathlib.Path)
@@ -87,21 +87,25 @@ def build_parser() -> argparse.ArgumentParser:
 
     gaps = subparsers.add_parser("gaps")
     gaps.add_argument(
-        "--mapping", type=pathlib.Path, default=pathlib.Path("cxx/parity/mapping.json")
+        "--mapping",
+        type=pathlib.Path,
+        default=pathlib.Path("tools/parity/data/mapping.json"),
     )
     gaps.add_argument(
         "--headers",
         type=pathlib.Path,
-        default=pathlib.Path("cxx/include/libtmux"),
+        default=pathlib.Path("include/libtmux"),
     )
     gaps.set_defaults(handler=_run_gaps)
 
     measure = subparsers.add_parser("coverage")
     measure.add_argument(
-        "--mapping", type=pathlib.Path, default=pathlib.Path("cxx/parity/mapping.json")
+        "--mapping",
+        type=pathlib.Path,
+        default=pathlib.Path("tools/parity/data/mapping.json"),
     )
     measure.add_argument(
-        "--headers", type=pathlib.Path, default=pathlib.Path("cxx/include/libtmux")
+        "--headers", type=pathlib.Path, default=pathlib.Path("include/libtmux")
     )
     measure.set_defaults(handler=_run_coverage)
 
@@ -128,7 +132,7 @@ def main(argv: t.Sequence[str] | None = None) -> int:
 
     Examples
     --------
-    >>> main(["generate", "--check", "cxx/parity"]) in {0, 1}
+    >>> main(["generate", "--check", "tools/parity/data"]) in {0, 1}
     True
     """
     namespace = build_parser().parse_args(argv)
@@ -519,7 +523,7 @@ def _contract_read_root(manifest_path: pathlib.Path) -> pathlib.Path:
 
     Examples
     --------
-    >>> _contract_read_root(pathlib.Path("cxx/parity/manifest.json")).is_dir()
+    >>> _contract_read_root(pathlib.Path("tools/parity/data/manifest.json")).is_dir()
     True
     """
     cwd = pathlib.Path.cwd().absolute()
@@ -600,7 +604,7 @@ def _read_json(path: pathlib.Path) -> dict[str, object]:
 
     Examples
     --------
-    >>> _read_json(pathlib.Path("cxx/parity/inputs.json"))["version"]
+    >>> _read_json(pathlib.Path("tools/parity/data/inputs.json"))["version"]
     1
     """
     value = json.loads(path.read_text(encoding="utf-8"))

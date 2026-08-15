@@ -51,31 +51,33 @@ _SEMANTIC_DECISION_FIELDS = (
     "reconciliation",
     "inapplicability_proof",
 )
-_SCHEMA_DIRECTORY = pathlib.Path(__file__).parents[2] / "parity"
+# Beside the module that validates against them, so neither moves
+# without the other.
+_SCHEMA_DIRECTORY = pathlib.Path(__file__).parent / "data"
 _EVIDENCE_PATH_RULES = {
-    "compile": (("cxx/tests/compile/",), frozenset({".cc", ".cpp", ".cxx"})),
+    "compile": (("tests/compile/",), frozenset({".cc", ".cpp", ".cxx"})),
     "behavior": (
-        ("cxx/tests/integration/",),
+        ("tests/integration/",),
         frozenset({".cc", ".cpp", ".cxx"}),
     ),
     "differential": (
-        ("cxx/tests/differential/", "tests/cxx/differential/"),
+        ("tests/differential/", "tests/cxx/differential/"),
         frozenset({".cpp", ".json", ".py"}),
     ),
-    "documentation": (("cxx/docs/",), frozenset({".md", ".rst"})),
-    "example": (("cxx/examples/",), frozenset({".cc", ".cpp", ".cxx"})),
+    "documentation": (("docs/",), frozenset({".md", ".rst"})),
+    "example": (("examples/",), frozenset({".cc", ".cpp", ".cxx"})),
     "version": (
         (
-            "cxx/tests/compile/",
-            "cxx/tests/integration/",
-            "cxx/tests/differential/",
+            "tests/compile/",
+            "tests/integration/",
+            "tests/differential/",
             "tests/cxx/differential/",
         ),
         frozenset({".cpp", ".json", ".py"}),
     ),
 }
 _APPROVAL_EVIDENCE_PATH_RULES = (
-    ("cxx/docs/decisions/",),
+    ("docs/decisions/",),
     frozenset({".md", ".rst"}),
 )
 
@@ -920,7 +922,10 @@ def _repository_artifact_error(
     Examples
     --------
     >>> _repository_artifact_error(
-    ...     pathlib.Path.cwd(), "cxx/parity/inputs.json", ("cxx/parity/",), {".json"}
+    ...     pathlib.Path.cwd(),
+    ...     "tools/parity/data/inputs.json",
+    ...     ("tools/parity/data/",),
+    ...     {".json"},
     ... ) is None
     True
     """

@@ -207,7 +207,7 @@ def is_safe_relative_path(value: object) -> bool:
 
     Examples
     --------
-    >>> is_safe_relative_path("cxx/tests/example.cpp")
+    >>> is_safe_relative_path("tests/example.cpp")
     True
     >>> is_safe_relative_path("../private")
     False
@@ -247,7 +247,7 @@ def load_input_manifest(
 
     Examples
     --------
-    >>> manifest, specs = load_input_manifest(pathlib.Path("cxx/parity/inputs.json"))
+    >>> manifest, specs = load_input_manifest(pathlib.Path("tools/parity/data/inputs.json"))
     >>> manifest["version"], bool(specs)
     (1, True)
     """
@@ -560,7 +560,7 @@ def generate_contract(
 
     Examples
     --------
-    >>> output = pathlib.Path("cxx/parity")
+    >>> output = pathlib.Path("tools/parity/data")
     >>> isinstance(generate_contract(pathlib.Path.cwd(), output, check=True), tuple)
     True
     """
@@ -654,7 +654,7 @@ def _read_json(path: pathlib.Path) -> dict[str, object]:
 
     Examples
     --------
-    >>> _read_json(pathlib.Path("cxx/parity/inputs.json"))["version"]
+    >>> _read_json(pathlib.Path("tools/parity/data/inputs.json"))["version"]
     1
     """
     value = json.loads(path.read_text(encoding="utf-8"))
@@ -684,7 +684,7 @@ def _release_observation_path(output: pathlib.Path) -> pathlib.Path:
 
     Examples
     --------
-    >>> isinstance(_release_observation_path(pathlib.Path("cxx/parity")), pathlib.Path)
+    >>> isinstance(_release_observation_path(pathlib.Path("tools/parity/data")), pathlib.Path)
     True
     """
     expected = output / "release-v0.62.0.json"
@@ -721,7 +721,7 @@ def _checked_artifact_path(
     Examples
     --------
     >>> artifact = _checked_artifact_path(
-    ...     pathlib.Path.cwd(), pathlib.Path("cxx/parity/inputs.json")
+    ...     pathlib.Path.cwd(), pathlib.Path("tools/parity/data/inputs.json")
     ... )
     >>> artifact.name
     'inputs.json'
@@ -764,7 +764,7 @@ def contained_regular_file(
     Examples
     --------
     >>> contained_regular_file(
-    ...     pathlib.Path.cwd(), pathlib.Path("cxx/parity/inputs.json"), message="bad"
+    ...     pathlib.Path.cwd(), pathlib.Path("tools/parity/data/inputs.json"), message="bad"
     ... ).name
     'inputs.json'
     """
