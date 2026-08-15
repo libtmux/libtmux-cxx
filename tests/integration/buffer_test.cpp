@@ -148,7 +148,11 @@ TEST(Buffers, PasteDeliversTheTextAndLeavesTheBuffer) {
   std::string shown_text;
   const auto visible_by = std::chrono::steady_clock::now() + std::chrono::seconds{10};
   for (;;) {
-    const auto shown = quiet.capture();
+    // Joined, because the pane is 80 columns and a runner whose hostname fills
+    // 76 of them wraps the pasted text mid-word: the capture held "past",
+    // a line break, then "ed-marker". The text arrived exactly as intended and
+    // the search was looking at the terminal's line wrapping.
+    const auto shown = quiet.capture({.join_wrapped = true});
     ASSERT_TRUE(shown.has_value()) << shown.error().diagnostic;
     shown_text = *shown;
     if (shown_text.find("pasted-marker") != std::string::npos ||
