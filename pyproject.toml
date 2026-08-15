@@ -2,6 +2,9 @@
 name = "libtmux-cxx-tools"
 version = "0.1.0"
 description = "Development tooling for the libtmux C++ port: the parity ledger, the mutation catalogue, and the API reference generator."
+authors = [{ name = "Tony Narlock", email = "tony@git-pull.com" }]
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = ["jsonschema", "referencing", "tomlkit"]
 
@@ -9,7 +12,7 @@ dependencies = ["jsonschema", "referencing", "tomlkit"]
 # package rather than by whatever happens to be on the path, and so the lint
 # contract below travels with the code it governs.
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]

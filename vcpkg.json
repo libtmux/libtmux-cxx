@@ -3,6 +3,9 @@
   "name": "libtmux",
   "version": "0.1.0",
   "description": "A typed C++ interface to the tmux terminal multiplexer.",
+  "maintainers": [
+    "Tony Narlock <tony@git-pull.com>"
+  ],
   "homepage": "https://github.com/libtmux/libtmux-cxx",
   "license": "MIT",
   "supports": "!windows",
@@ -10,11 +13,16 @@
   "features": {
     "tests": {
       "description": "Build the test suites",
-      "dependencies": ["gtest", "yaml-cpp"]
+      "dependencies": [
+        "gtest",
+        "yaml-cpp"
+      ]
     },
     "mcp": {
       "description": "Build the MCP server",
-      "dependencies": ["nlohmann-json"]
+      "dependencies": [
+        "nlohmann-json"
+      ]
     }
   }
 }
