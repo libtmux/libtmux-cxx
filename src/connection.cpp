@@ -39,6 +39,18 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
+// What the waiter asks `waitid` for.
+//
+// Only exits, which is all it wants. Some platforms report a stop anyway, and
+// `LIBTMUX_SIMULATE_STOP_REPORTING_WAITID` asks for stops explicitly so that
+// behaviour can be reproduced on a platform that does not have it. The deadlock
+// this guards against was found that way and stays testable that way.
+#if defined(LIBTMUX_SIMULATE_STOP_REPORTING_WAITID)
+inline constexpr int kChildWaitOptions = WEXITED | WSTOPPED | WNOWAIT;
+#else
+inline constexpr int kChildWaitOptions = WEXITED | WNOWAIT;
+#endif
+
 void close_fd(int& descriptor) noexcept {
   if (descriptor >= 0) {
     static_cast<void>(::close(descriptor));
@@ -429,14 +441,18 @@ struct Connection::State {
         output(client.output), error(client.error) {}
 
   ~State() noexcept {
-    {
-      std::lock_guard write_lock{write_mutex};
-      close_fd(input);
-    }
+    // Kill first. Closing the input needs the writer's mutex, and a writer
+    // blocked against a child that is not draining holds it for as long as its
+    // own deadline allows — so waiting for the mutex before killing made the
+    // teardown wait on the very thing the kill unsticks.
     const auto waiter_started = waiter.joinable();
     {
       std::lock_guard lock{mutex};
       signal_child_locked(SIGKILL);
+    }
+    {
+      std::lock_guard write_lock{write_mutex};
+      close_fd(input);
     }
     if (reader.joinable()) {
       reader.join();
@@ -466,7 +482,13 @@ struct Connection::State {
   State& operator=(const State&) = delete;
 
   void signal_child_locked(int signal_number) const noexcept {
-    if (pid > 0 && !child_exited && !reaped) {
+    // Gated on `reaped` alone. Until the child is reaped its pid cannot be
+    // reused, so signalling is safe; after it is reaped the number could name
+    // somebody else, so it is not. `child_exited` used to gate this too, which
+    // meant a wrong belief that the child had exited disabled the signal that
+    // would have made it true — and signalling a process that really has
+    // exited is a harmless no-op, so there was nothing to buy.
+    if (pid > 0 && !reaped) {
       static_cast<void>(::kill(-pid, signal_number));
     }
   }
@@ -624,12 +646,41 @@ struct Connection::State {
     }
   }
 
+  // True only for the ways a process can be over. `waitid` reports stops and
+  // continues with the same success code as an exit, distinguished by nothing
+  // but this field.
+  [[nodiscard]] static bool is_exit(int signal_code) noexcept {
+    return signal_code == CLD_EXITED || signal_code == CLD_KILLED ||
+           signal_code == CLD_DUMPED;
+  }
+
   void waiter_main() noexcept {
     siginfo_t child{};
     int observed = -1;
-    do {
-      observed = ::waitid(P_PID, static_cast<id_t>(pid), &child, WEXITED | WNOWAIT);
-    } while (observed < 0 && errno == EINTR);
+    for (;;) {
+      child = siginfo_t{};
+      observed = ::waitid(P_PID, static_cast<id_t>(pid), &child, kChildWaitOptions);
+      if (observed < 0) {
+        if (errno == EINTR) {
+          continue;
+        }
+        break;
+      }
+      // A successful return is not an exit. `si_pid` is zero when there was
+      // nothing to report, and `si_code` says whether what happened was an exit
+      // or merely a stop — which a platform may report even though this call
+      // asked only for exits. Taking either for an exit is what deadlocked
+      // shutdown: the flag it sets suppresses the very signals that would make
+      // the child exit, so a stopped child could never be killed, this thread
+      // never returned, and joining it hung for good.
+      if (child.si_pid != 0 && is_exit(child.si_code)) {
+        break;
+      }
+      // `WNOWAIT` leaves what was reported pending, so asking again returns the
+      // same answer immediately. Wait a little rather than spin on a platform
+      // that keeps offering a stop.
+      std::this_thread::sleep_for(std::chrono::milliseconds{10});
+    }
     if (observed < 0) {
       const auto saved_errno = errno;
       std::lock_guard lock{mutex};

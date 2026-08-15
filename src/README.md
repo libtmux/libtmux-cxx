@@ -49,6 +49,21 @@ waiting for the first person with an unusual window name.
 locale, so without it a machine with a non-UTF-8 locale gets different bytes
 back. There is a CI lane that runs the whole suite under one.
 
+**A successful `waitid` does not mean the child exited.** It reports stops and
+continues with the same success code, told apart only by `si_code`, and answers
+0 with `si_pid == 0` when there was nothing to report at all. Taking either for
+an exit once deadlocked shutdown permanently: the flag it set suppressed the
+signals that would have made the child exit, so a stopped child could never be
+killed and the thread waiting for it never returned.
+
+`LIBTMUX_SIMULATE_STOP_REPORTING_WAITID` makes the waiter ask for stops as well,
+which is what a platform that reports them looks like from here. That is how the
+deadlock was reproduced on Linux, and it is how to check the guard still holds:
+
+```console
+$ cmake -S . -B build/stopsim -G Ninja -DLIBTMUX_FETCH_DEPS=ON -DCMAKE_CXX_FLAGS=-DLIBTMUX_SIMULATE_STOP_REPORTING_WAITID
+```
+
 **A missing object is detected, not reported by tmux.** Asked to format a
 window that has been killed, tmux prints empty fields and exits zero. The
 library notices and reports `FailureKind::missing`, because a caller's next
