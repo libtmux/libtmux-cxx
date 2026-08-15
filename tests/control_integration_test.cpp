@@ -528,7 +528,12 @@ TEST(ControlModeConnection, ConcurrentShutdownHonorsEachCallerDeadline) {
   const auto second_finished = std::chrono::steady_clock::now();
   first_thread.join();
 
-  EXPECT_LE(second_finished, second_deadline + 100ms);
+  // The claim is that the second caller honoured its own 200ms deadline rather
+  // than waiting for the first caller's two seconds, so the bound only has to
+  // separate those two. A hundred milliseconds of slack does not: waking from a
+  // timed mutex on a shared runner took 139ms once, which failed a correct
+  // shutdown. Half a second is still nowhere near two.
+  EXPECT_LE(second_finished, second_deadline + 500ms);
   ASSERT_FALSE(second.has_value());
   EXPECT_EQ(second.error().message, "control shutdown acquisition deadline expired");
   ASSERT_TRUE(first.has_value());
@@ -639,7 +644,11 @@ WriterDeadlineAttempt run_writer_deadline_attempt(std::size_t index) {
   static_cast<void>(connection.shutdown(std::chrono::steady_clock::now() + 2s));
   owner_thread.join();
 
-  attempt.waiter_within_deadline = waiter_finished <= waiter_deadline + 100ms;
+  // Same bound, same reason as the concurrent-shutdown test: this separates a
+  // waiter that honoured its own 200ms deadline from one that waited for the
+  // owner's ten seconds, and the runner's scheduling jitter lives well inside
+  // the gap.
+  attempt.waiter_within_deadline = waiter_finished <= waiter_deadline + 500ms;
   attempt.waiter_operations = waiter_result.operations.size();
   if (!waiter_result.operations.empty()) {
     attempt.waiter_attribution = waiter_result.operations[0].attribution;
