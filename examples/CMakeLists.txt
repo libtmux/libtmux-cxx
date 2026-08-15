@@ -9,7 +9,7 @@ target_include_directories(
   libtmux_example_support INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(libtmux_example_support INTERFACE libtmux::libtmux)
 
-foreach(example 01-tour 02-workspace 03-filter 04-errors)
+foreach(example 01-tour 02-workspace 03-filter 04-errors 05-readme)
   string(REPLACE "-" "_" target "libtmux_example_${example}")
   add_executable(${target} "${example}.cpp")
   target_link_libraries(${target} PRIVATE libtmux_example_support)
