@@ -767,10 +767,24 @@ TEST(ControlModeConnection, DeadlineMarksUnresolvedUnknownAndPoisonsLaterAttribu
   static_cast<void>(connection.shutdown(std::chrono::steady_clock::now() + 2s));
 }
 
+// The build records which tmux binary the suite resolved, so a result can say
+// what produced it. What is worth pinning is that it recorded *something*
+// usable — an absolute path to a file that is there, and a well-formed digest
+// of it. Pinning a particular digest would pin the machine the test was
+// written on: every other machine, and every tmux in the compatibility matrix,
+// has a different binary and would fail a test that has nothing to say about
+// them.
 TEST(ControlModeConnection, ResolvedTmuxIdentityIsBound) {
-  EXPECT_EQ(std::string_view{LIBTMUX_CONTROL_TMUX_SHA256},
-            "0cd875611e001f9d66c65977d499a65de2400c967b5c7788d04d43a2c9f06982");
-  EXPECT_TRUE(std::filesystem::path{LIBTMUX_CONTROL_TMUX_PATH}.is_absolute());
+  const std::filesystem::path resolved{LIBTMUX_CONTROL_TMUX_PATH};
+  EXPECT_TRUE(resolved.is_absolute()) << resolved;
+  EXPECT_TRUE(std::filesystem::exists(resolved)) << resolved;
+
+  const std::string_view digest{LIBTMUX_CONTROL_TMUX_SHA256};
+  EXPECT_EQ(digest.size(), 64U) << digest;
+  EXPECT_TRUE(std::ranges::all_of(digest, [](const char character) {
+    return (character >= '0' && character <= '9') ||
+           (character >= 'a' && character <= 'f');
+  })) << digest;
 }
 
 } // namespace
