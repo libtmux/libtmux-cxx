@@ -31,6 +31,7 @@ first if you plan to write tests of your own.
 | [`02-workspace.cpp`](02-workspace.cpp) | Building an arrangement | Windows, splits, layouts, options, environment — without composing a single tmux argument. |
 | [`03-filter.cpp`](03-filter.cpp) | Finding things | Typed fields, standard ranges, and cardinality that cannot throw. |
 | [`04-errors.cpp`](04-errors.cpp) | What failure looks like | Every way a call can fail and what each one tells you. Nothing throws. |
+| [`05-readme.cpp`](05-readme.cpp) | The README, compiled | Every C++ sample in the top-level README lives here, so none of them can stop working. |
 
 If you read one, read [`04-errors.cpp`](04-errors.cpp) second. The error model
 is the part of this library least like the Python one, and it is easier to see
@@ -38,7 +39,7 @@ in a program than in prose.
 
 ## Consuming the package from outside
 
-[`consume/`](consume/) is a complete project that finds the installed package
+[`consume/`](consume/README.md) is a complete project that finds the installed package
 and links it — nothing else. It is the shortest answer to "what do I put in my
 `CMakeLists.txt`":
 
@@ -52,7 +53,7 @@ cannot rot.
 
 ## The workspace builder
 
-[`workspace/`](workspace/) is larger, and is not really an example: it is a
+[`workspace/`](workspace/README.md) is larger, and is not really an example: it is a
 consumer that exists to put weight on the public surface and report where that
 surface is awkward. It builds a described session, and reads
 [tmuxp](https://tmuxp.git-pull.com) documents.
