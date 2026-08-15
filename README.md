@@ -323,3 +323,14 @@ $ python3 tools/docs/api_index.py --include include/libtmux --output docs/api.md
   release, and what was wrong with some of it
 - `schema/filter-expression-v1.schema.json` — the lowered filter expression a
   JSON integration targets; the core ships no serializer
+
+## Contributing
+
+[CONTRIBUTING.md](CONTRIBUTING.md) covers getting a build, what a change needs
+to carry, and the gate to run before opening a pull request. The short version:
+every capability needs a test against real tmux, nothing throws, and no test
+starts a tmux server the fixture did not make.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
