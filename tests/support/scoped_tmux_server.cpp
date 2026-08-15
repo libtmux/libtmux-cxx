@@ -90,7 +90,20 @@ run_command(const std::filesystem::path& executable, std::vector<std::string> ar
   if (!status.has_value() || !WIFEXITED(*status) || WEXITSTATUS(*status) != 0) {
     auto error = trim_trailing_newlines(child->stderr_text());
     if (error.empty()) {
-      error = "tmux client exited unsuccessfully";
+      // How it ended, rather than only that it did. A tmux that fails with
+      // nothing on stderr used to report as "exited unsuccessfully", which is
+      // the one sentence that cannot be acted on: it hides whether the client
+      // exited with a status, died on a signal, or was never reaped at all.
+      error = "tmux client failed with no diagnostic: ";
+      if (!status.has_value()) {
+        error += "no wait status";
+      } else if (WIFSIGNALED(*status)) {
+        error += "killed by signal " + std::to_string(WTERMSIG(*status));
+      } else if (WIFEXITED(*status)) {
+        error += "exit status " + std::to_string(WEXITSTATUS(*status));
+      } else {
+        error += "wait status " + std::to_string(*status);
+      }
     }
     return libtmux::unexpected(std::move(error));
   }
