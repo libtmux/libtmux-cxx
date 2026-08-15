@@ -1,0 +1,18 @@
+version: 2
+updates:
+  # Actions are pinned by commit, which is what makes them safe and also what
+  # makes them invisible: nothing tells you a pin is a year old. Dependabot
+  # reads the `# vX.Y.Z` comment beside each one and opens a pull request
+  # moving the pin, comment included.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']
+
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
