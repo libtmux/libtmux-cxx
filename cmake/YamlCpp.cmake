@@ -22,5 +22,11 @@ function(libtmux_resolve_yaml_cpp)
   set(YAML_CPP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
   set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
   set(YAML_CPP_INSTALL OFF CACHE BOOL "" FORCE)
+  # yaml-cpp 0.8.0 asks for a `cmake_minimum_required` that CMake 4 refuses to
+  # honour, so a runner with a current CMake cannot configure it at all. This
+  # is the documented way to let an old third-party project through, and it is
+  # set here rather than at the top level: it applies to what this function
+  # pulls in, and says nothing about the standard this project is built to.
+  set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
   FetchContent_MakeAvailable(yaml_cpp)
 endfunction()
