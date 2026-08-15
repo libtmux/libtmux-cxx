@@ -1,0 +1,536 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  compatibility:
+    # The C++ library claims the same tmux range as the Python one, so it is
+    # tested against the same versions rather than only the newest.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        tmux-version: ['3.2a', '3.3a', '3.4', '3.5', '3.6', '3.7a', '3.7b', 'master']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: hendrikmuhs/ccache-action@d62db5f07c26379fc4b4e0916f098a92573c3b03 # v1.2.23
+        with:
+          key: ${{ github.job }}-tmux-${{ matrix.tmux-version }}
+          max-size: 400M
+
+      - name: Install the pinned toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 libc++-18-dev libc++abi-18-dev ninja-build
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
+
+      - name: Resolve the tmux revision
+        id: tmux-ref
+        run: |
+          echo "sha=$(git ls-remote https://github.com/tmux/tmux.git ${{ matrix.tmux-version }} | cut -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Setup tmux build cache for tmux ${{ matrix.tmux-version }}
+        id: tmux-build-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/tmux-builds/tmux-${{ matrix.tmux-version }}
+          # The commit, not the ref: a key of "tmux-master" would freeze this
+          # lane at whatever the first run happened to build, and keep passing.
+          key: tmux-${{ matrix.tmux-version }}-${{ steps.tmux-ref.outputs.sha }}
+
+      - name: Build tmux ${{ matrix.tmux-version }}
+        if: steps.tmux-build-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get install -y libevent-dev libncurses5-dev libtinfo-dev libutempter-dev bison
+          mkdir -p ~/tmux-builds ~/tmux-src
+          git clone https://github.com/tmux/tmux.git ~/tmux-src/tmux-${{ matrix.tmux-version }}
+          cd ~/tmux-src/tmux-${{ matrix.tmux-version }}
+          git checkout ${{ matrix.tmux-version }}
+          sh autogen.sh
+          ./configure --prefix=$HOME/tmux-builds/tmux-${{ matrix.tmux-version }} && make && make install
+
+      - name: Build and test against tmux ${{ matrix.tmux-version }}
+        run: |
+          export PATH=$HOME/tmux-builds/tmux-${{ matrix.tmux-version }}/bin:$PATH
+          tmux -V
+          cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache --preset cxx-dev
+          cmake --build --preset cxx-dev
+          ctest --preset cxx-dev --no-tests=error --output-on-failure
+
+  macos:
+    # tmux is used at least as much on macOS as on Linux, and Apple Clang with
+    # its own libc++ is a different compiler from the pinned one. Nothing here
+    # had ever been built on it.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: hendrikmuhs/ccache-action@d62db5f07c26379fc4b4e0916f098a92573c3b03 # v1.2.23
+        with:
+          key: macos
+          max-size: 400M
+
+      - name: Install tmux and Ninja
+        run: brew install tmux ninja
+
+      - name: Build and test with Apple Clang
+        run: |
+          tmux -V
+          # Not a preset: the pinned toolchain file names a libc++ that comes
+          # from a Homebrew LLVM this runner does not have. Apple Clang brings
+          # its own, which is the point of the lane.
+          cmake -S . -B build/macos -G Ninja -DCMAKE_CXX_STANDARD=23
+          cmake --build build/macos
+          ctest --test-dir build/macos --no-tests=error --output-on-failure
+
+  toolchains:
+    # A second compiler and standard library. Everything here built and passed
+    # only under clang and libc++ until three lines of duration arithmetic were
+    # spelled explicitly, which no lane would have caught.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: hendrikmuhs/ccache-action@d62db5f07c26379fc4b4e0916f098a92573c3b03 # v1.2.23
+        with:
+          key: ${{ github.job }}
+          max-size: 400M
+
+      - name: Install GCC, tmux and Ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ tmux ninja-build
+
+      - name: Build and test with GCC and libstdc++
+        run: |
+          g++ --version
+          cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache --preset cxx-gcc
+          cmake --build --preset cxx-gcc
+          ctest --preset cxx-gcc --no-tests=error --output-on-failure
+
+  standards:
+    # The C++20 configuration substitutes a different expected and carries its
+    # own ABI namespace. Until this lane existed, the only thing that had ever
+    # been built against it was one example program.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: hendrikmuhs/ccache-action@d62db5f07c26379fc4b4e0916f098a92573c3b03 # v1.2.23
+        with:
+          key: ${{ github.job }}
+          max-size: 400M
+
+      - name: Install the pinned toolchain and tmux
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 libc++-18-dev libc++abi-18-dev ninja-build tmux
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
+
+      - name: Build and test the C++20 configuration
+        run: |
+          cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache --preset cxx20
+          cmake --build --preset cxx20
+          ctest --preset cxx20 --no-tests=error --output-on-failure
+
+  fuzz:
+    # Four parsers read input the library does not choose. A short run over the
+    # checked-in corpus is the gate; it found a real ambiguity between an
+    # option name that ends in an asterisk and the marker tmux uses for an
+    # inherited one.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: hendrikmuhs/ccache-action@d62db5f07c26379fc4b4e0916f098a92573c3b03 # v1.2.23
+        with:
+          key: ${{ github.job }}
+          max-size: 400M
+
+      - name: Install the pinned toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 ninja-build
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
+
+      - name: Fuzz the parsers
+        run: |
+          # The fuzzer runtime this toolchain ships is built against libstdc++,
+          # which has no usable <expected> here, so the fuzzers build in the
+          # C++20 configuration over the pinned compatibility type.
+          cmake -S . -B build/fuzz -G Ninja \
+            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+            -DLIBTMUX_CXX_STANDARD=20 -DLIBTMUX_BUILD_FUZZERS=ON \
+            -DLIBTMUX_BUILD_TESTS=OFF -DLIBTMUX_BUILD_EXAMPLES=OFF
+          cmake --build build/fuzz
+          ctest --test-dir build/fuzz --no-tests=error --output-on-failure
+
+  locale:
+    # tmux decides whether the terminal is UTF-8 from the environment, and the
+    # separator this library asks it to print between format values is
+    # multi-byte. A lane that is not UTF-8 is the only thing that checks the
+    # library does not depend on its caller's locale.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: hendrikmuhs/ccache-action@d62db5f07c26379fc4b4e0916f098a92573c3b03 # v1.2.23
+        with:
+          key: ${{ github.job }}
+          max-size: 400M
+
+      - name: Install the pinned toolchain and tmux
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 libc++-18-dev libc++abi-18-dev ninja-build tmux
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
+
+      - name: Build and test in a C locale
+        env:
+          LC_ALL: C
+          LC_CTYPE: C
+        run: |
+          unset LANG
+          cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache --preset cxx-dev
+          cmake --build --preset cxx-dev
+          ctest --preset cxx-dev --no-tests=error --output-on-failure
+
+  sanitizers:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        # Address and thread sanitizers need separate build trees; enabling
+        # both at once is rejected at configure time.
+        sanitizer: [cxx-sanitize, cxx-tsan]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: hendrikmuhs/ccache-action@d62db5f07c26379fc4b4e0916f098a92573c3b03 # v1.2.23
+        with:
+          key: ${{ github.job }}-${{ matrix.sanitizer }}
+          max-size: 400M
+
+      - name: Install the pinned toolchain and tmux
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 libc++-18-dev libc++abi-18-dev ninja-build tmux
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
+
+      - name: Run the suite under ${{ matrix.sanitizer }}
+        run: |
+          cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache --preset ${{ matrix.sanitizer }}
+          cmake --build --preset ${{ matrix.sanitizer }}
+          ctest --preset ${{ matrix.sanitizer }} --no-tests=error --output-on-failure
+
+  mutation:
+    # A green suite is evidence only once it has been shown capable of
+    # failing. Each catalogued mutation breaks one guard that exists because
+    # tmux does something quiet, and a survivor names what went unnoticed.
+    # A mutation that no longer applies, or no longer builds, fails the job
+    # too: run by hand that case prints nothing and reads like a pass.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: hendrikmuhs/ccache-action@d62db5f07c26379fc4b4e0916f098a92573c3b03 # v1.2.23
+        with:
+          key: ${{ github.job }}
+          max-size: 400M
+
+      - name: Install tmux and a compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tmux ninja-build clang-18 libc++-18-dev \
+            libc++abi-18-dev
+          for tool in clang clang++; do
+            sudo update-alternatives --install "/usr/bin/$tool" "$tool" \
+              "/usr/bin/$tool-18" 100
+          done
+
+      - name: Configure
+        run: cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache --preset cxx-dev
+
+      - name: Break each guard and check something notices
+        run: python3 -m tools.mutate --preset cxx-dev
+
+  parity:
+    # The Python surface this port is measured against is recorded as a
+    # ledger, and the project's own bar is "no unclassified entries". That bar
+    # is not met yet, so this enforces what is true today — the ledger is
+    # structurally sound — and prints how far the classification has to go, so
+    # the number is in front of someone on every run rather than discovered
+    # months later.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: The ledger is structurally sound
+        run: |
+          python3 -m tools.parity verify \
+            --manifest tools/parity/data/manifest.json \
+            --mode structural --allow-pending
+
+      - name: How much of the Python surface is still unclassified
+        run: |
+          python3 -m tools.parity verify \
+            --manifest tools/parity/data/manifest.json --mode complete \
+            > report.txt 2>&1 || true
+          python3 - <<'COUNT'
+          import collections, json, pathlib
+          load = lambda name: json.loads(
+              pathlib.Path(f"tools/parity/data/{name}.json").read_text())
+          rows = load("mapping")["entries"]
+          status = collections.Counter(row["status"] for row in rows)
+          print(f"{len(rows)} entries in the ledger")
+          for name, count in status.most_common():
+              print(f"  {count:>5}  {name}")
+          reasons = collections.Counter(
+              line.rsplit(": ", 1)[-1]
+              for line in pathlib.Path("report.txt").read_text().splitlines()
+              if line.strip())
+          for reason, count in reasons.most_common():
+              print(f"  {count:>5}  {reason}")
+
+          # The work is ordered into shards, so progress is legible as steps
+          # taken rather than as one number that moves slowly.
+          shards = load("shards")
+          by_id = {row["entry_id"]: row["status"] for row in rows}
+          print("\nby shard, in dependency order:")
+          for name in shards["dependency_order"]:
+              shard = next(s for s in shards["shards"] if s["name"] == name)
+              ids = shard["entry_ids"]
+              done = sum(1 for i in ids if by_id.get(i) != "pending")
+              print(f"  {done:>4}/{len(ids):<4} {name}")
+          COUNT
+
+  coverage:
+    # Not here to police a percentage. Coverage tooling is used by nobody on
+    # an ordinary day, so it rots quietly and is then untrustworthy exactly
+    # when someone reaches for it; running it every time keeps it honest. The
+    # floor is set well under the current figure so it catches a collapse —
+    # instrumentation silently disabled, a suite that stopped running — and
+    # not the ordinary drift of a few lines.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: hendrikmuhs/ccache-action@d62db5f07c26379fc4b4e0916f098a92573c3b03 # v1.2.23
+        with:
+          key: ${{ github.job }}
+          max-size: 400M
+
+      - name: Install the pinned toolchain and tmux
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 libc++-18-dev libc++abi-18-dev \
+            llvm-18 ninja-build tmux
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
+
+      - name: Measure what the suite reaches
+        run: |
+          cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache --preset cxx-coverage
+          cmake --build --preset cxx-coverage
+          ctest --preset cxx-coverage --no-tests=error --output-on-failure
+          python3 tools/coverage/report.py \
+            --build build/cxx-coverage --source . --floor 65
+
+  lint:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: hendrikmuhs/ccache-action@d62db5f07c26379fc4b4e0916f098a92573c3b03 # v1.2.23
+        with:
+          key: ${{ github.job }}
+          max-size: 400M
+
+      - name: Install the pinned toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 clang-format-18 clang-tidy-18 \
+            libc++-18-dev libc++abi-18-dev ninja-build
+          for tool in clang clang++ clang-format clang-tidy; do
+            sudo update-alternatives --install /usr/bin/$tool $tool /usr/bin/$tool-18 100
+          done
+
+      - name: Check formatting
+        run: |
+          find include src tests apps examples -name '*.hpp' -o -name '*.cpp' \
+            | xargs clang-format --dry-run --Werror --style=file
+
+      - name: Check the API reference is current
+        run: |
+          python3 tools/docs/api_index.py \
+            --include include/libtmux --output docs/api.md --check
+
+      - name: Run clang-tidy over the library
+        run: |
+          cmake -S . -B build/tidy -G Ninja \
+            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/clang-libcxx.cmake \
+            -DLIBTMUX_ENABLE_CLANG_TIDY=ON -DLIBTMUX_BUILD_TESTS=OFF
+          cmake --build build/tidy
+
+  package:
+    # Proves the shipped package, not the build tree: install it and build an
+    # outside project that knows only find_package.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        standard: ['23', '20']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: hendrikmuhs/ccache-action@d62db5f07c26379fc4b4e0916f098a92573c3b03 # v1.2.23
+        with:
+          key: ${{ github.job }}-cxx${{ matrix.standard }}
+          max-size: 400M
+
+      - name: Install the pinned toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 libc++-18-dev libc++abi-18-dev ninja-build
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
+
+      - name: Install and consume with C++${{ matrix.standard }}
+        run: |
+          cmake -S . -B build/pkg -G Ninja \
+            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/clang-libcxx.cmake \
+            -DLIBTMUX_CXX_STANDARD=${{ matrix.standard }} \
+            -DLIBTMUX_BUILD_TESTS=OFF \
+            -DLIBTMUX_BUILD_MCP_SERVER=ON \
+            -DLIBTMUX_FETCH_DEPS=ON
+          cmake --build build/pkg
+          cmake --install build/pkg --prefix "$PWD/build/prefix"
+          cmake -S examples/consume -B build/consume \
+            -DCMAKE_PREFIX_PATH="$PWD/build/prefix" \
+            -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CXX_FLAGS=-stdlib=libc++
+          cmake --build build/consume
+          ./build/consume/consume
+
+      # The program is the half of the package a library consumer never
+      # links, so building it is not enough: this runs the installed copy the
+      # way an agent starts it, over stdio, and requires a reply.
+      #
+      # Needs no tmux. Both methods are answered by the protocol layer alone,
+      # which is what this job is for — whether the tools then drive tmux
+      # correctly is what the test lanes run a real server to find out.
+      - name: The installed MCP server answers on stdio
+        run: |
+          test -x build/prefix/bin/libtmux-mcp-server
+          printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+            | build/prefix/bin/libtmux-mcp-server > /tmp/mcp-replies.jsonl
+          python3 - <<'PROBE'
+          import json, pathlib, sys
+          replies = [json.loads(line)
+                     for line in pathlib.Path("/tmp/mcp-replies.jsonl").read_text().splitlines()
+                     if line.strip()]
+          by_id = {reply.get("id"): reply for reply in replies}
+          if by_id.keys() != {1, 2}:
+              sys.exit(f"expected replies to both requests, got {sorted(by_id)}")
+          if by_id[1]["result"]["serverInfo"]["name"] != "libtmux":
+              sys.exit(f"unexpected serverInfo: {by_id[1]['result']['serverInfo']}")
+          names = sorted(tool["name"] for tool in by_id[2]["result"]["tools"])
+          if not names:
+              sys.exit("the server advertised no tools")
+          print("tools:", ", ".join(names))
+          PROBE
+
+  all-checks-passed:
+    # Branch protection requires this one job. Naming every matrix leg there
+    # instead would mean editing the protection rule whenever a tmux version
+    # or a sanitizer is added, and a leg that is renamed and forgotten stops
+    # being required without anything saying so.
+    if: always()
+    needs:
+      - compatibility
+      - macos
+      - toolchains
+      - standards
+      - fuzz
+      - locale
+      - sanitizers
+      - mutation
+      - parity
+      - coverage
+      - lint
+      - package
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every job succeeded
+        run: |
+          # `needs.*.result` is skipped or cancelled as well as success and
+          # failure, and only success will do.
+          results='${{ join(needs.*.result, ' ') }}'
+          echo "$results"
+          for result in $results; do
+            if [ "$result" != "success" ]; then
+              echo "a required job reported: $result" >&2
+              exit 1
+            fi
+          done
