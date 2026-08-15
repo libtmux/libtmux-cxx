@@ -37,6 +37,25 @@ The socket path has to fit in `sun_path`, so keep the prefix short;
 `socket_path_fits` in the fixture reports the case where it does not rather
 than letting tmux fail obscurely.
 
+## The parity ledger is read here, not written
+
+The ledger in `tools/parity/data` records what each Python `libtmux`
+symbol maps to and the evidence for it. Two halves of the tooling read it,
+and only one of them can run in this repository:
+
+- `verify`, `gaps`, `coverage` and `record-evidence` read the recorded
+  artifacts and this tree. They work, and the gate below runs them.
+- `generate` and `drift` observe the Python library at a pinned commit to
+  produce the ledger in the first place. They need that repository's files
+  *and its history* — `inputs.json` pins `src/libtmux`, `conftest.py` and
+  `pyproject.toml` by git object, none of which exist here.
+
+So the recorded surface is frozen at the commit it was taken from. Adding
+a classification means editing `mapping.json` and `evidence.json` and
+re-running `sync`, which is what every entry so far has done anyway.
+Regenerating from a newer Python release means doing it where that
+release lives.
+
 ## Before committing
 
 Five build lanes, the format and reference checks, the parity ledger, and
@@ -47,11 +66,11 @@ $ for p in cxx-dev cxx-sanitize cxx-tsan cxx-gcc cxx20; do cmake --preset $p && 
 ```
 
 ```console
-$ python3 -m cxx.tools.parity verify --manifest cxx/parity/manifest.json --mode structural --allow-pending
+$ python3 -m tools.parity verify --manifest tools/parity/data/manifest.json --mode structural --allow-pending
 ```
 
 ```console
-$ python3 -m cxx.tools.mutate --preset cxx-dev
+$ python3 -m tools.mutate --preset cxx-dev
 ```
 
 The mutation runner edits sources in place and puts each back as it goes.
