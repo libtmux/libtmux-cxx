@@ -11,9 +11,19 @@ set_property(
   APPEND
   PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION")
 
+# `project(VERSION)` takes digits and dots and nothing else, so a semantic
+# version carrying a prerelease tag cannot be handed to it whole. The file
+# stays the one place the version is written; this splits it, and the full
+# string is what the library reports and what a human sees.
+set(LIBTMUX_VERSION_FULL "${LIBTMUX_VERSION_TEXT}")
+if(NOT LIBTMUX_VERSION_TEXT MATCHES "^([0-9]+(\\.[0-9]+)*)")
+  message(FATAL_ERROR "VERSION does not begin with a number: ${LIBTMUX_VERSION_TEXT}")
+endif()
+set(LIBTMUX_VERSION_NUMERIC "${CMAKE_MATCH_1}")
+
 project(
   libtmux_cxx
-  VERSION "${LIBTMUX_VERSION_TEXT}"
+  VERSION "${LIBTMUX_VERSION_NUMERIC}"
   DESCRIPTION "A typed C++ interface to tmux"
   HOMEPAGE_URL "https://github.com/libtmux/libtmux-cxx"
   LANGUAGES CXX)

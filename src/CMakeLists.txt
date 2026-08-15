@@ -54,8 +54,11 @@ if(LIBTMUX_CXX_STANDARD STREQUAL "20")
   install(DIRECTORY "${tl_expected_SOURCE_DIR}/include/tl"
           DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
 endif()
+# The full version, prerelease tag and all — `PROJECT_VERSION` has had the tag
+# stripped so CMake would accept it, and a library that reports "0.1.0" while
+# it is an alpha is telling the truth to nobody.
 target_compile_definitions(
-  libtmux PRIVATE LIBTMUX_VERSION="${PROJECT_VERSION}")
+  libtmux PRIVATE LIBTMUX_VERSION="${LIBTMUX_VERSION_FULL}")
 target_include_directories(
   libtmux
   PUBLIC $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
