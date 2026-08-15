@@ -13,6 +13,7 @@
 #include "libtmux/options.hpp"
 #include "libtmux/server.hpp"
 #include "support/scoped_tmux_server.hpp"
+#include "support/tmux_capabilities.hpp"
 
 namespace {
 
@@ -51,6 +52,10 @@ TEST(Options, AnInheritedOptionKeepsItsNameAndSaysItIsInherited) {
 }
 
 TEST(Options, AValueSurvivesBeingReadAndWrittenBack) {
+  LIBTMUX_SKIP_TMUX_DEFECT(
+      3, 4, 3, 4,
+      "tmux adds a backslash before $ when an option value it printed is set again");
+
   // tmux picks one of four quoting forms depending on what is in the value,
   // and a reader that knows only one corrupts the rest — which matters because
   // reading an option and writing it back is what a workspace tool does.

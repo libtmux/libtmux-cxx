@@ -2,6 +2,7 @@
 #include "libtmux/expected.hpp"
 
 #include "support/scoped_tmux_server.hpp"
+#include "support/tmux_capabilities.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -236,6 +237,9 @@ TEST(ControlModeConnection, ConcurrentIndependentRequestsKeepReplyOwnership) {
 }
 
 TEST(ControlModeConnection, NotificationShapedCommandOutputRemainsBlockBody) {
+  LIBTMUX_REQUIRES_TMUX(3, 4,
+                        "keeping notification-shaped command output in the block body");
+
   auto server = start_server(unique_name("control-shaped-body"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
   auto connected = connect_to(*server);
@@ -252,6 +256,10 @@ TEST(ControlModeConnection, NotificationShapedCommandOutputRemainsBlockBody) {
 }
 
 TEST(ControlModeConnection, EncodesArgumentsWithoutCreatingAnotherCommand) {
+  LIBTMUX_SKIP_TMUX_DEFECT(
+      3, 4, 3, 5,
+      "tmux echoes a non-UTF-8 byte back as its octal escape rather than the byte");
+
   auto server = start_server(unique_name("control-encoding"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
   auto connected = connect_to(*server);

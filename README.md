@@ -295,6 +295,29 @@ correctly: `3.7 < 3.7a < 3.7b`, `next-3.8` precedes `3.8`, and `master` sorts
 above every numbered release. Continuous integration builds and tests against
 every supported version.
 
+Across that range tmux does not answer identically, and where it cannot the
+library cannot either. These are the exceptions, each covered by a test that
+skips on the releases below and runs everywhere above:
+
+| Needs | Capability |
+|---|---|
+| tmux 3.3 | `display-message -c` addressed at a control client |
+| tmux 3.3 | `-x` and `-y` honoured on a detached `new-session` |
+| tmux 3.4 | `%message` delivered to an attached control client |
+| tmux 3.4 | notification-shaped command output kept in the block body |
+
+Two are defects rather than missing features — tmux answered wrongly and a
+later release fixed it, so the affected window is closed at both ends:
+
+| Broken on | What tmux does |
+|---|---|
+| tmux 3.4 – 3.5 | Echoes a non-UTF-8 byte back as its octal escape rather than the byte |
+| tmux 3.4 | Adds a backslash before `$` when an option value it printed is set again |
+
+Everything else holds across the whole range. `split` carrying a percentage
+is spelled `-l 25%` rather than the `-p 25` that tmux 3.4 removed, so it works
+on every supported release — Python libtmux still emits `-p` and does not.
+
 C++23 is the baseline. `LIBTMUX_CXX_STANDARD=20` substitutes pinned
 `tl::expected`; see
 [`docs/design/cxx20-fallback.md`](docs/design/cxx20-fallback.md). The two

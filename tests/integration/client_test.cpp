@@ -17,6 +17,7 @@
 #include "libtmux/entities.hpp"
 #include "libtmux/server.hpp"
 #include "support/scoped_tmux_server.hpp"
+#include "support/tmux_capabilities.hpp"
 
 namespace {
 
@@ -45,6 +46,8 @@ std::vector<Client> clients_once_attached(const Server& server) {
 }
 
 TEST(Client, AControlConnectionIsAClientTheServerReports) {
+  LIBTMUX_REQUIRES_TMUX(3, 3, "display-message -c against a control client");
+
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);

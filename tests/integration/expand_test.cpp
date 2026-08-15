@@ -14,6 +14,7 @@
 #include "libtmux/format.hpp"
 #include "libtmux/server.hpp"
 #include "support/scoped_tmux_server.hpp"
+#include "support/tmux_capabilities.hpp"
 
 namespace {
 
@@ -154,6 +155,8 @@ TEST(Expand, LiteralTextIsTheCallersToEscape) {
 }
 
 TEST(ShowMessage, AMessageReachesAnAttachedControlClient) {
+  LIBTMUX_REQUIRES_TMUX(3, 4, "delivery of %message to an attached control client");
+
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
@@ -182,6 +185,8 @@ TEST(ShowMessage, AMessageReachesAnAttachedControlClient) {
 }
 
 TEST(ShowMessage, TheTargetIsTheContextTheTextExpandsIn) {
+  LIBTMUX_REQUIRES_TMUX(3, 4, "delivery of %message to an attached control client");
+
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
@@ -222,6 +227,8 @@ TEST(ShowMessage, TheTargetIsTheContextTheTextExpandsIn) {
 }
 
 TEST(ShowMessage, APaneNamesItselfRatherThanTheActiveOne) {
+  LIBTMUX_REQUIRES_TMUX(3, 4, "delivery of %message to an attached control client");
+
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);

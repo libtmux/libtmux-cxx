@@ -445,6 +445,14 @@ if(NOT LIBTMUX_TEST_TMUX_VERSION MATCHES
       "control-mode tests need tmux 3.2 or newer, found ${LIBTMUX_TEST_TMUX_VERSION}")
 endif()
 
+# Added here rather than beside the rest of the support library: it needs the
+# version resolved above, and the resolution needs a tmux to ask.
+target_sources(libtmux_test_support PRIVATE support/tmux_capabilities.cpp)
+target_compile_definitions(
+  libtmux_test_support PRIVATE
+  LIBTMUX_TEST_TMUX_VERSION="${LIBTMUX_TEST_TMUX_VERSION}")
+target_link_libraries(libtmux_test_support PUBLIC GTest::gtest)
+
 foreach(control_case parser integration)
   add_executable(
     libtmux_control_${control_case}_test control_${control_case}_test.cpp)
