@@ -238,18 +238,29 @@ TEST(Entity, AnAnswerThatDoesNotFitIsReportedNotCut) {
           .has_value());
   ASSERT_TRUE(panes->at(0).send_key("Enter").has_value());
 
-  // Wait for the shell to actually produce the scrollback. Spinning without
-  // waiting can run out of attempts before it has written anything, which
-  // turns a real assertion into an occasional one.
+  // Wait for the shell to actually produce the scrollback. How long three
+  // thousand lines take to render is a property of the machine, not of the
+  // library: a fixed budget generous on a workstation expires on a loaded
+  // continuous integration runner, and reports 1978 lines as a library bug.
+  //
+  // So this waits for progress to stop rather than for a clock to run out —
+  // slow is tolerated, stalled is not, and the two are told apart.
   int history_size = 0;
-  for (int attempt = 0; attempt < 200 && history_size <= 2500; ++attempt) {
+  int reads_without_progress = 0;
+  const auto give_up_at = std::chrono::steady_clock::now() + std::chrono::seconds{120};
+  while (history_size <= 2500 && std::chrono::steady_clock::now() < give_up_at) {
     const auto history =
         server.run({"display-message", "-p", "-t", pane_id, "#{history_size}"});
     ASSERT_TRUE(history.has_value()) << history.error().diagnostic;
-    history_size = std::stoi(*history);
-    if (history_size <= 2500) {
-      std::this_thread::sleep_for(std::chrono::milliseconds{25});
+    const int seen = std::stoi(*history);
+    reads_without_progress = seen == history_size ? reads_without_progress + 1 : 0;
+    history_size = seen;
+    // Five seconds without a new line means the shell has finished and simply
+    // did not get there. That is a real failure, and worth reaching quickly.
+    if (reads_without_progress >= 200) {
+      break;
     }
+    std::this_thread::sleep_for(std::chrono::milliseconds{25});
   }
   ASSERT_GT(history_size, 2500) << "the shell never produced the scrollback";
 
