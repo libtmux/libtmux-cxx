@@ -1,0 +1,20 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "libtmux",
+  "version": "0.1.0",
+  "description": "A typed C++ interface to the tmux terminal multiplexer.",
+  "homepage": "https://github.com/libtmux/libtmux-cxx",
+  "license": "MIT",
+  "supports": "!windows",
+  "dependencies": [],
+  "features": {
+    "tests": {
+      "description": "Build the test suites",
+      "dependencies": ["gtest", "yaml-cpp"]
+    },
+    "mcp": {
+      "description": "Build the MCP server",
+      "dependencies": ["nlohmann-json"]
+    }
+  }
+}

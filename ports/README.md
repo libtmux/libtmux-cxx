@@ -3,7 +3,7 @@
 This is an overlay port, not a submission to the vcpkg registry. Use it with
 
 ```console
-$ vcpkg install libtmux --overlay-ports=cxx/packaging/vcpkg
+$ vcpkg install libtmux --overlay-ports=packaging/vcpkg
 ```
 
 The port builds the library alone. Tests are disabled because they need
@@ -18,5 +18,5 @@ tag, `--head` is the only mode that resolves.
 
 vcpkg is not installed in this repository's development environment, so this
 port is checked by inspection and by the fact that the underlying package
-installs and is consumed by `cxx/examples/consume` in continuous integration.
+installs and is consumed by `examples/consume` in continuous integration.
 Publishing it should wait for a run against real vcpkg on a tagged release.
