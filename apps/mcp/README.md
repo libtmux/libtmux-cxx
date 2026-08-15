@@ -9,11 +9,11 @@ Give an agent hands inside the terminal, from a single static binary with no
 runtime.
 
 > [!NOTE]
-> Five tools, deliberately. This exists to put weight on the library from the
-> side a model sees — every argument arrives as an untyped string — and it is
+> A small surface, deliberately. This exists to put weight on the library
+> from the side a model sees — every argument arrives as an untyped string — and it is
 > kept small enough to read in one sitting. For the full surface, use the
 > Python [libtmux-mcp](https://github.com/tmux-python/libtmux-mcp), which
-> offers around sixty tools and is the one to install if you want coverage
+> covers far more of tmux and is the one to install if you want coverage
 > rather than a reference.
 
 ## Tools

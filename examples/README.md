@@ -1,8 +1,8 @@
 # Examples
 
-Four programs that read top to bottom, plus two larger consumers. Every one of
-them runs against a real tmux server of its own and is executed as a test on
-every build — so nothing here can quietly stop compiling or stop being true.
+Programs that read top to bottom, plus two larger consumers. Every one of them
+runs against a real tmux server of its own and is executed as a test on every
+build — so nothing here can quietly stop compiling or stop being true.
 
 ```console
 $ cmake --build --preset cxx-dev --target libtmux_example_01_tour
@@ -23,7 +23,7 @@ Each starts a private server through
 running one never touches a tmux you are using. That header is worth reading
 first if you plan to write tests of your own.
 
-## The four
+## The short ones
 
 | Example | Reads as | Shows |
 |---|---|---|
@@ -59,7 +59,7 @@ surface is awkward. It builds a described session, and reads
 
 It keeps its YAML parser to itself, so the library links none of it.
 
-That pressure has paid: running tmuxp's own 23 example documents through it
+That pressure has paid: running tmuxp's own example documents through it
 found `environment:` and `window_index:` missing from the C++ surface, and a
 bug where every creation call carrying a shell command came back unreadable.
 The findings and what remains unread are in

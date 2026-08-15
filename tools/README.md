@@ -33,8 +33,11 @@ Both are run from the repository root.
 ## The parity ledger
 
 [`parity/data/`](parity/data/) records what each Python `libtmux` symbol maps
-to in this port and the evidence for it — 966 entries. It sits beside the tool
-that reads it because it is input, not a deliverable.
+to in this port and the evidence for it. It sits beside the tool that reads it
+because it is input, not a deliverable.
+
+`python3 -m tools.parity coverage` reports how much of which part of the
+Python surface is answered, and how much of that is recorded with evidence.
 
 Two halves, and only one can run in this repository:
 

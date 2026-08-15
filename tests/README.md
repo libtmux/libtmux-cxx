@@ -1,6 +1,6 @@
 # Tests
 
-222 of them, against a real tmux, on every build.
+Against a real tmux, on every build. `ctest -N` counts them.
 
 ```console
 $ ctest --preset cxx-dev --no-tests=error
@@ -56,7 +56,9 @@ being a refusal is a silent API regression, and this is the only way to notice.
 
 ## Running more than one configuration
 
-The suite runs under five, and they disagree often enough to be worth the time:
+The suite runs under every preset in
+[`CMakePresets.json`](../CMakePresets.json), and they disagree often enough to
+be worth the time:
 
 ```console
 $ for p in cxx-dev cxx-sanitize cxx-tsan cxx-gcc cxx20; do cmake --preset $p && cmake --build --preset $p && ctest --preset $p --no-tests=error; done

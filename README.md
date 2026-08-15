@@ -62,8 +62,8 @@ project itself needs.
 |---|---|
 | [`include/libtmux/`](include/libtmux/) | The public headers. If it is not here, it is not the contract. |
 | [`src/`](src/) | Implementation, and the private headers the transport seam hides behind. |
-| [`tests/`](tests/README.md) | 222 tests against real tmux, plus programs that must *not* compile. |
-| [`examples/`](examples/README.md) | Four programs that read top to bottom, and the tmuxp workspace builder. |
+| [`tests/`](tests/README.md) | The suite, against real tmux, plus programs that must *not* compile. |
+| [`examples/`](examples/README.md) | Programs that read top to bottom, and the tmuxp workspace builder. |
 | [`apps/mcp/`](apps/mcp/README.md) | The MCP server, for driving tmux from an agent. |
 | [`tools/`](tools/README.md) | The parity ledger, the mutation catalogue, the reference generator. Never installed. |
 | [`docs/`](docs/) | Design notes, bakeoffs, and the generated [API reference](docs/api.md). |
@@ -154,7 +154,8 @@ A **control connection** keeps a session open and gives every command its own
 reply block, which is what makes per-command attribution possible at all.
 `Server::over_control(session)` returns a Server that dispatches every entity
 operation that way: the same calls, without a process each. It measured about
-4.6 times faster per listing; see [`docs/design/control-transport.md`](docs/design/control-transport.md) for what
+4.6 times faster per listing; see
+[`docs/design/control-transport.md`](docs/design/control-transport.md) for what
 that costs.
 
 ```cpp
@@ -180,8 +181,8 @@ none of them can quietly stop working.
 $ cmake --build --preset cxx-dev --target libtmux_example_01_tour
 ```
 
-[`examples/consume`](examples/consume/) is the exception and stays one: it proves the installed
-package links and deliberately never contacts tmux.
+[`examples/consume`](examples/consume/) is the exception and stays one: it
+proves the installed package links and deliberately never contacts tmux.
 
 ## Consumers
 
@@ -225,10 +226,11 @@ tool result the model is meant to read and act on.
 
 ### Pointing agent CLIs at a build
 
-[`tools/mcp/mcp_swap.py`](tools/README.md) rewrites the MCP configuration of every installed
-agent CLI to run a chosen copy of the server, and puts the originals back. It
-handles each CLI's own dialect — TOML and JSONC with their comments intact,
-opencode's single argv array, Claude's user and project scopes.
+[`tools/mcp/mcp_swap.py`](tools/README.md) rewrites the MCP configuration of
+every installed agent CLI to run a chosen copy of the server, and puts the
+originals back. It handles each CLI's own dialect — TOML and JSONC with their
+comments intact, opencode's single argv array, Claude's user and project
+scopes.
 
 Point them at a build in this checkout, seeing the change first:
 
@@ -264,13 +266,13 @@ unconfirmed — `detect` says so for pi.
 
 ## How it is checked
 
-Every change runs against real tmux under six configurations: clang with
-libc++, GCC with libstdc++, the C++20 build over `tl::expected`, address and
+Every change runs against real tmux under clang with libc++, GCC with
+libstdc++, the C++20 build over `tl::expected`, address and
 undefined-behaviour sanitizers, the thread sanitizer, and a locale that is not
 UTF-8. The tmux matrix covers every supported release from 3.2a, and the
 examples run as tests.
 
-Four parsers read input the library does not choose — what tmux printed, what a
+Every parser reads input the library does not choose — what tmux printed, what a
 program inside a pane put in a title, a version string a distribution may have
 patched, and whatever arrives on a control socket. Each has a fuzz harness and
 a checked-in corpus:
@@ -287,14 +289,16 @@ above every numbered release. Continuous integration builds and tests against
 every supported version.
 
 C++23 is the baseline. `LIBTMUX_CXX_STANDARD=20` substitutes pinned
-`tl::expected`; see [`docs/design/cxx20-fallback.md`](docs/design/cxx20-fallback.md). The two builds carry
-different ABI namespaces, so mixing their objects is a link error rather than
-memory corruption.
+`tl::expected`; see
+[`docs/design/cxx20-fallback.md`](docs/design/cxx20-fallback.md). The two
+builds carry different ABI namespaces, so mixing their objects is a link error
+rather than memory corruption.
 
 ## Reference
 
-[`docs/api.md`](docs/api.md) lists every public type and call with the prose from its header.
-It is generated, and continuous integration fails if it drifts:
+[`docs/api.md`](docs/api.md) lists every public type and call with the prose
+from its header. It is generated, and continuous integration fails if it
+drifts:
 
 ```console
 $ python3 tools/docs/api_index.py --include include/libtmux --output docs/api.md
@@ -302,15 +306,20 @@ $ python3 tools/docs/api_index.py --include include/libtmux --output docs/api.md
 
 ## Design notes
 
-- [`docs/bakeoffs/entity-behavior/scorecard.md`](docs/bakeoffs/entity-behavior/scorecard.md) — the five ways an entity could
-  have reached tmux, and what measuring them settled
-- [`docs/design/control-transport.md`](docs/design/control-transport.md) — dispatching entities over one open
-  connection, and what the protocol asks for in return
-- [`docs/design/cxx20-fallback.md`](docs/design/cxx20-fallback.md) — why the fallback exists and what it costs
-- [`docs/design/engine-ops-study.md`](docs/design/engine-ops-study.md) — what the Python operations experiment
-  taught this library, and what was declined
-- [`docs/evidence/library-review.md`](docs/evidence/library-review.md) — the adversarial reviews and their findings
-- [`docs/evidence/prerelease-audit.md`](docs/evidence/prerelease-audit.md) — what eight independent passes over the
-  package found before its first release, and what was wrong with some of it
+- [`docs/bakeoffs/entity-behavior/scorecard.md`](docs/bakeoffs/entity-behavior/scorecard.md)
+  — the five ways an entity could have reached tmux, and what measuring them
+  settled
+- [`docs/design/control-transport.md`](docs/design/control-transport.md) —
+  dispatching entities over one open connection, and what the protocol asks for
+  in return
+- [`docs/design/cxx20-fallback.md`](docs/design/cxx20-fallback.md) — why the
+  fallback exists and what it costs
+- [`docs/design/engine-ops-study.md`](docs/design/engine-ops-study.md) — what
+  the Python operations experiment taught this library, and what was declined
+- [`docs/evidence/library-review.md`](docs/evidence/library-review.md) — the
+  adversarial reviews and their findings
+- [`docs/evidence/prerelease-audit.md`](docs/evidence/prerelease-audit.md) —
+  what eight independent passes over the package found before its first
+  release, and what was wrong with some of it
 - `schema/filter-expression-v1.schema.json` — the lowered filter expression a
   JSON integration targets; the core ships no serializer
