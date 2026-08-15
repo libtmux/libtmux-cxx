@@ -213,7 +213,11 @@ DelayedTracer start_delayed_tracer(pid_t target) {
     static_cast<void>(::write(status_pipe[1], &reported, sizeof(reported)));
     static_cast<void>(::close(status_pipe[1]));
     if (reported == 0) {
-      std::this_thread::sleep_for(std::chrono::milliseconds{500});
+      // Long enough that "teardown waited for this" and "teardown did not" are
+      // far apart. At half a second the two were 200ms apart and a loaded
+      // runner spent 245ms of that on scheduling, which failed a teardown that
+      // had in fact handed off exactly as intended.
+      std::this_thread::sleep_for(std::chrono::seconds{2});
     }
     std::_Exit(0);
   }
@@ -509,7 +513,10 @@ TEST(ScopedTmuxServerFailure, LatePtraceReapUsesBoundedOwnedHandoff) {
   fixture.reset();
   const auto teardown_elapsed = std::chrono::steady_clock::now() - teardown_started;
 
-  EXPECT_LT(teardown_elapsed, std::chrono::milliseconds{300});
+  // Bounded, against a tracer that holds on for two seconds. What is being
+  // shown is that teardown handed the reap off rather than waiting, so the
+  // bound only has to sit clearly between the two.
+  EXPECT_LT(teardown_elapsed, std::chrono::milliseconds{1000});
   while (::waitpid(tracer.pid, nullptr, 0) < 0 && errno == EINTR) {
   }
   EXPECT_TRUE(wait_until_not_a_child(server_pid, std::chrono::steady_clock::now() +
@@ -588,9 +595,20 @@ TEST(ScopedTmuxServerFailure, EscapedPipeHolderIsNeitherWaitedForNorSignalled) {
   // what teardown did rather than about how long it took: a process that was
   // waited for would be reaped, and one that was signalled would be gone.
   // Timing this instead would only be asking whether the machine was busy.
+  // The fixture normally reaps the direct child before teardown returns, and
+  // hands it to a background reaper when it does not — so this can be a race
+  // the test wins, and winning it means the call here does the collecting.
+  // Either way nothing is left behind, which is the claim.
   errno = 0;
-  EXPECT_EQ(::waitpid(direct_pid, nullptr, WNOHANG), -1);
+  auto collected = ::waitpid(direct_pid, nullptr, WNOHANG);
+  if (collected == direct_pid) {
+    errno = 0;
+    collected = ::waitpid(direct_pid, nullptr, WNOHANG);
+  }
+  EXPECT_EQ(collected, -1);
   EXPECT_EQ(errno, ECHILD);
+  // The descendant is the actual subject: teardown neither waited for it nor
+  // signalled it, so it is still there.
   EXPECT_EQ(::kill(descendant_pid, 0), 0);
   // This test owns it now: nothing else will ever reap a process the fixture
   // deliberately let escape.
