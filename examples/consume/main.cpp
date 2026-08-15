@@ -25,15 +25,15 @@ int main() {
   // and `from_recording` would answer with nothing at run time in a program
   // whose whole job is to be built. Better to not compile.
   static constexpr std::array kRecordedPane{
-      std::string_view{"%0"},   std::string_view{"nvim"},
-      std::string_view{"1"},    std::string_view{"@0"},
-      std::string_view{"$0"},   std::string_view{"0"},
-      std::string_view{"editor"}, std::string_view{"4210"},
+      std::string_view{"%0"},         std::string_view{"nvim"},
+      std::string_view{"1"},          std::string_view{"@0"},
+      std::string_view{"$0"},         std::string_view{"0"},
+      std::string_view{"editor"},     std::string_view{"4210"},
       std::string_view{"/dev/pts/3"}, std::string_view{"/home"},
-      std::string_view{"80"},   std::string_view{"24"},
-      std::string_view{"0"},    std::string_view{"0"},
-      std::string_view{"1"},    std::string_view{"0"},
-      std::string_view{"1"},    std::string_view{"1"},
+      std::string_view{"80"},         std::string_view{"24"},
+      std::string_view{"0"},          std::string_view{"0"},
+      std::string_view{"1"},          std::string_view{"0"},
+      std::string_view{"1"},          std::string_view{"1"},
       std::string_view{"0"}};
   static_assert(kRecordedPane.size() == libtmux::Pane::kFields.size(),
                 "one recorded value per pane field, in the order kFields lists them");
