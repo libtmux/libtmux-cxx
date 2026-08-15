@@ -183,6 +183,10 @@ jobs:
         with:
           files: artifacts/*
           draft: true
+          # A semantic version carries its prerelease tag after a hyphen, and
+          # nothing else in a `v*` tag has one — so the tag itself decides,
+          # rather than someone remembering to tick a box.
+          prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
           body: |
             ## Installing
