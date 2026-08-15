@@ -18,7 +18,10 @@ install_manifest.txt
 *.gcno
 *.profraw
 *.profdata
-coverage/
+# Anchored: unanchored, this matches a directory of that name at any depth, and
+# it quietly swallowed `tools/coverage/` — the tool that measures coverage was
+# excluded from the repository by the rule meant for its output.
+/coverage/
 
 # Compiled objects and libraries, for the same in-place case.
 *.o
