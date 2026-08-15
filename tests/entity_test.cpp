@@ -225,13 +225,19 @@ TEST(Entity, AnAnswerThatDoesNotFitIsReportedNotCut) {
   const Server server = connect(*fixture);
   const Session session = only_session(server);
 
+  // Before the pane exists, not after. A pane takes its scrollback bound when
+  // it is created and older tmux never revisits it, so raising the limit
+  // afterwards left this pane at the default two thousand — and the wait below
+  // then sat watching a counter that had already stopped at 1978, which reads
+  // exactly like a slow machine.
+  ASSERT_TRUE(server.run({"set-option", "-g", "history-limit", "5000"}).has_value());
+
   const auto window = session.new_window("noisy");
   ASSERT_TRUE(window.has_value()) << window.error().diagnostic;
   const auto panes = window->panes();
   ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
   const std::string pane_id{panes->at(0).id()};
 
-  ASSERT_TRUE(server.run({"set-option", "-g", "history-limit", "5000"}).has_value());
   ASSERT_TRUE(
       panes->at(0)
           .send_text("for i in $(seq 1 3000); do echo \"padding padding $i\"; done")
