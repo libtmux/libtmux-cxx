@@ -1,6 +1,6 @@
 [project]
 name = "libtmux-cxx-tools"
-version = "0.1.0"
+version = "0.1.0a1"
 description = "Development tooling for the libtmux C++ port: the parity ledger, the mutation catalogue, and the API reference generator."
 authors = [{ name = "Tony Narlock", email = "tony@git-pull.com" }]
 license = "MIT"
