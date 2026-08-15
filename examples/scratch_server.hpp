@@ -2,10 +2,14 @@
 
 // Where these examples get a tmux to talk to.
 //
-// Inside tmux, they use the server they are running in — which is what a
-// reader wants to see, because it is what their own program will do. Outside
-// one, they start a private server on a socket of their own and kill it on the
-// way out, so an example is runnable anywhere and leaves nothing behind.
+// Always a server of their own, on a socket under a directory named for this
+// workspace, killed on the way out. Never the server the reader is sitting in:
+// an example creates and renames and kills things, and doing that to somebody's
+// real session because they happened to run it from inside tmux is not a
+// trade worth making for a slightly more realistic demonstration.
+//
+// `Server::from_env()` — the call that does reach the surrounding server — has
+// an example of its own, which reads it rather than changing anything.
 
 #include <cstdio>
 #include <cstdlib>
@@ -20,12 +24,11 @@ namespace example {
 class ScratchServer {
 public:
   static ScratchServer open() {
-    if (auto inherited = libtmux::Server::from_env(); inherited.has_value()) {
-      return ScratchServer{*std::move(inherited), {}};
-    }
-
+    // Named for the workspace, so a stray directory says where it came from,
+    // and distinct from the fixture the test suite uses.
     std::string directory =
-        (std::filesystem::temp_directory_path() / "libtmux-example-XXXXXX").string();
+        (std::filesystem::temp_directory_path() / "libtmux-cxx-example-XXXXXX")
+            .string();
     if (::mkdtemp(directory.data()) == nullptr) {
       std::perror("mkdtemp");
       std::exit(1);
@@ -45,9 +48,6 @@ public:
   }
 
   ~ScratchServer() {
-    if (owned_.empty()) {
-      return;
-    }
     (void)server_.kill();
     std::error_code ignored;
     std::filesystem::remove_all(owned_, ignored);
@@ -65,7 +65,7 @@ private:
       : server_{std::move(server)}, owned_{std::move(owned)} {}
 
   libtmux::Server server_;
-  // Empty when the server was inherited rather than started here.
+  // The private tree this server's socket lives in, removed with it.
   std::string owned_;
 };
 
