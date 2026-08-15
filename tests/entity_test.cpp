@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
 #include <string>
 #include <thread>
 #include <vector>
@@ -505,7 +506,11 @@ TEST(Entity, CreationVerbsCarryTheFlagsTmuxHas) {
   const auto first = window->panes();
   ASSERT_TRUE(first.has_value()) << first.error().diagnostic;
   ASSERT_EQ(first->size(), 1U);
-  EXPECT_EQ(settled_path(first->at(0)), "/tmp");
+  // Resolved on both sides: macOS makes /tmp a symlink to /private/tmp, and the
+  // pane reports where it actually is. Comparing the literal string would be
+  // testing the platform's symlink layout rather than the start directory.
+  EXPECT_EQ(std::filesystem::path{settled_path(first->at(0))},
+            std::filesystem::canonical("/tmp"));
 
   const auto added =
       window->split({.horizontal = true, .start_directory = "/", .percentage = 25});

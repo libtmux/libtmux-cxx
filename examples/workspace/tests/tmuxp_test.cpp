@@ -3,6 +3,7 @@
 #include "libtmux_consumers/tmuxp.hpp"
 
 #include <chrono>
+#include <filesystem>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -130,7 +131,10 @@ TEST(Tmuxp, AParsedDocumentBuildsOnARealServer) {
   // The directory in the document is where the panes start.
   const auto panes = windows->front().panes();
   ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
-  EXPECT_EQ(panes->front().path(), "/tmp");
+  // Resolved, because macOS makes /tmp a symlink to /private/tmp and the pane
+  // reports where it really is. The document says /tmp either way.
+  EXPECT_EQ(std::filesystem::path{panes->front().path()},
+            std::filesystem::canonical("/tmp"));
 
   const auto logs = windows->back().panes();
   ASSERT_TRUE(logs.has_value()) << logs.error().diagnostic;
