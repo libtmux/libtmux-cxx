@@ -256,6 +256,19 @@ int run_server(const std::vector<std::string>& arguments, const Selector& select
                       ("libtmux-unowned-" + std::to_string(::getpid()) + ".sock");
   }
 
+  // Before anything the fixture can observe. The socket marker below is how it
+  // decides this server is up, and a `term-resistant` fake that is still on the
+  // default disposition when the first SIGTERM lands simply dies — leaving a
+  // test that expects a SIGKILL escalation reporting a bug in teardown rather
+  // than a race in this program.
+  struct sigaction action {};
+  action.sa_handler =
+      mode == "term-resistant" || mode == "ptrace-reap-delay" ? SIG_IGN : request_stop;
+  sigemptyset(&action.sa_mask);
+  if (::sigaction(SIGTERM, &action, nullptr) != 0) {
+    return 4;
+  }
+
   std::error_code error;
   std::filesystem::create_directories(socket.parent_path(), error);
   {
@@ -296,14 +309,6 @@ int run_server(const std::vector<std::string>& arguments, const Selector& select
     if (descendant > 0) {
       append_trace({"descendant", "PID=" + std::to_string(descendant)});
     }
-  }
-
-  struct sigaction action {};
-  action.sa_handler =
-      mode == "term-resistant" || mode == "ptrace-reap-delay" ? SIG_IGN : request_stop;
-  sigemptyset(&action.sa_mask);
-  if (::sigaction(SIGTERM, &action, nullptr) != 0) {
-    return 4;
   }
 
   const auto started = std::chrono::steady_clock::now();
