@@ -302,8 +302,13 @@ expected<Pane, CommandFailure> Window::split(SplitOptions options) const {
     command.emplace_back("-f");
   }
   if (options.percentage.has_value()) {
-    command.emplace_back("-p");
-    command.push_back(std::to_string(*options.percentage));
+    // `-l 25%` rather than `-p 25`. They mean the same thing and tmux has
+    // accepted the former since 3.1, but `-p` was removed in 3.4 — a version
+    // in the middle of the supported range, which answers a split carrying it
+    // with "size missing". Spelling it the way every supported tmux
+    // understands costs nothing.
+    command.emplace_back("-l");
+    command.push_back(std::to_string(*options.percentage) + "%");
   }
   if (!options.start_directory.empty()) {
     command.emplace_back("-c");
