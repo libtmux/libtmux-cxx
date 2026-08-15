@@ -85,32 +85,17 @@ private:
   std::filesystem::path previous_;
 };
 
+// Short, and resolved. Every root made here ends up holding a tmux socket, and
+// `sun_path` is 104 bytes on macOS — where the per-user temporary directory is
+// already something like /var/folders/xx/<28 characters>/T/, leaving no room
+// for the fixture's own tree underneath it. Resolved as well, because /tmp is a
+// symlink to /private/tmp there and one test walks back up with `..`.
 std::filesystem::path unique_test_directory(std::string_view stem) {
   static std::atomic<unsigned long> sequence{0};
-  auto path = std::filesystem::temp_directory_path() /
-              (std::string{stem} + "-" + std::to_string(::getpid()) + "-" +
-               std::to_string(sequence.fetch_add(1)));
-  std::filesystem::create_directories(path);
-  return path;
-}
-
-// A root short enough that a socket underneath it still fits in `sun_path`.
-//
-// `sun_path` is 108 bytes on Linux and 104 on macOS, and macOS puts the
-// per-user temporary directory at something like
-// /var/folders/xx/<28 characters>/T/ — so a test that nests a few directories
-// under it and then asks for a socket runs out of room, and the fixture
-// correctly refuses to start. That refusal is right, and it is not what these
-// tests are about.
-std::filesystem::path short_test_directory(std::string_view stem) {
-  static std::atomic<unsigned long> sequence{0};
-  // Resolved: macOS makes /tmp a symlink to /private/tmp, and this test walks
-  // back up with `..` — from the unresolved spelling that climbs out of the
-  // temporary tree entirely and lands on /private, which is not writable.
   std::error_code resolving;
   auto base = std::filesystem::canonical("/tmp", resolving);
   if (resolving) {
-    base = "/tmp";
+    base = std::filesystem::temp_directory_path();
   }
   auto path = base / (std::string{stem} + "-" + std::to_string(::getpid()) + "-" +
                       std::to_string(sequence.fetch_add(1)));
@@ -362,7 +347,7 @@ TEST(ScopedTmuxServerFailure, ReboundAfterPidQueryCannotCreateSession) {
 }
 
 TEST(ScopedTmuxServerFailure, RelativeTmpdirCannotRedirectCleanupAfterCwdChange) {
-  const auto root = short_test_directory("libtmux-relative-tmpdir");
+  const auto root = unique_test_directory("libtmux-relative-tmpdir");
   const auto original_root = root / "original";
   const auto rebound_root = root / "rebound";
   std::filesystem::create_directories(original_root / "relative-tmp");
