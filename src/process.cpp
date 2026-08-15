@@ -184,11 +184,29 @@ validate_request(const ProcessRequest& request) {
 
 [[nodiscard]] expected<Pipe, int> create_pipe() {
   std::array<int, 2> descriptors{-1, -1};
+#if defined(__linux__) && !defined(LIBTMUX_FORCE_PORTABLE_SYSCALLS)
   if (::pipe2(descriptors.data(), O_CLOEXEC) != 0) {
     return unexpected(errno);
   }
   OwnedFd read{descriptors[0]};
   OwnedFd write{descriptors[1]};
+#else
+  // No `pipe2` outside Linux. Two calls instead of one, which leaves a window
+  // where another thread forking would inherit these descriptors; this library
+  // forks only through `spawn`, which closes what it does not pass on.
+  if (::pipe(descriptors.data()) != 0) {
+    return unexpected(errno);
+  }
+  OwnedFd read{descriptors[0]};
+  OwnedFd write{descriptors[1]};
+  for (const int descriptor : {read.get(), write.get()}) {
+    const auto descriptor_flags = ::fcntl(descriptor, F_GETFD);
+    if (descriptor_flags < 0 ||
+        ::fcntl(descriptor, F_SETFD, descriptor_flags | FD_CLOEXEC) != 0) {
+      return unexpected(errno);
+    }
+  }
+#endif
   const auto flags = ::fcntl(read.get(), F_GETFL);
   if (flags < 0 || ::fcntl(read.get(), F_SETFL, flags | O_NONBLOCK) != 0) {
     return unexpected(errno);

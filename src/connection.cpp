@@ -52,7 +52,7 @@ ProtocolError system_error(std::string_view operation, int error_number) {
 
 expected<std::array<int, 2>, ProtocolError> make_pipe() {
   std::array<int, 2> descriptors{-1, -1};
-#if defined(__linux__)
+#if defined(__linux__) && !defined(LIBTMUX_FORCE_PORTABLE_SYSCALLS)
   if (::pipe2(descriptors.data(), O_CLOEXEC) != 0) {
     return unexpected(system_error("pipe2", errno));
   }
@@ -328,39 +328,66 @@ std::string notification_text(const Notification& notification) {
   return {reinterpret_cast<const char*>(raw.data()), raw.size()};
 }
 
+// Take the SIGPIPE this thread just generated off the pending queue, so that
+// unblocking the mask does not deliver it to a process that never asked for it.
+//
+// The caller has established the exact situation this is safe in: `write`
+// answered EPIPE, and SIGPIPE was not pending beforehand. A SIGPIPE raised by
+// `write` is directed at the calling thread, so it is queued for this thread
+// and no other thread can consume it first.
+void drain_pending_sigpipe(const sigset_t& blocked) {
+#if defined(__linux__) && !defined(LIBTMUX_FORCE_PORTABLE_SYSCALLS)
+  const timespec no_wait{.tv_sec = 0, .tv_nsec = 0};
+  for (;;) {
+    const auto signal = ::sigtimedwait(&blocked, nullptr, &no_wait);
+    if (signal == SIGPIPE || (signal < 0 && errno == EAGAIN)) {
+      return;
+    }
+    if (signal < 0 && errno == EINTR) {
+      continue;
+    }
+    return;
+  }
+#else
+  // macOS has no `sigtimedwait`. `sigwait` blocks, but only until it collects a
+  // signal that is already queued for this thread — which is the whole reason
+  // the caller checked before writing.
+  int signal = 0;
+  for (;;) {
+    const auto result = ::sigwait(&blocked, &signal);
+    if (result == EINTR) {
+      continue;
+    }
+    return;
+  }
+#endif
+}
+
 expected<ssize_t, ProtocolError> write_without_sigpipe(int descriptor, const void* data,
                                                        std::size_t size) {
   sigset_t blocked{};
   sigset_t previous{};
   sigset_t pending{};
-  if (::sigemptyset(&blocked) != 0 || ::sigaddset(&blocked, SIGPIPE) != 0) {
+  // Unqualified: these four are functions on Linux but macros on macOS, and a
+  // macro will not take a `::`.
+  if (sigemptyset(&blocked) != 0 || sigaddset(&blocked, SIGPIPE) != 0) {
     return unexpected(system_error("prepare SIGPIPE mask", errno));
   }
   const auto mask_result = ::pthread_sigmask(SIG_BLOCK, &blocked, &previous);
   if (mask_result != 0) {
     return unexpected(system_error("pthread_sigmask(SIG_BLOCK)", mask_result));
   }
-  if (::sigpending(&pending) != 0) {
+  if (sigpending(&pending) != 0) {
     const auto saved_errno = errno;
     static_cast<void>(::pthread_sigmask(SIG_SETMASK, &previous, nullptr));
     return unexpected(system_error("sigpending", saved_errno));
   }
-  const auto already_pending = ::sigismember(&pending, SIGPIPE) == 1;
+  const auto already_pending = sigismember(&pending, SIGPIPE) == 1;
 
   const auto count = ::write(descriptor, data, size);
   const auto write_errno = errno;
   if (count < 0 && write_errno == EPIPE && !already_pending) {
-    const timespec no_wait{.tv_sec = 0, .tv_nsec = 0};
-    for (;;) {
-      const auto signal = ::sigtimedwait(&blocked, nullptr, &no_wait);
-      if (signal == SIGPIPE || (signal < 0 && errno == EAGAIN)) {
-        break;
-      }
-      if (signal < 0 && errno == EINTR) {
-        continue;
-      }
-      break;
-    }
+    drain_pending_sigpipe(blocked);
   }
   const auto restore_result = ::pthread_sigmask(SIG_SETMASK, &previous, nullptr);
   if (restore_result != 0) {
