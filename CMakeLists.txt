@@ -15,7 +15,7 @@ project(
   libtmux_cxx
   VERSION "${LIBTMUX_VERSION_TEXT}"
   DESCRIPTION "A typed C++ interface to tmux"
-  HOMEPAGE_URL "https://github.com/tmux-python/libtmux"
+  HOMEPAGE_URL "https://github.com/libtmux/libtmux-cxx"
   LANGUAGES CXX)
 
 option(LIBTMUX_BUILD_TESTS "Build libtmux C++ tests" ${PROJECT_IS_TOP_LEVEL})

@@ -2,7 +2,7 @@
   "name": "libtmux",
   "version": "0.1.0",
   "description": "A typed C++ interface to the tmux terminal multiplexer.",
-  "homepage": "https://github.com/tmux-python/libtmux",
+  "homepage": "https://github.com/libtmux/libtmux-cxx",
   "license": "MIT",
   "supports": "!windows",
   "dependencies": [
