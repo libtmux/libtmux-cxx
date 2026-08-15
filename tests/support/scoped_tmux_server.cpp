@@ -21,9 +21,14 @@
 #include <utility>
 #include <vector>
 
+// `mkdtemp` is POSIX, but the two platforms disagree about where it lives:
+// glibc declares it in <stdlib.h> and macOS in <unistd.h>. `<cstdlib>` alone
+// promises only the `std::` names, and on macOS leaves `::mkdtemp` undeclared.
+#include <stdlib.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <unistd.h>
 
 namespace libtmux::test {
 namespace {
