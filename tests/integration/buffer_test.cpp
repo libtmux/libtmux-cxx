@@ -157,7 +157,13 @@ TEST(Buffers, PasteDeliversTheTextAndLeavesTheBuffer) {
     }
     std::this_thread::sleep_for(std::chrono::milliseconds{25});
   }
-  EXPECT_NE(shown_text.find("pasted-marker"), std::string::npos);
+  EXPECT_NE(shown_text.find("pasted-marker"), std::string::npos)
+      << "pane " << quiet.id() << " running "
+      << quiet.expand("#{pane_current_command}").value_or("?")
+      << ", dead=" << quiet.expand("#{pane_dead}").value_or("?") << ", "
+      << quiet.expand("#{pane_width}").value_or("?") << "x"
+      << quiet.expand("#{pane_height}").value_or("?") << ", capture is "
+      << shown_text.size() << " bytes: [" << shown_text << "]";
   const auto elsewhere = active->capture();
   ASSERT_TRUE(elsewhere.has_value()) << elsewhere.error().diagnostic;
   EXPECT_EQ(elsewhere->find("pasted-marker"), std::string::npos);
