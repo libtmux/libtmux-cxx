@@ -162,7 +162,7 @@ def _mutated(source: pathlib.Path, find: str, replace: str) -> t.Iterator[bool]:
         _touch_forward(source)
 
 
-def _fingerprint(build_root: pathlib.Path, target: str) -> str | None:
+def _fingerprint(build_root: pathlib.Path, preset: str, target: str) -> str | None:
     """Return a digest of the executable a target builds, if it is there.
 
     Two mutations in one run can edit the same header and build the same
@@ -174,6 +174,11 @@ def _fingerprint(build_root: pathlib.Path, target: str) -> str | None:
     ----------
     build_root : pathlib.Path
         Directory holding the build trees.
+    preset : str
+        Which tree to look in. Every preset builds the same target names, so
+        searching all of them found whichever sorted first — a tree nothing
+        in this run rebuilt, whose digest therefore never moved and made
+        every mutation look like it had not reached the binary.
     target : str
         CMake target name, which is also the executable's file name.
 
@@ -184,10 +189,10 @@ def _fingerprint(build_root: pathlib.Path, target: str) -> str | None:
 
     Examples
     --------
-    >>> _fingerprint(pathlib.Path("."), "no_such_target_anywhere") is None
+    >>> _fingerprint(pathlib.Path("."), "cxx-dev", "no_such_target") is None
     True
     """
-    for candidate in sorted(build_root.glob(f"build/*/**/{target}")):
+    for candidate in sorted(build_root.glob(f"build/{preset}/**/{target}")):
         if candidate.is_file():
             return hashlib.sha256(candidate.read_bytes()).hexdigest()
     return None
@@ -246,7 +251,7 @@ def run(
     )
     if restored.returncode != 0:
         return Outcome(mutation, "not a result", "the target does not build unmutated")
-    before = _fingerprint(where, mutation.target)
+    before = _fingerprint(where, preset, mutation.target)
     with _mutated(source, mutation.find, mutation.replace) as applied:
         if not applied:
             return Outcome(
@@ -264,7 +269,10 @@ def run(
         )
         if build.returncode != 0:
             return Outcome(mutation, "not a result", "the mutation did not build")
-        if before is not None and _fingerprint(where, mutation.target) == before:
+        if (
+            before is not None
+            and _fingerprint(where, preset, mutation.target) == before
+        ):
             return Outcome(
                 mutation,
                 "not a result",
