@@ -30,7 +30,7 @@ Given a `server` — from `Server::from_env()` inside tmux,
 // Every call answers with a value: the result, or the reason there is none.
 const auto panes = server.panes();
 if (!panes.has_value()) {
-  report("list-panes", panes.error());
+  std::fprintf(stderr, "%s\n", panes.error().diagnostic.c_str());
   return 1;
 }
 
@@ -198,13 +198,13 @@ running inside, and `Server::at_default()` the one a person means by "my tmux".
 // Build an arrangement without composing a single tmux argument.
 const auto editor = session.new_window({.name = "editor"});
 if (!editor.has_value()) {
-  report("new-window", editor.error());
+  std::fprintf(stderr, "%s\n", editor.error().diagnostic.c_str());
   return 1;
 }
 
 const auto logs = editor->split({.horizontal = true, .percentage = 30});
 if (!logs.has_value()) {
-  report("split-window", logs.error());
+  std::fprintf(stderr, "%s\n", logs.error().diagnostic.c_str());
   return 1;
 }
 
@@ -580,6 +580,18 @@ a checked-in corpus.
 A green suite is only evidence once it has been shown able to fail, so
 [a mutation catalogue](tools/README.md#the-mutation-catalogue) breaks one guard
 at a time and reports any that nothing notices.
+
+## When you might not need this
+
+- **You want a workspace from a config file.** [tmuxp] already does that, and
+  does it well. [`examples/workspace/`](examples/workspace/README.md) reads the
+  same documents if you need it inside a C++ program.
+- **You are scripting, not building.** A shell script calling `tmux` is a fine
+  answer to a one-off. This earns its keep when the thing you are writing has
+  to *read* tmux's state and decide something.
+- **You want it from Python.** Use [libtmux] — it is the original, has a wider
+  surface, and this port is measured against it.
+- **You need Windows.** tmux does not run there, so neither does this.
 
 ## Project links
 

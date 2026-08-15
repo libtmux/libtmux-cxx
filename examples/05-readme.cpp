@@ -17,14 +17,6 @@
 
 #include "scratch_server.hpp"
 
-namespace {
-
-void report(const char* what, const libtmux::CommandFailure& failure) {
-  std::fprintf(stderr, "%s: %s\n", what, failure.diagnostic.c_str());
-}
-
-} // namespace
-
 int main() {
   const example::ScratchServer scratch = example::ScratchServer::open();
   const libtmux::Server& server = scratch.get();
@@ -50,13 +42,13 @@ int main() {
   // Build an arrangement without composing a single tmux argument.
   const auto editor = session.new_window({.name = "editor"});
   if (!editor.has_value()) {
-    report("new-window", editor.error());
+    std::fprintf(stderr, "%s\n", editor.error().diagnostic.c_str());
     return 1;
   }
 
   const auto logs = editor->split({.horizontal = true, .percentage = 30});
   if (!logs.has_value()) {
-    report("split-window", logs.error());
+    std::fprintf(stderr, "%s\n", logs.error().diagnostic.c_str());
     return 1;
   }
 
@@ -68,7 +60,7 @@ int main() {
   // Every call answers with a value: the result, or the reason there is none.
   const auto panes = server.panes();
   if (!panes.has_value()) {
-    report("list-panes", panes.error());
+    std::fprintf(stderr, "%s\n", panes.error().diagnostic.c_str());
     return 1;
   }
 
