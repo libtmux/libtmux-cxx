@@ -7,7 +7,9 @@
 #include <iterator>
 #include <string>
 
+#include <chrono>
 #include <gtest/gtest.h>
+#include <thread>
 
 #include "libtmux/entities.hpp"
 #include "libtmux/server.hpp"
@@ -127,9 +129,21 @@ TEST(Buffers, PasteDeliversTheTextAndLeavesTheBuffer) {
   // The text lands on the command line of the pane it was aimed at, without
   // being run: that is the whole difference between pasting and sending
   // keys, and the other pane never sees it.
-  const auto shown = quiet.capture();
-  ASSERT_TRUE(shown.has_value()) << shown.error().diagnostic;
-  EXPECT_NE(shown->find("pasted-marker"), std::string::npos);
+  // tmux delivers the paste to the pane's input, and the shell has to draw it
+  // before a capture can see it. Reading once turns "not yet" into "never".
+  std::string shown_text;
+  const auto visible_by = std::chrono::steady_clock::now() + std::chrono::seconds{10};
+  for (;;) {
+    const auto shown = quiet.capture();
+    ASSERT_TRUE(shown.has_value()) << shown.error().diagnostic;
+    shown_text = *shown;
+    if (shown_text.find("pasted-marker") != std::string::npos ||
+        std::chrono::steady_clock::now() >= visible_by) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds{25});
+  }
+  EXPECT_NE(shown_text.find("pasted-marker"), std::string::npos);
   const auto elsewhere = active->capture();
   ASSERT_TRUE(elsewhere.has_value()) << elsewhere.error().diagnostic;
   EXPECT_EQ(elsewhere->find("pasted-marker"), std::string::npos);
