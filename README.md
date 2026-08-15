@@ -2,6 +2,13 @@
 
 A typed C++ interface to [tmux](https://github.com/tmux/tmux).
 
+> [!WARNING]
+> **Alpha prerelease — `0.1.0-alpha.1`.** The API is not stable. Names,
+> signatures and behaviour may change between alphas with no deprecation
+> period, and there is no upgrade path promised until `0.1.0`. It is tested
+> hard — against real tmux, across compilers and tmux versions — but "tested"
+> and "settled" are different claims, and only the first one is being made.
+
 ```cpp
 #include <libtmux/libtmux.hpp>
 

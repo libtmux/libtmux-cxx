@@ -4,6 +4,11 @@ Thanks for looking. This is a C++ port of
 [libtmux](https://libtmux.git-pull.com), and it is held to the same standard as
 the original: nothing merges that is not proven against a real tmux.
 
+The project is an **alpha prerelease**, which is good news for a contributor:
+the public surface is still open. A change that improves a name or a signature
+does not need a deprecation shim, and "this API is awkward" is a reportable
+bug rather than something to work around. That ends at `0.1.0`.
+
 ## Getting a build
 
 **Requirements:** a C++23 toolchain (clang 17+ or GCC 13+), CMake 3.25, tmux on

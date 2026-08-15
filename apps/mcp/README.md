@@ -8,6 +8,11 @@ tmux.
 Give an agent hands inside the terminal, from a single static binary with no
 runtime.
 
+> [!WARNING]
+> **Alpha prerelease.** Built on a library whose API is not stable yet; the
+> tool names and their arguments may change between alphas. See the
+> [library README](../../README.md).
+
 > [!NOTE]
 > A small surface, deliberately. This exists to put weight on the library
 > from the side a model sees — every argument arrives as an untyped string — and it is
