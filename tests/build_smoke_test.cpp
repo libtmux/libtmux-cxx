@@ -11,8 +11,15 @@
 
 #include <gtest/gtest.h>
 
-#if defined(__clang__) && (!defined(_LIBCPP_VERSION) || _LIBCPP_VERSION != 180100)
-#error "Clang 18.1.3 must use libc++ 18.1"
+// Only when the pinned toolchain was chosen. That build asks for a specific
+// clang paired with a specific libc++, and getting libstdc++ or a different
+// libc++ instead would be a silent change of what is under test. Apple Clang
+// brings its own libc++ at its own version and is not that pairing, so a bare
+// `__clang__` check called a correct macOS build broken.
+#if defined(LIBTMUX_PINNED_LIBCXX)
+#if !defined(_LIBCPP_VERSION) || _LIBCPP_VERSION != 180100
+#error "the pinned toolchain is clang 18.1 with libc++ 18.1"
+#endif
 #endif
 
 #if defined(LIBTMUX_USE_TL_EXPECTED)
