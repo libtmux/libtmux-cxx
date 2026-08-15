@@ -9,9 +9,14 @@
 // It runs against a tmux server of its own, like every other example here.
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
+#include <filesystem>
 #include <string>
+#include <thread>
 #include <vector>
+
+#include <unistd.h>
 
 #include <libtmux/libtmux.hpp>
 
@@ -55,6 +60,46 @@ int main() {
   (void)logs->send_text("journalctl -f");
   (void)logs->send_key("Enter");
   // #endregion build
+
+  // Something for the filter below to actually find, so the snippet the README
+  // opens with runs its action rather than only compiling. tmux names a pane by
+  // the program running in it, so a link called `nvim` stands in for an editor
+  // without needing one installed.
+  const auto editor_command = [] {
+    const auto sleeper = std::filesystem::exists("/bin/sleep")
+                             ? std::filesystem::path{"/bin/sleep"}
+                             : std::filesystem::path{"/usr/bin/sleep"};
+    // The link's own name is what tmux will report, so it has to be exactly
+    // `nvim`; a unique directory keeps that name free.
+    const auto directory = std::filesystem::temp_directory_path() /
+                           ("libtmux-cxx-editor-" + std::to_string(::getpid()));
+    std::error_code failed;
+    std::filesystem::create_directories(directory, failed);
+    const auto link = directory / "nvim";
+    std::filesystem::remove(link, failed);
+    std::filesystem::create_symlink(sleeper, link, failed);
+    return failed ? std::string{} : link.string() + " 300";
+  }();
+  if (!editor_command.empty()) {
+    const auto editing_window =
+        session.new_window({.name = "editing", .shell_command = editor_command});
+    if (!editing_window.has_value()) {
+      std::fprintf(stderr, "%s\n", editing_window.error().diagnostic.c_str());
+      return 1;
+    }
+    // tmux names the pane after whatever is running in it, and for a moment
+    // that is still the shell on its way to exec. Wait for the name to settle,
+    // or the filter below looks for an editor before there is one.
+    const auto settled_by = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+    while (std::chrono::steady_clock::now() < settled_by) {
+      const auto panes = editing_window->panes();
+      if (panes.has_value() && !panes->empty() &&
+          panes->at(0).command().starts_with("nv")) {
+        break;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds{25});
+    }
+  }
 
   // #region intro
   // Every call answers with a value: the result, or the reason there is none.
@@ -212,5 +257,10 @@ int main() {
   std::printf("chain valid: %s\n", chain.valid() ? "yes" : "no"); // no
   // #endregion chain
 
+  // The stand-in editor's directory, which the scratch server does not own.
+  std::error_code cleanup;
+  std::filesystem::remove_all(std::filesystem::temp_directory_path() /
+                                  ("libtmux-cxx-editor-" + std::to_string(::getpid())),
+                              cleanup);
   return 0;
 }
