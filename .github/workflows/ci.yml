@@ -102,7 +102,11 @@ jobs:
           # Not a preset: the pinned toolchain file names a libc++ that comes
           # from a Homebrew LLVM this runner does not have. Apple Clang brings
           # its own, which is the point of the lane.
-          cmake -S . -B build/macos -G Ninja -DCMAKE_CXX_STANDARD=23
+          #
+          # `LIBTMUX_FETCH_DEPS=ON` because the presets that build tests on
+          # Linux get GoogleTest from the system, and there is none here.
+          cmake -S . -B build/macos -G Ninja -DCMAKE_CXX_STANDARD=23 \
+            -DLIBTMUX_FETCH_DEPS=ON
           cmake --build build/macos
           ctest --test-dir build/macos --no-tests=error --output-on-failure
 
@@ -312,6 +316,16 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The ledger is validated against a JSON schema, so the tooling has real
+      # dependencies. An interpreter of its own rather than the system one: on
+      # Ubuntu that is externally managed and refuses to be installed into.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Install the tooling's dependencies
+        run: python3 -m pip install --disable-pip-version-check -e .
 
       - name: The ledger is structurally sound
         run: |
