@@ -104,9 +104,16 @@ std::filesystem::path unique_test_directory(std::string_view stem) {
 // tests are about.
 std::filesystem::path short_test_directory(std::string_view stem) {
   static std::atomic<unsigned long> sequence{0};
-  auto path = std::filesystem::path{"/tmp"} /
-              (std::string{stem} + "-" + std::to_string(::getpid()) + "-" +
-               std::to_string(sequence.fetch_add(1)));
+  // Resolved: macOS makes /tmp a symlink to /private/tmp, and this test walks
+  // back up with `..` — from the unresolved spelling that climbs out of the
+  // temporary tree entirely and lands on /private, which is not writable.
+  std::error_code resolving;
+  auto base = std::filesystem::canonical("/tmp", resolving);
+  if (resolving) {
+    base = "/tmp";
+  }
+  auto path = base / (std::string{stem} + "-" + std::to_string(::getpid()) + "-" +
+                      std::to_string(sequence.fetch_add(1)));
   std::filesystem::create_directories(path);
   return path;
 }
@@ -253,7 +260,17 @@ TEST(ScopedTmuxServerFailure, InvalidBinaryCleansPartialConstructionTree) {
       {.tmux_binary = "/definitely/not/a/tmux-binary"});
 
   ASSERT_FALSE(server.has_value());
-  EXPECT_NE(server.error().find("posix_spawnp"), std::string::npos);
+  // Reported at all, and about the thing that failed. Which call noticed is
+  // the platform's business: glibc's `posix_spawnp` fails in the parent, and
+  // macOS reports it from the child that could not exec, so naming the
+  // function made this a test of libc rather than of the fixture.
+  EXPECT_FALSE(server.error().empty());
+  // ENOENT, which both platforms render with the same words. Naming the libc
+  // call instead made this a test of which one noticed: glibc fails in
+  // `posix_spawnp` in the parent, macOS reports it from the child that could
+  // not exec. The error is streamed so a third spelling names itself.
+  EXPECT_NE(server.error().find("No such file or directory"), std::string::npos)
+      << server.error();
   EXPECT_TRUE(std::filesystem::is_empty(parent));
   std::filesystem::remove(parent);
 }

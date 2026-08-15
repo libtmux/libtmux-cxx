@@ -616,7 +616,8 @@ TEST(Entity, AWholeWorkspaceIsBuiltFromTypedVerbsAlone) {
   ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
   ASSERT_EQ(panes->size(), 2U);
   EXPECT_EQ(settled_path(panes->at(0)), "/");
-  EXPECT_EQ(settled_path(panes->at(1)), "/tmp");
+  EXPECT_EQ(std::filesystem::path{settled_path(panes->at(1))},
+            std::filesystem::canonical("/tmp"));
 
   // And the session the caller asked for is the one that exists.
   const auto listed = server.sessions();

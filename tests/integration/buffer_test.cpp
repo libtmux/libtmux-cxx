@@ -119,6 +119,20 @@ TEST(Buffers, PasteDeliversTheTextAndLeavesTheBuffer) {
   ASSERT_TRUE(active.has_value()) << active.error().diagnostic;
   const auto quiet = active->id() == second->id() ? window->panes()->front() : *second;
   ASSERT_NE(quiet.id(), active->id());
+  // Wait for the pane's shell to be reading before pasting into it. A paste
+  // delivered to a shell that has not started yet is simply lost, and no
+  // amount of waiting afterwards brings it back — which is what a ten-second
+  // wait on the capture proved on a slower machine. A drawn prompt is the
+  // signal that something is there to receive it.
+  const auto ready_by = std::chrono::steady_clock::now() + std::chrono::seconds{10};
+  while (std::chrono::steady_clock::now() < ready_by) {
+    const auto drawn = quiet.capture();
+    if (drawn.has_value() && !drawn->empty()) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds{25});
+  }
+
   ASSERT_TRUE(server.set_buffer("payload", "pasted-marker").has_value());
   const auto held = server.buffers();
   ASSERT_TRUE(held.has_value()) << held.error().diagnostic;
