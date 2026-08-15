@@ -12,6 +12,7 @@
 #include "libtmux/batch.hpp"
 #include "libtmux/entities.hpp"
 #include "libtmux/server.hpp"
+#include "support/descriptors.hpp"
 #include "support/scoped_tmux_server.hpp"
 
 namespace {
@@ -86,14 +87,7 @@ TEST(ServerContract, RepeatedRunsDoNotLeakDescriptors) {
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
 
-  const auto count_open = [] {
-    std::size_t open = 0;
-    for (const auto& entry : std::filesystem::directory_iterator{"/proc/self/fd"}) {
-      static_cast<void>(entry);
-      ++open;
-    }
-    return open;
-  };
+  const auto count_open = libtmux::test::open_descriptor_count;
   ASSERT_TRUE(server.run({"display-message", "-p", "warm"}).has_value());
   const std::size_t before = count_open();
   for (int index = 0; index < 20; ++index) {

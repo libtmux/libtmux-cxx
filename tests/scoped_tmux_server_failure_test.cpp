@@ -1,3 +1,4 @@
+#include "support/descriptors.hpp"
 #include "support/scoped_tmux_server.hpp"
 
 #include <gtest/gtest-spi.h>
@@ -217,11 +218,7 @@ DelayedTracer start_delayed_tracer(pid_t target) {
 }
 #endif
 
-std::size_t descriptor_count() {
-  return static_cast<std::size_t>(
-      std::distance(std::filesystem::directory_iterator{"/proc/self/fd"},
-                    std::filesystem::directory_iterator{}));
-}
+std::size_t descriptor_count() { return libtmux::test::open_descriptor_count(); }
 
 void create_server_then_report_primary_failure(
     const std::shared_ptr<libtmux::test::TeardownReport>& report) {

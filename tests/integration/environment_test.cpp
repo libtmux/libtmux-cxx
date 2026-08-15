@@ -12,6 +12,7 @@
 
 #include "libtmux/entities.hpp"
 #include "libtmux/server.hpp"
+#include "support/platform.hpp"
 #include "support/scoped_tmux_server.hpp"
 
 namespace {
@@ -52,6 +53,8 @@ std::string environment_of(const libtmux::Pane& pane, std::string_view name) {
 }
 
 TEST(Environment, ASessionPassesItsVariablesToEveryPane) {
+  LIBTMUX_SKIP_WITHOUT_PROCFS("a pane process's real environment");
+
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
@@ -77,6 +80,8 @@ TEST(Environment, ASessionPassesItsVariablesToEveryPane) {
 }
 
 TEST(Environment, AWindowAndAPaneCarryTheirOwnAndNotEachOthers) {
+  LIBTMUX_SKIP_WITHOUT_PROCFS("a pane process's real environment");
+
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
@@ -113,6 +118,8 @@ TEST(Environment, AWindowAndAPaneCarryTheirOwnAndNotEachOthers) {
 }
 
 TEST(Environment, SeveralVariablesAllArriveAndAnEmptyValueIsAValue) {
+  LIBTMUX_SKIP_WITHOUT_PROCFS("a pane process's real environment");
+
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
