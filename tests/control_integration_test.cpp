@@ -1,6 +1,7 @@
 #include "libtmux/control.hpp"
 #include "libtmux/expected.hpp"
 
+#include "support/platform.hpp"
 #include "support/scoped_tmux_server.hpp"
 #include "support/tmux_capabilities.hpp"
 
@@ -367,6 +368,8 @@ TEST(ControlModeConnection, ExecuteVsShutdownCompletesOnceAndMarksUnresolvedUnkn
 }
 
 TEST(ControlModeConnection, LargeSubmitVsShutdownIsBoundedAndMarksUnknown) {
+  LIBTMUX_SKIP_WITHOUT_PROCFS("how many bytes are queued on the client's stdin");
+
   auto server = start_server(unique_name("control-large-shutdown-race"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
   auto connected = connect_to(*server);
@@ -425,6 +428,8 @@ TEST(ControlModeConnection, LargeSubmitVsShutdownIsBoundedAndMarksUnknown) {
 }
 
 TEST(ControlModeConnection, PartialWriteShutdownNeverDispatchesTruncatedCommand) {
+  LIBTMUX_SKIP_WITHOUT_PROCFS("how many bytes are queued on the client's stdin");
+
   auto server = start_server(unique_name("control-partial-write"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
   auto connected = connect_to(*server);
@@ -677,6 +682,8 @@ TEST(ControlModeConnection, WriterWaitHonorsDeadlineWithoutPoisoningOwner) {
 }
 
 TEST(ControlModeConnection, ExternallyTerminatedClientIsReapedWhileOwned) {
+  LIBTMUX_SKIP_WITHOUT_PROCFS("how many bytes are queued on the client's stdin");
+
   auto server = start_server(unique_name("control-external-termination"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
   auto connected = connect_to(*server);
