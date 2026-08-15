@@ -51,8 +51,24 @@ find_package(libtmux REQUIRED)
 target_link_libraries(your_target PRIVATE libtmux::libtmux)
 ```
 
-`examples/consume` is a complete working example. A vcpkg overlay port
-lives in `packaging/vcpkg`.
+[`examples/consume`](examples/consume/) is a complete working example, built
+against a real install in CI. A vcpkg overlay port lives in
+[`ports/`](ports/README.md), and [`vcpkg.json`](vcpkg.json) declares what the
+project itself needs.
+
+## Repository layout
+
+| Where | What |
+|---|---|
+| [`include/libtmux/`](include/libtmux/) | The public headers. If it is not here, it is not the contract. |
+| [`src/`](src/) | Implementation, and the private headers the transport seam hides behind. |
+| [`tests/`](tests/README.md) | 222 tests against real tmux, plus programs that must *not* compile. |
+| [`examples/`](examples/README.md) | Four programs that read top to bottom, and the tmuxp workspace builder. |
+| [`apps/mcp/`](apps/mcp/README.md) | The MCP server, for driving tmux from an agent. |
+| [`tools/`](tools/README.md) | The parity ledger, the mutation catalogue, the reference generator. Never installed. |
+| [`docs/`](docs/) | Design notes, bakeoffs, and the generated [API reference](docs/api.md). |
+| [`ports/`](ports/README.md) | The vcpkg overlay port. |
+| [`cmake/`](cmake/) | Helper modules and the package config template. |
 
 ## What the design commits to
 
@@ -138,7 +154,7 @@ A **control connection** keeps a session open and gives every command its own
 reply block, which is what makes per-command attribution possible at all.
 `Server::over_control(session)` returns a Server that dispatches every entity
 operation that way: the same calls, without a process each. It measured about
-4.6 times faster per listing; see `docs/design/control-transport.md` for what
+4.6 times faster per listing; see [`docs/design/control-transport.md`](docs/design/control-transport.md) for what
 that costs.
 
 ```cpp
@@ -164,17 +180,18 @@ none of them can quietly stop working.
 $ cmake --build --preset cxx-dev --target libtmux_example_01_tour
 ```
 
-`examples/consume` is the exception and stays one: it proves the installed
+[`examples/consume`](examples/consume/) is the exception and stays one: it proves the installed
 package links and deliberately never contacts tmux.
 
 ## Consumers
 
 Two programs use the library from opposite sides, and exist to find where it is
-awkward. `consumers/mcp` is a tool surface where every call arrives as untyped
-strings from a model, so it exercises validation and error reporting.
-`consumers/workspace` builds a described session and reads tmuxp documents,
-which exercises composition — and keeps the YAML parser it needs to itself, so
-the library links none of it.
+awkward. [`apps/mcp`](apps/mcp/README.md) is a tool surface where every call
+arrives as untyped strings from a model, so it exercises validation and error
+reporting. [`examples/workspace`](examples/README.md#the-workspace-builder)
+builds a described session and reads tmuxp documents, which exercises
+composition — and keeps the YAML parser it needs to itself, so the library
+links none of it.
 
 ### The MCP server
 
@@ -187,8 +204,12 @@ It is not built unless asked for, because it is the one thing here that needs
 a JSON parser:
 
 ```console
-$ cmake -S . -B build/mcp -DLIBTMUX_BUILD_MCP_SERVER=ON -DLIBTMUX_FETCH_DEPS=ON
+$ cmake -S . -B build/mcp -DLIBTMUX_BUILD_MCP_SERVER=ON -DLIBTMUX_FETCH_DEPS=ON -DLIBTMUX_BUILD_TESTS=OFF -DLIBTMUX_BUILD_EXAMPLES=OFF
 ```
+
+Turning the tests and examples off is worth the flags: they are the larger
+build by far, and the server needs neither. [`apps/mcp`](apps/mcp/README.md)
+covers installing it and pointing a client at it.
 
 The installed program takes the tmux socket as its only argument. Without one
 it uses the server it was started inside, and failing that the one tmux itself
@@ -204,7 +225,7 @@ tool result the model is meant to read and act on.
 
 ### Pointing agent CLIs at a build
 
-`tools/mcp/mcp_swap.py` rewrites the MCP configuration of every installed
+[`tools/mcp/mcp_swap.py`](tools/README.md) rewrites the MCP configuration of every installed
 agent CLI to run a chosen copy of the server, and puts the originals back. It
 handles each CLI's own dialect — TOML and JSONC with their comments intact,
 opencode's single argv array, Claude's user and project scopes.
@@ -266,13 +287,13 @@ above every numbered release. Continuous integration builds and tests against
 every supported version.
 
 C++23 is the baseline. `LIBTMUX_CXX_STANDARD=20` substitutes pinned
-`tl::expected`; see `docs/design/cxx20-fallback.md`. The two builds carry
+`tl::expected`; see [`docs/design/cxx20-fallback.md`](docs/design/cxx20-fallback.md). The two builds carry
 different ABI namespaces, so mixing their objects is a link error rather than
 memory corruption.
 
 ## Reference
 
-`docs/api.md` lists every public type and call with the prose from its header.
+[`docs/api.md`](docs/api.md) lists every public type and call with the prose from its header.
 It is generated, and continuous integration fails if it drifts:
 
 ```console
@@ -281,15 +302,15 @@ $ python3 tools/docs/api_index.py --include include/libtmux --output docs/api.md
 
 ## Design notes
 
-- `docs/bakeoffs/entity-behavior/scorecard.md` — the five ways an entity could
+- [`docs/bakeoffs/entity-behavior/scorecard.md`](docs/bakeoffs/entity-behavior/scorecard.md) — the five ways an entity could
   have reached tmux, and what measuring them settled
-- `docs/design/control-transport.md` — dispatching entities over one open
+- [`docs/design/control-transport.md`](docs/design/control-transport.md) — dispatching entities over one open
   connection, and what the protocol asks for in return
-- `docs/design/cxx20-fallback.md` — why the fallback exists and what it costs
-- `docs/design/engine-ops-study.md` — what the Python operations experiment
+- [`docs/design/cxx20-fallback.md`](docs/design/cxx20-fallback.md) — why the fallback exists and what it costs
+- [`docs/design/engine-ops-study.md`](docs/design/engine-ops-study.md) — what the Python operations experiment
   taught this library, and what was declined
-- `docs/evidence/library-review.md` — the adversarial reviews and their findings
-- `docs/evidence/prerelease-audit.md` — what eight independent passes over the
+- [`docs/evidence/library-review.md`](docs/evidence/library-review.md) — the adversarial reviews and their findings
+- [`docs/evidence/prerelease-audit.md`](docs/evidence/prerelease-audit.md) — what eight independent passes over the
   package found before its first release, and what was wrong with some of it
 - `schema/filter-expression-v1.schema.json` — the lowered filter expression a
   JSON integration targets; the core ships no serializer

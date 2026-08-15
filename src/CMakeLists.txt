@@ -114,7 +114,7 @@ if(LIBTMUX_INSTALL)
     "${PROJECT_SOURCE_DIR}/cmake/libtmuxConfig.cmake.in"
     "${CMAKE_CURRENT_BINARY_DIR}/libtmuxConfig.cmake"
     INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/libtmux")
-  install(FILES "${PROJECT_SOURCE_DIR}/../LICENSE"
+  install(FILES "${PROJECT_SOURCE_DIR}/LICENSE"
           DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/licenses/libtmux")
   install(FILES "${CMAKE_CURRENT_BINARY_DIR}/libtmuxConfig.cmake"
                 "${CMAKE_CURRENT_BINARY_DIR}/libtmuxConfigVersion.cmake"
