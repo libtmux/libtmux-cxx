@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "evidence.schema.json",
+  "title": "libtmux C++ parity evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "evidence"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "evidence": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/evidence_record"}
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "safe_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "evidence_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidence_id", "kind", "path", "case_id"],
+      "allOf": [
+        {
+          "if": {
+            "required": ["kind", "status"],
+            "properties": {
+              "kind": {"const": "differential"},
+              "status": {"const": "passed"}
+            }
+          },
+          "then": {"required": ["semantic_contract_sha256"]}
+        }
+      ],
+      "properties": {
+        "evidence_id": {"type": "string", "minLength": 1},
+        "kind": {
+          "enum": [
+            "compile",
+            "behavior",
+            "differential",
+            "documentation",
+            "example",
+            "version"
+          ]
+        },
+        "path": {"$ref": "#/$defs/safe_path"},
+        "case_id": {"type": "string", "minLength": 1},
+        "cmake_target": {"type": "string", "minLength": 1},
+        "ctest_name": {"type": "string", "minLength": 1},
+        "ctest_label": {"type": "string", "minLength": 1},
+        "execution_mode": {"type": "string", "minLength": 1},
+        "real_tmux": {"type": "boolean"},
+        "status": {"const": "passed"},
+        "registration_sha256": {"$ref": "#/$defs/digest"},
+        "junit_sha256": {"$ref": "#/$defs/digest"},
+        "result_sha256": {"$ref": "#/$defs/digest"},
+        "tmux_binary_sha256": {"$ref": "#/$defs/digest"},
+        "tmux_version": {"type": "string", "minLength": 1},
+        "scenario_record_sha256": {"$ref": "#/$defs/digest"},
+        "semantic_contract_sha256": {"$ref": "#/$defs/digest"}
+      }
+    }
+  }
+}

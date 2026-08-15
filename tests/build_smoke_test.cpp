@@ -1,0 +1,53 @@
+// The build is the configuration it claims to be.
+//
+// Two configurations ship: C++23 over std::expected, and C++20 over the pinned
+// compatibility type. Each has its own inline ABI namespace, so an object from
+// one cannot silently link against the other — and each has to be able to say
+// which one it is.
+
+#include "libtmux/abi.hpp"
+#include "libtmux/expected.hpp"
+#include "libtmux/version.hpp"
+
+#include <gtest/gtest.h>
+
+#if defined(__clang__) && (!defined(_LIBCPP_VERSION) || _LIBCPP_VERSION != 180100)
+#error "Clang 18.1.3 must use libc++ 18.1"
+#endif
+
+#if defined(LIBTMUX_USE_TL_EXPECTED)
+#include <tl/expected.hpp>
+#else
+#include <expected>
+#endif
+
+TEST(BuildSmoke, TheExpectedBackendIsTheOneThisStandardSelects) {
+#if defined(LIBTMUX_USE_TL_EXPECTED)
+  static_assert(std::is_same_v<libtmux::expected<int, int>, tl::expected<int, int>>,
+                "the C++20 configuration selects the compatibility type");
+#else
+  static_assert(__cpp_lib_expected >= 202202L);
+  static_assert(std::is_same_v<libtmux::expected<int, int>, std::expected<int, int>>,
+                "the C++23 configuration selects the standard type");
+#endif
+
+  libtmux::expected<int, int> value{42};
+  EXPECT_EQ(*value, 42);
+
+  const auto failed = libtmux::expected<int, int>{libtmux::unexpected(7)};
+  ASSERT_FALSE(failed.has_value());
+  EXPECT_EQ(failed.error(), 7);
+}
+
+TEST(BuildSmoke, TheAbiNamespaceNamesTheBackend) {
+  // Spelled through the inline namespace, which is how an object built one way
+  // fails to link against a library built the other rather than reading the
+  // wrong bytes.
+#if defined(LIBTMUX_USE_TL_EXPECTED)
+  const libtmux::v1_cxx20::Version version{.major = 3, .minor = 4};
+#else
+  const libtmux::v1_cxx23::Version version{.major = 3, .minor = 4};
+#endif
+  EXPECT_EQ(version.major, 3U);
+  EXPECT_TRUE(libtmux::is_supported(version));
+}

@@ -1,0 +1,12 @@
+{
+  "canonicalization": {
+    "entity_id_pointers": ["/observations/*/sessions/*/id"],
+    "remove_pointers": [],
+    "unordered_pointers": ["/observations/*/sessions"]
+  },
+  "operations": [
+    {"request": {}, "tag": "server.list_sessions"}
+  ],
+  "scenario_id": "server-lifecycle",
+  "schema_version": 1
+}

@@ -1,0 +1,2123 @@
+{
+  "claims": {
+    "not_proved": [
+      "complete parity",
+      "live Python-versus-C++ comparison",
+      "a selected transport/query design",
+      "production API behavior",
+      "tmux version-matrix support",
+      "package ABI",
+      "relocation",
+      "final reproducibility"
+    ],
+    "proved": [
+      "current Linux harness",
+      "pinned parity-source reproducibility",
+      "test-only differential framework",
+      "both fixture modes on one selected tmux binary",
+      "ASan/UBSan and TSan fixture behavior",
+      "source immutability",
+      "absence of production C++ code"
+    ]
+  },
+  "commands": [
+    {
+      "cwd": ".",
+      "exit_code": 0,
+      "name": "tool.just",
+      "version": "just 1.58.0"
+    },
+    {
+      "cwd": ".",
+      "exit_code": 0,
+      "name": "tool.uv",
+      "version": "uv 0.12.1"
+    },
+    {
+      "cwd": ".",
+      "exit_code": 0,
+      "name": "tool.python",
+      "version": "Python 3.14.6"
+    },
+    {
+      "cwd": ".",
+      "exit_code": 0,
+      "name": "tool.cmake",
+      "version": "cmake version 3.28.3"
+    },
+    {
+      "cwd": ".",
+      "exit_code": 0,
+      "name": "tool.ninja",
+      "version": "1.11.1"
+    },
+    {
+      "cwd": ".",
+      "exit_code": 0,
+      "name": "tool.tmux",
+      "version": "tmux 3.7b"
+    },
+    {
+      "cwd": ".",
+      "exit_code": 0,
+      "name": "toolchain.ctest",
+      "version": "ctest version 3.28.3"
+    },
+    {
+      "cwd": "cxx",
+      "exit_code": 0,
+      "name": "configure.cxx-dev"
+    },
+    {
+      "cwd": ".",
+      "exit_code": 0,
+      "name": "toolchain.ninja.cxx-dev",
+      "version": "1.11.1"
+    },
+    {
+      "cwd": ".",
+      "exit_code": 0,
+      "name": "tool.clang",
+      "version": "clang version 18.1.3"
+    },
+    {
+      "cwd": "cxx",
+      "exit_code": 0,
+      "name": "build.cxx-dev"
+    },
+    {
+      "cwd": ".",
+      "exit_code": 0,
+      "name": "toolchain.libcxx_config"
+    },
+    {
+      "cwd": ".",
+      "exit_code": 0,
+      "name": "toolchain.libcxx"
+    },
+    {
+      "cwd": ".",
+      "exit_code": 0,
+      "name": "toolchain.libcxxabi"
+    },
+    {
+      "cwd": ".",
+      "exit_code": 0,
+      "name": "ctest.contract-dev"
+    },
+    {
+      "cwd": "cxx",
+      "exit_code": 0,
+      "name": "configure.cxx-sanitize"
+    },
+    {
+      "cwd": ".",
+      "exit_code": 0,
+      "name": "toolchain.ninja.cxx-sanitize",
+      "version": "1.11.1"
+    },
+    {
+      "cwd": "cxx",
+      "exit_code": 0,
+      "name": "build.cxx-sanitize"
+    },
+    {
+      "cwd": ".",
+      "exit_code": 0,
+      "name": "ctest.contract-real-tmux"
+    },
+    {
+      "cwd": "cxx",
+      "exit_code": 0,
+      "name": "configure.cxx-tsan"
+    },
+    {
+      "cwd": ".",
+      "exit_code": 0,
+      "name": "toolchain.ninja.cxx-tsan",
+      "version": "1.11.1"
+    },
+    {
+      "cwd": "cxx",
+      "exit_code": 0,
+      "name": "build.cxx-tsan"
+    },
+    {
+      "cwd": ".",
+      "exit_code": 0,
+      "name": "ctest.contract-real-tmux-tsan"
+    },
+    {
+      "cwd": ".",
+      "exit_code": 0,
+      "name": "parity.generate"
+    },
+    {
+      "cwd": ".",
+      "exit_code": 0,
+      "name": "parity.drift"
+    },
+    {
+      "cwd": ".",
+      "exit_code": 0,
+      "name": "parity.verify"
+    },
+    {
+      "cwd": ".",
+      "exit_code": 0,
+      "name": "ruff.format"
+    },
+    {
+      "cwd": ".",
+      "exit_code": 0,
+      "name": "pytest.initial"
+    },
+    {
+      "cwd": ".",
+      "exit_code": 0,
+      "name": "ruff.check"
+    },
+    {
+      "cwd": ".",
+      "exit_code": 0,
+      "name": "mypy"
+    },
+    {
+      "cwd": ".",
+      "exit_code": 0,
+      "name": "doctest"
+    },
+    {
+      "cwd": ".",
+      "exit_code": 0,
+      "name": "docs"
+    },
+    {
+      "cwd": ".",
+      "exit_code": 0,
+      "name": "pytest.final"
+    }
+  ],
+  "core_excluded_fields": [
+    "ctest_gates.*.gate_sha256",
+    "ctest_gates.*.tmux.sha256",
+    "evidence_core_sha256",
+    "final_evidence_sha256",
+    "gate_source.source_snapshot",
+    "review",
+    "toolchain.artifacts"
+  ],
+  "ctest_gates": [
+    {
+      "executed_test_ids": [
+        "build_smoke",
+        "differential.wire.protocol",
+        "scoped_tmux_server_ProcessSupport.AmbientPidfdReapCannotRedirectToReusedNumericPid",
+        "scoped_tmux_server_ProcessSupport.BackgroundHandoffReapsWithoutNumericPidWait",
+        "scoped_tmux_server_ProcessSupport.BoundsCaptureWhileDrainingLargeDualPipeOutput",
+        "scoped_tmux_server_ProcessSupport.CapturesBothStreamsAndReapsDirectChild",
+        "scoped_tmux_server_ProcessSupport.ContinuousOutputCannotEscapeDrainDeadline",
+        "scoped_tmux_server_ProcessSupport.DoesNotWaitForEscapedDescriptorHolder",
+        "scoped_tmux_server_ProcessSupport.KeepsStableKernelIdentityUntilDirectChildIsReaped",
+        "scoped_tmux_server_ProcessSupport.MoveAssignmentReapsThePreviouslyOwnedChild",
+        "scoped_tmux_server_ProcessSupport.PidfdOpenFailureRetainsDelayedReapOwnership",
+        "scoped_tmux_server_ProcessSupport.PidfdOpenFailureTerminatesAndReapsNonExitingChild",
+        "scoped_tmux_server_ProcessSupport.PreservesSignalStatusWithoutNumericPidReaping",
+        "scoped_tmux_server_ProcessSupport.ReaperRemainsAvailableForLateExitHandoff",
+        "scoped_tmux_server_ProcessSupport.RejectsBeforeSpawnWhenPidfdCapacityCannotBeReserved",
+        "scoped_tmux_server_ProcessSupport.RejectsIgnoredSigchldBeforeSpawn",
+        "scoped_tmux_server_ProcessSupport.RejectsMissingExecutableAtSpawn",
+        "scoped_tmux_server_ProcessSupport.RejectsNoCldwaitBeforeSpawn",
+        "scoped_tmux_server_ProcessSupport.RepeatedEintrCannotExtendWaitDeadline",
+        "scoped_tmux_server_ProcessSupport.WaitsAndPreservesStatusWithoutNumericPidReaping",
+        "scoped_tmux_server_ScopedTmuxServer.EncodesSessionNameInsideConditionalCommandList",
+        "scoped_tmux_server_ScopedTmuxServer.FakeTraceProvesArgvAndSanitizedChildEnvironment",
+        "scoped_tmux_server_ScopedTmuxServer.MoveConstructionAndAssignmentTransferOwnership",
+        "scoped_tmux_server_ScopedTmuxServer.SerializesConcurrentSharedTeardownReports",
+        "scoped_tmux_server_ScopedTmuxServer.StartsByExactPath",
+        "scoped_tmux_server_ScopedTmuxServer.StartsByNameAndExposesResolvedPath",
+        "scoped_tmux_server_ScopedTmuxServer.StartsEightServersConcurrentlyWithoutSocketCollisions",
+        "scoped_tmux_server_ScopedTmuxServerFailure.EscapedPipeHolderIsNeitherWaitedForNorSignalled",
+        "scoped_tmux_server_ScopedTmuxServerFailure.InvalidBinaryCleansPartialConstructionTree",
+        "scoped_tmux_server_ScopedTmuxServerFailure.LargeDualPipeOutputCannotDeadlockTeardown",
+        "scoped_tmux_server_ScopedTmuxServerFailure.LatePtraceReapUsesBoundedOwnedHandoff",
+        "scoped_tmux_server_ScopedTmuxServerFailure.QueryFailureReapsDirectChildAndCleansTree",
+        "scoped_tmux_server_ScopedTmuxServerFailure.ReboundAfterPidQueryCannotCreateSession",
+        "scoped_tmux_server_ScopedTmuxServerFailure.ReboundSocketCannotKillUnrelatedProcess",
+        "scoped_tmux_server_ScopedTmuxServerFailure.RejectsNamedSocketResolvedOutsidePrivateTree",
+        "scoped_tmux_server_ScopedTmuxServerFailure.RejectsOverlongSocketWithoutDeletingTmpParent",
+        "scoped_tmux_server_ScopedTmuxServerFailure.RejectsResolvedPathThatDiffersFromExactSelector",
+        "scoped_tmux_server_ScopedTmuxServerFailure.RelativeTmpdirCannotRedirectCleanupAfterCwdChange",
+        "scoped_tmux_server_ScopedTmuxServerFailure.RepeatedLifecycleKeepsDescriptorCountStable",
+        "scoped_tmux_server_ScopedTmuxServerFailure.SelfExitAndStaleSocketAreSafeAtTeardown",
+        "scoped_tmux_server_ScopedTmuxServerFailure.TeardownDiagnosticsDoNotMaskPrimaryAssertion",
+        "scoped_tmux_server_ScopedTmuxServerFailure.TermResistantServerIsKilledAndReapedByDeadline"
+      ],
+      "execution_sha256": "sha256:a6cb600ac8aa662211f213725bc4926b5c38ff23281753f84758acfc91da202b",
+      "fixture_binding": {},
+      "fixture_modes": [],
+      "gate_id": "contract-dev",
+      "gate_sha256": "sha256:10b25717371d48c3a1f14d77ec74ef6c7a976e261b1637960f11e14dd12d9840",
+      "preset": "cxx-dev",
+      "registered_test_ids": [
+        "build_smoke",
+        "differential.wire.protocol",
+        "scoped_tmux_server_ProcessSupport.AmbientPidfdReapCannotRedirectToReusedNumericPid",
+        "scoped_tmux_server_ProcessSupport.BackgroundHandoffReapsWithoutNumericPidWait",
+        "scoped_tmux_server_ProcessSupport.BoundsCaptureWhileDrainingLargeDualPipeOutput",
+        "scoped_tmux_server_ProcessSupport.CapturesBothStreamsAndReapsDirectChild",
+        "scoped_tmux_server_ProcessSupport.ContinuousOutputCannotEscapeDrainDeadline",
+        "scoped_tmux_server_ProcessSupport.DoesNotWaitForEscapedDescriptorHolder",
+        "scoped_tmux_server_ProcessSupport.KeepsStableKernelIdentityUntilDirectChildIsReaped",
+        "scoped_tmux_server_ProcessSupport.MoveAssignmentReapsThePreviouslyOwnedChild",
+        "scoped_tmux_server_ProcessSupport.PidfdOpenFailureRetainsDelayedReapOwnership",
+        "scoped_tmux_server_ProcessSupport.PidfdOpenFailureTerminatesAndReapsNonExitingChild",
+        "scoped_tmux_server_ProcessSupport.PreservesSignalStatusWithoutNumericPidReaping",
+        "scoped_tmux_server_ProcessSupport.ReaperRemainsAvailableForLateExitHandoff",
+        "scoped_tmux_server_ProcessSupport.RejectsBeforeSpawnWhenPidfdCapacityCannotBeReserved",
+        "scoped_tmux_server_ProcessSupport.RejectsIgnoredSigchldBeforeSpawn",
+        "scoped_tmux_server_ProcessSupport.RejectsMissingExecutableAtSpawn",
+        "scoped_tmux_server_ProcessSupport.RejectsNoCldwaitBeforeSpawn",
+        "scoped_tmux_server_ProcessSupport.RepeatedEintrCannotExtendWaitDeadline",
+        "scoped_tmux_server_ProcessSupport.WaitsAndPreservesStatusWithoutNumericPidReaping",
+        "scoped_tmux_server_ScopedTmuxServer.EncodesSessionNameInsideConditionalCommandList",
+        "scoped_tmux_server_ScopedTmuxServer.FakeTraceProvesArgvAndSanitizedChildEnvironment",
+        "scoped_tmux_server_ScopedTmuxServer.MoveConstructionAndAssignmentTransferOwnership",
+        "scoped_tmux_server_ScopedTmuxServer.SerializesConcurrentSharedTeardownReports",
+        "scoped_tmux_server_ScopedTmuxServer.StartsByExactPath",
+        "scoped_tmux_server_ScopedTmuxServer.StartsByNameAndExposesResolvedPath",
+        "scoped_tmux_server_ScopedTmuxServer.StartsEightServersConcurrentlyWithoutSocketCollisions",
+        "scoped_tmux_server_ScopedTmuxServerFailure.EscapedPipeHolderIsNeitherWaitedForNorSignalled",
+        "scoped_tmux_server_ScopedTmuxServerFailure.InvalidBinaryCleansPartialConstructionTree",
+        "scoped_tmux_server_ScopedTmuxServerFailure.LargeDualPipeOutputCannotDeadlockTeardown",
+        "scoped_tmux_server_ScopedTmuxServerFailure.LatePtraceReapUsesBoundedOwnedHandoff",
+        "scoped_tmux_server_ScopedTmuxServerFailure.QueryFailureReapsDirectChildAndCleansTree",
+        "scoped_tmux_server_ScopedTmuxServerFailure.ReboundAfterPidQueryCannotCreateSession",
+        "scoped_tmux_server_ScopedTmuxServerFailure.ReboundSocketCannotKillUnrelatedProcess",
+        "scoped_tmux_server_ScopedTmuxServerFailure.RejectsNamedSocketResolvedOutsidePrivateTree",
+        "scoped_tmux_server_ScopedTmuxServerFailure.RejectsOverlongSocketWithoutDeletingTmpParent",
+        "scoped_tmux_server_ScopedTmuxServerFailure.RejectsResolvedPathThatDiffersFromExactSelector",
+        "scoped_tmux_server_ScopedTmuxServerFailure.RelativeTmpdirCannotRedirectCleanupAfterCwdChange",
+        "scoped_tmux_server_ScopedTmuxServerFailure.RepeatedLifecycleKeepsDescriptorCountStable",
+        "scoped_tmux_server_ScopedTmuxServerFailure.SelfExitAndStaleSocketAreSafeAtTeardown",
+        "scoped_tmux_server_ScopedTmuxServerFailure.TeardownDiagnosticsDoNotMaskPrimaryAssertion",
+        "scoped_tmux_server_ScopedTmuxServerFailure.TermResistantServerIsKilledAndReapedByDeadline"
+      ],
+      "selector": {
+        "match": "^.*$"
+      },
+      "status": "passed",
+      "tmux": {
+        "sha256": "sha256:0cd875611e001f9d66c65977d499a65de2400c967b5c7788d04d43a2c9f06982",
+        "version": "tmux 3.7b"
+      }
+    },
+    {
+      "executed_test_ids": [
+        "scoped_tmux_server_ProcessSupport.AmbientPidfdReapCannotRedirectToReusedNumericPid",
+        "scoped_tmux_server_ProcessSupport.BackgroundHandoffReapsWithoutNumericPidWait",
+        "scoped_tmux_server_ProcessSupport.BoundsCaptureWhileDrainingLargeDualPipeOutput",
+        "scoped_tmux_server_ProcessSupport.CapturesBothStreamsAndReapsDirectChild",
+        "scoped_tmux_server_ProcessSupport.ContinuousOutputCannotEscapeDrainDeadline",
+        "scoped_tmux_server_ProcessSupport.DoesNotWaitForEscapedDescriptorHolder",
+        "scoped_tmux_server_ProcessSupport.KeepsStableKernelIdentityUntilDirectChildIsReaped",
+        "scoped_tmux_server_ProcessSupport.MoveAssignmentReapsThePreviouslyOwnedChild",
+        "scoped_tmux_server_ProcessSupport.PidfdOpenFailureRetainsDelayedReapOwnership",
+        "scoped_tmux_server_ProcessSupport.PidfdOpenFailureTerminatesAndReapsNonExitingChild",
+        "scoped_tmux_server_ProcessSupport.PreservesSignalStatusWithoutNumericPidReaping",
+        "scoped_tmux_server_ProcessSupport.ReaperRemainsAvailableForLateExitHandoff",
+        "scoped_tmux_server_ProcessSupport.RejectsBeforeSpawnWhenPidfdCapacityCannotBeReserved",
+        "scoped_tmux_server_ProcessSupport.RejectsIgnoredSigchldBeforeSpawn",
+        "scoped_tmux_server_ProcessSupport.RejectsMissingExecutableAtSpawn",
+        "scoped_tmux_server_ProcessSupport.RejectsNoCldwaitBeforeSpawn",
+        "scoped_tmux_server_ProcessSupport.RepeatedEintrCannotExtendWaitDeadline",
+        "scoped_tmux_server_ProcessSupport.WaitsAndPreservesStatusWithoutNumericPidReaping",
+        "scoped_tmux_server_ScopedTmuxServer.EncodesSessionNameInsideConditionalCommandList",
+        "scoped_tmux_server_ScopedTmuxServer.FakeTraceProvesArgvAndSanitizedChildEnvironment",
+        "scoped_tmux_server_ScopedTmuxServer.MoveConstructionAndAssignmentTransferOwnership",
+        "scoped_tmux_server_ScopedTmuxServer.SerializesConcurrentSharedTeardownReports",
+        "scoped_tmux_server_ScopedTmuxServer.StartsByExactPath",
+        "scoped_tmux_server_ScopedTmuxServer.StartsByNameAndExposesResolvedPath",
+        "scoped_tmux_server_ScopedTmuxServer.StartsEightServersConcurrentlyWithoutSocketCollisions",
+        "scoped_tmux_server_ScopedTmuxServerFailure.EscapedPipeHolderIsNeitherWaitedForNorSignalled",
+        "scoped_tmux_server_ScopedTmuxServerFailure.InvalidBinaryCleansPartialConstructionTree",
+        "scoped_tmux_server_ScopedTmuxServerFailure.LargeDualPipeOutputCannotDeadlockTeardown",
+        "scoped_tmux_server_ScopedTmuxServerFailure.LatePtraceReapUsesBoundedOwnedHandoff",
+        "scoped_tmux_server_ScopedTmuxServerFailure.QueryFailureReapsDirectChildAndCleansTree",
+        "scoped_tmux_server_ScopedTmuxServerFailure.ReboundAfterPidQueryCannotCreateSession",
+        "scoped_tmux_server_ScopedTmuxServerFailure.ReboundSocketCannotKillUnrelatedProcess",
+        "scoped_tmux_server_ScopedTmuxServerFailure.RejectsNamedSocketResolvedOutsidePrivateTree",
+        "scoped_tmux_server_ScopedTmuxServerFailure.RejectsOverlongSocketWithoutDeletingTmpParent",
+        "scoped_tmux_server_ScopedTmuxServerFailure.RejectsResolvedPathThatDiffersFromExactSelector",
+        "scoped_tmux_server_ScopedTmuxServerFailure.RelativeTmpdirCannotRedirectCleanupAfterCwdChange",
+        "scoped_tmux_server_ScopedTmuxServerFailure.RepeatedLifecycleKeepsDescriptorCountStable",
+        "scoped_tmux_server_ScopedTmuxServerFailure.SelfExitAndStaleSocketAreSafeAtTeardown",
+        "scoped_tmux_server_ScopedTmuxServerFailure.TeardownDiagnosticsDoNotMaskPrimaryAssertion",
+        "scoped_tmux_server_ScopedTmuxServerFailure.TermResistantServerIsKilledAndReapedByDeadline"
+      ],
+      "execution_sha256": "sha256:4135566d5b52c333edf2c4348765c527f6c482f84c7fe26a3d917556ddabb20d",
+      "fixture_binding": {
+        "name": "scoped_tmux_server_ScopedTmuxServer.StartsByNameAndExposesResolvedPath",
+        "path": "scoped_tmux_server_ScopedTmuxServer.StartsByExactPath"
+      },
+      "fixture_modes": [
+        "name",
+        "path"
+      ],
+      "gate_id": "contract-real-tmux",
+      "gate_sha256": "sha256:9b25410e29975d34c309c6af4b8413e8828e0abea969c9c16ff4cbe597b0612a",
+      "preset": "cxx-sanitize",
+      "registered_test_ids": [
+        "scoped_tmux_server_ProcessSupport.AmbientPidfdReapCannotRedirectToReusedNumericPid",
+        "scoped_tmux_server_ProcessSupport.BackgroundHandoffReapsWithoutNumericPidWait",
+        "scoped_tmux_server_ProcessSupport.BoundsCaptureWhileDrainingLargeDualPipeOutput",
+        "scoped_tmux_server_ProcessSupport.CapturesBothStreamsAndReapsDirectChild",
+        "scoped_tmux_server_ProcessSupport.ContinuousOutputCannotEscapeDrainDeadline",
+        "scoped_tmux_server_ProcessSupport.DoesNotWaitForEscapedDescriptorHolder",
+        "scoped_tmux_server_ProcessSupport.KeepsStableKernelIdentityUntilDirectChildIsReaped",
+        "scoped_tmux_server_ProcessSupport.MoveAssignmentReapsThePreviouslyOwnedChild",
+        "scoped_tmux_server_ProcessSupport.PidfdOpenFailureRetainsDelayedReapOwnership",
+        "scoped_tmux_server_ProcessSupport.PidfdOpenFailureTerminatesAndReapsNonExitingChild",
+        "scoped_tmux_server_ProcessSupport.PreservesSignalStatusWithoutNumericPidReaping",
+        "scoped_tmux_server_ProcessSupport.ReaperRemainsAvailableForLateExitHandoff",
+        "scoped_tmux_server_ProcessSupport.RejectsBeforeSpawnWhenPidfdCapacityCannotBeReserved",
+        "scoped_tmux_server_ProcessSupport.RejectsIgnoredSigchldBeforeSpawn",
+        "scoped_tmux_server_ProcessSupport.RejectsMissingExecutableAtSpawn",
+        "scoped_tmux_server_ProcessSupport.RejectsNoCldwaitBeforeSpawn",
+        "scoped_tmux_server_ProcessSupport.RepeatedEintrCannotExtendWaitDeadline",
+        "scoped_tmux_server_ProcessSupport.WaitsAndPreservesStatusWithoutNumericPidReaping",
+        "scoped_tmux_server_ScopedTmuxServer.EncodesSessionNameInsideConditionalCommandList",
+        "scoped_tmux_server_ScopedTmuxServer.FakeTraceProvesArgvAndSanitizedChildEnvironment",
+        "scoped_tmux_server_ScopedTmuxServer.MoveConstructionAndAssignmentTransferOwnership",
+        "scoped_tmux_server_ScopedTmuxServer.SerializesConcurrentSharedTeardownReports",
+        "scoped_tmux_server_ScopedTmuxServer.StartsByExactPath",
+        "scoped_tmux_server_ScopedTmuxServer.StartsByNameAndExposesResolvedPath",
+        "scoped_tmux_server_ScopedTmuxServer.StartsEightServersConcurrentlyWithoutSocketCollisions",
+        "scoped_tmux_server_ScopedTmuxServerFailure.EscapedPipeHolderIsNeitherWaitedForNorSignalled",
+        "scoped_tmux_server_ScopedTmuxServerFailure.InvalidBinaryCleansPartialConstructionTree",
+        "scoped_tmux_server_ScopedTmuxServerFailure.LargeDualPipeOutputCannotDeadlockTeardown",
+        "scoped_tmux_server_ScopedTmuxServerFailure.LatePtraceReapUsesBoundedOwnedHandoff",
+        "scoped_tmux_server_ScopedTmuxServerFailure.QueryFailureReapsDirectChildAndCleansTree",
+        "scoped_tmux_server_ScopedTmuxServerFailure.ReboundAfterPidQueryCannotCreateSession",
+        "scoped_tmux_server_ScopedTmuxServerFailure.ReboundSocketCannotKillUnrelatedProcess",
+        "scoped_tmux_server_ScopedTmuxServerFailure.RejectsNamedSocketResolvedOutsidePrivateTree",
+        "scoped_tmux_server_ScopedTmuxServerFailure.RejectsOverlongSocketWithoutDeletingTmpParent",
+        "scoped_tmux_server_ScopedTmuxServerFailure.RejectsResolvedPathThatDiffersFromExactSelector",
+        "scoped_tmux_server_ScopedTmuxServerFailure.RelativeTmpdirCannotRedirectCleanupAfterCwdChange",
+        "scoped_tmux_server_ScopedTmuxServerFailure.RepeatedLifecycleKeepsDescriptorCountStable",
+        "scoped_tmux_server_ScopedTmuxServerFailure.SelfExitAndStaleSocketAreSafeAtTeardown",
+        "scoped_tmux_server_ScopedTmuxServerFailure.TeardownDiagnosticsDoNotMaskPrimaryAssertion",
+        "scoped_tmux_server_ScopedTmuxServerFailure.TermResistantServerIsKilledAndReapedByDeadline"
+      ],
+      "selector": {
+        "label": "real-tmux"
+      },
+      "status": "passed",
+      "tmux": {
+        "sha256": "sha256:0cd875611e001f9d66c65977d499a65de2400c967b5c7788d04d43a2c9f06982",
+        "version": "tmux 3.7b"
+      }
+    },
+    {
+      "executed_test_ids": [
+        "scoped_tmux_server_ProcessSupport.AmbientPidfdReapCannotRedirectToReusedNumericPid",
+        "scoped_tmux_server_ProcessSupport.BackgroundHandoffReapsWithoutNumericPidWait",
+        "scoped_tmux_server_ProcessSupport.BoundsCaptureWhileDrainingLargeDualPipeOutput",
+        "scoped_tmux_server_ProcessSupport.CapturesBothStreamsAndReapsDirectChild",
+        "scoped_tmux_server_ProcessSupport.ContinuousOutputCannotEscapeDrainDeadline",
+        "scoped_tmux_server_ProcessSupport.DoesNotWaitForEscapedDescriptorHolder",
+        "scoped_tmux_server_ProcessSupport.KeepsStableKernelIdentityUntilDirectChildIsReaped",
+        "scoped_tmux_server_ProcessSupport.MoveAssignmentReapsThePreviouslyOwnedChild",
+        "scoped_tmux_server_ProcessSupport.PidfdOpenFailureRetainsDelayedReapOwnership",
+        "scoped_tmux_server_ProcessSupport.PidfdOpenFailureTerminatesAndReapsNonExitingChild",
+        "scoped_tmux_server_ProcessSupport.PreservesSignalStatusWithoutNumericPidReaping",
+        "scoped_tmux_server_ProcessSupport.ReaperRemainsAvailableForLateExitHandoff",
+        "scoped_tmux_server_ProcessSupport.RejectsBeforeSpawnWhenPidfdCapacityCannotBeReserved",
+        "scoped_tmux_server_ProcessSupport.RejectsIgnoredSigchldBeforeSpawn",
+        "scoped_tmux_server_ProcessSupport.RejectsMissingExecutableAtSpawn",
+        "scoped_tmux_server_ProcessSupport.RejectsNoCldwaitBeforeSpawn",
+        "scoped_tmux_server_ProcessSupport.RepeatedEintrCannotExtendWaitDeadline",
+        "scoped_tmux_server_ProcessSupport.WaitsAndPreservesStatusWithoutNumericPidReaping",
+        "scoped_tmux_server_ScopedTmuxServer.EncodesSessionNameInsideConditionalCommandList",
+        "scoped_tmux_server_ScopedTmuxServer.FakeTraceProvesArgvAndSanitizedChildEnvironment",
+        "scoped_tmux_server_ScopedTmuxServer.MoveConstructionAndAssignmentTransferOwnership",
+        "scoped_tmux_server_ScopedTmuxServer.SerializesConcurrentSharedTeardownReports",
+        "scoped_tmux_server_ScopedTmuxServer.StartsByExactPath",
+        "scoped_tmux_server_ScopedTmuxServer.StartsByNameAndExposesResolvedPath",
+        "scoped_tmux_server_ScopedTmuxServer.StartsEightServersConcurrentlyWithoutSocketCollisions",
+        "scoped_tmux_server_ScopedTmuxServerFailure.EscapedPipeHolderIsNeitherWaitedForNorSignalled",
+        "scoped_tmux_server_ScopedTmuxServerFailure.InvalidBinaryCleansPartialConstructionTree",
+        "scoped_tmux_server_ScopedTmuxServerFailure.LargeDualPipeOutputCannotDeadlockTeardown",
+        "scoped_tmux_server_ScopedTmuxServerFailure.LatePtraceReapUsesBoundedOwnedHandoff",
+        "scoped_tmux_server_ScopedTmuxServerFailure.QueryFailureReapsDirectChildAndCleansTree",
+        "scoped_tmux_server_ScopedTmuxServerFailure.ReboundAfterPidQueryCannotCreateSession",
+        "scoped_tmux_server_ScopedTmuxServerFailure.ReboundSocketCannotKillUnrelatedProcess",
+        "scoped_tmux_server_ScopedTmuxServerFailure.RejectsNamedSocketResolvedOutsidePrivateTree",
+        "scoped_tmux_server_ScopedTmuxServerFailure.RejectsOverlongSocketWithoutDeletingTmpParent",
+        "scoped_tmux_server_ScopedTmuxServerFailure.RejectsResolvedPathThatDiffersFromExactSelector",
+        "scoped_tmux_server_ScopedTmuxServerFailure.RelativeTmpdirCannotRedirectCleanupAfterCwdChange",
+        "scoped_tmux_server_ScopedTmuxServerFailure.RepeatedLifecycleKeepsDescriptorCountStable",
+        "scoped_tmux_server_ScopedTmuxServerFailure.SelfExitAndStaleSocketAreSafeAtTeardown",
+        "scoped_tmux_server_ScopedTmuxServerFailure.TeardownDiagnosticsDoNotMaskPrimaryAssertion",
+        "scoped_tmux_server_ScopedTmuxServerFailure.TermResistantServerIsKilledAndReapedByDeadline"
+      ],
+      "execution_sha256": "sha256:46859b82ffa98026b40b39b52c4a8a0eabcf4dc1186a515955dfd485728df8de",
+      "fixture_binding": {
+        "name": "scoped_tmux_server_ScopedTmuxServer.StartsByNameAndExposesResolvedPath",
+        "path": "scoped_tmux_server_ScopedTmuxServer.StartsByExactPath"
+      },
+      "fixture_modes": [
+        "name",
+        "path"
+      ],
+      "gate_id": "contract-real-tmux-tsan",
+      "gate_sha256": "sha256:7b9d99b5524fd6a698f1959b66748f4395e79e30179ac35f1db88729e90f39d3",
+      "preset": "cxx-tsan",
+      "registered_test_ids": [
+        "scoped_tmux_server_ProcessSupport.AmbientPidfdReapCannotRedirectToReusedNumericPid",
+        "scoped_tmux_server_ProcessSupport.BackgroundHandoffReapsWithoutNumericPidWait",
+        "scoped_tmux_server_ProcessSupport.BoundsCaptureWhileDrainingLargeDualPipeOutput",
+        "scoped_tmux_server_ProcessSupport.CapturesBothStreamsAndReapsDirectChild",
+        "scoped_tmux_server_ProcessSupport.ContinuousOutputCannotEscapeDrainDeadline",
+        "scoped_tmux_server_ProcessSupport.DoesNotWaitForEscapedDescriptorHolder",
+        "scoped_tmux_server_ProcessSupport.KeepsStableKernelIdentityUntilDirectChildIsReaped",
+        "scoped_tmux_server_ProcessSupport.MoveAssignmentReapsThePreviouslyOwnedChild",
+        "scoped_tmux_server_ProcessSupport.PidfdOpenFailureRetainsDelayedReapOwnership",
+        "scoped_tmux_server_ProcessSupport.PidfdOpenFailureTerminatesAndReapsNonExitingChild",
+        "scoped_tmux_server_ProcessSupport.PreservesSignalStatusWithoutNumericPidReaping",
+        "scoped_tmux_server_ProcessSupport.ReaperRemainsAvailableForLateExitHandoff",
+        "scoped_tmux_server_ProcessSupport.RejectsBeforeSpawnWhenPidfdCapacityCannotBeReserved",
+        "scoped_tmux_server_ProcessSupport.RejectsIgnoredSigchldBeforeSpawn",
+        "scoped_tmux_server_ProcessSupport.RejectsMissingExecutableAtSpawn",
+        "scoped_tmux_server_ProcessSupport.RejectsNoCldwaitBeforeSpawn",
+        "scoped_tmux_server_ProcessSupport.RepeatedEintrCannotExtendWaitDeadline",
+        "scoped_tmux_server_ProcessSupport.WaitsAndPreservesStatusWithoutNumericPidReaping",
+        "scoped_tmux_server_ScopedTmuxServer.EncodesSessionNameInsideConditionalCommandList",
+        "scoped_tmux_server_ScopedTmuxServer.FakeTraceProvesArgvAndSanitizedChildEnvironment",
+        "scoped_tmux_server_ScopedTmuxServer.MoveConstructionAndAssignmentTransferOwnership",
+        "scoped_tmux_server_ScopedTmuxServer.SerializesConcurrentSharedTeardownReports",
+        "scoped_tmux_server_ScopedTmuxServer.StartsByExactPath",
+        "scoped_tmux_server_ScopedTmuxServer.StartsByNameAndExposesResolvedPath",
+        "scoped_tmux_server_ScopedTmuxServer.StartsEightServersConcurrentlyWithoutSocketCollisions",
+        "scoped_tmux_server_ScopedTmuxServerFailure.EscapedPipeHolderIsNeitherWaitedForNorSignalled",
+        "scoped_tmux_server_ScopedTmuxServerFailure.InvalidBinaryCleansPartialConstructionTree",
+        "scoped_tmux_server_ScopedTmuxServerFailure.LargeDualPipeOutputCannotDeadlockTeardown",
+        "scoped_tmux_server_ScopedTmuxServerFailure.LatePtraceReapUsesBoundedOwnedHandoff",
+        "scoped_tmux_server_ScopedTmuxServerFailure.QueryFailureReapsDirectChildAndCleansTree",
+        "scoped_tmux_server_ScopedTmuxServerFailure.ReboundAfterPidQueryCannotCreateSession",
+        "scoped_tmux_server_ScopedTmuxServerFailure.ReboundSocketCannotKillUnrelatedProcess",
+        "scoped_tmux_server_ScopedTmuxServerFailure.RejectsNamedSocketResolvedOutsidePrivateTree",
+        "scoped_tmux_server_ScopedTmuxServerFailure.RejectsOverlongSocketWithoutDeletingTmpParent",
+        "scoped_tmux_server_ScopedTmuxServerFailure.RejectsResolvedPathThatDiffersFromExactSelector",
+        "scoped_tmux_server_ScopedTmuxServerFailure.RelativeTmpdirCannotRedirectCleanupAfterCwdChange",
+        "scoped_tmux_server_ScopedTmuxServerFailure.RepeatedLifecycleKeepsDescriptorCountStable",
+        "scoped_tmux_server_ScopedTmuxServerFailure.SelfExitAndStaleSocketAreSafeAtTeardown",
+        "scoped_tmux_server_ScopedTmuxServerFailure.TeardownDiagnosticsDoNotMaskPrimaryAssertion",
+        "scoped_tmux_server_ScopedTmuxServerFailure.TermResistantServerIsKilledAndReapedByDeadline"
+      ],
+      "selector": {
+        "label": "real-tmux"
+      },
+      "status": "passed",
+      "tmux": {
+        "sha256": "sha256:0cd875611e001f9d66c65977d499a65de2400c967b5c7788d04d43a2c9f06982",
+        "version": "tmux 3.7b"
+      }
+    }
+  ],
+  "evidence_core_sha256": "sha256:26396124c9aec5b14a74bd8101de181400220a1d3763ad3906d1682fff186b2c",
+  "final_evidence_sha256": "sha256:8f58a08e9fff9918d94f3b5a8ba83312999a3389f1435d47372003b01d4f0243",
+  "gate_source": {
+    "commit": "f76cb991843be9d55b4dedb91a71c2e81ecad744",
+    "source_snapshot": {
+      "entries": [
+        {
+          "mode": "100644",
+          "path": ".clang-format",
+          "sha256": "sha256:fc54cc53943a9884807d139a25df7bc88f15b11573f5a36f429d748f78ea076b",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": ".clang-tidy",
+          "sha256": "sha256:44adae42183df67754695257f914569e97b828e5e81265a4318ad3fc68a97d55",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": ".codecov.yml",
+          "sha256": "sha256:3137fbb0c2743ecbc8a5a045eb5bc9bb268268da53155139d7e0179ff065d3e9",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": ".github/contributing.md",
+          "sha256": "sha256:9dd3440d54120946a1635017e34dd341e92f6ed7ddbef6e5403cdba7fce720b7",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": ".github/dependabot.yml",
+          "sha256": "sha256:448c571bf5f067eb5d4470dc53c44d756f225582a94713a215d47a5ca53147ff",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": ".github/stale.yml",
+          "sha256": "sha256:a388ec0cca8f6dfbe9c7cee5600bc24408f7aefc21041e105fabf31e8b117049",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": ".github/workflows/docs.yml",
+          "sha256": "sha256:2dcedd0436c617196624527baf94f496c87f1f58e89132416d994ba7d8a2f203",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": ".github/workflows/tests.yml",
+          "sha256": "sha256:79021e9947c30ae4ca2a2dbd79b1c7e2eee8052cad23118a25045d8ead643463",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": ".gitignore",
+          "sha256": "sha256:804a91e2a074c5dfc47313a2f673077891c089a262ee354f7ed0f7989d504b34",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": ".nvmrc",
+          "sha256": "sha256:f92d772860af53729efe631df859725ebd6f6456d7e168420469037b32020754",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": ".prettierrc",
+          "sha256": "sha256:6b380994ae171521d31a3e92447de7e80a8cfdff7ced1e4787a26ce98dcfe6ae",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": ".python-version",
+          "sha256": "sha256:a876e0b10411037a012498b9fe18d9bc1df32ed8b722a13564dc944ddcfd9135",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": ".tmuxp.yaml",
+          "sha256": "sha256:d5acf9c5b5db2b3121ae5a51e9a16e920ffc25c934b513a25da7796cf37e0bc3",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": ".tool-versions",
+          "sha256": "sha256:d999ca6ed887f181e929b60a24dabf7722f5f9ab33db07fc1a6afb2007170385",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": ".vim/coc-settings.json",
+          "sha256": "sha256:711256ab4fe2fb5a27613433f9afff70b606d9750e45693035382fbc0c3a4b72",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": ".windsurfrules",
+          "sha256": "sha256:ce24435489c6f6da03da18b1a28fabc51bf0e8062e78565739a6ccb8a0106daa",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "AGENTS.md",
+          "sha256": "sha256:0fad55c1067d5daac1b734b49d69c0586be95b9a803993c2ccb3c66088429572",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "CHANGES",
+          "sha256": "sha256:7b303551a699afecb19f313ce85d446fa85eea7c3f21a4ce03d86f4379214cb2",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "CITATION.cff",
+          "sha256": "sha256:d974946965d0c9e806c504eca126e615a83941a9df427e576c54701681a51d21",
+          "source": "tracked"
+        },
+        {
+          "mode": "120000",
+          "path": "CLAUDE.md",
+          "sha256": "sha256:a54ff182c7e8acf56acfd6e4b9c3ff41e2c41a31c9b211b2deb9df75d9a478f9",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "LICENSE",
+          "sha256": "sha256:b1a55dcee596e03fa8eee64c340668297cae586d6af6700d7a80b004bb61a34e",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "MIGRATION",
+          "sha256": "sha256:ffebe86b8b99e9e2613ebe95382d5e6961f2e66588791628e954456cceab60af",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "README.md",
+          "sha256": "sha256:9ffbfe1415f97465b5740eebdb4cd6522ca5f809c0d5b692caf6bd8eec96f94f",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "TODO",
+          "sha256": "sha256:8c5300c4f2ffa72a6d90f7429cb736450abf5cc59390aefd40108a81582c1a7f",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "conftest.py",
+          "sha256": "sha256:b31462dcd1168ef9687d289a8649e15d7addcb0caa0da3bb36d27caf6c5b80ba",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/CMakeLists.txt",
+          "sha256": "sha256:631541cd1bfa139583365299a6ba32999cd225b0f8b14c502180da903b8eaab2",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/CMakePresets.json",
+          "sha256": "sha256:441f7ef85b58ee7b37b31e4e052aac056d4a877898cabc52a407d018f83b9646",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/__init__.py",
+          "sha256": "sha256:8a17607902560c39249974d76718d889721d2e63ec61ac055323eb0efd32fcb6",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/cmake/GoogleTest.cmake",
+          "sha256": "sha256:29646b76289ffdcf40d8e2df6f89cc4d1035ef62d90ab9cf771ce1f6d82ac06f",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/cmake/ProjectOptions.cmake",
+          "sha256": "sha256:e4f9d60fd2310d91290b7673be91c41add2a774e0bc7b11f308964e23eefa7a6",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/cmake/toolchains/clang-libcxx.cmake",
+          "sha256": "sha256:71daf3df6b2abe00fcab5fe85bc0ae0cf5fd60479f4ecd9b8354d5a15a7e1139",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/docs/design/bakeoff-and-rewrite.md",
+          "sha256": "sha256:89111ab526eb2946daee3e2aa6da1665de8a72f7ef118a2fc6d08fcd73d15023",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/docs/evidence/contract-and-harness-review.md",
+          "sha256": "sha256:f7d645f6849011e49e30748c5afe874d60139a5003aced23da33d150c7896d8b",
+          "source": "untracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/docs/plans/00-program.md",
+          "sha256": "sha256:8b5ec2f272b14a6a91374c4dc79d019934568dffcf0d6378f1e5c1663a37dcd9",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/docs/plans/01-contract-and-harness.md",
+          "sha256": "sha256:6d7cd3e75ebf88ba334016debb110671bc2fa8a0038ff569bbb229ee3a2538d9",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/docs/plans/02-transport-bakeoff.md",
+          "sha256": "sha256:96d2bcff6afede4b26986cbbf56461ce7ef5610f122aaf7b93e1ac890e55f4e5",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/docs/plans/03-query-bakeoff.md",
+          "sha256": "sha256:4656de81a761221f540ca4d3b7486fc3e0951ac92e4352a9f3f8236ba632d4ce",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/docs/plans/04-clean-rewrite.md",
+          "sha256": "sha256:f63cad5af9e8cf679dcde99305eda73141527eb1dbea9dadd8ed3704c7bc72a6",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/docs/plans/05-python-parity.md",
+          "sha256": "sha256:d6a1b2a8fc494587bf157f6c7386be2e92975592d8c913be124baa8054ce2259",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/docs/plans/06-distribution-and-audit.md",
+          "sha256": "sha256:f5fbb024d7e7e6a38b78807e64e5d386521b3d93cbd8c34f0b4d3c66007082cb",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/parity/approvals.json",
+          "sha256": "sha256:fcf19ab9912e80ec410eb65c5cecb6f9a6cdd226e5b2678724c83b658c85ed0e",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/parity/approvals.schema.json",
+          "sha256": "sha256:a8e84a2826189d402240323aa5b3ae81209d0337987783ec612d4cbfd19f7168",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/parity/development.json",
+          "sha256": "sha256:d6d064f28363ad7379cfba2f4e337692955d429d92af7f2e7c919a3d75ec0c6f",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/parity/evidence.json",
+          "sha256": "sha256:54021ac49e7519e3b85ebb11ad55061577a9670b81ea1d0584c0b1007b3b4965",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/parity/evidence.schema.json",
+          "sha256": "sha256:973c34c03dd437cb51ad1aa21f6eb0226b9a26178de743267aa3b0c1a42008a8",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/parity/inputs.json",
+          "sha256": "sha256:e992dd2d690e900491c4e8838c57fabce2cec9d468042ec84f1d25e63da236c7",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/parity/manifest.json",
+          "sha256": "sha256:1ea9b2a77a508ef1f43b2c500db7b6d817d5212f6b30e152dd76001a32b74461",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/parity/manifest.schema.json",
+          "sha256": "sha256:f908ddfc9c3224208722eddbf28f74d229cf7335ba6fa441172aa17c35a6d127",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/parity/mapping.json",
+          "sha256": "sha256:f27956d5fc8b9758d1998fc744992241f98de6328570ee53853cf827b6ceaf75",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/parity/release-v0.62.0.json",
+          "sha256": "sha256:a78520e081d701f6e1faba24c8891f57eb039496d20b2a4833cf0eb2ac135820",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/parity/shards.json",
+          "sha256": "sha256:8cc53bd1faa660b08d220bedca1a921d2509614f37fcbb9d43b6811115ff0a74",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tests/CMakeLists.txt",
+          "sha256": "sha256:294123d8ca06ee880b30d5bdad3a60812d51f3fd989a6f765c52680e463ccb8a",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tests/build_smoke_test.cpp",
+          "sha256": "sha256:4153c0b5092198da83ae63db89400ea3f51aaa3d17a2543af40c2a3cafabdf50",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tests/differential/CMakeLists.txt",
+          "sha256": "sha256:2e801169702252a170a11768e8612230e6c869b8034acefd4555326abfa1bd23",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tests/differential/scenario.schema.json",
+          "sha256": "sha256:8d818f1781eda9cfc9db9cc19f1bfd5942115a2f826b87837100663d54de40d7",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tests/differential/scenario_registry.json",
+          "sha256": "sha256:eedd65052cfff5a0ced782eab79fc5532bc749d99ea306d0dda83131deeef533",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tests/differential/scenarios/server-lifecycle.json",
+          "sha256": "sha256:adb35d1ac44d069d1b42d07ce7e6f2851a6b67ddd70336cfd6cd2822e4043e0f",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tests/differential/wire_protocol_test.cpp",
+          "sha256": "sha256:f43414c2aa6b733ce77b0055fb846fc4686fe6c9f79d7af1be882a89fa17432f",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tests/scoped_tmux_server_failure_test.cpp",
+          "sha256": "sha256:2133feec8d16123e2c6a7974688aab066fc22dcffff6fc7f1ae2cc7cff5b294d",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tests/scoped_tmux_server_test.cpp",
+          "sha256": "sha256:e1a22273a1f0eacd136321d8e0f64c6d1249d24d4528382771fbd375408bb922",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tests/support/differential_wire.cpp",
+          "sha256": "sha256:816e868f970150adf4d6f70ac8b7e6020d715dcad359e924b650118fabf164bf",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tests/support/differential_wire.hpp",
+          "sha256": "sha256:8feb3ee3c97a4db600cbc6c0da76ee61191184b4e0bcf3576597ca5e08458619",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tests/support/fake_tmux.cpp",
+          "sha256": "sha256:84ee45da07c2908574c5acf11a000f93ec69ff2e003ca4ecf36879e3db4c950b",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tests/support/process.cpp",
+          "sha256": "sha256:56fa7767bb3b7b6504d2f1bb3334cf08158e8a27053901915b8224ea93f9801a",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tests/support/process.hpp",
+          "sha256": "sha256:2f1927249ab6ef7b4f7c0322572ca9841447541867c09f3e63ce0219e588a425",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tests/support/process_test.cpp",
+          "sha256": "sha256:9179201f5d3071f353c2d090db682ef4bf59373e1e253ff1c9d4fb846a5a3b22",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tests/support/scoped_tmux_server.cpp",
+          "sha256": "sha256:fb6b5ba565118884c4c644d46b19ed15292b8f1903dd353fd6a139adcc70772f",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tests/support/scoped_tmux_server.hpp",
+          "sha256": "sha256:4487c1a9f0d1ef6a0b51721a50ad819c16e9308a9583bec1eb41561343d8075f",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tools/__init__.py",
+          "sha256": "sha256:05cf078f32e23b7523c23461f202f09ebb4c436df898d1a7f2f6c259c9b7b45a",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tools/differential/__init__.py",
+          "sha256": "sha256:77266e0f66265aad04a2d32d613c008e688e84f4c52c185e2db4c338876c218c",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tools/differential/canonicalize.py",
+          "sha256": "sha256:13233854cfcb31bc2c38eadeefd46585500f5fb1b05fd90c355089d61f198a6b",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tools/differential/compare.py",
+          "sha256": "sha256:1b5c9a01ab2cc74dfd1b2d3d5bd975fd40d3693fd7cbdd54038866544da67c1d",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tools/differential/materialize.py",
+          "sha256": "sha256:158011ebb2064cca388e19b4efff0d42d2db1972354cd0453126afe6a18c0661",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tools/differential/model.py",
+          "sha256": "sha256:19e735fd08dc6b635685e01508a8af9186b3b37f1301a28701dddca6b473a368",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tools/differential/python_reference.py",
+          "sha256": "sha256:a55a6c27f100f63349d04e53a75df66a5b51a8f7d8fd0867ff27adb036212f47",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tools/differential/runner.py",
+          "sha256": "sha256:9fec620cbf860443a09fd0b326a1c07dcd7b4e18ecd699a2451c21c02bf5e6da",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tools/differential/wire.py",
+          "sha256": "sha256:70eea9ae60525085ea73200e57fbeb3739a277f00305cfe5dd32ebbba46eea04",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tools/evidence/__init__.py",
+          "sha256": "sha256:d44d27d266f4ccde2a8398e384c789339345e458f394b139a7a6ef51df006638",
+          "source": "untracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tools/evidence/contract_gate.py",
+          "sha256": "sha256:c490ead0cc36150644611175230cfcb0fd002b0056053ae1036c9f256607460c",
+          "source": "untracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tools/evidence/ctest_gate.py",
+          "sha256": "sha256:60ee2b3fe290584e3d51e15726bd0264a3de89e0fd7e33e73dd7164149099320",
+          "source": "untracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tools/parity/__init__.py",
+          "sha256": "sha256:2025c0355e78dc4c01b2280db61dc386f01a44b9d9810dea41fd811fc2ec5198",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tools/parity/__main__.py",
+          "sha256": "sha256:0e8c5cfa1d64b412fbc1c0b634de08e5a7568626aa19d01fe6fce498e7264c0e",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tools/parity/check_manifest.py",
+          "sha256": "sha256:0a48c5660a5ac22f2ecf7d00dcf10f70d8452f4d71d7810324417cb0ad3a2e98",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tools/parity/drift.py",
+          "sha256": "sha256:b9353f0748c1db2a8375d92944d823948392529898e9ee4a785cdaad41bbf641",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tools/parity/extract.py",
+          "sha256": "sha256:6076356cf48ce7f8d1b04da802dfb0c219b9f7258f54864ad3ceaa891442ab85",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tools/parity/generate.py",
+          "sha256": "sha256:126da50f1109c2d7b32e188537d1aa50cee458d463c40df383ff74df3a2eb9f7",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tools/parity/git_objects.py",
+          "sha256": "sha256:c1df5668142cc86ed107cfd1517949d3f198cba3cb66d5f2c1a668751f5c0e07",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tools/parity/model.py",
+          "sha256": "sha256:8f1ba1f246689db051ab59a762ad24329de7b188e4d5943dad055eb82f0f38d7",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tools/parity/shard.py",
+          "sha256": "sha256:d29676a0b44e77271a176d98b4beea9e86ab1e1aa5b34d2dae0aae021578976f",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "cxx/tools/parity/sync.py",
+          "sha256": "sha256:ff0c3a66c9def02b6452a4ca353393f77725f192fc9e5a05e49650af0a16502d",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/AGENTS.md",
+          "sha256": "sha256:9daacb0db53a49c390836cced0679017c7ce560dae7090c5f1a4b79ab6f96020",
+          "source": "tracked"
+        },
+        {
+          "mode": "120000",
+          "path": "docs/CLAUDE.md",
+          "sha256": "sha256:a54ff182c7e8acf56acfd6e4b9c3ff41e2c41a31c9b211b2deb9df75d9a478f9",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/__init__.py",
+          "sha256": "sha256:3441a796d37c1014fbd7c7af64a9b5d5ff0fc70339d863686873a1a3bec35bd2",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/_static/css/custom.css",
+          "sha256": "sha256:851dd80cf74f065f574fa8c430866871eece67bcdf1c956a740558c17644f6b1",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/_static/favicon.ico",
+          "sha256": "sha256:e6dac7f7e219607b66b3207ab6275881bfeaf10b133d79d593ca1de2f9e30f6a",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/_static/img/books/amazon-logo.png",
+          "sha256": "sha256:d3bce38eaa6afa938eb3285f754af129dba77fcdac0ea2bf9ffaf6689eef6a7c",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/_static/img/books/ibooks-logo.png",
+          "sha256": "sha256:dc06649680b092be7f2fd13967d9745e4b483b40a7c52e83ac0545a042ae41b4",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/_static/img/icons/icon-128x128.png",
+          "sha256": "sha256:e73ae9284a460e78637c7689e0295587b9fd09027d32623f4cd13c94d6a29e5b",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/_static/img/icons/icon-144x144.png",
+          "sha256": "sha256:1e4ec42254a2eb98064eca90c150e1b3231e22ef9180a7983e31a76ea093d3af",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/_static/img/icons/icon-152x152.png",
+          "sha256": "sha256:ea8b6a9359b3a075bf82eec0a319c8b9cb9aa8a0768003e2d25f092a2a687435",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/_static/img/icons/icon-192x192.png",
+          "sha256": "sha256:d5ba12de6b871842c28c8bd120966405bc1c33da7bbcbd36c25fb25324964d3c",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/_static/img/icons/icon-384x384.png",
+          "sha256": "sha256:f27d83f428d3838786bf6cac419c465e799eef4188f5db437ff2c9963b089fa4",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/_static/img/icons/icon-512x512.png",
+          "sha256": "sha256:3906f7444932e596f8d0abafcfe9425ecedbb7ab0e510dc410f94d79f69b895e",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/_static/img/icons/icon-72x72.png",
+          "sha256": "sha256:603f0bf1fe1dc4d88bd95e32083ed7b0289cfe4ad80a1c038289772bff007d3d",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/_static/img/icons/icon-96x96.png",
+          "sha256": "sha256:489bbd0165204bd25546162a36a4ca3d64dec359ce1339bcd6de31115260a168",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/_static/img/libtmux.svg",
+          "sha256": "sha256:bed44cbf7f2634b9428885c17c41c25d1066ad6ad9da4e44e591445a2144c76b",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/_templates/book.html",
+          "sha256": "sha256:9b4257bf4ce4f9e168bc957963fe670034a33024553b12b39964a2d9c36ddb30",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/_templates/page.html",
+          "sha256": "sha256:175835c40b11c9f9addc945985b32328ac2940d9cd72658e6ffb588cfd42a5b1",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/_templates/sidebar/brand.html",
+          "sha256": "sha256:ab96fe7c60d109c198edb10ddf03004afc5281223f303a7d26f0141c9963e4a2",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/api/index.md",
+          "sha256": "sha256:5c4e3297638399b0cc03e470cde304781c621ec4f349d124b168628f75c38c09",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/api/libtmux.client.md",
+          "sha256": "sha256:6a71a6f533f1fe5a162f7159a3beb1e4c73dccf12e75d2ee669ed325ab904b13",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/api/libtmux.common.md",
+          "sha256": "sha256:65b37198a7865a0725db80971b9d5ba34aa22e17f9647e3f9cf51b5dd6a5b131",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/api/libtmux.constants.md",
+          "sha256": "sha256:808c1ca7feaebb40ad2a10a113f764d67e80fcea076a92206918496ffc4c19c8",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/api/libtmux.exc.md",
+          "sha256": "sha256:b52a996033bf978578b757b599307f36217f890b67800737fcb93a1e3c4ab599",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/api/libtmux.hooks.md",
+          "sha256": "sha256:44d3916068361271e346e0988cc2036397e09e85e9aafd54e2db0c542200d73f",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/api/libtmux.neo.md",
+          "sha256": "sha256:4e18d48804c2e8235fa6a8d2277eb79ba3bd084a34657bb8b17c9de5021a56c8",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/api/libtmux.options.md",
+          "sha256": "sha256:d0bee4878fde63fb77ad33c477d9f5fddad95b259ba0986c998233bd14b4f1a0",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/api/libtmux.pane.md",
+          "sha256": "sha256:e5d2b3ba096628862762577d69c623ad6fd3c5027b6aaba041462fde2c2dba2b",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/api/libtmux.server.md",
+          "sha256": "sha256:861b6f4f77587076566ad7b63ce5e4b702cc3bf2920b49199986ab3ccbccc653",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/api/libtmux.session.md",
+          "sha256": "sha256:9b9bebf84ad5955e634a970e557a42fbca6d9c7aa799f7f304b5f0cdc9f247ca",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/api/libtmux.window.md",
+          "sha256": "sha256:02b01ab855aece3102b5c9a760a820ac2f35cc4dbdbbf5d95330447c6cde3e8e",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/api/testing/index.md",
+          "sha256": "sha256:5d0a15ded3ce29963df35b802392bf69033d7b1e7fdc3a4f13d3871a5e3c43b8",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/api/testing/pytest-plugin/fixtures.md",
+          "sha256": "sha256:7e8ae5a340d232198324b9a86f6a1164feb039d4c24eb9fca4b4e25d9820fa5f",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/api/testing/pytest-plugin/index.md",
+          "sha256": "sha256:12e6770992687df06d1df823f2d84d8ec595bc57d49dc1f9ac334fb7075dd2f1",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/api/testing/pytest-plugin/usage.md",
+          "sha256": "sha256:d964fe951b50e320442f50e25dd4c77715e9ac765f4fc6ed78d4c666f41fd5b1",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/api/testing/test-helpers/constants.md",
+          "sha256": "sha256:a13dc60c35a0494c63d4b3cd90dc52712c34778acf1210ed5c9df4f08ce0d2a4",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/api/testing/test-helpers/environment.md",
+          "sha256": "sha256:9feeeed03de2258c36175b27a4f9d3f546501dcd17c7043d61f3d1a0b0a6284a",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/api/testing/test-helpers/index.md",
+          "sha256": "sha256:bf7e6034b59818c888a6720838454a8a40777b8e861ca6c11d115155098656d6",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/api/testing/test-helpers/random.md",
+          "sha256": "sha256:43c680881f3c6c56175fd84f42ee4c583de62f302d05839862e0f34757de5011",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/api/testing/test-helpers/retry.md",
+          "sha256": "sha256:f3eea60f6e7b11556eda07d3979267cfbe09d2a07924f1b861b86309549058a2",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/api/testing/test-helpers/temporary.md",
+          "sha256": "sha256:94f077446786c09c4807c54eb2530d8bf96fb8bdc5817b59770bc83f856d58b7",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/conf.py",
+          "sha256": "sha256:fb008df5d65e775f3b5a101ef40457792c3c05014286b300fedc386a1e7638d9",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/glossary.md",
+          "sha256": "sha256:51b8fa3345c9f8558e43d4dc69cecce273d92a191066c75911d253bb344c181d",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/history.md",
+          "sha256": "sha256:95d3f69435be9f17fb8d379d7a594c41160ca44496b00dfe9c708e0d4e67a147",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/index.md",
+          "sha256": "sha256:4d24fe115c856946bedea069d59d6f77df958f4f6bcb1691f7fb28ad51646a53",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/internals/api/libtmux._internal.constants.md",
+          "sha256": "sha256:7e9c7f191e1977301c9f85cb7ae37b815968a3daf68a7d4b2c111647b5f02be6",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/internals/api/libtmux._internal.dataclasses.md",
+          "sha256": "sha256:4c981c20fcadd90ba28d67e4e687282aca666f9588c7b4bb58a398b543fd89a4",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/internals/api/libtmux._internal.query_list.md",
+          "sha256": "sha256:61f2be26bf46ca32c9edc517f1906f61cad48109c91c2c3af21e470c36c143f5",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/internals/api/libtmux._internal.sparse_array.md",
+          "sha256": "sha256:97397a2a209e9d2447399344e33d6fb22a5216e17d743f0bf271fb5cedeccc18",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/internals/index.md",
+          "sha256": "sha256:e7fa2c635655fd39cc16b95dfbf1a15d5765d88359810ae84fa63e24761d563b",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/justfile",
+          "sha256": "sha256:113d4ecce3d199d5cd90a7b1f31262fed60df86f60b8d02e067df13657d88527",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/manifest.json",
+          "sha256": "sha256:c9b751e059f569f8820e74e71a02b2df2b800ebb7c2cf5d7e7cc958de60e4ccb",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/migration.md",
+          "sha256": "sha256:86d0d3af52edc1d2075cf03d35933e54087b996023f2aedadeee2a669e0aec7f",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/project/code-style.md",
+          "sha256": "sha256:35790a88eb090322f16ac14a7be5f2cc5103be9dab346fa7a8bf317d618b3a83",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/project/compatibility.md",
+          "sha256": "sha256:a3a8bf45dc2a408bc69e11b7768c208b58a009f00153a96554e760bf796f48a7",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/project/contributing.md",
+          "sha256": "sha256:e5645d18b4640037c4dde5b4a1c7f593f4f5b263d3a6cc3cd4038dae74d007f6",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/project/deprecations.md",
+          "sha256": "sha256:01b0ae0a622c399e72a87fcca9022884ee944b4040d19c70a854d920c551bbe3",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/project/index.md",
+          "sha256": "sha256:ecef647b0a42180251ab6ebfb936196f7df5700b7154e79906feb4272007389c",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/project/public-api.md",
+          "sha256": "sha256:c52d6176838c8246a8a4de103c0c277ac7cce634e2df1516714acad501c41c03",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/project/releasing.md",
+          "sha256": "sha256:fcadc7ed96e4a6f8011428eca693a6aba9cdb16b5443469f7a30cd30e3fd044d",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/quickstart.md",
+          "sha256": "sha256:e0f2ac9e23575050aa6cef63e81761c2daf36af44391d5824d7ff17da7b7d75a",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/redirects.txt",
+          "sha256": "sha256:7d3b16e60a1840d818d296c2d35bc52149e4e3efea27c647df0d0b5112176c31",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/requirements.txt",
+          "sha256": "sha256:d32a2dc96726fdaed82d49aef3d10e339eb7732e0f4cad2893f7b9bebb6093cf",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/topics/architecture.md",
+          "sha256": "sha256:868015c4685d3a762d02576f49a57ba02450e0430f10ccbc32fc9c696d801f36",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/topics/automation_patterns.md",
+          "sha256": "sha256:ecdccdd195a75c49fd4a4ae217454284cc2c984867854739244b1b0a1ca950ef",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/topics/clients.md",
+          "sha256": "sha256:8d834194eafef3d7426ffb4e312e2f561bf805fde9db1c68dbb7437e7e19160c",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/topics/configuration.md",
+          "sha256": "sha256:2499d01709613d353707571f83383b007a22232522f2f8d6e15dc7ca96f120ea",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/topics/context_managers.md",
+          "sha256": "sha256:4082a87b2098f3db1082012fb9addafe207f708286fe778268201acb15e29e21",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/topics/design-decisions.md",
+          "sha256": "sha256:38bcca5fc98db8ae2b475602581961c2a2e544bde0fc6983ed99a8997ba47fae",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/topics/filtering.md",
+          "sha256": "sha256:d55129d3e6905536075f3242877299c6ba7b82a1d20da9e1080c176135541cc0",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/topics/floating_panes.md",
+          "sha256": "sha256:7d50344135feb6dcf10ae0155dae5e51fad15d07bb8ffb1c18c03c2e0b2f01f8",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/topics/format-tokens.md",
+          "sha256": "sha256:cc7771de321bc68b5ebdb2c981a005219b9d1a430d25fb51e7968f360459134f",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/topics/index.md",
+          "sha256": "sha256:60040bb2e70a01a3fb6a132d377638bbe373ea321e194be1e1e62cb729496782",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/topics/options_and_hooks.md",
+          "sha256": "sha256:48b4dc8d7ffcf1c87007eb897e637838efe6145d7582694baa9856e77a515703",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/topics/pane_interaction.md",
+          "sha256": "sha256:84e23b57d84b464223a0391cc91288addba36114686ab60b4ef6d26af65737c9",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/topics/public-vs-internal.md",
+          "sha256": "sha256:5a2232b04f0bc509d558110eab8212e9ca6011d0a0a30cb2a059afde5c5ce0fd",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/topics/self_location.md",
+          "sha256": "sha256:35058fe7e1512688090d1917edcf474eb3fd369b96e79ccbfe1f73ed5a1e9f59",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/topics/traversal.md",
+          "sha256": "sha256:4fd2792759aaa66d6f511698262fe77ff2857531d1203af4772051e6439bdf74",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "docs/topics/workspace_setup.md",
+          "sha256": "sha256:1d0d822eef71974fead86a2ca21f7c580a0d6153a927071ac0b0a44fea4d5213",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "justfile",
+          "sha256": "sha256:c1bc6bc8cd44286e23f5124f711c14cf0c08a4c65cc250d8a2fbcdb942e7796f",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "pyproject.toml",
+          "sha256": "sha256:d3eb7456ad87310f15dc5d091802066cff2fb19eb37151dfb8e454a8879dedd2",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/__about__.py",
+          "sha256": "sha256:381d16f3e4baddbe0e06cfe02014074b26153899b076dfc17f8e1403c8105ceb",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/__init__.py",
+          "sha256": "sha256:64d46f5ce6cc06b6923167d16b57a88b02a465dce892c61999b29fae705ae364",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/_compat.py",
+          "sha256": "sha256:0e385a3ef1833d0f33f343f57c0d77eaa1947590b63a735c539a843335390d26",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/_internal/__init__.py",
+          "sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/_internal/constants.py",
+          "sha256": "sha256:cea4dc6880576b58c10221171a49782b0a87c4539d1a33fcee8d1c60c45fc7c2",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/_internal/control_mode.py",
+          "sha256": "sha256:ef94bc518d0918e833ed78221274eba246e0044d6fade9ffc909ee4d8d55f656",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/_internal/dataclasses.py",
+          "sha256": "sha256:512c5170a78aec86304694f6c71cb4758d8bcf267c3f72b13e280523786b418a",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/_internal/env.py",
+          "sha256": "sha256:d34de4a6f4269deebe84d18310b0a8722267244700712b8c0af485480acd1e7e",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/_internal/query_list.py",
+          "sha256": "sha256:1f786362e94c725d644da57e40f4e3f5be411b55837825a6b1af047f79dd2c64",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/_internal/sparse_array.py",
+          "sha256": "sha256:0126e8447c5b4449ba3a9e341415324c49a96d8e0d9de34ee533f5e51a5519bd",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/_internal/types.py",
+          "sha256": "sha256:095f5bdeab96b03d9bbd56bb61fbc7c27f18250cef86ce1a5288bd363218691c",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/_vendor/__init__.py",
+          "sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/_vendor/_structures.py",
+          "sha256": "sha256:5d2834e37782c73e35317419b9beb3300cc8e66099b76883b63e9950007843c3",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/_vendor/version.py",
+          "sha256": "sha256:fecdbbb3d5c3840a6483a023cb78084c546d0f5b11bc28d097cca152be3d5db8",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/client.py",
+          "sha256": "sha256:4cad593e66eb59437846a8c4591955a02b6f6e8bb0ed8e262985ed0ec357dffb",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/common.py",
+          "sha256": "sha256:8454de5b2737679b7f1f1e25d5b89407061f79f42f523c742f4a39359033cb1e",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/constants.py",
+          "sha256": "sha256:0f7f66b8dcae3825bcab9c87b82b71a4eadac314ba23b46eca1d1804ba47a2ff",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/exc.py",
+          "sha256": "sha256:a4819e07ff7f2dbf4dc662aa0d5314418826ad901aaecacefcb3a5d9c72d11b3",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/formats.py",
+          "sha256": "sha256:70af508f7c753e551872eed5a55fd42a56b9d69d8b5260fa999158b60c2a16a1",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/hooks.py",
+          "sha256": "sha256:e42c67869fdfa02a34cc6e9ada4ad70cf8016ae7c62646eee103678defc83f0c",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/neo.py",
+          "sha256": "sha256:4a97a5e56036c3db0bb0f7910b2442129f9429c66b399b7afe7fde293454d4a1",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/options.py",
+          "sha256": "sha256:e25f9f090a4f7a7461471a784f8c18485d1e1273379a6bd05faf1c01cc312c98",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/pane.py",
+          "sha256": "sha256:b1d764bce4e3c895e7041153a101a668c116c211f36f6c68141640979b014cc4",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/py.typed",
+          "sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/pytest_plugin.py",
+          "sha256": "sha256:e8411d896105b0c2a3d3338ada358944f4a53871d607b9975dd364d5cb56d35c",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/server.py",
+          "sha256": "sha256:58124e8f578bcbab13aa65f12df6c030cbf97b490b6380a336c6402546db2f96",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/session.py",
+          "sha256": "sha256:cc3660470008b096fb8b9c8d89f7e9901746688b1fb240c5d3d107bd4f431b41",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/test/__init__.py",
+          "sha256": "sha256:546708e0e1489d4c13d18679f9a05110f04107eb82d468f0da7bf9d16576feb1",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/test/constants.py",
+          "sha256": "sha256:8f44bbd9b2586387899a381cb9eb51a196b9fca207dbb7c4171b82e05944778e",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/test/environment.py",
+          "sha256": "sha256:b24d8daf3d0da2b7ce91b88214f8513ecfb22eda29825343dac4a96003999733",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/test/random.py",
+          "sha256": "sha256:99729b508c3cf51f901a5e717398829f17c4b0e81158e23a9b887d903236cc23",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/test/retry.py",
+          "sha256": "sha256:ab1d356c40dd14a364b28228c0e86387761832ddcf6bae434ba5ae1e0e98181e",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/test/temporary.py",
+          "sha256": "sha256:c020b9b08fb144ab3962ffbd3550e6f9d052d0dc51bba4500e289f98c67057ca",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "src/libtmux/window.py",
+          "sha256": "sha256:dd7c17d15d0932cda833b7ca4a535cb47aa9a2310ad7e1d067155106c61dedc8",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/__init__.py",
+          "sha256": "sha256:46d76281990bfb876f2a649842ff2aba438d5b47880a329a29538545fa823798",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/_internal/__init__.py",
+          "sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/_internal/test_query_list.py",
+          "sha256": "sha256:f97f69578925b17f7369798362d0c71cc737efa1cca419438ec75a9e60f5e743",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/conftest.py",
+          "sha256": "sha256:7aa33fcebc818b40e96c726775e52a560348fb9e921716b48f6f649ed091bccb",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/cxx/__init__.py",
+          "sha256": "sha256:c4b39da2f9f22910f15f7a61600b2da38cb35eae3fe3454222d8cba22846b456",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/cxx/test_contract_gate.py",
+          "sha256": "sha256:9372c15f6771a302c2a5d982c7da356f39bd0648b4c6226e8dc886f390150854",
+          "source": "untracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/cxx/test_ctest_gate.py",
+          "sha256": "sha256:6acf32b846f7c5e9c9245950c60979b8bc4907d43798d54f6d5bf934b07b4e1f",
+          "source": "untracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/cxx/test_differential.py",
+          "sha256": "sha256:ad973a16f966eb2bcbf31037ac4e1f08ddb63790f7330812dc4101a8e5ea5591",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/cxx/test_parity_extract.py",
+          "sha256": "sha256:db59c48f69c8a28ff11bab55942c914e2d5ec1c674624e30197e3df3c461c872",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/cxx/test_parity_manifest.py",
+          "sha256": "sha256:425933281c3c65d631881c1000f0fcd1f6b9bc8d6f18ded0e753bca8c56869ce",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/legacy_api/__init__.py",
+          "sha256": "sha256:c18c84300d63ba6198109caca1c0c56ac868145a8326832efc3270a1b42b02a9",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/legacy_api/test_common.py",
+          "sha256": "sha256:f40a903c8f3fd5697630eb3ae5a59c854dfeee549ffea4ebfc320364d9987691",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/legacy_api/test_pane.py",
+          "sha256": "sha256:e7f62d136f7310ff43935f98eebda809a6b57e641636f0734ed1db3ee882a1b5",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/legacy_api/test_server.py",
+          "sha256": "sha256:63c47229d5487d24e05b197a730d50c4903a916637f28b477eed8ae6b0780a9a",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/legacy_api/test_session.py",
+          "sha256": "sha256:382b526b242ffb839275e0761dc4641839e2d0c232f06875f5ae3a3d090aa51a",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/legacy_api/test_tmuxobject.py",
+          "sha256": "sha256:07b2d35a538be8fc1a838d2257c275d57c935b509a0a25d9c9429b48fe2bccad",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/legacy_api/test_version.py",
+          "sha256": "sha256:3a52fb898ac8c2a3fac993eb5232ea577c4e2de956688c56616f48381175c94c",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/legacy_api/test_window.py",
+          "sha256": "sha256:3951297a68e3dbed14dcc1fdaea48e58a7981726195a9bbe55cb8cc5804ddb0b",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/test/test_constants.py",
+          "sha256": "sha256:aa9ebbe73c759b57b69430422c13b6e2dfe4619d5cb9048e083e3d7d0b10f855",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/test/test_environment.py",
+          "sha256": "sha256:11be74fa77fb64cd8d415725f66c48817613fbe4673a3abc7d19d99042ef6cab",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/test/test_random.py",
+          "sha256": "sha256:0d214223881e785d0d25ad70425062263a10f73a3b7a14eacdd42d0f5c7f22c7",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/test/test_retry.py",
+          "sha256": "sha256:051ddcff775d1efcf34c5f1d9801f1393afb4c583804c6ab83c3ccc9d64c784e",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/test/test_sparse_array.py",
+          "sha256": "sha256:c54d970fe472641afb477e5ae8b56562c10cd2ad4b2b67b5b63410b63ecb19ae",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/test/test_temporary.py",
+          "sha256": "sha256:1b2fdcc6846fb259d21eaf2df6564724ef5cb12c10c2b393592d9b770095dc85",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/test_client.py",
+          "sha256": "sha256:379f344f709faab3156d4085477be318f06774f10536c209b88ab5d734f52275",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/test_common.py",
+          "sha256": "sha256:fab7f020b7a905ef7473f2928d7a2db5a709596f747e2e480e14534d6e12dd35",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/test_control_mode.py",
+          "sha256": "sha256:bc2e58c5c71e003bb6ec8efb2cb998f9f32881a95997937cb8abc738263867b0",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/test_dataclasses.py",
+          "sha256": "sha256:e29a8514bbf462b31d2b0e7557898b695ba4eda0c9b09c66d7da295e34f54935",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/test_from_env.py",
+          "sha256": "sha256:18a3d752e4524065a6d154ddb8c8bb1f3badb7b1a346b949f6eb0ed4a69a0d16",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/test_hooks.py",
+          "sha256": "sha256:852ac1e1fbf3ccfce2f36d7069bf54e4d1dd63a0e9511ded4acbd741f583b5dd",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/test_logging.py",
+          "sha256": "sha256:5ddfa01f013f184359f9e7dc8769513e6ea7e7d376b6ddab5ac4d46dd86a62ad",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/test_neo.py",
+          "sha256": "sha256:13fb1c0fba418900f5c2218032839ba04bce926f55494a221694f3e87bbd7752",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/test_options.py",
+          "sha256": "sha256:1a6eebcc3db61392da228e4fede19cea318c70904b06ae05044ebd51017fb6e0",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/test_pane.py",
+          "sha256": "sha256:6fbcf696bfdca5629a413e9543633df0342cf9116ef9c6a48801341ff355dc87",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/test_pane_capture_pane.py",
+          "sha256": "sha256:9ac1ff36f24bc7b08371ea97ae0a4a7348bfb98250a8e4ee1d8a5d032a2f6a79",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/test_pytest_plugin.py",
+          "sha256": "sha256:8880809ad22e943ff36ace1682aa71124c21b02bf05124001e61bb3fcad473f3",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/test_resolution.py",
+          "sha256": "sha256:7d8044ec709d60b48459b05416bebb311bbf096d84e55817e82366baa98fab0d",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/test_server.py",
+          "sha256": "sha256:a7f0ccf5612774282eba4359978fce8747fd1aee51b42f7268b00f18b18569cd",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/test_session.py",
+          "sha256": "sha256:24e1fbe4ba744557cab3ccdb5bc37d62bf9743b3fc3386e6852cee24ad9a277e",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/test_tmuxobject.py",
+          "sha256": "sha256:1c28bc56ad8d746789192e6ac9aac17a97559151de3330e39b2a8663f658fcc0",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/test_version.py",
+          "sha256": "sha256:bd7c66861dff8ccd680904fbe38f91a63a2be769542bc45677e6a01bbbcc182f",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "tests/test_window.py",
+          "sha256": "sha256:23fdbb5252147bd6bd0601b6686d66be1388aadc25619f21cfcd16a76a9cdd75",
+          "source": "tracked"
+        },
+        {
+          "mode": "100644",
+          "path": "uv.lock",
+          "sha256": "sha256:81d09429939a59dbcbd76c3f877f9b7ec0635ed85cac679c72e48b35b3870756",
+          "source": "tracked"
+        }
+      ],
+      "sha256": "sha256:335a343db86676ef10f56fdcc67d5512f9e6e792615d12cefc227f2576dc073a"
+    },
+    "tree": "8f0001d350c2ef9d792b078fe912df6450505f11"
+  },
+  "python_contract": {
+    "development": {
+      "commit": "a285641c92b1913690d7bca395c6e736651b528f",
+      "observation_id": "development",
+      "revision": "HEAD",
+      "sidecar_sha256": "sha256:d6d064f28363ad7379cfba2f4e337692955d429d92af7f2e7c919a3d75ec0c6f",
+      "tree": "ef615de62ebb7bb6c75df10081fa93d21e1d9fff"
+    },
+    "inputs_sha256": "sha256:e992dd2d690e900491c4e8838c57fabce2cec9d468042ec84f1d25e63da236c7",
+    "manifest_sha256": "sha256:1ea9b2a77a508ef1f43b2c500db7b6d817d5212f6b30e152dd76001a32b74461",
+    "release": {
+      "commit": "38e368c11117fb4aeb2f082d552cd4f210eae06a",
+      "observation_id": "release-v0.62.0",
+      "revision": "v0.62.0",
+      "sidecar_sha256": "sha256:a78520e081d701f6e1faba24c8891f57eb039496d20b2a4833cf0eb2ac135820",
+      "tree": "eee900223a11c00a4b9b0cc6944e7d5a4d503bc8"
+    },
+    "semantic_contract_sha256": "sha256:e1b1df09b7bd86946453d5b12b8768867e144b40ab8c0d1a27e06e3336c39fcc",
+    "sidecar_sha256": {
+      "approvals": "sha256:fcf19ab9912e80ec410eb65c5cecb6f9a6cdd226e5b2678724c83b658c85ed0e",
+      "evidence": "sha256:54021ac49e7519e3b85ebb11ad55061577a9670b81ea1d0584c0b1007b3b4965",
+      "mapping": "sha256:f27956d5fc8b9758d1998fc744992241f98de6328570ee53853cf827b6ceaf75",
+      "shards": "sha256:8cc53bd1faa660b08d220bedca1a921d2509614f37fcbb9d43b6811115ff0a74"
+    }
+  },
+  "review": {
+    "sha256": "sha256:f7d645f6849011e49e30748c5afe874d60139a5003aced23da33d150c7896d8b",
+    "status": "passed"
+  },
+  "reviewable_source_sha256": "sha256:123c058b8560c803b3c35d621066b3d692c8e3191421d781ad4f9a4c9e5d4249",
+  "schema_version": 1,
+  "status": "passed",
+  "toolchain": {
+    "artifacts": [
+      {
+        "name": "clang++",
+        "sha256": "sha256:8ef402d453d1ba4902e4ee0f0f847f6cfa01400c95aa43c24e97818b9c0e3f45"
+      },
+      {
+        "name": "libcxx.__config",
+        "sha256": "sha256:e8000acbe3880bb63f5e9bcb6a6aa36a7fa9ed3e4c2ef6ee51dc412948412e9a"
+      },
+      {
+        "name": "libc++.so.1",
+        "sha256": "sha256:465b54c395f9a227554e653cdf0e2742686f891eb278e8d0b630d0229084c0df"
+      },
+      {
+        "name": "libc++abi.so.1",
+        "sha256": "sha256:40cb6e2e548b61e53d4e3fb07c537dbc4f23900f465ae584f141eda9c92b1585"
+      },
+      {
+        "name": "tmux",
+        "sha256": "sha256:0cd875611e001f9d66c65977d499a65de2400c967b5c7788d04d43a2c9f06982"
+      }
+    ],
+    "compiler": {
+      "id": "Clang",
+      "version": "18.1.3"
+    },
+    "libcxx_version": 180100
+  },
+  "tools": {
+    "pins": {
+      "clang": [
+        "18.1.3"
+      ],
+      "cmake": [
+        "3.28.3"
+      ],
+      "just": [
+        "1.58.0"
+      ],
+      "ninja": [
+        "1.11.1"
+      ],
+      "python": [
+        "3.14",
+        "3.13",
+        "3.12",
+        "3.11",
+        "3.10"
+      ],
+      "uv": [
+        "0.12.1"
+      ]
+    },
+    "versions": {
+      "clang": "clang version 18.1.3",
+      "cmake": "cmake version 3.28.3",
+      "just": "just 1.58.0",
+      "ninja": "1.11.1",
+      "python": "Python 3.14.6",
+      "tmux": "tmux 3.7b",
+      "uv": "uv 0.12.1"
+    }
+  }
+}

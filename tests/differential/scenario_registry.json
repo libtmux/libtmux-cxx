@@ -1,0 +1,48 @@
+{
+  "operations": {
+    "server.list_sessions": {
+      "cpp_handler": "list_sessions",
+      "entity_fields": [
+        {
+          "kind": "session",
+          "pointer": "/observations/*/sessions/*/id",
+          "role": "definition"
+        }
+      ],
+      "python_handler": "list_sessions",
+      "request_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "response_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "sessions": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "pattern": "^\\$SESSION_[1-9][0-9]*$",
+                  "type": "string"
+                },
+                "name": {"type": "string"}
+              },
+              "required": ["id", "name"],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "stderr": {"items": {"type": "string"}, "type": "array"},
+          "tag": {"const": "server.list_sessions", "type": "string"},
+          "warnings": {"items": {"type": "string"}, "type": "array"}
+        },
+        "required": ["tag", "sessions", "stderr", "warnings"],
+        "type": "object"
+      },
+      "scenario_id": "server-lifecycle",
+      "wire": {"request_tag": 1, "response_tags": [2, 3, 4]}
+    }
+  },
+  "schema_version": 1
+}

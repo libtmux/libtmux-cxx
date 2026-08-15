@@ -1,0 +1,4 @@
+status-position* bottom
+status-format[0] "#[align=left]"
+@v 'a"b'
+@e ''

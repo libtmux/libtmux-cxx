@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "measurement_id": "entity-behavior-allocation-cost",
+  "question": "How much does an entity representation add to one tmux listing?",
+  "method": "A counting global operator new, around one listing on an isolated tmux server holding the stated number of windows. Release build, one repetition per size; the quantity measured is allocation count, which does not vary between runs.",
+  "environment": {
+    "compiler": "Clang 18.1.3",
+    "stdlib": "libc++",
+    "optimization": "-O2",
+    "tmux_version": "3.7b",
+    "operating_system": "Linux"
+  },
+  "representations": {
+    "bare_run": "Server::run only, no rows parsed. The floor.",
+    "row_view": "Entity is a span over snapshot rows. The previous design, measured before it was replaced.",
+    "shared_snapshot": "Entity is a shared_ptr to the snapshot plus a row index. The selected design.",
+    "owning_value": "Entity copies every field into its own strings and shares the connection."
+  },
+  "allocations": [
+    {
+      "windows": 21,
+      "bare_run": 254,
+      "row_view": 293,
+      "shared_snapshot": 293,
+      "owning_value": 315
+    },
+    {
+      "windows": 201,
+      "bare_run": 254,
+      "row_view": 476,
+      "shared_snapshot": 477,
+      "owning_value": 679
+    }
+  ],
+  "entity_size_bytes": {
+    "row_view": 16,
+    "shared_snapshot": 24,
+    "owning_value": 40
+  },
+  "finding": "One tmux invocation costs 254 allocations before any entity exists. The selected representation adds nothing measurable over the view it replaced, and the owning alternative adds one allocation per row. Entity representation is not where this library's cost lives, so the choice was made on lifetime and ergonomics instead."
+}

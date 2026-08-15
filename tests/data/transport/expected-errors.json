@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "errors": [
+    {"kind": "request_validation", "delivery": ["not_dispatched"]},
+    {"kind": "spawn", "delivery": ["not_dispatched"]},
+    {"kind": "pre_exec", "delivery": ["not_dispatched"]},
+    {"kind": "pipe", "delivery": ["not_dispatched", "unknown"]},
+    {"kind": "timeout", "delivery": ["not_dispatched", "unknown"]},
+    {"kind": "tmux_command", "delivery": ["unknown"]},
+    {"kind": "protocol", "delivery": []},
+    {"kind": "decode", "delivery": []},
+    {"kind": "mutation_applied", "delivery": ["applied"]}
+  ]
+}

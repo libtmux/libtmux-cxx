@@ -1,0 +1,173 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "cxx-base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "toolchainFile": "${sourceDir}/cmake/toolchains/clang-libcxx.cmake",
+      "environment": {
+        "LIBTMUX_EXPECT_COMPILER_ID": "Clang",
+        "LIBTMUX_EXPECT_COMPILER_VERSION": "18.1.3"
+      },
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "LIBTMUX_BUILD_TESTS": "ON",
+        "LIBTMUX_FETCH_DEPS": "ON",
+        "LIBTMUX_WARNINGS_AS_ERRORS": "ON",
+        "LIBTMUX_BUILD_EXAMPLES": "ON"
+      }
+    },
+    {
+      "name": "cxx-dev",
+      "inherits": "cxx-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "cxx-sanitize",
+      "inherits": "cxx-dev",
+      "cacheVariables": {
+        "LIBTMUX_ENABLE_SANITIZERS": "ON",
+        "LIBTMUX_ENABLE_THREAD_SANITIZER": "OFF"
+      }
+    },
+    {
+      "name": "cxx-tsan",
+      "inherits": "cxx-dev",
+      "cacheVariables": {
+        "LIBTMUX_ENABLE_SANITIZERS": "OFF",
+        "LIBTMUX_ENABLE_THREAD_SANITIZER": "ON"
+      }
+    },
+    {
+      "name": "cxx-transport-measure",
+      "inherits": "cxx-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "LIBTMUX_ENABLE_SANITIZERS": "OFF",
+        "LIBTMUX_ENABLE_THREAD_SANITIZER": "OFF"
+      }
+    },
+    {
+      "name": "cxx-gcc",
+      "displayName": "GCC and libstdc++, unpinned",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++",
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "LIBTMUX_BUILD_TESTS": "ON",
+        "LIBTMUX_FETCH_DEPS": "ON",
+        "LIBTMUX_WARNINGS_AS_ERRORS": "ON",
+        "LIBTMUX_BUILD_EXAMPLES": "ON"
+      }
+    },
+    {
+      "name": "cxx20",
+      "displayName": "C++20 over the pinned compatibility type",
+      "inherits": "cxx-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "LIBTMUX_CXX_STANDARD": "20"
+      }
+    },
+    {
+      "name": "cxx-coverage",
+      "displayName": "Instrumented for coverage",
+      "inherits": "cxx-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "LIBTMUX_ENABLE_COVERAGE": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "cxx-dev",
+      "configurePreset": "cxx-dev"
+    },
+    {
+      "name": "cxx-sanitize",
+      "configurePreset": "cxx-sanitize"
+    },
+    {
+      "name": "cxx-tsan",
+      "configurePreset": "cxx-tsan"
+    },
+    {
+      "name": "cxx-transport-measure",
+      "configurePreset": "cxx-transport-measure"
+    },
+    {
+      "name": "cxx-gcc",
+      "configurePreset": "cxx-gcc"
+    },
+    {
+      "name": "cxx20",
+      "configurePreset": "cxx20"
+    },
+    {
+      "name": "cxx-coverage",
+      "configurePreset": "cxx-coverage"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "cxx-dev",
+      "configurePreset": "cxx-dev",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "cxx-sanitize",
+      "configurePreset": "cxx-sanitize",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "cxx-tsan",
+      "configurePreset": "cxx-tsan",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "cxx-gcc",
+      "configurePreset": "cxx-gcc",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "cxx20",
+      "configurePreset": "cxx20",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "cxx-coverage",
+      "configurePreset": "cxx-coverage",
+      "output": {
+        "outputOnFailure": true
+      },
+      "environment": {
+        "LLVM_PROFILE_FILE": "${sourceDir}/build/cxx-coverage/profiles/%p.profraw"
+      }
+    }
+  ]
+}

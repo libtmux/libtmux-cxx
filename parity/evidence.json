@@ -1,0 +1,1049 @@
+{
+  "evidence": [
+    {
+      "case_id": "Buffers.RemoveTakesOneAwayAndLeavesTheRest",
+      "cmake_target": "libtmux_buffer_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.buffer.Buffers.RemoveTakesOneAwayAndLeavesTheRest",
+      "evidence_id": "behavior.buffers.buffer_contents",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/buffer_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "Buffers.RemoveTakesOneAwayAndLeavesTheRest",
+      "cmake_target": "libtmux_buffer_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.buffer.Buffers.RemoveTakesOneAwayAndLeavesTheRest",
+      "evidence_id": "behavior.buffers.delete",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/buffer_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "Buffers.AFileRoundTripsThroughABufferUnchanged",
+      "cmake_target": "libtmux_buffer_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.buffer.Buffers.AFileRoundTripsThroughABufferUnchanged",
+      "evidence_id": "behavior.buffers.load",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/buffer_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "Buffers.PasteDeliversTheTextAndLeavesTheBuffer",
+      "cmake_target": "libtmux_buffer_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.buffer.Buffers.PasteDeliversTheTextAndLeavesTheBuffer",
+      "evidence_id": "behavior.buffers.pane_paste",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/buffer_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "Buffers.LoadingSaysWhenTheFileIsNotThere",
+      "cmake_target": "libtmux_buffer_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.buffer.Buffers.LoadingSaysWhenTheFileIsNotThere",
+      "evidence_id": "behavior.buffers.save",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/buffer_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "Buffers.SetNamesABufferAndListingReportsIt",
+      "cmake_target": "libtmux_buffer_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.buffer.Buffers.SetNamesABufferAndListingReportsIt",
+      "evidence_id": "behavior.buffers.server_buffers",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/buffer_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "Buffers.ContentsReadBackExactlyWhatWentIn",
+      "cmake_target": "libtmux_buffer_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.buffer.Buffers.ContentsReadBackExactlyWhatWentIn",
+      "evidence_id": "behavior.buffers.server_set_buffer",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/buffer_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "Client.AControlConnectionIsAClientTheServerReports",
+      "cmake_target": "libtmux_client_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.client.Client.AControlConnectionIsAClientTheServerReports",
+      "evidence_id": "behavior.client.client",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/client_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "Client.AttachingIsACommandLineRatherThanACall",
+      "cmake_target": "libtmux_client_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.client.Client.AttachingIsACommandLineRatherThanACall",
+      "evidence_id": "behavior.clients.attach",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/client_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "Client.ASessionSendsEveryClientAway",
+      "cmake_target": "libtmux_client_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.client.Client.ASessionSendsEveryClientAway",
+      "evidence_id": "behavior.clients.detach",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/client_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "Commands.TheServerNamesEveryCommandItUnderstands",
+      "cmake_target": "libtmux_command_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.command.Commands.TheServerNamesEveryCommandItUnderstands",
+      "evidence_id": "behavior.commands.list",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/command_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "KeyBindings.BindingMakesTheTableExistAndUnbindingTakesItAway",
+      "cmake_target": "libtmux_key_binding_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.keys.KeyBindings.BindingMakesTheTableExistAndUnbindingTakesItAway",
+      "evidence_id": "behavior.keys.bind",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/key_binding_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "KeyBindings.UnbindingAKeyThatWasNotBoundLeavesTheRest",
+      "cmake_target": "libtmux_key_binding_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.keys.KeyBindings.UnbindingAKeyThatWasNotBoundLeavesTheRest",
+      "evidence_id": "behavior.keys.unbind",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/key_binding_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "WindowLayout.LastPaneReturnsToThePreviouslySelectedOne",
+      "cmake_target": "libtmux_window_layout_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.window.layout.WindowLayout.LastPaneReturnsToThePreviouslySelectedOne",
+      "evidence_id": "behavior.layout.last_pane",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/window_layout_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "WindowLinking.AWindowIsShownInTwoSessionsAtOnce",
+      "cmake_target": "libtmux_window_linking_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.window.linking.WindowLinking.AWindowIsShownInTwoSessionsAtOnce",
+      "evidence_id": "behavior.linking.link",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/window_linking_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "WindowLinking.UnlinkRemovesTheLinkTheValueNamesAndRefusesTheLast",
+      "cmake_target": "libtmux_window_linking_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.window.linking.WindowLinking.UnlinkRemovesTheLinkTheValueNamesAndRefusesTheLast",
+      "evidence_id": "behavior.linking.unlink",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/window_linking_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "ShowMessage.APaneNamesItselfRatherThanTheActiveOne",
+      "cmake_target": "libtmux_expand_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.expand.ShowMessage.APaneNamesItselfRatherThanTheActiveOne",
+      "evidence_id": "behavior.messages.pane",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/expand_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "ShowMessage.AMessageReachesAnAttachedControlClient",
+      "cmake_target": "libtmux_expand_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.expand.ShowMessage.AMessageReachesAnAttachedControlClient",
+      "evidence_id": "behavior.messages.server",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/expand_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "ShowMessage.TheTargetIsTheContextTheTextExpandsIn",
+      "cmake_target": "libtmux_expand_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.expand.ShowMessage.TheTargetIsTheContextTheTextExpandsIn",
+      "evidence_id": "behavior.messages.window",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/expand_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "PaneIo.CopyModeIsEnteredAndLeftWithoutAnAttachedClient",
+      "cmake_target": "libtmux_pane_io_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.pane.io.PaneIo.CopyModeIsEnteredAndLeftWithoutAnAttachedClient",
+      "evidence_id": "behavior.modes.copy_mode",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/pane_io_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "PaneIo.ClearHistoryDropsTheScrollbackAndKeepsTheScreen",
+      "cmake_target": "libtmux_pane_io_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.pane.io.PaneIo.ClearHistoryDropsTheScrollbackAndKeepsTheScreen",
+      "evidence_id": "behavior.pane-io.clear_history",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/pane_io_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "Scripting.AShellCommandRunsOnTheServersMachine",
+      "cmake_target": "libtmux_scripting_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.scripting.Scripting.AShellCommandRunsOnTheServersMachine",
+      "evidence_id": "behavior.scripting.run",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/scripting_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "Scripting.SourcingAFileAppliesWhatIsInIt",
+      "cmake_target": "libtmux_scripting_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.scripting.Scripting.SourcingAFileAppliesWhatIsInIt",
+      "evidence_id": "behavior.scripting.source",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/scripting_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "WaitFor.AServerDyingUnderTheWaiterIsNotASignal",
+      "cmake_target": "libtmux_wait_for_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.wait_for.WaitFor.AServerDyingUnderTheWaiterIsNotASignal",
+      "evidence_id": "behavior.scripting.wait_for",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/wait_for_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "ServerSessions.KillEndsTheServerAndEverythingOnIt",
+      "cmake_target": "libtmux_server_sessions_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.server.sessions.ServerSessions.KillEndsTheServerAndEverythingOnIt",
+      "evidence_id": "behavior.server-sessions.server_kill",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/server_sessions_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "ServerSessions.NewSessionCreatesOneAndHandsItBack",
+      "cmake_target": "libtmux_server_sessions_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.server.sessions.ServerSessions.NewSessionCreatesOneAndHandsItBack",
+      "evidence_id": "behavior.server-sessions.server_new_session",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/server_sessions_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "SessionNavigation.LastWindowReturnsToThePreviouslySelected",
+      "cmake_target": "libtmux_session_navigation_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.session.navigation.SessionNavigation.LastWindowReturnsToThePreviouslySelected",
+      "evidence_id": "behavior.session-navigation.last_window",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/session_navigation_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "SessionNavigation.NextWindowAdvancesAndWrapsAtTheEnd",
+      "cmake_target": "libtmux_session_navigation_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.session.navigation.SessionNavigation.NextWindowAdvancesAndWrapsAtTheEnd",
+      "evidence_id": "behavior.session-navigation.next_window",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/session_navigation_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "SessionNavigation.PreviousWindowStepsBack",
+      "cmake_target": "libtmux_session_navigation_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.session.navigation.SessionNavigation.PreviousWindowStepsBack",
+      "evidence_id": "behavior.session-navigation.previous_window",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/session_navigation_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "PaneTopology.JoinMovesAPaneAndEmptiesTheWindowItLeft",
+      "cmake_target": "libtmux_pane_topology_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.pane.topology.PaneTopology.JoinMovesAPaneAndEmptiesTheWindowItLeft",
+      "evidence_id": "behavior.topology.join",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/pane_topology_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "PaneTopology.PipingCopiesOutputUntilItIsStopped",
+      "cmake_target": "libtmux_pane_topology_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.pane.topology.PaneTopology.PipingCopiesOutputUntilItIsStopped",
+      "evidence_id": "behavior.topology.pipe",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/pane_topology_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "PaneTopology.RespawnRefusesALivePaneUnlessToldToReplaceIt",
+      "cmake_target": "libtmux_pane_topology_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.pane.topology.PaneTopology.RespawnRefusesALivePaneUnlessToldToReplaceIt",
+      "evidence_id": "behavior.topology.respawn",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/pane_topology_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "PaneTopology.ATitleIsSetAndSurvivesTheProcessBeingReplaced",
+      "cmake_target": "libtmux_pane_topology_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.pane.topology.PaneTopology.ATitleIsSetAndSurvivesTheProcessBeingReplaced",
+      "evidence_id": "behavior.topology.set_title",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/pane_topology_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "WindowLayout.SelectMakesOneWindowTheActiveOne",
+      "cmake_target": "libtmux_window_layout_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.window.layout.WindowLayout.SelectMakesOneWindowTheActiveOne",
+      "evidence_id": "behavior.window-layout.select",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/window_layout_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "WindowLayout.NextAndPreviousStepThroughTmuxsArrangements",
+      "cmake_target": "libtmux_window_layout_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.window.layout.WindowLayout.NextAndPreviousStepThroughTmuxsArrangements",
+      "evidence_id": "behavior.window-layout.window_next_layout",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/window_layout_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "WindowLayout.RotateMovesThePanesAndLeavesTheCells",
+      "cmake_target": "libtmux_window_layout_test",
+      "ctest_label": "real-tmux",
+      "ctest_name": "libtmux.window.layout.WindowLayout.RotateMovesThePanesAndLeavesTheCells",
+      "evidence_id": "behavior.window-layout.window_rotate",
+      "execution_mode": "real_tmux",
+      "kind": "behavior",
+      "path": "cxx/tests/integration/window_layout_test.cpp",
+      "real_tmux": true
+    },
+    {
+      "case_id": "buffers_are_set_read_and_removed",
+      "evidence_id": "compile.buffers.buffer_contents",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "buffers_move_through_files",
+      "evidence_id": "compile.buffers.delete",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "buffers_move_through_files",
+      "evidence_id": "compile.buffers.load",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "buffers_are_set_read_and_removed",
+      "evidence_id": "compile.buffers.pane_paste",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "buffers_move_through_files",
+      "evidence_id": "compile.buffers.save",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "buffers_are_set_read_and_removed",
+      "evidence_id": "compile.buffers.server_buffers",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "buffers_are_set_read_and_removed",
+      "evidence_id": "compile.buffers.server_set_buffer",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "a_client_is_a_value_read_from_a_listing",
+      "evidence_id": "compile.client.client",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "clients_come_and_go",
+      "evidence_id": "compile.clients.attach",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "clients_come_and_go",
+      "evidence_id": "compile.clients.detach",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "commands_are_listed",
+      "evidence_id": "compile.commands.list",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "keys_bind_and_unbind",
+      "evidence_id": "compile.keys.bind",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "keys_bind_and_unbind",
+      "evidence_id": "compile.keys.unbind",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "the_last_pane_is_reselected",
+      "evidence_id": "compile.layout.last_pane",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "windows_are_linked_and_unlinked",
+      "evidence_id": "compile.linking.link",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "windows_are_linked_and_unlinked",
+      "evidence_id": "compile.linking.unlink",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "formats_expand_and_messages_show",
+      "evidence_id": "compile.messages.pane",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "formats_expand_and_messages_show",
+      "evidence_id": "compile.messages.server",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "formats_expand_and_messages_show",
+      "evidence_id": "compile.messages.window",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "a_pane_enters_and_leaves_copy_mode",
+      "evidence_id": "compile.modes.copy_mode",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "a_pane_forgets_its_scrollback",
+      "evidence_id": "compile.pane-io.clear_history",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "the_server_runs_scripts",
+      "evidence_id": "compile.scripting.run",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "the_server_runs_scripts",
+      "evidence_id": "compile.scripting.source",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "a_channel_is_waited_on",
+      "evidence_id": "compile.scripting.wait_for",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "server_sessions_are_made_and_ended",
+      "evidence_id": "compile.server-sessions.server_kill",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "server_sessions_are_made_and_ended",
+      "evidence_id": "compile.server-sessions.server_new_session",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "navigation_answers_with_a_window",
+      "evidence_id": "compile.session-navigation.last_window",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "navigation_answers_with_a_window",
+      "evidence_id": "compile.session-navigation.next_window",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "navigation_answers_with_a_window",
+      "evidence_id": "compile.session-navigation.previous_window",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "panes_move_between_windows",
+      "evidence_id": "compile.topology.join",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "a_pane_is_piped",
+      "evidence_id": "compile.topology.pipe",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "panes_are_named_and_restarted",
+      "evidence_id": "compile.topology.respawn",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "panes_are_named_and_restarted",
+      "evidence_id": "compile.topology.set_title",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "a_window_is_selected",
+      "evidence_id": "compile.window-layout.select",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "a_window_changes_its_arrangement",
+      "evidence_id": "compile.window-layout.window_next_layout",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "a_window_changes_its_arrangement",
+      "evidence_id": "compile.window-layout.window_rotate",
+      "kind": "compile",
+      "path": "cxx/tests/compile/valid_uses.cpp"
+    },
+    {
+      "case_id": "libtmux::Buffer::contents",
+      "evidence_id": "documentation.buffers.buffer_contents",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Buffer::remove",
+      "evidence_id": "documentation.buffers.delete",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Server::load_buffer",
+      "evidence_id": "documentation.buffers.load",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Pane::paste",
+      "evidence_id": "documentation.buffers.pane_paste",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Server::save_buffer",
+      "evidence_id": "documentation.buffers.save",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Server::buffers",
+      "evidence_id": "documentation.buffers.server_buffers",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Server::set_buffer",
+      "evidence_id": "documentation.buffers.server_set_buffer",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Client",
+      "evidence_id": "documentation.client.client",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Session::attach_command",
+      "evidence_id": "documentation.clients.attach",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Session::detach_clients",
+      "evidence_id": "documentation.clients.detach",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Server::commands",
+      "evidence_id": "documentation.commands.list",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Server::bind_key",
+      "evidence_id": "documentation.keys.bind",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Server::unbind_key",
+      "evidence_id": "documentation.keys.unbind",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Window::select_last_pane",
+      "evidence_id": "documentation.layout.last_pane",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Window::link_to",
+      "evidence_id": "documentation.linking.link",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Window::unlink",
+      "evidence_id": "documentation.linking.unlink",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Pane::show_message",
+      "evidence_id": "documentation.messages.pane",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Server::show_message",
+      "evidence_id": "documentation.messages.server",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Window::show_message",
+      "evidence_id": "documentation.messages.window",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Pane::enter_copy_mode",
+      "evidence_id": "documentation.modes.copy_mode",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Pane::clear_history",
+      "evidence_id": "documentation.pane-io.clear_history",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Server::run_shell",
+      "evidence_id": "documentation.scripting.run",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Server::source_file",
+      "evidence_id": "documentation.scripting.source",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Server::wait_for",
+      "evidence_id": "documentation.scripting.wait_for",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Server::kill",
+      "evidence_id": "documentation.server-sessions.server_kill",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Server::new_session",
+      "evidence_id": "documentation.server-sessions.server_new_session",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Session::select_last_window",
+      "evidence_id": "documentation.session-navigation.last_window",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Session::select_next_window",
+      "evidence_id": "documentation.session-navigation.next_window",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Session::select_previous_window",
+      "evidence_id": "documentation.session-navigation.previous_window",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Pane::join",
+      "evidence_id": "documentation.topology.join",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Pane::pipe_to",
+      "evidence_id": "documentation.topology.pipe",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Pane::respawn",
+      "evidence_id": "documentation.topology.respawn",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Pane::set_title",
+      "evidence_id": "documentation.topology.set_title",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Window::select",
+      "evidence_id": "documentation.window-layout.select",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Window::next_layout",
+      "evidence_id": "documentation.window-layout.window_next_layout",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "libtmux::Window::rotate",
+      "evidence_id": "documentation.window-layout.window_rotate",
+      "kind": "documentation",
+      "path": "cxx/docs/api.md"
+    },
+    {
+      "case_id": "buffer.contents",
+      "evidence_id": "example.buffers.buffer_contents",
+      "kind": "example",
+      "path": "cxx/examples/01-tour.cpp"
+    },
+    {
+      "case_id": "buffer.remove",
+      "evidence_id": "example.buffers.delete",
+      "kind": "example",
+      "path": "cxx/examples/01-tour.cpp"
+    },
+    {
+      "case_id": "server.load_buffer",
+      "evidence_id": "example.buffers.load",
+      "kind": "example",
+      "path": "cxx/examples/01-tour.cpp"
+    },
+    {
+      "case_id": "pane.paste",
+      "evidence_id": "example.buffers.pane_paste",
+      "kind": "example",
+      "path": "cxx/examples/01-tour.cpp"
+    },
+    {
+      "case_id": "server.save_buffer",
+      "evidence_id": "example.buffers.save",
+      "kind": "example",
+      "path": "cxx/examples/01-tour.cpp"
+    },
+    {
+      "case_id": "server.buffers",
+      "evidence_id": "example.buffers.server_buffers",
+      "kind": "example",
+      "path": "cxx/examples/01-tour.cpp"
+    },
+    {
+      "case_id": "server.set_buffer",
+      "evidence_id": "example.buffers.server_set_buffer",
+      "kind": "example",
+      "path": "cxx/examples/01-tour.cpp"
+    },
+    {
+      "case_id": "client",
+      "evidence_id": "example.client.client",
+      "kind": "example",
+      "path": "cxx/examples/01-tour.cpp"
+    },
+    {
+      "case_id": "session.attach_command",
+      "evidence_id": "example.clients.attach",
+      "kind": "example",
+      "path": "cxx/examples/01-tour.cpp"
+    },
+    {
+      "case_id": "session.detach_clients",
+      "evidence_id": "example.clients.detach",
+      "kind": "example",
+      "path": "cxx/examples/01-tour.cpp"
+    },
+    {
+      "case_id": "server.commands",
+      "evidence_id": "example.commands.list",
+      "kind": "example",
+      "path": "cxx/examples/01-tour.cpp"
+    },
+    {
+      "case_id": "server.bind_key",
+      "evidence_id": "example.keys.bind",
+      "kind": "example",
+      "path": "cxx/examples/02-workspace.cpp"
+    },
+    {
+      "case_id": "server.unbind_key",
+      "evidence_id": "example.keys.unbind",
+      "kind": "example",
+      "path": "cxx/examples/02-workspace.cpp"
+    },
+    {
+      "case_id": "window.select_last_pane",
+      "evidence_id": "example.layout.last_pane",
+      "kind": "example",
+      "path": "cxx/examples/02-workspace.cpp"
+    },
+    {
+      "case_id": "window.link_to",
+      "evidence_id": "example.linking.link",
+      "kind": "example",
+      "path": "cxx/examples/02-workspace.cpp"
+    },
+    {
+      "case_id": "window.unlink",
+      "evidence_id": "example.linking.unlink",
+      "kind": "example",
+      "path": "cxx/examples/02-workspace.cpp"
+    },
+    {
+      "case_id": "pane.expand",
+      "evidence_id": "example.messages.pane",
+      "kind": "example",
+      "path": "cxx/examples/01-tour.cpp"
+    },
+    {
+      "case_id": "pane.expand",
+      "evidence_id": "example.messages.server",
+      "kind": "example",
+      "path": "cxx/examples/01-tour.cpp"
+    },
+    {
+      "case_id": "pane.expand",
+      "evidence_id": "example.messages.window",
+      "kind": "example",
+      "path": "cxx/examples/01-tour.cpp"
+    },
+    {
+      "case_id": "pane.enter_copy_mode",
+      "evidence_id": "example.modes.copy_mode",
+      "kind": "example",
+      "path": "cxx/examples/01-tour.cpp"
+    },
+    {
+      "case_id": "pane.clear_history",
+      "evidence_id": "example.pane-io.clear_history",
+      "kind": "example",
+      "path": "cxx/examples/01-tour.cpp"
+    },
+    {
+      "case_id": "server.run_shell",
+      "evidence_id": "example.scripting.run",
+      "kind": "example",
+      "path": "cxx/examples/02-workspace.cpp"
+    },
+    {
+      "case_id": "server.source_file",
+      "evidence_id": "example.scripting.source",
+      "kind": "example",
+      "path": "cxx/examples/02-workspace.cpp"
+    },
+    {
+      "case_id": "server.wait_for",
+      "evidence_id": "example.scripting.wait_for",
+      "kind": "example",
+      "path": "cxx/examples/04-errors.cpp"
+    },
+    {
+      "case_id": "server.kill",
+      "evidence_id": "example.server-sessions.server_kill",
+      "kind": "example",
+      "path": "cxx/examples/04-errors.cpp"
+    },
+    {
+      "case_id": "server.new_session",
+      "evidence_id": "example.server-sessions.server_new_session",
+      "kind": "example",
+      "path": "cxx/examples/02-workspace.cpp"
+    },
+    {
+      "case_id": "session.select_last_window",
+      "evidence_id": "example.session-navigation.last_window",
+      "kind": "example",
+      "path": "cxx/examples/01-tour.cpp"
+    },
+    {
+      "case_id": "session.select_next_window",
+      "evidence_id": "example.session-navigation.next_window",
+      "kind": "example",
+      "path": "cxx/examples/01-tour.cpp"
+    },
+    {
+      "case_id": "session.select_previous_window",
+      "evidence_id": "example.session-navigation.previous_window",
+      "kind": "example",
+      "path": "cxx/examples/01-tour.cpp"
+    },
+    {
+      "case_id": "pane.join",
+      "evidence_id": "example.topology.join",
+      "kind": "example",
+      "path": "cxx/examples/02-workspace.cpp"
+    },
+    {
+      "case_id": "pane.pipe_to",
+      "evidence_id": "example.topology.pipe",
+      "kind": "example",
+      "path": "cxx/examples/01-tour.cpp"
+    },
+    {
+      "case_id": "pane.respawn",
+      "evidence_id": "example.topology.respawn",
+      "kind": "example",
+      "path": "cxx/examples/01-tour.cpp"
+    },
+    {
+      "case_id": "pane.set_title",
+      "evidence_id": "example.topology.set_title",
+      "kind": "example",
+      "path": "cxx/examples/01-tour.cpp"
+    },
+    {
+      "case_id": "window.select",
+      "evidence_id": "example.window-layout.select",
+      "kind": "example",
+      "path": "cxx/examples/02-workspace.cpp"
+    },
+    {
+      "case_id": "window.next_layout",
+      "evidence_id": "example.window-layout.window_next_layout",
+      "kind": "example",
+      "path": "cxx/examples/02-workspace.cpp"
+    },
+    {
+      "case_id": "window.rotate",
+      "evidence_id": "example.window-layout.window_rotate",
+      "kind": "example",
+      "path": "cxx/examples/02-workspace.cpp"
+    }
+  ],
+  "schema_version": 1
+}

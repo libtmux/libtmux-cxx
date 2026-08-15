@@ -1,0 +1,8 @@
+# dispatch_overhead_scale follow-up review
+
+Status: Ready
+Unresolved findings: 0
+Source commit: 90ffde066931501c5a4c5236cbd14d2f9466d748
+Source tree: 579a9ae9043fbd102e6aacaec5e8cf80b59bf3ae
+Source manifest: sha256:e892775406ea9ccc23593d125765b846a2daef6897040e8598759a3f2423f45f
+Follow-up core: sha256:d3bd402765c18ba6e8215302c88d846cab709d5316af38e0892890e7d5bf1e7d

@@ -1,0 +1,7 @@
+measurement-probes/abstract/private_diagnostic_negative.cpp:10:18: error: 'state_' is a private member of 'libtmux::spike::Server'
+   10 |   return server->state_ ? 0 : 1;
+      |                  ^
+../../spikes/transport/abstract_backend/include/libtmux_spike/server.hpp:40:32: note: declared private here
+   40 |   std::shared_ptr<ServerState> state_;
+      |                                ^
+1 error generated.

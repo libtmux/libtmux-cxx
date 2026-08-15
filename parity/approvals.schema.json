@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "approvals.schema.json",
+  "title": "libtmux C++ parity approvals",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "approvals"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "approvals": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/approval"}
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "safe_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "approval_id",
+        "decision_kind",
+        "scope_entry_ids",
+        "accepted_decision_sha256",
+        "evidence_path"
+      ],
+      "properties": {
+        "approval_id": {"type": "string", "minLength": 1},
+        "decision_kind": {
+          "enum": [
+            "adaptation",
+            "exclusion",
+            "pending_adaptation",
+            "reconciliation"
+          ]
+        },
+        "scope_entry_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "accepted_decision_sha256": {"$ref": "#/$defs/digest"},
+        "evidence_path": {"$ref": "#/$defs/safe_path"}
+      }
+    }
+  }
+}

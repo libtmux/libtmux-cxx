@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "normal_exit_code": 0,
+  "normal_stdout_hex": "7374646f75742d70726f62650a",
+  "normal_stderr_hex": "7374646572722d70726f62650a",
+  "nonzero_exit_code": 23,
+  "reserved_exit_code": 127,
+  "signal_number": 10,
+  "binary_stdout_hex": "00ff41800a",
+  "binary_stderr_hex": "fe00427f0a",
+  "large_bytes_per_stream": 262144,
+  "default_capture_limit": 1048576,
+  "redaction_marker": "[REDACTED]"
+}

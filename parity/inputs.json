@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "inputs": [
+    {"path": "src/libtmux", "kind": "tree"},
+    {"path": "docs/api", "kind": "tree"},
+    {"path": "docs/project/public-api.md", "kind": "blob"},
+    {"path": "docs/project/compatibility.md", "kind": "blob"},
+    {"path": "docs/project/deprecations.md", "kind": "blob"},
+    {"path": "conftest.py", "kind": "blob"},
+    {
+      "path": "pyproject.toml",
+      "kind": "toml_fields",
+      "fields": [
+        "project.requires-python",
+        "project.entry-points.pytest11",
+        "project.classifiers"
+      ]
+    }
+  ]
+}

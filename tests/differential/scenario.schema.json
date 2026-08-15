@@ -1,0 +1,58 @@
+{
+  "$id": "https://libtmux.git-pull.com/schema/differential-scenario/v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "canonicalization": {
+      "additionalProperties": false,
+      "properties": {
+        "entity_id_pointers": {
+          "items": {"type": "string"},
+          "type": "array",
+          "uniqueItems": true
+        },
+        "remove_pointers": {
+          "items": {"type": "string"},
+          "type": "array",
+          "uniqueItems": true
+        },
+        "unordered_pointers": {
+          "items": {"type": "string"},
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "entity_id_pointers",
+        "remove_pointers",
+        "unordered_pointers"
+      ],
+      "type": "object"
+    },
+    "operations": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "request": {"type": "object"},
+          "tag": {"minLength": 1, "type": "string"}
+        },
+        "required": ["tag", "request"],
+        "type": "object"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "scenario_id": {
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+      "type": "string"
+    },
+    "schema_version": {"const": 1, "type": "integer"}
+  },
+  "required": [
+    "schema_version",
+    "scenario_id",
+    "operations",
+    "canonicalization"
+  ],
+  "type": "object"
+}

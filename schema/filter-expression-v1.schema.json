@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://libtmux.git-pull.com/schema/filter-expression-v1.schema.json",
+  "title": "libtmux filter expression",
+  "description": "A lowered filter expression as a flat sequence in prefix order. Groups, negations, and relations are bracketed by begin and end nodes so a reader never counts operands.",
+  "type": "object",
+  "required": [
+    "version",
+    "nodes"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1,
+      "description": "Schema version. A reader that does not recognise the value must refuse the document rather than guess."
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/node"
+      }
+    }
+  },
+  "$defs": {
+    "node": {
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "string_test",
+            "bool_test",
+            "number_test",
+            "begin_group",
+            "end_group",
+            "begin_negation",
+            "end_negation",
+            "begin_relation",
+            "end_relation"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "description": "tmux format name for a test, relation name for a relation."
+        },
+        "op": {
+          "enum": [
+            "eq",
+            "iexact",
+            "contains",
+            "startswith",
+            "endswith",
+            "ne",
+            "lt",
+            "lte",
+            "gt",
+            "gte"
+          ],
+          "description": "Present on string_test and number_test. A number_test uses eq, ne, lt, lte, gt or gte; a string_test uses the rest."
+        },
+        "operand": {
+          "type": "string",
+          "description": "The value compared against, owned rather than referenced."
+        },
+        "conjunction": {
+          "type": "boolean",
+          "description": "Present only on begin_group. True is and, false is or."
+        },
+        "expected": {
+          "type": "boolean",
+          "description": "Present only on bool_test."
+        },
+        "quantifier": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3,
+          "description": "Present only on begin_relation: 0 any_of, 1 all_of, 2 none_of, 3 is."
+        },
+        "number": {
+          "type": "integer",
+          "description": "Present only on number_test: the value compared against, as a number rather than as its rendered text."
+        }
+      }
+    }
+  }
+}
