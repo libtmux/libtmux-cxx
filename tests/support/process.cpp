@@ -50,8 +50,24 @@ void close_fd(int& descriptor) noexcept {
   }
 }
 
+// Whether this platform can hand out a pidfd. Where it cannot — macOS, the
+// BSDs — reaping falls back to the child's pid, which is what everything did
+// before pidfds existed. The race a pidfd closes is that a reaped pid can be
+// reused before the next call names it; this helper reaps its own children
+// exclusively and nothing else waits for them, which is what keeps the
+// fallback sound rather than merely traditional.
+// `LIBTMUX_FORCE_PORTABLE_SYSCALLS` selects the fallback on Linux too, so the
+// path a macOS runner takes can be run here rather than only there.
+#if defined(__linux__) && defined(SYS_pidfd_open) &&                                   \
+    !defined(LIBTMUX_FORCE_PORTABLE_SYSCALLS)
+inline constexpr bool kHasPidfd = true;
+#else
+inline constexpr bool kHasPidfd = false;
+#endif
+
 int open_pidfd(pid_t pid) noexcept {
-#if defined(__linux__) && defined(SYS_pidfd_open)
+#if defined(__linux__) && defined(SYS_pidfd_open) &&                                   \
+    !defined(LIBTMUX_FORCE_PORTABLE_SYSCALLS)
   return static_cast<int>(::syscall(SYS_pidfd_open, pid, 0U));
 #else
   static_cast<void>(pid);
@@ -61,7 +77,8 @@ int open_pidfd(pid_t pid) noexcept {
 }
 
 int signal_pidfd(int pidfd, int signal_number) noexcept {
-#if defined(__linux__) && defined(SYS_pidfd_send_signal)
+#if defined(__linux__) && defined(SYS_pidfd_send_signal) &&                            \
+    !defined(LIBTMUX_FORCE_PORTABLE_SYSCALLS)
   return static_cast<int>(
       ::syscall(SYS_pidfd_send_signal, pidfd, signal_number, nullptr, 0U));
 #else
@@ -88,6 +105,11 @@ libtmux::expected<void, std::string> validate_sigchld_disposition() {
 }
 
 libtmux::expected<int, std::string> reserve_pidfd_capacity() {
+  if constexpr (!kHasPidfd) {
+    // The reservation proves a pidfd can still be opened after the spawn. With
+    // no pidfds there is nothing to run out of, and -1 closes harmlessly.
+    return -1;
+  }
   auto descriptor = open_pidfd(::getpid());
   if (descriptor < 0) {
     return libtmux::unexpected(system_error("pidfd_open reservation", errno));
@@ -119,7 +141,7 @@ int wait_status_from(const siginfo_t& information) noexcept {
 }
 
 bool consume_pidfd_status(int pidfd, std::optional<int>* status) noexcept {
-#if defined(__linux__)
+#if defined(__linux__) && !defined(LIBTMUX_FORCE_PORTABLE_SYSCALLS)
   siginfo_t information{};
   if (::waitid(P_PIDFD, static_cast<id_t>(pidfd), &information, WEXITED | WNOHANG) ==
       0) {
@@ -415,7 +437,11 @@ ChildProcess::spawn(ProcessOptions options) {
     return libtmux::unexpected(system_error("posix_spawnp", result));
   }
   const auto pidfd = open_pidfd(child_pid);
-  if (pidfd < 0) {
+  if (pidfd < 0 && !kHasPidfd) {
+    // Expected here, and not an error: the ticket carries the pid instead, and
+    // signalling and reaping go through it.
+    (*reap_ticket)->fallback_pid = child_pid;
+  } else if (pidfd < 0) {
     const auto saved_errno = errno;
     close_fd(stdout_read);
     close_fd(stderr_read);
@@ -505,7 +531,19 @@ bool ChildProcess::wait_until(ProcessClock::time_point deadline) noexcept {
 
 bool ChildProcess::send_signal(int signal_number) noexcept {
   update_status();
-  if (!owns_child_ || !reap_ticket_ || reap_ticket_->pidfd < 0) {
+  if (!owns_child_ || !reap_ticket_) {
+    return false;
+  }
+  if (reap_ticket_->pidfd < 0) {
+    if (reap_ticket_->fallback_pid <= 0) {
+      return false;
+    }
+    if (::kill(reap_ticket_->fallback_pid, signal_number) == 0) {
+      return true;
+    }
+    if (errno == ESRCH) {
+      update_status();
+    }
     return false;
   }
   if (signal_pidfd(reap_ticket_->pidfd, signal_number) == 0) {
@@ -633,7 +671,16 @@ void ChildProcess::update_status() noexcept {
   if (!owns_child_) {
     return;
   }
-  if (reap_ticket_ && consume_pidfd_status(reap_ticket_->pidfd, &wait_status_)) {
+  if (reap_ticket_ && reap_ticket_->pidfd < 0 && reap_ticket_->fallback_pid > 0) {
+    int status = 0;
+    const auto reaped = ::waitpid(reap_ticket_->fallback_pid, &status, WNOHANG);
+    if (reaped == reap_ticket_->fallback_pid) {
+      wait_status_ = status;
+      owns_child_ = false;
+    } else if (reaped < 0 && errno == ECHILD) {
+      owns_child_ = false;
+    }
+  } else if (reap_ticket_ && consume_pidfd_status(reap_ticket_->pidfd, &wait_status_)) {
     owns_child_ = false;
   }
   if (!owns_child_ && reap_ticket_) {

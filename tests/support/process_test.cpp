@@ -328,6 +328,20 @@ public:
 
 void handle_interrupt(int /*signal_number*/) {}
 
+// Several tests below pin what a pidfd buys: an identity the kernel keeps until
+// this process reaps the child, which a numeric pid does not have because a
+// reaped pid can be reused. Where the platform has no pidfd — macOS, the BSDs —
+// there is no such guarantee to hold the helper to, and it falls back to
+// `waitpid` by pid. Skipping says that; failing would claim the fallback is
+// broken when it is doing the only thing available.
+#if defined(__linux__) && defined(SYS_pidfd_open) &&                                   \
+    !defined(LIBTMUX_FORCE_PORTABLE_SYSCALLS)
+#define LIBTMUX_SKIP_WITHOUT_PIDFD() static_cast<void>(0)
+#else
+#define LIBTMUX_SKIP_WITHOUT_PIDFD()                                                   \
+  GTEST_SKIP() << "this platform has no pidfd; reaping falls back to waitpid by pid"
+#endif
+
 TEST(ProcessSupport, CapturesBothStreamsAndReapsDirectChild) {
   auto child = ChildProcess::spawn(
       {.executable = LIBTMUX_FAKE_TMUX_PATH,
@@ -372,6 +386,8 @@ TEST(ProcessSupport, BoundsCaptureWhileDrainingLargeDualPipeOutput) {
 }
 
 TEST(ProcessSupport, KeepsStableKernelIdentityUntilDirectChildIsReaped) {
+  LIBTMUX_SKIP_WITHOUT_PIDFD();
+
   auto child = ChildProcess::spawn(
       {.executable = LIBTMUX_FAKE_TMUX_PATH,
        .arguments = {"--process-probe", "wait"},
@@ -387,6 +403,8 @@ TEST(ProcessSupport, KeepsStableKernelIdentityUntilDirectChildIsReaped) {
 
 #if defined(__linux__)
 TEST(ProcessSupport, RejectsBeforeSpawnWhenPidfdCapacityCannotBeReserved) {
+  LIBTMUX_SKIP_WITHOUT_PIDFD();
+
   const auto trace = process_trace_path("libtmux-pidfd-reservation");
   auto environment = libtmux::test::detail::current_environment();
   libtmux::test::detail::set_environment(environment, "LIBTMUX_FAKE_TRACE",
@@ -415,6 +433,8 @@ TEST(ProcessSupport, RejectsBeforeSpawnWhenPidfdCapacityCannotBeReserved) {
 }
 
 TEST(ProcessSupport, PidfdOpenFailureTerminatesAndReapsNonExitingChild) {
+  LIBTMUX_SKIP_WITHOUT_PIDFD();
+
   const auto trace = process_trace_path("libtmux-pidfd-child-failure");
   auto environment = libtmux::test::detail::current_environment();
   libtmux::test::detail::set_environment(environment, "LIBTMUX_FAKE_TRACE",
@@ -447,6 +467,8 @@ TEST(ProcessSupport, PidfdOpenFailureTerminatesAndReapsNonExitingChild) {
 }
 
 TEST(ProcessSupport, PidfdOpenFailureRetainsDelayedReapOwnership) {
+  LIBTMUX_SKIP_WITHOUT_PIDFD();
+
   const auto trace = process_trace_path("libtmux-pidfd-delayed-reap");
   auto environment = libtmux::test::detail::current_environment();
   libtmux::test::detail::set_environment(environment, "LIBTMUX_FAKE_TRACE",
@@ -495,6 +517,8 @@ TEST(ProcessSupport, PidfdOpenFailureRetainsDelayedReapOwnership) {
 }
 
 TEST(ProcessSupport, WaitsAndPreservesStatusWithoutNumericPidReaping) {
+  LIBTMUX_SKIP_WITHOUT_PIDFD();
+
   auto child = ChildProcess::spawn(
       {.executable = LIBTMUX_FAKE_TMUX_PATH,
        .arguments = {"--process-probe", "streams"},
@@ -512,6 +536,8 @@ TEST(ProcessSupport, WaitsAndPreservesStatusWithoutNumericPidReaping) {
 }
 
 TEST(ProcessSupport, PreservesSignalStatusWithoutNumericPidReaping) {
+  LIBTMUX_SKIP_WITHOUT_PIDFD();
+
   auto child = ChildProcess::spawn(
       {.executable = LIBTMUX_FAKE_TMUX_PATH,
        .arguments = {"--process-probe", "wait"},
@@ -530,6 +556,8 @@ TEST(ProcessSupport, PreservesSignalStatusWithoutNumericPidReaping) {
 }
 
 TEST(ProcessSupport, AmbientPidfdReapCannotRedirectToReusedNumericPid) {
+  LIBTMUX_SKIP_WITHOUT_PIDFD();
+
   auto original = ChildProcess::spawn(
       {.executable = LIBTMUX_FAKE_TMUX_PATH,
        .arguments = {"--process-probe", "streams"},
@@ -569,6 +597,8 @@ TEST(ProcessSupport, AmbientPidfdReapCannotRedirectToReusedNumericPid) {
 }
 
 TEST(ProcessSupport, BackgroundHandoffReapsWithoutNumericPidWait) {
+  LIBTMUX_SKIP_WITHOUT_PIDFD();
+
   auto child = ChildProcess::spawn(
       {.executable = LIBTMUX_FAKE_TMUX_PATH,
        .arguments = {"--process-probe", "wait"},
