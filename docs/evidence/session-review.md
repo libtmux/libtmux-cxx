@@ -58,11 +58,11 @@ exactly like a suite holding firm. Five of the roughly thirty runs behind
 this note were non-results for that reason, and each was only noticed
 because the output looked too clean.
 
-So the catalogue lives in `cxx/tools/mutate/` and the runner names three
+So the catalogue lives in `tools/mutate/` and the runner names three
 outcomes instead of two:
 
 ```console
-$ python3 -m cxx.tools.mutate --preset cxx-dev
+$ python3 -m tools.mutate --preset cxx-dev
 ```
 
 A survivor fails the run and says which guard went unnoticed. A mutation

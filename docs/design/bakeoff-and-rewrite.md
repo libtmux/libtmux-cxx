@@ -414,7 +414,7 @@ is a parse error. There is no silent fallback to exact lookup.
 
 The core exposes a read-only AST visitor. A separate opt-in JSON header lowers
 the AST through a serializer concept. The language-neutral canonical schema is
-committed under `cxx/schema/` and owns the schema identifier, integer major
+committed under `schema/` and owns the schema identifier, integer major
 version, entity kinds, closed node tags, field IDs, relation IDs, regex flags,
 and scalar encodings. An incompatible representation change creates a new
 major schema; version-one tags never change meaning.

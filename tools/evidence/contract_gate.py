@@ -103,7 +103,7 @@ _VERSIONED_COMMANDS = {
     "toolchain.ninja.cxx-sanitize",
     "toolchain.ninja.cxx-tsan",
 }
-_OUTPUT_PATH = pathlib.Path("cxx/docs/evidence/contract-and-harness.json")
+_OUTPUT_PATH = pathlib.Path("docs/evidence/contract-and-harness.json")
 _PROVED_CLAIMS = [
     "current Linux harness",
     "pinned parity-source reproducibility",
@@ -151,7 +151,7 @@ def build_parser() -> argparse.ArgumentParser:
     >>> build_parser().parse_args(["--output", "evidence.json"]).review is None
     True
     """
-    parser = argparse.ArgumentParser(prog="python -m cxx.tools.evidence.contract_gate")
+    parser = argparse.ArgumentParser(prog="python -m tools.evidence.contract_gate")
     parser.add_argument("--output", type=pathlib.Path, required=True)
     parser.add_argument("--review", type=pathlib.Path)
     return parser
@@ -1428,7 +1428,7 @@ def _python_contract(root: pathlib.Path) -> dict[str, object]:
     bindings = manifest.get("bindings")
     if not isinstance(bindings, dict):
         _abort("missing parity bindings")
-    from cxx.tools.parity.generate import canonical_sha256
+    from tools.parity.generate import canonical_sha256
 
     for key, (document, _) in documents.items():
         binding = bindings.get(f"{key}_sha256")
@@ -1446,7 +1446,7 @@ def _python_contract(root: pathlib.Path) -> dict[str, object]:
     semantic = manifest.get("semantic_contract_sha256")
     if not isinstance(semantic, str) or not _DIGEST.fullmatch(semantic):
         _abort("invalid parity semantic digest")
-    from cxx.tools.parity.sync import semantic_contract_sha256
+    from tools.parity.sync import semantic_contract_sha256
 
     if semantic_contract_sha256(manifest) != semantic:
         _abort("parity semantic digest differs from manifest")
@@ -3560,7 +3560,7 @@ def _run_aggregate_with_compilers(
                 [
                     sys.executable,
                     "-m",
-                    "cxx.tools.evidence.ctest_gate",
+                    "tools.evidence.ctest_gate",
                     "--source-dir",
                     "cxx",
                     "--preset",
@@ -3608,10 +3608,10 @@ def _run_aggregate_with_compilers(
                 "run",
                 "python",
                 "-m",
-                "cxx.tools.parity",
+                "tools.parity",
                 "generate",
                 "--check",
-                "cxx/parity",
+                "tools/parity/data",
             ],
         ),
         (
@@ -3621,10 +3621,10 @@ def _run_aggregate_with_compilers(
                 "run",
                 "python",
                 "-m",
-                "cxx.tools.parity",
+                "tools.parity",
                 "drift",
                 "--manifest",
-                "cxx/parity/manifest.json",
+                "tools/parity/data/manifest.json",
                 "--worktree",
                 ".",
             ],
@@ -3636,10 +3636,10 @@ def _run_aggregate_with_compilers(
                 "run",
                 "python",
                 "-m",
-                "cxx.tools.parity",
+                "tools.parity",
                 "verify",
                 "--manifest",
-                "cxx/parity/manifest.json",
+                "tools/parity/data/manifest.json",
                 "--mode",
                 "structural",
                 "--allow-pending",
@@ -3669,8 +3669,8 @@ def _run_aggregate_with_compilers(
                 "run",
                 "pytest",
                 "--doctest-modules",
-                "cxx/tools",
-                "cxx/tests/differential",
+                "tools",
+                "tests/differential",
             ],
         ),
     ):
@@ -4276,7 +4276,7 @@ def _validate_source_snapshot(value: object) -> str:
     if any(
         name == prefix or name.startswith(f"{prefix}/")
         for name in names
-        for prefix in ("cxx/include", "cxx/src", "cxx/spikes")
+        for prefix in ("include", "src", "cxx/spikes")
     ):
         _abort("invalid source snapshot")
     if _sha256(_canonical_bytes({"entries": entries})) != digest:

@@ -701,373 +701,373 @@
         },
         {
           "mode": "100644",
-          "path": "cxx/cmake/GoogleTest.cmake",
+          "path": "cmake/GoogleTest.cmake",
           "sha256": "sha256:29646b76289ffdcf40d8e2df6f89cc4d1035ef62d90ab9cf771ce1f6d82ac06f",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/cmake/ProjectOptions.cmake",
+          "path": "cmake/ProjectOptions.cmake",
           "sha256": "sha256:e4f9d60fd2310d91290b7673be91c41add2a774e0bc7b11f308964e23eefa7a6",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/cmake/toolchains/clang-libcxx.cmake",
+          "path": "cmake/toolchains/clang-libcxx.cmake",
           "sha256": "sha256:71daf3df6b2abe00fcab5fe85bc0ae0cf5fd60479f4ecd9b8354d5a15a7e1139",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/docs/design/bakeoff-and-rewrite.md",
+          "path": "docs/design/bakeoff-and-rewrite.md",
           "sha256": "sha256:89111ab526eb2946daee3e2aa6da1665de8a72f7ef118a2fc6d08fcd73d15023",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/docs/evidence/contract-and-harness-review.md",
+          "path": "docs/evidence/contract-and-harness-review.md",
           "sha256": "sha256:f7d645f6849011e49e30748c5afe874d60139a5003aced23da33d150c7896d8b",
           "source": "untracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/docs/plans/00-program.md",
+          "path": "docs/plans/00-program.md",
           "sha256": "sha256:8b5ec2f272b14a6a91374c4dc79d019934568dffcf0d6378f1e5c1663a37dcd9",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/docs/plans/01-contract-and-harness.md",
+          "path": "docs/plans/01-contract-and-harness.md",
           "sha256": "sha256:6d7cd3e75ebf88ba334016debb110671bc2fa8a0038ff569bbb229ee3a2538d9",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/docs/plans/02-transport-bakeoff.md",
+          "path": "docs/plans/02-transport-bakeoff.md",
           "sha256": "sha256:96d2bcff6afede4b26986cbbf56461ce7ef5610f122aaf7b93e1ac890e55f4e5",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/docs/plans/03-query-bakeoff.md",
+          "path": "docs/plans/03-query-bakeoff.md",
           "sha256": "sha256:4656de81a761221f540ca4d3b7486fc3e0951ac92e4352a9f3f8236ba632d4ce",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/docs/plans/04-clean-rewrite.md",
+          "path": "docs/plans/04-clean-rewrite.md",
           "sha256": "sha256:f63cad5af9e8cf679dcde99305eda73141527eb1dbea9dadd8ed3704c7bc72a6",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/docs/plans/05-python-parity.md",
+          "path": "docs/plans/05-python-parity.md",
           "sha256": "sha256:d6a1b2a8fc494587bf157f6c7386be2e92975592d8c913be124baa8054ce2259",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/docs/plans/06-distribution-and-audit.md",
+          "path": "docs/plans/06-distribution-and-audit.md",
           "sha256": "sha256:f5fbb024d7e7e6a38b78807e64e5d386521b3d93cbd8c34f0b4d3c66007082cb",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/parity/approvals.json",
+          "path": "tools/parity/data/approvals.json",
           "sha256": "sha256:fcf19ab9912e80ec410eb65c5cecb6f9a6cdd226e5b2678724c83b658c85ed0e",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/parity/approvals.schema.json",
+          "path": "tools/parity/data/approvals.schema.json",
           "sha256": "sha256:a8e84a2826189d402240323aa5b3ae81209d0337987783ec612d4cbfd19f7168",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/parity/development.json",
+          "path": "tools/parity/data/development.json",
           "sha256": "sha256:d6d064f28363ad7379cfba2f4e337692955d429d92af7f2e7c919a3d75ec0c6f",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/parity/evidence.json",
+          "path": "tools/parity/data/evidence.json",
           "sha256": "sha256:54021ac49e7519e3b85ebb11ad55061577a9670b81ea1d0584c0b1007b3b4965",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/parity/evidence.schema.json",
+          "path": "tools/parity/data/evidence.schema.json",
           "sha256": "sha256:973c34c03dd437cb51ad1aa21f6eb0226b9a26178de743267aa3b0c1a42008a8",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/parity/inputs.json",
+          "path": "tools/parity/data/inputs.json",
           "sha256": "sha256:e992dd2d690e900491c4e8838c57fabce2cec9d468042ec84f1d25e63da236c7",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/parity/manifest.json",
+          "path": "tools/parity/data/manifest.json",
           "sha256": "sha256:1ea9b2a77a508ef1f43b2c500db7b6d817d5212f6b30e152dd76001a32b74461",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/parity/manifest.schema.json",
+          "path": "tools/parity/data/manifest.schema.json",
           "sha256": "sha256:f908ddfc9c3224208722eddbf28f74d229cf7335ba6fa441172aa17c35a6d127",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/parity/mapping.json",
+          "path": "tools/parity/data/mapping.json",
           "sha256": "sha256:f27956d5fc8b9758d1998fc744992241f98de6328570ee53853cf827b6ceaf75",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/parity/release-v0.62.0.json",
+          "path": "tools/parity/data/release-v0.62.0.json",
           "sha256": "sha256:a78520e081d701f6e1faba24c8891f57eb039496d20b2a4833cf0eb2ac135820",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/parity/shards.json",
+          "path": "tools/parity/data/shards.json",
           "sha256": "sha256:8cc53bd1faa660b08d220bedca1a921d2509614f37fcbb9d43b6811115ff0a74",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tests/CMakeLists.txt",
+          "path": "tests/CMakeLists.txt",
           "sha256": "sha256:294123d8ca06ee880b30d5bdad3a60812d51f3fd989a6f765c52680e463ccb8a",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tests/build_smoke_test.cpp",
+          "path": "tests/build_smoke_test.cpp",
           "sha256": "sha256:4153c0b5092198da83ae63db89400ea3f51aaa3d17a2543af40c2a3cafabdf50",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tests/differential/CMakeLists.txt",
+          "path": "tests/differential/CMakeLists.txt",
           "sha256": "sha256:2e801169702252a170a11768e8612230e6c869b8034acefd4555326abfa1bd23",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tests/differential/scenario.schema.json",
+          "path": "tests/differential/scenario.schema.json",
           "sha256": "sha256:8d818f1781eda9cfc9db9cc19f1bfd5942115a2f826b87837100663d54de40d7",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tests/differential/scenario_registry.json",
+          "path": "tests/differential/scenario_registry.json",
           "sha256": "sha256:eedd65052cfff5a0ced782eab79fc5532bc749d99ea306d0dda83131deeef533",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tests/differential/scenarios/server-lifecycle.json",
+          "path": "tests/differential/scenarios/server-lifecycle.json",
           "sha256": "sha256:adb35d1ac44d069d1b42d07ce7e6f2851a6b67ddd70336cfd6cd2822e4043e0f",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tests/differential/wire_protocol_test.cpp",
+          "path": "tests/differential/wire_protocol_test.cpp",
           "sha256": "sha256:f43414c2aa6b733ce77b0055fb846fc4686fe6c9f79d7af1be882a89fa17432f",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tests/scoped_tmux_server_failure_test.cpp",
+          "path": "tests/scoped_tmux_server_failure_test.cpp",
           "sha256": "sha256:2133feec8d16123e2c6a7974688aab066fc22dcffff6fc7f1ae2cc7cff5b294d",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tests/scoped_tmux_server_test.cpp",
+          "path": "tests/scoped_tmux_server_test.cpp",
           "sha256": "sha256:e1a22273a1f0eacd136321d8e0f64c6d1249d24d4528382771fbd375408bb922",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tests/support/differential_wire.cpp",
+          "path": "tests/support/differential_wire.cpp",
           "sha256": "sha256:816e868f970150adf4d6f70ac8b7e6020d715dcad359e924b650118fabf164bf",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tests/support/differential_wire.hpp",
+          "path": "tests/support/differential_wire.hpp",
           "sha256": "sha256:8feb3ee3c97a4db600cbc6c0da76ee61191184b4e0bcf3576597ca5e08458619",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tests/support/fake_tmux.cpp",
+          "path": "tests/support/fake_tmux.cpp",
           "sha256": "sha256:84ee45da07c2908574c5acf11a000f93ec69ff2e003ca4ecf36879e3db4c950b",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tests/support/process.cpp",
+          "path": "tests/support/process.cpp",
           "sha256": "sha256:56fa7767bb3b7b6504d2f1bb3334cf08158e8a27053901915b8224ea93f9801a",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tests/support/process.hpp",
+          "path": "tests/support/process.hpp",
           "sha256": "sha256:2f1927249ab6ef7b4f7c0322572ca9841447541867c09f3e63ce0219e588a425",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tests/support/process_test.cpp",
+          "path": "tests/support/process_test.cpp",
           "sha256": "sha256:9179201f5d3071f353c2d090db682ef4bf59373e1e253ff1c9d4fb846a5a3b22",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tests/support/scoped_tmux_server.cpp",
+          "path": "tests/support/scoped_tmux_server.cpp",
           "sha256": "sha256:fb6b5ba565118884c4c644d46b19ed15292b8f1903dd353fd6a139adcc70772f",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tests/support/scoped_tmux_server.hpp",
+          "path": "tests/support/scoped_tmux_server.hpp",
           "sha256": "sha256:4487c1a9f0d1ef6a0b51721a50ad819c16e9308a9583bec1eb41561343d8075f",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tools/__init__.py",
+          "path": "tools/__init__.py",
           "sha256": "sha256:05cf078f32e23b7523c23461f202f09ebb4c436df898d1a7f2f6c259c9b7b45a",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tools/differential/__init__.py",
+          "path": "tools/differential/__init__.py",
           "sha256": "sha256:77266e0f66265aad04a2d32d613c008e688e84f4c52c185e2db4c338876c218c",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tools/differential/canonicalize.py",
+          "path": "tools/differential/canonicalize.py",
           "sha256": "sha256:13233854cfcb31bc2c38eadeefd46585500f5fb1b05fd90c355089d61f198a6b",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tools/differential/compare.py",
+          "path": "tools/differential/compare.py",
           "sha256": "sha256:1b5c9a01ab2cc74dfd1b2d3d5bd975fd40d3693fd7cbdd54038866544da67c1d",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tools/differential/materialize.py",
+          "path": "tools/differential/materialize.py",
           "sha256": "sha256:158011ebb2064cca388e19b4efff0d42d2db1972354cd0453126afe6a18c0661",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tools/differential/model.py",
+          "path": "tools/differential/model.py",
           "sha256": "sha256:19e735fd08dc6b635685e01508a8af9186b3b37f1301a28701dddca6b473a368",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tools/differential/python_reference.py",
+          "path": "tools/differential/python_reference.py",
           "sha256": "sha256:a55a6c27f100f63349d04e53a75df66a5b51a8f7d8fd0867ff27adb036212f47",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tools/differential/runner.py",
+          "path": "tools/differential/runner.py",
           "sha256": "sha256:9fec620cbf860443a09fd0b326a1c07dcd7b4e18ecd699a2451c21c02bf5e6da",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tools/differential/wire.py",
+          "path": "tools/differential/wire.py",
           "sha256": "sha256:70eea9ae60525085ea73200e57fbeb3739a277f00305cfe5dd32ebbba46eea04",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tools/evidence/__init__.py",
+          "path": "tools/evidence/__init__.py",
           "sha256": "sha256:d44d27d266f4ccde2a8398e384c789339345e458f394b139a7a6ef51df006638",
           "source": "untracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tools/evidence/contract_gate.py",
+          "path": "tools/evidence/contract_gate.py",
           "sha256": "sha256:c490ead0cc36150644611175230cfcb0fd002b0056053ae1036c9f256607460c",
           "source": "untracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tools/evidence/ctest_gate.py",
+          "path": "tools/evidence/ctest_gate.py",
           "sha256": "sha256:60ee2b3fe290584e3d51e15726bd0264a3de89e0fd7e33e73dd7164149099320",
           "source": "untracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tools/parity/__init__.py",
+          "path": "tools/parity/__init__.py",
           "sha256": "sha256:2025c0355e78dc4c01b2280db61dc386f01a44b9d9810dea41fd811fc2ec5198",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tools/parity/__main__.py",
+          "path": "tools/parity/__main__.py",
           "sha256": "sha256:0e8c5cfa1d64b412fbc1c0b634de08e5a7568626aa19d01fe6fce498e7264c0e",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tools/parity/check_manifest.py",
+          "path": "tools/parity/check_manifest.py",
           "sha256": "sha256:0a48c5660a5ac22f2ecf7d00dcf10f70d8452f4d71d7810324417cb0ad3a2e98",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tools/parity/drift.py",
+          "path": "tools/parity/drift.py",
           "sha256": "sha256:b9353f0748c1db2a8375d92944d823948392529898e9ee4a785cdaad41bbf641",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tools/parity/extract.py",
+          "path": "tools/parity/extract.py",
           "sha256": "sha256:6076356cf48ce7f8d1b04da802dfb0c219b9f7258f54864ad3ceaa891442ab85",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tools/parity/generate.py",
+          "path": "tools/parity/generate.py",
           "sha256": "sha256:126da50f1109c2d7b32e188537d1aa50cee458d463c40df383ff74df3a2eb9f7",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tools/parity/git_objects.py",
+          "path": "tools/parity/git_objects.py",
           "sha256": "sha256:c1df5668142cc86ed107cfd1517949d3f198cba3cb66d5f2c1a668751f5c0e07",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tools/parity/model.py",
+          "path": "tools/parity/model.py",
           "sha256": "sha256:8f1ba1f246689db051ab59a762ad24329de7b188e4d5943dad055eb82f0f38d7",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tools/parity/shard.py",
+          "path": "tools/parity/shard.py",
           "sha256": "sha256:d29676a0b44e77271a176d98b4beea9e86ab1e1aa5b34d2dae0aae021578976f",
           "source": "tracked"
         },
         {
           "mode": "100644",
-          "path": "cxx/tools/parity/sync.py",
+          "path": "tools/parity/sync.py",
           "sha256": "sha256:ff0c3a66c9def02b6452a4ca353393f77725f192fc9e5a05e49650af0a16502d",
           "source": "tracked"
         },

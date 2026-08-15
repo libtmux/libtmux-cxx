@@ -21,7 +21,7 @@ C++23, GCC 13 with libstdc++ 13, Clang 18.1.3 with libc++ 18.1, GoogleTest
 
 ## Global Constraints
 
-- No production header under `cxx/include/libtmux/` or source under `cxx/src/`
+- No production header under `include/libtmux/` or source under `src/`
   is created in this phase.
 - C++23 remains dependency-free; GoogleTest is test-only and fetched only when
   `LIBTMUX_FETCH_DEPS=ON`.
@@ -39,7 +39,7 @@ C++23, GCC 13 with libstdc++ 13, Clang 18.1.3 with libc++ 18.1, GoogleTest
 - Every task ends in an independently reviewable commit using repository commit
   format.
 - Every Python function and method uses the repository's NumPy docstring style
-  and a working doctest. Run `uv run pytest --doctest-modules cxx/tools` for
+  and a working doctest. Run `uv run pytest --doctest-modules tools` for
   each Python-tool task; `# doctest: +SKIP` is forbidden.
 
 ---
@@ -52,15 +52,15 @@ C++23, GCC 13 with libstdc++ 13, Clang 18.1.3 with libc++ 18.1, GoogleTest
   becomes the package root.
 - `cxx/CMakePresets.json` defines reproducible configure, build, and test
   presets.
-- `cxx/cmake/ProjectOptions.cmake` applies first-party warnings and sanitizers
+- `cmake/ProjectOptions.cmake` applies first-party warnings and sanitizers
   without leaking them to dependencies.
-- `cxx/cmake/GoogleTest.cmake` resolves system GoogleTest or the explicit pinned
+- `cmake/GoogleTest.cmake` resolves system GoogleTest or the explicit pinned
   fallback.
-- `cxx/parity/` contains inputs, schemas, observations, mappings, and shards.
-- `cxx/tools/parity/` contains deterministic source and manifest tooling.
-- `cxx/tests/support/` contains non-installed process and tmux fixtures.
-- `cxx/tools/differential/` contains canonical record comparison.
-- `cxx/tools/evidence/` captures immutable CTest and phase-gate records.
+- `tools/parity/data/` contains inputs, schemas, observations, mappings, and shards.
+- `tools/parity/` contains deterministic source and manifest tooling.
+- `tests/support/` contains non-installed process and tmux fixtures.
+- `tools/differential/` contains canonical record comparison.
+- `tools/evidence/` captures immutable CTest and phase-gate records.
 - `tests/cxx/` tests Python-side C++ tooling.
 
 ### Task 1: Pin the C++ build and test harness
@@ -74,11 +74,11 @@ C++23, GCC 13 with libstdc++ 13, Clang 18.1.3 with libc++ 18.1, GoogleTest
 - Create: `.clang-tidy`
 - Create: `cxx/CMakeLists.txt`
 - Create: `cxx/CMakePresets.json`
-- Create: `cxx/cmake/ProjectOptions.cmake`
-- Create: `cxx/cmake/GoogleTest.cmake`
-- Create: `cxx/cmake/toolchains/clang-libcxx.cmake`
-- Create: `cxx/tests/CMakeLists.txt`
-- Create: `cxx/tests/build_smoke_test.cpp`
+- Create: `cmake/ProjectOptions.cmake`
+- Create: `cmake/GoogleTest.cmake`
+- Create: `cmake/toolchains/clang-libcxx.cmake`
+- Create: `tests/CMakeLists.txt`
+- Create: `tests/build_smoke_test.cpp`
 
 **Interfaces:**
 
@@ -160,7 +160,7 @@ if(LIBTMUX_BUILD_TESTS)
 endif()
 ```
 
-`cxx/cmake/GoogleTest.cmake` uses the pinned fallback only when allowed:
+`cmake/GoogleTest.cmake` uses the pinned fallback only when allowed:
 
 ```cmake
 include(FetchContent)
@@ -185,7 +185,7 @@ function(libtmux_resolve_googletest)
 endfunction()
 ```
 
-`cxx/tests/CMakeLists.txt` keeps requirements private:
+`tests/CMakeLists.txt` keeps requirements private:
 
 ```cmake
 add_executable(build_smoke build_smoke_test.cpp)
@@ -415,9 +415,9 @@ $ git add \
     justfile \
     cxx/CMakeLists.txt \
     cxx/CMakePresets.json \
-    cxx/cmake \
-    cxx/tests/CMakeLists.txt \
-    cxx/tests/build_smoke_test.cpp
+    cmake \
+    tests/CMakeLists.txt \
+    tests/build_smoke_test.cpp
 ```
 
 ```console
@@ -437,12 +437,12 @@ EOF
 **Files:**
 
 - Modify: `pyproject.toml`
-- Create: `cxx/parity/inputs.json`
-- Create: `cxx/tools/parity/__init__.py`
-- Create: `cxx/tools/parity/model.py`
-- Create: `cxx/tools/parity/git_objects.py`
-- Create: `cxx/tools/parity/drift.py`
-- Create: `cxx/tools/parity/extract.py`
+- Create: `tools/parity/data/inputs.json`
+- Create: `tools/parity/__init__.py`
+- Create: `tools/parity/model.py`
+- Create: `tools/parity/git_objects.py`
+- Create: `tools/parity/drift.py`
+- Create: `tools/parity/extract.py`
 - Create: `tests/cxx/__init__.py`
 - Create: `tests/cxx/test_parity_extract.py`
 
@@ -460,7 +460,7 @@ from __future__ import annotations
 import pathlib
 import subprocess
 
-from cxx.tools.parity.extract import extract_revision
+from tools.parity.extract import extract_revision
 
 
 def test_extract_revision_reads_committed_source(tmp_path: pathlib.Path) -> None:
@@ -497,7 +497,7 @@ def test_extract_revision_reads_committed_source(tmp_path: pathlib.Path) -> None
 $ uv run pytest tests/cxx/test_parity_extract.py -v
 ```
 
-Expected: FAIL because `cxx.tools.parity.extract` does not exist.
+Expected: FAIL because `tools.parity.extract` does not exist.
 
 - [ ] **Step 3: Define immutable observation models**
 
@@ -560,7 +560,7 @@ objects, not that unrelated C++ paths are absent from the worktree.
 
 - [ ] **Step 4: Record the exact Python parity boundary**
 
-`cxx/parity/inputs.json` contains the `src/libtmux/` subtree, the public API
+`tools/parity/data/inputs.json` contains the `src/libtmux/` subtree, the public API
 documentation paths, `conftest.py`, and the package metadata fields that expose
 pytest plugins or supported Python versions. It does not contain `cxx/`, cache
 paths, build paths, unrelated documentation, or the whole repository tree.
@@ -575,7 +575,7 @@ never imports a target module.
 
 - [ ] **Step 5: Add tooling to the Python quality boundary**
 
-Retain recursive `tests` and add `cxx/tools` to `[tool.mypy].files` in
+Retain recursive `tests` and add `tools` to `[tool.mypy].files` in
 `pyproject.toml`. The recursive `tests` root covers `tests/cxx`; do not list
 both roots because mypy 2.3.0 discovers duplicate `tests.cxx` modules.
 
@@ -586,15 +586,15 @@ $ uv run pytest tests/cxx/test_parity_extract.py -v
 ```
 
 ```console
-$ uv run ruff check cxx/tools tests/cxx
+$ uv run ruff check tools tests/cxx
 ```
 
 ```console
-$ uv run mypy cxx/tools tests/cxx
+$ uv run mypy tools tests/cxx
 ```
 
 ```console
-$ uv run pytest --doctest-modules cxx/tools/parity
+$ uv run pytest --doctest-modules tools/parity
 ```
 
 Expected: all commands exit zero.
@@ -602,7 +602,7 @@ Expected: all commands exit zero.
 - [ ] **Step 7: Commit the extractor**
 
 ```console
-$ git add pyproject.toml cxx/parity/inputs.json cxx/tools/parity tests/cxx
+$ git add pyproject.toml tools/parity/data/inputs.json tools/parity tests/cxx
 ```
 
 ```console
@@ -622,21 +622,21 @@ EOF
 
 **Files:**
 
-- Create: `cxx/parity/manifest.schema.json`
-- Create: `cxx/parity/approvals.schema.json`
-- Create: `cxx/parity/evidence.schema.json`
-- Create: `cxx/parity/release-v0.62.0.json`
-- Create: `cxx/parity/development.json`
-- Create: `cxx/parity/mapping.json`
-- Create: `cxx/parity/approvals.json`
-- Create: `cxx/parity/evidence.json`
-- Create: `cxx/parity/manifest.json`
-- Create: `cxx/parity/shards.json`
-- Create: `cxx/tools/parity/__main__.py`
-- Create: `cxx/tools/parity/generate.py`
-- Create: `cxx/tools/parity/check_manifest.py`
-- Create: `cxx/tools/parity/sync.py`
-- Create: `cxx/tools/parity/shard.py`
+- Create: `tools/parity/data/manifest.schema.json`
+- Create: `tools/parity/data/approvals.schema.json`
+- Create: `tools/parity/data/evidence.schema.json`
+- Create: `tools/parity/data/release-v0.62.0.json`
+- Create: `tools/parity/data/development.json`
+- Create: `tools/parity/data/mapping.json`
+- Create: `tools/parity/data/approvals.json`
+- Create: `tools/parity/data/evidence.json`
+- Create: `tools/parity/data/manifest.json`
+- Create: `tools/parity/data/shards.json`
+- Create: `tools/parity/__main__.py`
+- Create: `tools/parity/generate.py`
+- Create: `tools/parity/check_manifest.py`
+- Create: `tools/parity/sync.py`
+- Create: `tools/parity/shard.py`
 - Create: `tests/cxx/test_parity_manifest.py`
 
 **Interfaces:**
@@ -652,7 +652,7 @@ mapping, approvals, evidence, complete)`; review-preserving synchronization;
 ```python
 from __future__ import annotations
 
-from cxx.tools.parity.check_manifest import validate_mapping
+from tools.parity.check_manifest import validate_mapping
 
 
 def test_adaptation_requires_delta_oracle_and_approval() -> None:
@@ -693,13 +693,13 @@ def test_adaptation_requires_delta_oracle_and_approval() -> None:
                 {
                     "evidence_id": "compile.server-equality",
                     "kind": "compile",
-                    "path": "cxx/tests/compile/server-equality.cpp",
+                    "path": "tests/compile/server-equality.cpp",
                     "case_id": "server-equality",
                 },
                 {
                     "evidence_id": "behavior.server-equality",
                     "kind": "behavior",
-                    "path": "cxx/tests/integration/server-equality.cpp",
+                    "path": "tests/integration/server-equality.cpp",
                     "case_id": "server-equality",
                     "cmake_target": "server_equality_test",
                     "ctest_name": "parity.server-equality",
@@ -713,13 +713,13 @@ def test_adaptation_requires_delta_oracle_and_approval() -> None:
                 {
                     "evidence_id": "docs.server-equality",
                     "kind": "documentation",
-                    "path": "cxx/docs/api/server.md",
+                    "path": "docs/api/server.md",
                     "case_id": "server-equality",
                 },
                 {
                     "evidence_id": "example.server-equality",
                     "kind": "example",
-                    "path": "cxx/examples/parity/server.cpp",
+                    "path": "examples/parity/server.cpp",
                     "case_id": "server-equality",
                 },
             ]
@@ -874,7 +874,7 @@ evidence records. It never reads CTest's mutable `Testing/` directory.
 - [ ] **Step 4: Generate release and development observations**
 
 ```console
-$ uv run python -m cxx.tools.parity generate --release v0.62.0 --development HEAD
+$ uv run python -m tools.parity generate --release v0.62.0 --development HEAD
 ```
 
 Expected: the two observation files embed full commit/tree identities and the
@@ -883,7 +883,7 @@ mapping contains every unioned entry exactly once.
 - [ ] **Step 5: Prove byte-for-byte regeneration**
 
 ```console
-$ uv run python -m cxx.tools.parity generate --check cxx/parity
+$ uv run python -m tools.parity generate --check cxx/parity
 ```
 
 Expected: the command regenerates from the revisions embedded in the committed
@@ -892,20 +892,20 @@ observations and exits zero with no diff, even after unrelated C++ commits.
 - [ ] **Step 6: Validate the pending scaffold and shard graph**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     sync \
-    --release cxx/parity/release-v0.62.0.json \
-    --development cxx/parity/development.json \
-    --mapping cxx/parity/mapping.json \
-    --approvals cxx/parity/approvals.json \
-    --evidence cxx/parity/evidence.json \
-    --output cxx/parity/manifest.json
+    --release tools/parity/data/release-v0.62.0.json \
+    --development tools/parity/data/development.json \
+    --mapping tools/parity/data/mapping.json \
+    --approvals tools/parity/data/approvals.json \
+    --evidence tools/parity/data/evidence.json \
+    --output tools/parity/data/manifest.json
 ```
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     drift \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --worktree .
 ```
 
@@ -913,9 +913,9 @@ Expected: exit zero because only the recorded Python input objects participate
 in drift detection.
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode structural \
     --allow-pending
 ```
@@ -934,7 +934,7 @@ Expected: all manifest synchronization and validation tests pass.
 - [ ] **Step 7: Commit the generated contract**
 
 ```console
-$ git add cxx/parity cxx/tools/parity tests/cxx/test_parity_manifest.py
+$ git add cxx/parity tools/parity tests/cxx/test_parity_manifest.py
 ```
 
 ```console
@@ -954,15 +954,15 @@ EOF
 
 **Files:**
 
-- Create: `cxx/tests/support/process.hpp`
-- Create: `cxx/tests/support/process.cpp`
-- Create: `cxx/tests/support/scoped_tmux_server.hpp`
-- Create: `cxx/tests/support/scoped_tmux_server.cpp`
-- Create: `cxx/tests/scoped_tmux_server_test.cpp`
-- Create: `cxx/tests/scoped_tmux_server_failure_test.cpp`
-- Create: `cxx/tests/support/process_test.cpp`
-- Create: `cxx/tests/support/fake_tmux.cpp`
-- Modify: `cxx/tests/CMakeLists.txt`
+- Create: `tests/support/process.hpp`
+- Create: `tests/support/process.cpp`
+- Create: `tests/support/scoped_tmux_server.hpp`
+- Create: `tests/support/scoped_tmux_server.cpp`
+- Create: `tests/scoped_tmux_server_test.cpp`
+- Create: `tests/scoped_tmux_server_failure_test.cpp`
+- Create: `tests/support/process_test.cpp`
+- Create: `tests/support/fake_tmux.cpp`
+- Modify: `tests/CMakeLists.txt`
 
 **Interfaces:**
 
@@ -1147,10 +1147,10 @@ Expected: no leaks, zombies, use-after-free, or fixture collisions.
 
 ```console
 $ git add \
-    cxx/tests/CMakeLists.txt \
-    cxx/tests/support \
-    cxx/tests/scoped_tmux_server_test.cpp \
-    cxx/tests/scoped_tmux_server_failure_test.cpp
+    tests/CMakeLists.txt \
+    tests/support \
+    tests/scoped_tmux_server_test.cpp \
+    tests/scoped_tmux_server_failure_test.cpp
 ```
 
 ```console
@@ -1169,22 +1169,22 @@ EOF
 
 **Files:**
 
-- Create: `cxx/tests/differential/scenario.schema.json`
-- Create: `cxx/tests/differential/scenario_registry.json`
-- Create: `cxx/tests/differential/scenarios/server-lifecycle.json`
-- Create: `cxx/tests/differential/CMakeLists.txt`
-- Modify: `cxx/tests/CMakeLists.txt`
-- Create: `cxx/tools/differential/__init__.py`
-- Create: `cxx/tools/differential/model.py`
-- Create: `cxx/tools/differential/wire.py`
-- Create: `cxx/tools/differential/canonicalize.py`
-- Create: `cxx/tools/differential/compare.py`
-- Create: `cxx/tools/differential/materialize.py`
-- Create: `cxx/tools/differential/runner.py`
-- Create: `cxx/tools/differential/python_reference.py`
-- Create: `cxx/tests/support/differential_wire.hpp`
-- Create: `cxx/tests/support/differential_wire.cpp`
-- Create: `cxx/tests/differential/wire_protocol_test.cpp`
+- Create: `tests/differential/scenario.schema.json`
+- Create: `tests/differential/scenario_registry.json`
+- Create: `tests/differential/scenarios/server-lifecycle.json`
+- Create: `tests/differential/CMakeLists.txt`
+- Modify: `tests/CMakeLists.txt`
+- Create: `tools/differential/__init__.py`
+- Create: `tools/differential/model.py`
+- Create: `tools/differential/wire.py`
+- Create: `tools/differential/canonicalize.py`
+- Create: `tools/differential/compare.py`
+- Create: `tools/differential/materialize.py`
+- Create: `tools/differential/runner.py`
+- Create: `tools/differential/python_reference.py`
+- Create: `tests/support/differential_wire.hpp`
+- Create: `tests/support/differential_wire.cpp`
+- Create: `tests/differential/wire_protocol_test.cpp`
 - Create: `tests/cxx/test_differential.py`
 
 **Interfaces:**
@@ -1199,7 +1199,7 @@ EOF
 ```python
 from __future__ import annotations
 
-from cxx.tools.differential.canonicalize import CanonicalizationRules, canonicalize
+from tools.differential.canonicalize import CanonicalizationRules, canonicalize
 
 
 def test_canonicalize_removes_only_declared_unstable_fields() -> None:
@@ -1355,11 +1355,11 @@ $ uv run pytest tests/cxx/test_differential.py -v
 ```
 
 ```console
-$ uv run ruff check cxx/tools/differential tests/cxx/test_differential.py
+$ uv run ruff check tools/differential tests/cxx/test_differential.py
 ```
 
 ```console
-$ uv run mypy cxx/tools/differential tests/cxx/test_differential.py
+$ uv run mypy tools/differential tests/cxx/test_differential.py
 ```
 
 Expected: all commands exit zero.
@@ -1368,11 +1368,11 @@ Expected: all commands exit zero.
 
 ```console
 $ git add \
-    cxx/tests/CMakeLists.txt \
-    cxx/tests/differential \
-    cxx/tests/support/differential_wire.hpp \
-    cxx/tests/support/differential_wire.cpp \
-    cxx/tools/differential \
+    tests/CMakeLists.txt \
+    tests/differential \
+    tests/support/differential_wire.hpp \
+    tests/support/differential_wire.cpp \
+    tools/differential \
     tests/cxx/test_differential.py
 ```
 
@@ -1394,10 +1394,10 @@ EOF
 
 **Files:**
 
-- Create: `cxx/tools/evidence/ctest_gate.py`
-- Create: `cxx/tools/evidence/contract_gate.py`
-- Create: `cxx/docs/evidence/contract-and-harness.json`
-- Create: `cxx/docs/evidence/contract-and-harness-review.md`
+- Create: `tools/evidence/ctest_gate.py`
+- Create: `tools/evidence/contract_gate.py`
+- Create: `docs/evidence/contract-and-harness.json`
+- Create: `docs/evidence/contract-and-harness-review.md`
 - Create: `tests/cxx/test_ctest_gate.py`
 - Create: `tests/cxx/test_contract_gate.py`
 
@@ -1451,7 +1451,7 @@ $ cmake --build --preset cxx-sanitize
 ```
 
 ```console
-$ uv run python -m cxx.tools.evidence.ctest_gate \
+$ uv run python -m tools.evidence.ctest_gate \
     --source-dir cxx \
     --preset cxx-sanitize \
     --label real-tmux \
@@ -1468,8 +1468,8 @@ the committed report; raw registry and JUnit files remain ignored build
 artifacts.
 
 ```console
-$ uv run python -m cxx.tools.evidence.contract_gate \
-    --output cxx/docs/evidence/contract-and-harness.json
+$ uv run python -m tools.evidence.contract_gate \
+    --output docs/evidence/contract-and-harness.json
 ```
 
 Expected: exit zero only after CMake, immutable CTest gates, parity
@@ -1502,8 +1502,8 @@ closeout.
 
 ```console
 $ git add \
-    cxx/tools/evidence \
-    cxx/docs/evidence \
+    tools/evidence \
+    docs/evidence \
     tests/cxx/test_ctest_gate.py \
     tests/cxx/test_contract_gate.py
 ```

@@ -51,7 +51,7 @@ find_package(libtmux REQUIRED)
 target_link_libraries(your_target PRIVATE libtmux::libtmux)
 ```
 
-`cxx/examples/consume` is a complete working example. A vcpkg overlay port
+`examples/consume` is a complete working example. A vcpkg overlay port
 lives in `packaging/vcpkg`.
 
 ## What the design commits to

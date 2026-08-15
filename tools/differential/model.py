@@ -12,7 +12,7 @@ import urllib.parse
 
 import jsonschema
 
-from cxx.tools.parity.generate import canonical_sha256
+from tools.parity.generate import canonical_sha256
 
 if t.TYPE_CHECKING:
     from .canonicalize import CanonicalizationRules
@@ -1040,7 +1040,7 @@ def load_registry(path: pathlib.Path) -> ScenarioRegistry:
 
     Examples
     --------
-    >>> path = pathlib.Path('cxx/tests/differential/scenario_registry.json')
+    >>> path = pathlib.Path('tests/differential/scenario_registry.json')
     >>> registry = load_registry(path)
     >>> sorted(registry.operations)
     ['server.list_sessions']
@@ -1200,7 +1200,7 @@ def load_scenario(
 
     Examples
     --------
-    >>> root = pathlib.Path('cxx/tests/differential')
+    >>> root = pathlib.Path('tests/differential')
     >>> registry = load_registry(root / 'scenario_registry.json')
     >>> spec = load_scenario(
     ...     root / 'scenarios/server-lifecycle.json',
@@ -1280,7 +1280,7 @@ def validate_observation(
 
     Examples
     --------
-    >>> path = pathlib.Path('cxx/tests/differential/scenario_registry.json')
+    >>> path = pathlib.Path('tests/differential/scenario_registry.json')
     >>> operation = load_registry(path).operations['server.list_sessions']
     >>> observation = {
     ...     'tag': 'server.list_sessions',

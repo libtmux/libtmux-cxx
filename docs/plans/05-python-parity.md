@@ -45,14 +45,14 @@ red`, which reconfigures the named preset, builds the exact target, selects
    sidecars into `manifest.json`:
 
    ```console
-   $ uv run python -m cxx.tools.parity \
+   $ uv run python -m tools.parity \
        sync \
-       --release cxx/parity/release-v0.62.0.json \
-       --development cxx/parity/development.json \
-       --mapping cxx/parity/mapping.json \
-       --approvals cxx/parity/approvals.json \
-       --evidence cxx/parity/evidence.json \
-       --output cxx/parity/manifest.json
+       --release tools/parity/data/release-v0.62.0.json \
+       --development tools/parity/data/development.json \
+       --mapping tools/parity/data/mapping.json \
+       --approvals tools/parity/data/approvals.json \
+       --evidence tools/parity/data/evidence.json \
+       --output tools/parity/data/manifest.json
    ```
 
 6. Rerun `run-shard --phase green` after synchronization so its immutable CTest
@@ -87,18 +87,18 @@ wrapper has just built and recorded; it does not replace the wrapper.
 Every behavior slice treats these as shared production/test registries and
 stages every path it changes in the same commit:
 
-- `cxx/src/CMakeLists.txt`
+- `src/CMakeLists.txt`
 - `cxx/CMakeLists.txt`
-- `cxx/tests/CMakeLists.txt`
-- `cxx/tests/unit/CMakeLists.txt`
-- `cxx/tests/integration/CMakeLists.txt`
-- `cxx/tests/compile/CMakeLists.txt`
-- `cxx/tests/differential/CMakeLists.txt`
-- `cxx/examples/CMakeLists.txt`
-- `cxx/tests/differential/scenario_registry.json`
-- `cxx/parity/shards.json`
-- `cxx/tools/differential/python_reference.py`
-- `cxx/tests/differential/cpp_adapter.cpp`
+- `tests/CMakeLists.txt`
+- `tests/unit/CMakeLists.txt`
+- `tests/integration/CMakeLists.txt`
+- `tests/compile/CMakeLists.txt`
+- `tests/differential/CMakeLists.txt`
+- `examples/CMakeLists.txt`
+- `tests/differential/scenario_registry.json`
+- `tools/parity/data/shards.json`
+- `tools/differential/python_reference.py`
+- `tests/differential/cpp_adapter.cpp`
 - the matching `tests/cxx/differential/test_*.py` driver
 
 Change `scenario.schema.json` in that commit only when the registered request
@@ -118,7 +118,7 @@ files. It includes `scenario.schema.json` only when the registered wire shape
 changes and `approvals.json` only for a changed adapted or excluded row. When
 the shard adds or removes a public header, it also includes
 `cxx/public-headers.json` and the generated
-`cxx/include/libtmux/libtmux.hpp`. It rejects directories, globs, pathspec
+`include/libtmux/libtmux.hpp`. It rejects directories, globs, pathspec
 magic, paths outside the allowed roots, a changed in-scope path absent from the
 result, a path owned by another shard, or a pre-staged path outside the exact
 result. After staging, the cached path list must equal the generated changed
@@ -128,7 +128,7 @@ pathspec.
 Generate the exact pathspec for the shard being committed:
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     stage-paths \
     --shard server-connection \
     --output cxx/build/parity-stage/server-connection.paths
@@ -150,12 +150,12 @@ inapplicability proof and approval. A missing functional capability is not an
 exclusion.
 
 Every public function and method gets a case ID in the task's explicitly named
-source under `cxx/examples/parity/`. Each executable dispatches named cases and
+source under `examples/parity/`. Each executable dispatches named cases and
 is registered with CTest. The mapping uses the exact case ID, not merely the
 source filename.
 
-Generated metadata under `cxx/parity/metadata/` and
-`cxx/include/libtmux/generated/` is immutable output. Parity slices bind those
+Generated metadata under `tools/parity/data/metadata/` and
+`include/libtmux/generated/` is immutable output. Parity slices bind those
 files; they never edit them. If a generated value is wrong, stop the slice and
 make a separate correction commit that changes `generate_metadata.py` and its
 tests, regenerates every affected JSON/header output, and passes `--check` from
@@ -165,8 +165,8 @@ two temporary directories. Resume the parity slice only after that commit.
 public headers. Each row records `install_path`, `source_path`, `source_kind`
 (`committed`, `generated`, or `configured`), owning shard, and its C++23/C++20
 variant set. The configured `libtmux/config.hpp` row points to
-`cxx/include/libtmux/config.hpp.in`; the template itself is not installed.
-`generate_umbrella.py` derives `cxx/include/libtmux/libtmux.hpp` from it. Every
+`include/libtmux/config.hpp.in`; the template itself is not installed.
+`generate_umbrella.py` derives `include/libtmux/libtmux.hpp` from it. Every
 slice that adds or removes a public header updates the registry and generated
 umbrella in the same commit; every slice runs the generator in `--check` mode.
 Direct umbrella edits are forbidden.
@@ -226,7 +226,7 @@ target, selector, diagnostic, gate ID, or record-path override. The
 `server-connection` red is exactly:
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     run-shard \
     --shard server-connection \
     --phase red
@@ -238,7 +238,7 @@ shard: server-connection`, and the command exits zero only because that complete
 red contract matched. After implementation, the exact green is:
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     run-shard \
     --shard server-connection \
     --phase green
@@ -259,17 +259,17 @@ only the scenario's declared canonicalization pointers.
 
 Later compact file lists use this fixed expansion:
 
-- `name.hpp` is `cxx/include/libtmux/name.hpp`; `name.cpp` is
-  `cxx/src/name.cpp`.
+- `name.hpp` is `include/libtmux/name.hpp`; `name.cpp` is
+  `src/name.cpp`.
 - A shard `foo-bar` owns
-  `cxx/tests/integration/foo_bar_test.cpp`,
-  `cxx/tests/differential/scenarios/foo-bar.json`,
+  `tests/integration/foo_bar_test.cpp`,
+  `tests/differential/scenarios/foo-bar.json`,
   `tests/cxx/differential/test_foo_bar.py`,
-  `cxx/examples/parity/foo_bar.cpp`, and `cxx/docs/api/foo-bar.md`.
+  `examples/parity/foo_bar.cpp`, and `docs/api/foo-bar.md`.
 - Each task's compile suite uses its exact shard name directly under
-  `cxx/tests/compile/`.
+  `tests/compile/`.
 - `mapping`, `manifest`, `evidence`, and `approvals` mean the corresponding
-  JSON files directly under `cxx/parity/`.
+  JSON files directly under `tools/parity/data/`.
 
 These expansions and the inherited registry/adapter paths are part of each
 task's file list and atomic commit even when its local list uses the shorter
@@ -295,36 +295,36 @@ All parity tasks preserve these rules:
 
 **Files:**
 
-- Bind: `cxx/tools/codegen/generate_metadata.py`
-- Bind: `cxx/parity/metadata/`
-- Bind: `cxx/include/libtmux/generated/`
-- Bind: `cxx/tests/unit/generated_metadata_test.cpp`
-- Bind: `cxx/tools/evidence/ctest_gate.py`
+- Bind: `tools/codegen/generate_metadata.py`
+- Bind: `tools/parity/data/metadata/`
+- Bind: `include/libtmux/generated/`
+- Bind: `tests/unit/generated_metadata_test.cpp`
+- Bind: `tools/evidence/ctest_gate.py`
 - Create: `cxx/public-headers.json`
-- Create: `cxx/tools/headers/generate_umbrella.py`
+- Create: `tools/headers/generate_umbrella.py`
 - Create: `tests/cxx/test_generate_umbrella.py`
-- Modify: `cxx/include/libtmux/libtmux.hpp`
-- Modify: `cxx/tools/parity/__main__.py`
-- Modify: `cxx/tools/parity/shard.py`
+- Modify: `include/libtmux/libtmux.hpp`
+- Modify: `tools/parity/__main__.py`
+- Modify: `tools/parity/shard.py`
 - Modify: `tests/cxx/test_parity_manifest.py`
-- Create: `cxx/examples/CMakeLists.txt`
-- Create: `cxx/examples/parity/metadata.cpp`
-- Create: `cxx/docs/api/metadata.md`
-- Create: `cxx/tests/compile/metadata/`
+- Create: `examples/CMakeLists.txt`
+- Create: `examples/parity/metadata.cpp`
+- Create: `docs/api/metadata.md`
+- Create: `tests/compile/metadata/`
 - Modify: `cxx/CMakeLists.txt`
-- Modify: `cxx/tests/CMakeLists.txt`
-- Modify: `cxx/tests/compile/CMakeLists.txt`
-- Modify: `cxx/parity/mapping.json`
-- Modify: `cxx/parity/shards.json`
-- Modify: `cxx/parity/manifest.json`
-- Modify: `cxx/parity/evidence.json`
+- Modify: `tests/CMakeLists.txt`
+- Modify: `tests/compile/CMakeLists.txt`
+- Modify: `tools/parity/data/mapping.json`
+- Modify: `tools/parity/data/shards.json`
+- Modify: `tools/parity/data/manifest.json`
+- Modify: `tools/parity/data/evidence.json`
 
 - [ ] **Step 1: Run the missing `metadata` shard**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode structural \
     --shard metadata
 ```
@@ -335,10 +335,10 @@ entry IDs still pending.
 - [ ] **Step 2: Recheck deterministic generated artifacts**
 
 ```console
-$ uv run python cxx/tools/codegen/generate_metadata.py \
+$ uv run python tools/codegen/generate_metadata.py \
     --observations cxx/parity \
-    --output cxx/parity/metadata \
-    --headers cxx/include/libtmux/generated \
+    --output tools/parity/data/metadata \
+    --headers include/libtmux/generated \
     --check
 ```
 
@@ -385,9 +385,9 @@ $ uv run pytest \
 Expected: all umbrella-generator and shard-runner contract tests pass.
 
 ```console
-$ uv run python cxx/tools/headers/generate_umbrella.py \
+$ uv run python tools/headers/generate_umbrella.py \
     --registry cxx/public-headers.json \
-    --output cxx/include/libtmux/libtmux.hpp \
+    --output include/libtmux/libtmux.hpp \
     --check
 ```
 
@@ -401,14 +401,14 @@ below/at-boundary tests, including exact raw `3.7`, `3.7a`, and `3.7b`.
 - [ ] **Step 5: Synchronize the reviewed metadata mapping**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     sync \
-    --release cxx/parity/release-v0.62.0.json \
-    --development cxx/parity/development.json \
-    --mapping cxx/parity/mapping.json \
-    --approvals cxx/parity/approvals.json \
-    --evidence cxx/parity/evidence.json \
-    --output cxx/parity/manifest.json
+    --release tools/parity/data/release-v0.62.0.json \
+    --development tools/parity/data/development.json \
+    --mapping tools/parity/data/mapping.json \
+    --approvals tools/parity/data/approvals.json \
+    --evidence tools/parity/data/evidence.json \
+    --output tools/parity/data/manifest.json
 ```
 
 - [ ] **Step 6: Run the exact target and retain immutable CTest evidence**
@@ -422,7 +422,7 @@ $ cmake --build --preset cxx-dev --target parity_metadata_test
 ```
 
 ```console
-$ uv run python -m cxx.tools.evidence.ctest_gate \
+$ uv run python -m tools.evidence.ctest_gate \
     --source-dir cxx \
     --preset cxx-dev \
     --label '^parity-metadata$' \
@@ -439,12 +439,12 @@ selection, a skipped or unregistered case, stale
 CMake/CTest/executable/source digests, or replacement after a failed run.
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     record-evidence \
     --shard metadata \
     --ctest-gate cxx/build/evidence/parity-metadata.json \
     --execution-mode generated-metadata \
-    --output cxx/parity/evidence.json
+    --output tools/parity/data/evidence.json
 ```
 
 `record-evidence` verifies the immutable record, inventory, JUnit, target,
@@ -454,14 +454,14 @@ It never reads CTest's mutable `Testing/` directory.
 Resynchronize the manifest after the atomic evidence replacement:
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     sync \
-    --release cxx/parity/release-v0.62.0.json \
-    --development cxx/parity/development.json \
-    --mapping cxx/parity/mapping.json \
-    --approvals cxx/parity/approvals.json \
-    --evidence cxx/parity/evidence.json \
-    --output cxx/parity/manifest.json
+    --release tools/parity/data/release-v0.62.0.json \
+    --development tools/parity/data/development.json \
+    --mapping tools/parity/data/mapping.json \
+    --approvals tools/parity/data/approvals.json \
+    --evidence tools/parity/data/evidence.json \
+    --output tools/parity/data/manifest.json
 ```
 
 ```console
@@ -471,16 +471,16 @@ $ uv run pytest tests/cxx/test_generate_metadata.py -v
 - [ ] **Step 7: Verify, stage, and commit the completed shard**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode structural \
     --shard metadata \
     --require-evidence
 ```
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     stage-paths \
     --shard metadata \
     --output cxx/build/parity-stage/metadata.paths
@@ -509,14 +509,14 @@ EOF
 
 **Files:**
 
-- Modify: `cxx/include/libtmux/server.hpp`
-- Modify: `cxx/src/server.cpp`
-- Create: `cxx/tests/integration/server_connection_test.cpp`
-- Create: `cxx/tests/compile/server_connection/`
-- Create: `cxx/tests/differential/scenarios/server-connection.json`
-- Create: `cxx/examples/parity/server_connection.cpp`
-- Create: `cxx/docs/api/server-connection.md`
-- Modify: `cxx/parity/mapping.json`
+- Modify: `include/libtmux/server.hpp`
+- Modify: `src/server.cpp`
+- Create: `tests/integration/server_connection_test.cpp`
+- Create: `tests/compile/server_connection/`
+- Create: `tests/differential/scenarios/server-connection.json`
+- Create: `examples/parity/server_connection.cpp`
+- Create: `docs/api/server-connection.md`
+- Modify: `tools/parity/data/mapping.json`
 
 **Coverage:** Constructors and factories, `from_env`, socket name/path/config
 selection, raw `cmd`, equality, representation, capability access,
@@ -525,9 +525,9 @@ selection, raw `cmd`, equality, representation, capability access,
 - [ ] **Step 1: Run the shard red**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode structural \
     --shard server-connection
 ```
@@ -557,7 +557,7 @@ $ uv run pytest tests/cxx/differential/test_server_connection.py -v
 - [ ] **Step 4: Commit the shard**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     stage-paths \
     --shard server-connection \
     --output cxx/build/parity-stage/server-connection.paths
@@ -586,29 +586,29 @@ EOF
 
 **Files:**
 
-- Bind: `cxx/include/libtmux/session.hpp`
-- Bind: `cxx/include/libtmux/window.hpp`
-- Bind: `cxx/include/libtmux/pane.hpp`
-- Bind: `cxx/include/libtmux/client.hpp`
-- Bind: `cxx/src/session.cpp`
-- Bind: `cxx/src/window.cpp`
-- Bind: `cxx/src/pane.cpp`
-- Bind: `cxx/src/client.cpp`
-- Bind: `cxx/tests/unit/entity_value_shells_test.cpp`
-- Bind: `cxx/tests/compile/entity_value_shells/`
-- Create: `cxx/include/libtmux/environment.hpp`
-- Create: `cxx/include/libtmux/options.hpp`
-- Create: `cxx/include/libtmux/hooks.hpp`
-- Create: `cxx/src/environment.cpp`
-- Create: `cxx/src/options.cpp`
-- Create: `cxx/src/hooks.cpp`
-- Create: `cxx/tests/unit/facade_value_shells_test.cpp`
-- Create: `cxx/tests/compile/facade_value_shells/`
-- Modify: `cxx/src/CMakeLists.txt`
-- Modify: `cxx/tests/unit/CMakeLists.txt`
-- Modify: `cxx/tests/compile/CMakeLists.txt`
+- Bind: `include/libtmux/session.hpp`
+- Bind: `include/libtmux/window.hpp`
+- Bind: `include/libtmux/pane.hpp`
+- Bind: `include/libtmux/client.hpp`
+- Bind: `src/session.cpp`
+- Bind: `src/window.cpp`
+- Bind: `src/pane.cpp`
+- Bind: `src/client.cpp`
+- Bind: `tests/unit/entity_value_shells_test.cpp`
+- Bind: `tests/compile/entity_value_shells/`
+- Create: `include/libtmux/environment.hpp`
+- Create: `include/libtmux/options.hpp`
+- Create: `include/libtmux/hooks.hpp`
+- Create: `src/environment.cpp`
+- Create: `src/options.cpp`
+- Create: `src/hooks.cpp`
+- Create: `tests/unit/facade_value_shells_test.cpp`
+- Create: `tests/compile/facade_value_shells/`
+- Modify: `src/CMakeLists.txt`
+- Modify: `tests/unit/CMakeLists.txt`
+- Modify: `tests/compile/CMakeLists.txt`
 - Modify: `cxx/public-headers.json`
-- Modify: `cxx/include/libtmux/libtmux.hpp`
+- Modify: `include/libtmux/libtmux.hpp`
 
 - [ ] **Step 1: Preserve entity shells and compile facade signatures red**
 
@@ -667,9 +667,9 @@ query, mutation, or destructor dispatch, the preexisting entity-shell digests
 are unchanged, and every entity accessor can name a complete facade return type.
 
 ```console
-$ uv run python cxx/tools/headers/generate_umbrella.py \
+$ uv run python tools/headers/generate_umbrella.py \
     --registry cxx/public-headers.json \
-    --output cxx/include/libtmux/libtmux.hpp \
+    --output include/libtmux/libtmux.hpp \
     --check
 ```
 
@@ -677,19 +677,19 @@ $ uv run python cxx/tools/headers/generate_umbrella.py \
 
 ```console
 $ git add \
-    cxx/include/libtmux/environment.hpp \
-    cxx/include/libtmux/options.hpp \
-    cxx/include/libtmux/hooks.hpp \
+    include/libtmux/environment.hpp \
+    include/libtmux/options.hpp \
+    include/libtmux/hooks.hpp \
     cxx/public-headers.json \
-    cxx/include/libtmux/libtmux.hpp \
-    cxx/src/environment.cpp \
-    cxx/src/options.cpp \
-    cxx/src/hooks.cpp \
-    cxx/src/CMakeLists.txt \
-    cxx/tests/unit/facade_value_shells_test.cpp \
-    cxx/tests/unit/CMakeLists.txt \
-    cxx/tests/compile/facade_value_shells \
-    cxx/tests/compile/CMakeLists.txt
+    include/libtmux/libtmux.hpp \
+    src/environment.cpp \
+    src/options.cpp \
+    src/hooks.cpp \
+    src/CMakeLists.txt \
+    tests/unit/facade_value_shells_test.cpp \
+    tests/unit/CMakeLists.txt \
+    tests/compile/facade_value_shells \
+    tests/compile/CMakeLists.txt
 ```
 
 ```console
@@ -720,9 +720,9 @@ variants, and loud raw tmux-format search errors.
 - [ ] **Step 1: Run `server-collections` red**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode structural \
     --shard server-collections
 ```
@@ -750,7 +750,7 @@ $ uv run pytest tests/cxx/differential/test_server_collections.py -v
 ```
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     stage-paths \
     --shard server-collections \
     --output cxx/build/parity-stage/server-collections.paths
@@ -787,9 +787,9 @@ hydration, and `MutationApplied` with retry prohibition.
 - [ ] **Step 1: Run `server-sessions` red**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode structural \
     --shard server-sessions
 ```
@@ -810,7 +810,7 @@ $ uv run pytest tests/cxx/differential/test_server_sessions.py -v
 ```
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     stage-paths \
     --shard server-sessions \
     --output cxx/build/parity-stage/server-sessions.paths
@@ -845,9 +845,9 @@ and sensitive argument marking.
 - [ ] **Step 1: Run `server-shell-buffers` red**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode structural \
     --shard server-shell-buffers
 ```
@@ -869,7 +869,7 @@ $ uv run pytest tests/cxx/differential/test_server_shell_buffers.py -v
 - [ ] **Step 3: Commit the shard**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     stage-paths \
     --shard server-shell-buffers \
     --output cxx/build/parity-stage/server-shell-buffers.paths
@@ -904,9 +904,9 @@ and non-hanging attach behavior through a test-only PTY/control client.
 - [ ] **Step 1: Run `server-commands` red**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode structural \
     --shard server-commands
 ```
@@ -927,7 +927,7 @@ $ uv run pytest tests/cxx/differential/test_server_commands.py -v
 ```
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     stage-paths \
     --shard server-commands \
     --output cxx/build/parity-stage/server-commands.paths
@@ -963,9 +963,9 @@ clients, groups, environment/options/hooks access, and stale-state behavior.
 - [ ] **Step 1: Run `session-values` red**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode structural \
     --shard session-values
 ```
@@ -990,7 +990,7 @@ $ uv run pytest tests/cxx/differential/test_session_values.py -v
 ```
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     stage-paths \
     --shard session-values \
     --output cxx/build/parity-stage/session-values.paths
@@ -1032,9 +1032,9 @@ commands continue to use captured stdio.
 - [ ] **Step 1: Run both Session shards red**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode structural \
     --shard session-navigation \
     --shard session-lifecycle
@@ -1055,7 +1055,7 @@ $ uv run pytest tests/cxx/differential/test_session_navigation.py -v
 ```
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     stage-paths \
     --shard session-navigation \
     --output cxx/build/parity-stage/session-navigation.paths
@@ -1092,7 +1092,7 @@ $ uv run pytest tests/cxx/differential/test_session_lifecycle.py -v
 ```
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     stage-paths \
     --shard session-lifecycle \
     --output cxx/build/parity-stage/session-lifecycle.paths
@@ -1127,9 +1127,9 @@ environment/options/hooks, and linked-window deduplication.
 - [ ] **Step 1: Run `window-values` red**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode structural \
     --shard window-values
 ```
@@ -1151,7 +1151,7 @@ $ uv run pytest tests/cxx/differential/test_window_values.py -v
 - [ ] **Step 3: Commit the shard**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     stage-paths \
     --shard window-values \
     --output cxx/build/parity-stage/window-values.paths
@@ -1186,9 +1186,9 @@ respawn/kill.
 - [ ] **Step 1: Run all three Window shards red**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode structural \
     --shard window-layout \
     --shard window-panes \
@@ -1246,9 +1246,9 @@ sensitive commands.
 - [ ] **Step 1: Run both Pane shards red**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode structural \
     --shard pane-values \
     --shard pane-io
@@ -1292,9 +1292,9 @@ tmux `3.7` behavior boundary.
 - [ ] **Step 1: Run all three shards red**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode structural \
     --shard pane-layout \
     --shard pane-modes \
@@ -1343,13 +1343,13 @@ capability cases and applied hydration failure.
 
 **Files:**
 
-- Modify: `cxx/include/libtmux/client.hpp`
-- Modify: `cxx/src/client.cpp`
-- Create: `cxx/tests/integration/client_test.cpp`
-- Create: `cxx/tests/differential/scenarios/client.json`
-- Create: `cxx/examples/parity/client.cpp`
-- Create: `cxx/docs/api/client.md`
-- Modify: `cxx/parity/mapping.json`
+- Modify: `include/libtmux/client.hpp`
+- Modify: `src/client.cpp`
+- Create: `tests/integration/client_test.cpp`
+- Create: `tests/differential/scenarios/client.json`
+- Create: `examples/parity/client.cpp`
+- Create: `docs/api/client.md`
+- Modify: `tools/parity/data/mapping.json`
 
 **Coverage:** Identity, fields, equality, representation, refresh, attached
 session/window/pane resolution, stale attachment, and client operations exposed
@@ -1358,9 +1358,9 @@ from both Server and Client.
 - [ ] **Step 1: Run `client` red**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode structural \
     --shard client
 ```
@@ -1376,7 +1376,7 @@ $ uv run pytest tests/cxx/differential/test_client.py -v
 ```
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     stage-paths \
     --shard client \
     --output cxx/build/parity-stage/client.paths
@@ -1412,9 +1412,9 @@ sensitive value redaction.
 - [ ] **Step 1: Run `environment` red**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode structural \
     --shard environment
 ```
@@ -1444,9 +1444,9 @@ indices, invalid indices, and deterministic ordering.
 - [ ] **Step 1: Run `sparse-array` red**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode structural \
     --shard sparse-array
 ```
@@ -1470,8 +1470,8 @@ Commit the exact sparse-array and inherited slice paths as
 
 **Files:** Modify `options.hpp`, `options.cpp`; create integration and compile
 tests, `options.json`, `options.cpp` example, and `options.md`; bind
-`cxx/parity/metadata/options.json` and
-`cxx/include/libtmux/generated/options.hpp`; modify the mapping.
+`tools/parity/data/metadata/options.json` and
+`include/libtmux/generated/options.hpp`; modify the mapping.
 
 **Coverage:** Typed generated keys, server/session/window/pane scope validation,
 get/set/unset/show, sparse arrays, conversion, defaults, invalid value/category
@@ -1480,9 +1480,9 @@ errors, and inherited option behavior.
 - [ ] **Step 1: Run `options` red**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode structural \
     --shard options
 ```
@@ -1506,8 +1506,8 @@ Commit the exact option and inherited slice paths as
 
 **Files:** Modify `hooks.hpp`, `hooks.cpp`; create integration and compile
 tests, `hooks.json`, `hooks.cpp` example, and `hooks.md`; bind
-`cxx/parity/metadata/hooks.json` and
-`cxx/include/libtmux/generated/hooks.hpp`; modify the mapping.
+`tools/parity/data/metadata/hooks.json` and
+`include/libtmux/generated/hooks.hpp`; modify the mapping.
 
 **Coverage:** Typed hook keys, scope, show/set/unset/run, sparse tmux command
 indices, bulk set, invalid indices, and inherited hook behavior.
@@ -1515,9 +1515,9 @@ indices, bulk set, invalid indices, and inherited hook behavior.
 - [ ] **Step 1: Run `hooks` red**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode structural \
     --shard hooks
 ```
@@ -1541,15 +1541,15 @@ Commit the exact hook and inherited slice paths as
 
 **Files:**
 
-- Bind: `cxx/include/libtmux/generated/fields.hpp`
-- Bind: `cxx/parity/metadata/fields.json`
-- Modify: `cxx/include/libtmux/query/`
-- Create: `cxx/tests/integration/query_parity_test.cpp`
-- Create: `cxx/tests/compile/query_parity/`
-- Create: `cxx/tests/differential/scenarios/query.json`
-- Create: `cxx/examples/parity/query.cpp`
-- Create: `cxx/docs/api/query.md`
-- Modify: `cxx/parity/mapping.json`
+- Bind: `include/libtmux/generated/fields.hpp`
+- Bind: `tools/parity/data/metadata/fields.json`
+- Modify: `include/libtmux/query/`
+- Create: `tests/integration/query_parity_test.cpp`
+- Create: `tests/compile/query_parity/`
+- Create: `tests/differential/scenarios/query.json`
+- Create: `examples/parity/query.cpp`
+- Create: `docs/api/query.md`
+- Modify: `tools/parity/data/mapping.json`
 
 **Coverage:** Every `neo.Obj` field and lookup capability, generated fields,
 scalar and relation filters, all operators, direct invocation, standard views,
@@ -1561,9 +1561,9 @@ mapped elsewhere.
 - [ ] **Step 1: Run `query-neo` red**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode structural \
     --shard query-neo
 ```
@@ -1583,9 +1583,9 @@ $ uv run pytest tests/cxx/differential/test_query.py tests/cxx/test_query_oracle
 - [ ] **Step 3: Verify no functional `neo` exclusion**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode structural \
     --shard query-neo \
     --reject-functional-exclusions
@@ -1596,7 +1596,7 @@ Expected: exit zero.
 - [ ] **Step 4: Commit the shard**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     stage-paths \
     --shard query-neo \
     --output cxx/build/parity-stage/query-neo.paths
@@ -1623,8 +1623,8 @@ EOF
 ### Task 20: Complete common values and version surfaces
 
 **Files:** Modify public version and capability headers; bind
-`cxx/parity/metadata/enums.json` and
-`cxx/include/libtmux/generated/enums.hpp`; create unit and compile tests,
+`tools/parity/data/metadata/enums.json` and
+`include/libtmux/generated/enums.hpp`; create unit and compile tests,
 `common-version.json`, `common_version.cpp`, and `common-version.md`; modify the
 mapping.
 
@@ -1634,9 +1634,9 @@ lookups, return-value containers, and below/at-boundary behavior.
 - [ ] **Step 1: Run `common-version` red**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode structural \
     --shard common-version
 ```
@@ -1669,9 +1669,9 @@ and stable error inspection.
 - [ ] **Step 1: Run `warnings-errors` red**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode structural \
     --shard warnings-errors
 ```
@@ -1708,9 +1708,9 @@ nonfunctional exclusions for import and typing mechanics.
 - [ ] **Step 1: Run `compatibility-protocols` red**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode structural \
     --shard compatibility-protocols
 ```
@@ -1718,9 +1718,9 @@ $ uv run python -m cxx.tools.parity \
 - [ ] **Step 2: Reject functional exclusions**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode structural \
     --shard compatibility-protocols \
     --reject-functional-exclusions
@@ -1757,9 +1757,9 @@ exclusions for pytest registration mechanics rather than runtime behavior.
 - [ ] **Step 1: Run `testing-support` red**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode structural \
     --shard testing-support
 ```
@@ -1775,9 +1775,9 @@ $ uv run pytest tests/cxx/differential/test_testing_support.py -v
 ```
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode structural \
     --shard testing-support \
     --reject-functional-exclusions
@@ -1793,27 +1793,27 @@ Commit the exact fixture and inherited slice paths as
 **Files:**
 
 - Bind: `cxx/public-headers.json`
-- Bind: `cxx/parity/shards.json`
-- Modify: `cxx/parity/mapping.json`
-- Modify: `cxx/parity/approvals.json`
-- Modify: `cxx/parity/evidence.json`
-- Modify: `cxx/parity/manifest.json`
-- Modify: `cxx/tools/parity/__main__.py`
-- Create: `cxx/tools/headers/inventory_public_api.py`
-- Create: `cxx/tools/parity/check_api_coverage.py`
-- Create: `cxx/tools/parity/refresh_evidence.py`
-- Create: `cxx/tools/parity/write_completion_evidence.py`
-- Create: `cxx/tools/differential/check_coverage.py`
-- Create: `cxx/tools/evidence/parity_gates.py`
+- Bind: `tools/parity/data/shards.json`
+- Modify: `tools/parity/data/mapping.json`
+- Modify: `tools/parity/data/approvals.json`
+- Modify: `tools/parity/data/evidence.json`
+- Modify: `tools/parity/data/manifest.json`
+- Modify: `tools/parity/__main__.py`
+- Create: `tools/headers/inventory_public_api.py`
+- Create: `tools/parity/check_api_coverage.py`
+- Create: `tools/parity/refresh_evidence.py`
+- Create: `tools/parity/write_completion_evidence.py`
+- Create: `tools/differential/check_coverage.py`
+- Create: `tools/evidence/parity_gates.py`
 - Create: `tests/cxx/test_api_coverage.py`
 - Create: `tests/cxx/test_public_api_inventory.py`
 - Create: `tests/cxx/test_parity_completion_evidence.py`
 - Create: `tests/cxx/test_differential_coverage.py`
 - Create: `tests/cxx/test_parity_ctest_gates.py`
 - Create: `tests/cxx/test_refresh_evidence.py`
-- Create: `cxx/docs/evidence/parity-completion.schema.json`
-- Create: `cxx/docs/evidence/parity-completion.json`
-- Create: `cxx/docs/reviews/parity.md`
+- Create: `docs/evidence/parity-completion.schema.json`
+- Create: `docs/evidence/parity-completion.json`
+- Create: `docs/reviews/parity.md`
 
 - [ ] **Step 1: Write and run the closure-tool tests red**
 
@@ -1895,9 +1895,9 @@ Expected: all focused unit tests pass.
 - [ ] **Step 3: Run completion mode before closure**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode complete
 ```
 
@@ -1915,9 +1915,9 @@ of immutable gate-record digests; it never reads `Testing/` or reuses an older
 source record.
 
 ```console
-$ uv run python -m cxx.tools.evidence.parity_gates \
+$ uv run python -m tools.evidence.parity_gates \
     --source-dir cxx \
-    --shards cxx/parity/shards.json \
+    --shards tools/parity/data/shards.json \
     --output-root cxx/build/evidence/ctest \
     --record cxx/build/evidence/parity-ctest-index.json
 ```
@@ -1931,16 +1931,16 @@ Generate the independent C++ declaration inventory after the parity gate has
 configured and built the current development tree:
 
 ```console
-$ uv run python cxx/tools/headers/inventory_public_api.py \
+$ uv run python tools/headers/inventory_public_api.py \
     --registry cxx/public-headers.json \
-    --include-root cxx/include \
+    --include-root include \
     --build-dir cxx/build/cxx-dev \
     --output cxx/build/public-api-inventory.json
 ```
 
 ```console
-$ uv run python cxx/tools/parity/check_api_coverage.py \
-    --manifest cxx/parity/manifest.json \
+$ uv run python tools/parity/check_api_coverage.py \
+    --manifest tools/parity/data/manifest.json \
     --public-api cxx/build/public-api-inventory.json \
     --ctest-index cxx/build/evidence/parity-ctest-index.json \
     --output cxx/build/api-coverage.json
@@ -1972,12 +1972,12 @@ digests are current. An evidence-only manifest refresh does not invalidate that
 semantic identity.
 
 ```console
-$ uv run python cxx/tools/differential/check_coverage.py \
+$ uv run python tools/differential/check_coverage.py \
     --mode local \
-    --manifest cxx/parity/manifest.json \
-    --shards cxx/parity/shards.json \
-    --registry cxx/tests/differential/scenario_registry.json \
-    --python-adapter cxx/tools/differential/python_reference.py \
+    --manifest tools/parity/data/manifest.json \
+    --shards tools/parity/data/shards.json \
+    --registry tests/differential/scenario_registry.json \
+    --python-adapter tools/differential/python_reference.py \
     --cpp-adapter cxx/build/cxx-dev/tests/differential/cpp_adapter \
     --drivers tests/cxx/differential \
     --results cxx/build/differential-results.json \
@@ -1994,13 +1994,13 @@ Refresh the durable evidence sidecar only from the current-source indexes
 produced in Steps 4 and 5:
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     refresh-evidence \
-    --manifest cxx/parity/manifest.json \
-    --shards cxx/parity/shards.json \
+    --manifest tools/parity/data/manifest.json \
+    --shards tools/parity/data/shards.json \
     --ctest-index cxx/build/evidence/parity-ctest-index.json \
     --differential-index cxx/build/differential-results.json \
-    --evidence cxx/parity/evidence.json
+    --evidence tools/parity/data/evidence.json
 ```
 
 Expected: every existing shard-owned execution record is refreshed in one
@@ -2010,14 +2010,14 @@ byte-for-byte unchanged.
 Resynchronize the reviewed mapping with both durable sidecars:
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     sync \
-    --release cxx/parity/release-v0.62.0.json \
-    --development cxx/parity/development.json \
-    --mapping cxx/parity/mapping.json \
-    --approvals cxx/parity/approvals.json \
-    --evidence cxx/parity/evidence.json \
-    --output cxx/parity/manifest.json
+    --release tools/parity/data/release-v0.62.0.json \
+    --development tools/parity/data/development.json \
+    --mapping tools/parity/data/mapping.json \
+    --approvals tools/parity/data/approvals.json \
+    --evidence tools/parity/data/evidence.json \
+    --output tools/parity/data/manifest.json
 ```
 
 Expected: `manifest.json` deterministically embeds the current approval and
@@ -2040,9 +2040,9 @@ output against
 regeneration.
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode complete \
     --report cxx/build/parity-verify.json
 ```
@@ -2052,16 +2052,16 @@ $ uv run pytest tests/cxx/test_parity_completion_evidence.py -v
 ```
 
 ```console
-$ uv run python cxx/tools/parity/write_completion_evidence.py \
-    --manifest cxx/parity/manifest.json \
-    --evidence cxx/parity/evidence.json \
+$ uv run python tools/parity/write_completion_evidence.py \
+    --manifest tools/parity/data/manifest.json \
+    --evidence tools/parity/data/evidence.json \
     --public-api cxx/build/public-api-inventory.json \
     --validator cxx/build/parity-verify.json \
     --ctest-index cxx/build/evidence/parity-ctest-index.json \
     --differential cxx/build/differential-results.json \
     --differential-coverage cxx/build/differential-coverage.json \
     --coverage cxx/build/api-coverage.json \
-    --output cxx/docs/evidence/parity-completion.json
+    --output docs/evidence/parity-completion.json
 ```
 
 Expected: the committed evidence validates and names only successful current
@@ -2081,9 +2081,9 @@ describe the same current run.
 - [ ] **Step 9: Run completion mode and commit**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode complete
 ```
 
@@ -2092,26 +2092,26 @@ approval, stale classification, duplicate evidence, or functional exclusion.
 
 ```console
 $ git add \
-    cxx/parity/mapping.json \
-    cxx/parity/approvals.json \
-    cxx/parity/evidence.json \
-    cxx/parity/manifest.json \
-    cxx/tools/parity/__main__.py \
-    cxx/tools/headers/inventory_public_api.py \
-    cxx/tools/parity/check_api_coverage.py \
-    cxx/tools/parity/refresh_evidence.py \
-    cxx/tools/parity/write_completion_evidence.py \
-    cxx/tools/differential/check_coverage.py \
-    cxx/tools/evidence/parity_gates.py \
+    tools/parity/data/mapping.json \
+    tools/parity/data/approvals.json \
+    tools/parity/data/evidence.json \
+    tools/parity/data/manifest.json \
+    tools/parity/__main__.py \
+    tools/headers/inventory_public_api.py \
+    tools/parity/check_api_coverage.py \
+    tools/parity/refresh_evidence.py \
+    tools/parity/write_completion_evidence.py \
+    tools/differential/check_coverage.py \
+    tools/evidence/parity_gates.py \
     tests/cxx/test_api_coverage.py \
     tests/cxx/test_public_api_inventory.py \
     tests/cxx/test_parity_completion_evidence.py \
     tests/cxx/test_differential_coverage.py \
     tests/cxx/test_parity_ctest_gates.py \
     tests/cxx/test_refresh_evidence.py \
-    cxx/docs/evidence/parity-completion.schema.json \
-    cxx/docs/evidence/parity-completion.json \
-    cxx/docs/reviews/parity.md
+    docs/evidence/parity-completion.schema.json \
+    docs/evidence/parity-completion.json \
+    docs/reviews/parity.md
 ```
 
 ```console

@@ -1792,7 +1792,7 @@ def build_parser() -> argparse.ArgumentParser:
     >>> build_parser().parse_args(args).preset
     'cxx-dev'
     """
-    parser = argparse.ArgumentParser(prog="python -m cxx.tools.evidence.ctest_gate")
+    parser = argparse.ArgumentParser(prog="python -m tools.evidence.ctest_gate")
     parser.add_argument("--source-dir", type=pathlib.Path, required=True)
     parser.add_argument("--preset", required=True)
     selector = parser.add_mutually_exclusive_group(required=True)

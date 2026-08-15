@@ -11,7 +11,7 @@ import sys
 import tempfile
 import typing as t
 
-from cxx.tools.parity.generate import canonical_json_bytes
+from tools.parity.generate import canonical_json_bytes
 
 from .canonicalize import canonicalize
 from .materialize import materialize_reference
@@ -76,7 +76,7 @@ def list_operations_document(registry: ScenarioRegistry) -> dict[str, object]:
 
     Examples
     --------
-    >>> root = pathlib.Path('cxx/tests/differential')
+    >>> root = pathlib.Path('tests/differential')
     >>> document = list_operations_document(
     ...     load_registry(root / 'scenario_registry.json')
     ... )

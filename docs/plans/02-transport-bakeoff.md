@@ -43,10 +43,10 @@ control mode, and the pinned engine-ops source named by the approved design.
 Retain these artifacts through the production rewrite:
 
 ```text
-cxx/tests/contracts/transport/
-cxx/tests/data/transport/
-cxx/docs/bakeoffs/transport/
-cxx/docs/bakeoffs/grafts/
+tests/contracts/transport/
+tests/data/transport/
+docs/bakeoffs/transport/
+docs/bakeoffs/grafts/
 ```
 
 Delete these implementations before production work:
@@ -63,9 +63,9 @@ cxx/spikes/grafts/engine_ops/
 
 - Create: `cxx/spikes/transport/kernel/include/transport/process.hpp`
 - Create: `cxx/spikes/transport/kernel/src/process.cpp`
-- Create: `cxx/tests/contracts/transport/process_contract.cpp`
-- Create: `cxx/tests/support/process_probe.cpp`
-- Create: `cxx/tests/data/transport/process-goldens.json`
+- Create: `tests/contracts/transport/process_contract.cpp`
+- Create: `tests/support/process_probe.cpp`
+- Create: `tests/data/transport/process-goldens.json`
 - Create: `cxx/spikes/transport/kernel/CMakeLists.txt`
 - Modify: `cxx/CMakeLists.txt`
 
@@ -204,9 +204,9 @@ diagnostics.
 $ git add \
     cxx/CMakeLists.txt \
     cxx/spikes/transport/kernel \
-    cxx/tests/contracts/transport/process_contract.cpp \
-    cxx/tests/support/process_probe.cpp \
-    cxx/tests/data/transport/process-goldens.json
+    tests/contracts/transport/process_contract.cpp \
+    tests/support/process_probe.cpp \
+    tests/data/transport/process-goldens.json
 ```
 
 ```console
@@ -226,17 +226,17 @@ EOF
 
 **Files:**
 
-- Create: `cxx/tests/contracts/transport/exercise.hpp`
-- Create: `cxx/tests/contracts/transport/exercise.cpp`
-- Create: `cxx/tests/contracts/transport/harness_self_test.cpp`
-- Create: `cxx/tests/contracts/transport/CMakeLists.txt`
-- Create: `cxx/tests/contracts/transport/vertical_slice.cpp`
-- Create: `cxx/tests/data/transport/expected-errors.json`
+- Create: `tests/contracts/transport/exercise.hpp`
+- Create: `tests/contracts/transport/exercise.cpp`
+- Create: `tests/contracts/transport/harness_self_test.cpp`
+- Create: `tests/contracts/transport/CMakeLists.txt`
+- Create: `tests/contracts/transport/vertical_slice.cpp`
+- Create: `tests/data/transport/expected-errors.json`
 - Create: `cxx/spikes/transport/common/include/libtmux_spike/transport.hpp`
 - Create: `cxx/spikes/transport/common/src/transport.cpp`
 - Create: `cxx/spikes/transport/common/CMakeLists.txt`
 - Modify: `cxx/CMakeLists.txt`
-- Modify: `cxx/tests/CMakeLists.txt`
+- Modify: `tests/CMakeLists.txt`
 
 **Interfaces:**
 
@@ -425,9 +425,9 @@ contender target exists yet.
 ```console
 $ git add \
     cxx/CMakeLists.txt \
-    cxx/tests/CMakeLists.txt \
-    cxx/tests/contracts/transport \
-    cxx/tests/data/transport \
+    tests/CMakeLists.txt \
+    tests/contracts/transport \
+    tests/data/transport \
     cxx/spikes/transport/common
 ```
 
@@ -717,8 +717,8 @@ EOF
 - Create: `cxx/spikes/grafts/control_mode/tests/parser_test.cpp`
 - Create: `cxx/spikes/grafts/control_mode/tests/integration_test.cpp`
 - Create: `cxx/spikes/grafts/control_mode/CMakeLists.txt`
-- Create: `cxx/docs/bakeoffs/grafts/control-mode.json`
-- Create: `cxx/docs/bakeoffs/grafts/control-mode.md`
+- Create: `docs/bakeoffs/grafts/control-mode.json`
+- Create: `docs/bakeoffs/grafts/control-mode.md`
 - Modify: `cxx/CMakeLists.txt`
 
 **Interfaces:**
@@ -809,7 +809,7 @@ $ cmake --build --preset cxx-sanitize --target graft_control_mode_contracts
 ```
 
 ```console
-$ uv run python -m cxx.tools.evidence.ctest_gate \
+$ uv run python -m tools.evidence.ctest_gate \
     --source-dir cxx \
     --preset cxx-sanitize \
     --match '^graft\.control\.' \
@@ -826,8 +826,8 @@ Expected: all parser and real-tmux tests pass without a timeout.
 $ git add \
     cxx/CMakeLists.txt \
     cxx/spikes/grafts/control_mode \
-    cxx/docs/bakeoffs/grafts/control-mode.json \
-    cxx/docs/bakeoffs/grafts/control-mode.md
+    docs/bakeoffs/grafts/control-mode.json \
+    docs/bakeoffs/grafts/control-mode.md
 ```
 
 ```console
@@ -851,11 +851,11 @@ EOF
 - Create: `cxx/spikes/grafts/engine_ops/src/execute.cpp`
 - Create: `cxx/spikes/grafts/engine_ops/tests/adapter_test.cpp`
 - Create: `cxx/spikes/grafts/engine_ops/CMakeLists.txt`
-- Create: `cxx/tools/bakeoff/materialize_engine_ops.py`
+- Create: `tools/bakeoff/materialize_engine_ops.py`
 - Create: `tests/cxx/test_materialize_engine_ops.py`
-- Create: `cxx/docs/bakeoffs/grafts/engine-ops-source.json`
-- Create: `cxx/docs/bakeoffs/grafts/engine-ops.json`
-- Create: `cxx/docs/bakeoffs/grafts/engine-ops.md`
+- Create: `docs/bakeoffs/grafts/engine-ops-source.json`
+- Create: `docs/bakeoffs/grafts/engine-ops.json`
+- Create: `docs/bakeoffs/grafts/engine-ops.md`
 - Modify: `cxx/CMakeLists.txt`
 
 **Interfaces:**
@@ -919,8 +919,8 @@ writes only the eight inspected files plus a normalized materialization
 manifest. It never accepts an ambient checkout or searches local worktrees.
 
 ```console
-$ uv run python cxx/tools/bakeoff/materialize_engine_ops.py \
-    --spec cxx/docs/bakeoffs/grafts/engine-ops-source.json \
+$ uv run python tools/bakeoff/materialize_engine_ops.py \
+    --spec docs/bakeoffs/grafts/engine-ops-source.json \
     --output cxx/build/engine-ops-source
 ```
 
@@ -991,7 +991,7 @@ $ cmake --build --preset cxx-dev --target graft_engine_ops_contracts
 ```
 
 ```console
-$ uv run python -m cxx.tools.evidence.ctest_gate \
+$ uv run python -m tools.evidence.ctest_gate \
     --source-dir cxx \
     --preset cxx-dev \
     --match '^graft\.engine_ops\.' \
@@ -1009,11 +1009,11 @@ the immutable gate digest.
 $ git add \
     cxx/CMakeLists.txt \
     cxx/spikes/grafts/engine_ops \
-    cxx/tools/bakeoff/materialize_engine_ops.py \
+    tools/bakeoff/materialize_engine_ops.py \
     tests/cxx/test_materialize_engine_ops.py \
-    cxx/docs/bakeoffs/grafts/engine-ops-source.json \
-    cxx/docs/bakeoffs/grafts/engine-ops.json \
-    cxx/docs/bakeoffs/grafts/engine-ops.md
+    docs/bakeoffs/grafts/engine-ops-source.json \
+    docs/bakeoffs/grafts/engine-ops.json \
+    docs/bakeoffs/grafts/engine-ops.md
 ```
 
 ```console
@@ -1032,17 +1032,17 @@ EOF
 
 **Files:**
 
-- Create: `cxx/tools/bakeoff/measure_transport.py`
-- Create: `cxx/tools/bakeoff/verify_decision.py`
+- Create: `tools/bakeoff/measure_transport.py`
+- Create: `tools/bakeoff/verify_decision.py`
 - Create: `tests/cxx/test_measure_transport.py`
 - Create: `tests/cxx/test_verify_decision.py`
-- Create: `cxx/docs/bakeoffs/environment.json`
-- Create: `cxx/docs/bakeoffs/transport/measurements.json`
-- Create: `cxx/docs/bakeoffs/transport/diagnostics/`
-- Create: `cxx/docs/bakeoffs/transport/decision.json`
-- Create: `cxx/docs/bakeoffs/transport/scorecard.md`
-- Create: `cxx/docs/bakeoffs/transport/review.md`
-- Create conditionally: `cxx/docs/plans/followups/`
+- Create: `docs/bakeoffs/environment.json`
+- Create: `docs/bakeoffs/transport/measurements.json`
+- Create: `docs/bakeoffs/transport/diagnostics/`
+- Create: `docs/bakeoffs/transport/decision.json`
+- Create: `docs/bakeoffs/transport/scorecard.md`
+- Create: `docs/bakeoffs/transport/review.md`
+- Create conditionally: `docs/plans/followups/`
 - Modify: `cxx/CMakePresets.json`
 
 **Interfaces:**
@@ -1105,7 +1105,7 @@ $ cmake --build --preset cxx-sanitize
 ```
 
 ```console
-$ uv run python -m cxx.tools.evidence.ctest_gate \
+$ uv run python -m tools.evidence.ctest_gate \
     --source-dir cxx \
     --preset cxx-sanitize \
     --label transport \
@@ -1125,7 +1125,7 @@ $ cmake --build --preset cxx-tsan
 ```
 
 ```console
-$ uv run python -m cxx.tools.evidence.ctest_gate \
+$ uv run python -m tools.evidence.ctest_gate \
     --source-dir cxx \
     --preset cxx-tsan \
     --label concurrency \
@@ -1155,13 +1155,13 @@ $ cmake --build --preset cxx-transport-measure
 ```
 
 ```console
-$ uv run python cxx/tools/bakeoff/measure_transport.py \
+$ uv run python tools/bakeoff/measure_transport.py \
     --candidate all \
     --build-dir cxx/build/cxx-transport-measure \
     --repetitions 7 \
     --sanitize-gate cxx/build/evidence/transport-sanitize.json \
     --tsan-gate cxx/build/evidence/transport-tsan.json \
-    --output cxx/docs/bakeoffs/transport/measurements.json
+    --output docs/bakeoffs/transport/measurements.json
 ```
 
 Expected: normalized JSON contains all required measures and source/tool
@@ -1174,7 +1174,7 @@ gate evidence IDs, measurement IDs, and classified unknowns. Each unknown has
 `materiality`, an evidence ID, and a follow-up disposition. A material unknown
 requires a focused follow-up spike with its own failing test, measurement, and
 review disposition before selection; it cannot remain open. Before that work,
-stop and add a tracked subordinate plan under `cxx/docs/plans/followups/`,
+stop and add a tracked subordinate plan under `docs/plans/followups/`,
 named by the unknown's stable ID and listing exact paths, gates, and commits.
 Non-material unknowns state why they cannot change the public contract or
 winner. The decision does not use a preselected weighted formula.
@@ -1200,7 +1200,7 @@ or registration fix blocks closeout.
 - [ ] **Step 8: Run the report verifier**
 
 ```console
-$ uv run python cxx/tools/bakeoff/verify_decision.py \
+$ uv run python tools/bakeoff/verify_decision.py \
     --axis transport \
     --require-review-closed
 ```
@@ -1217,13 +1217,13 @@ directory to `git add`.
 ```console
 $ git add \
     cxx/CMakePresets.json \
-    cxx/tools/bakeoff/measure_transport.py \
-    cxx/tools/bakeoff/verify_decision.py \
+    tools/bakeoff/measure_transport.py \
+    tools/bakeoff/verify_decision.py \
     tests/cxx/test_measure_transport.py \
     tests/cxx/test_verify_decision.py \
-    cxx/docs/bakeoffs/environment.json \
-    cxx/docs/bakeoffs/transport \
-    cxx/docs/bakeoffs/grafts
+    docs/bakeoffs/environment.json \
+    docs/bakeoffs/transport \
+    docs/bakeoffs/grafts
 ```
 
 ```console

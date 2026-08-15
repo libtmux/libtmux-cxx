@@ -11,7 +11,7 @@ Of 228 registered tests:
 |---|---|
 | `cxx/spikes/transport/*` (contract and contenders) | 131 |
 | `cxx/spikes/grafts/*` (control mode, engine ops) | 50 |
-| `cxx/tests/support` fixture self-tests | 40 |
+| `tests/support` fixture self-tests | 40 |
 | The production library and its consumers | 5 |
 | Other | 2 |
 
@@ -36,7 +36,7 @@ would go untested.
 
 ## What deletion also breaks
 
-`cxx/docs/bakeoffs/transport/decision.json` records a source digest for each
+`docs/bakeoffs/transport/decision.json` records a source digest for each
 contender, and `verify_decision` re-derives those digests from the live files.
 Once the contenders are gone the decision cannot be re-verified from the tree,
 which is why the plan calls for a single audited deletion that supersedes

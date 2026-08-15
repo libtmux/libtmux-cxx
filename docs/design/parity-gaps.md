@@ -5,7 +5,7 @@ callable on `Server`, `Session`, `Window`, `Pane` and `Client` in the Python
 library that no C++ name answers.
 
 ```console
-$ python3 -m cxx.tools.parity gaps
+$ python3 -m tools.parity gaps
 ```
 
 It prints a total in the mid twenties and the names behind it, grouped by
@@ -16,7 +16,7 @@ The other half of the question — how much of the surface those are — is a
 second command:
 
 ```console
-$ python3 -m cxx.tools.parity coverage
+$ python3 -m tools.parity coverage
 ```
 
 The ledger's own total is not the denominator. It holds 966 entries, of
@@ -38,7 +38,7 @@ A rename is not a gap. `list_windows` is `windows()`, `capture_pane` is
 first version of this note — written by hand against such a diff — did,
 overstating the work by roughly half.
 
-So the renames are written down, as `RENAMES` in `cxx/tools/parity/gaps.py`,
+So the renames are written down, as `RENAMES` in `tools/parity/gaps.py`,
 and the survey is generated. The table itself is the hazard: an entry whose
 target does not exist would still suppress its Python name, so the survey
 would shrink and nothing would say why. `find_gaps` therefore checks every

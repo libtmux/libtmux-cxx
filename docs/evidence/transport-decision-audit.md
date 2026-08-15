@@ -2,7 +2,7 @@
 
 ## What the decision describes
 
-`cxx/docs/bakeoffs/transport/decision.json` records a bakeoff performed at
+`docs/bakeoffs/transport/decision.json` records a bakeoff performed at
 commit `90ffde066`, whose tree is `579a9ae9`. That binding is intact: the tree
 recorded in the decision is still the tree of that commit.
 
@@ -60,7 +60,7 @@ text that belongs in it.
 
 ## Deletion
 
-`cxx/spikes/` and `cxx/tests/contracts/` are deleted. That removes the three
+`cxx/spikes/` and `tests/contracts/` are deleted. That removes the three
 transport contenders, the engine-ops and control-mode grafts, the query
 prototype, and the contract suite that exercised the contenders against each
 other.

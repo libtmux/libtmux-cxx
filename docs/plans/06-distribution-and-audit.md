@@ -45,7 +45,7 @@ The C++23 package uses inline namespace `abi_v23` and output name
 build exports alias `libtmux::libtmux`; the two identities cannot share one
 build tree or install prefix.
 
-`cxx/VERSION` is the sole package-version source. `cxx/cmake/Version.cmake`
+`cxx/VERSION` is the sole package-version source. `cmake/Version.cmake`
 validates it and fixes
 `LIBTMUX_PACKAGE_VERSION_COMPATIBILITY=SameMinorVersion`; project metadata,
 configured headers, package config/version files, installed identity markers,
@@ -60,11 +60,11 @@ proves that an older requested patch in the same major/minor resolves.
 **Files:**
 
 - Bind: `cxx/public-headers.json`
-- Bind: `cxx/tools/headers/generate_umbrella.py`
-- Create: `cxx/tests/consumers/headers/CMakeLists.txt`
-- Create: `cxx/tools/headers/generate_consumers.py`
+- Bind: `tools/headers/generate_umbrella.py`
+- Create: `tests/consumers/headers/CMakeLists.txt`
+- Create: `tools/headers/generate_consumers.py`
 - Create: `tests/cxx/test_header_consumers.py`
-- Create: generated sources under `cxx/tests/consumers/headers/generated/`
+- Create: generated sources under `tests/consumers/headers/generated/`
 - Modify: `cxx/CMakeLists.txt`
 
 - [ ] **Step 1: Register the generator-backed consumer target red**
@@ -121,12 +121,12 @@ $ uv run pytest tests/cxx/test_header_consumers.py -v
 Expected: all generator unit tests pass.
 
 ```console
-$ uv run python cxx/tools/headers/generate_consumers.py \
+$ uv run python tools/headers/generate_consumers.py \
     --registry cxx/public-headers.json \
-    --include-root cxx/include \
+    --include-root include \
     --build-include cxx/build/cxx-dev/generated/include \
     --variant cxx23 \
-    --output cxx/tests/consumers/headers/generated \
+    --output tests/consumers/headers/generated \
     --check
 ```
 
@@ -150,9 +150,9 @@ Expected: all sources compile under warnings-as-errors with no umbrella-header
 dependency.
 
 ```console
-$ uv run python cxx/tools/headers/generate_umbrella.py \
+$ uv run python tools/headers/generate_umbrella.py \
     --registry cxx/public-headers.json \
-    --output cxx/include/libtmux/libtmux.hpp \
+    --output include/libtmux/libtmux.hpp \
     --check
 ```
 
@@ -160,8 +160,8 @@ $ uv run python cxx/tools/headers/generate_umbrella.py \
 
 ```console
 $ git add \
-    cxx/tests/consumers/headers \
-    cxx/tools/headers/generate_consumers.py \
+    tests/consumers/headers \
+    tools/headers/generate_consumers.py \
     tests/cxx/test_header_consumers.py \
     cxx/CMakeLists.txt
 ```
@@ -183,12 +183,12 @@ EOF
 **Files:**
 
 - Bind: `cxx/VERSION`
-- Bind: `cxx/cmake/Version.cmake`
-- Create: `cxx/cmake/libtmuxConfig.cmake.in`
-- Create: `cxx/cmake/Install.cmake`
-- Create: `cxx/tests/consumers/find_package/CMakeLists.txt`
-- Create: `cxx/tests/consumers/find_package/main.cpp`
-- Create: `cxx/tools/package/run_installed_consumer.py`
+- Bind: `cmake/Version.cmake`
+- Create: `cmake/libtmuxConfig.cmake.in`
+- Create: `cmake/Install.cmake`
+- Create: `tests/consumers/find_package/CMakeLists.txt`
+- Create: `tests/consumers/find_package/main.cpp`
+- Create: `tools/package/run_installed_consumer.py`
 - Create: `tests/cxx/test_installed_consumer.py`
 - Modify: `cxx/CMakeLists.txt`
 - Modify: `cxx/CMakePresets.json`
@@ -227,7 +227,7 @@ Expected: all installed-consumer unit tests pass.
 - [ ] **Step 3: Configure, compile, link, and run the staged consumer**
 
 ```console
-$ uv run python cxx/tools/package/run_installed_consumer.py \
+$ uv run python tools/package/run_installed_consumer.py \
     --source . \
     --build-root cxx/build/installed-consumer
 ```
@@ -243,10 +243,10 @@ and finds no source/build path in installed CMake files.
 $ git add \
     cxx/CMakeLists.txt \
     cxx/CMakePresets.json \
-    cxx/cmake/libtmuxConfig.cmake.in \
-    cxx/cmake/Install.cmake \
-    cxx/tests/consumers/find_package \
-    cxx/tools/package/run_installed_consumer.py \
+    cmake/libtmuxConfig.cmake.in \
+    cmake/Install.cmake \
+    tests/consumers/find_package \
+    tools/package/run_installed_consumer.py \
     tests/cxx/test_installed_consumer.py
 ```
 
@@ -266,10 +266,10 @@ EOF
 
 **Files:**
 
-- Create: `cxx/tools/package/relocate_install.py`
+- Create: `tools/package/relocate_install.py`
 - Create: `tests/cxx/test_relocated_consumer.py`
-- Create: `cxx/tests/consumers/relocated/CMakeLists.txt`
-- Create: `cxx/tests/consumers/relocated/main.cpp`
+- Create: `tests/consumers/relocated/CMakeLists.txt`
+- Create: `tests/consumers/relocated/main.cpp`
 - Modify: `cxx/CMakePresets.json`
 
 - [ ] **Step 1: Make a source-prefix leak fail**
@@ -298,7 +298,7 @@ $ uv run pytest tests/cxx/test_relocated_consumer.py -v
 Expected: all relocation unit tests pass.
 
 ```console
-$ uv run python cxx/tools/package/relocate_install.py \
+$ uv run python tools/package/relocate_install.py \
     --source . \
     --build-root cxx/build/relocation
 ```
@@ -310,9 +310,9 @@ Expected: configure, link, execution, path scan, and RPATH inspection all pass.
 ```console
 $ git add \
     cxx/CMakePresets.json \
-    cxx/tools/package/relocate_install.py \
+    tools/package/relocate_install.py \
     tests/cxx/test_relocated_consumer.py \
-    cxx/tests/consumers/relocated
+    tests/consumers/relocated
 ```
 
 ```console
@@ -331,11 +331,11 @@ EOF
 
 **Files:**
 
-- Create: `cxx/tests/consumers/add_subdirectory/CMakeLists.txt`
-- Create: `cxx/tests/consumers/add_subdirectory/main.cpp`
-- Create: `cxx/tests/consumers/fetchcontent/CMakeLists.txt`
-- Create: `cxx/tests/consumers/fetchcontent/main.cpp`
-- Create: `cxx/tools/package/run_source_consumers.py`
+- Create: `tests/consumers/add_subdirectory/CMakeLists.txt`
+- Create: `tests/consumers/add_subdirectory/main.cpp`
+- Create: `tests/consumers/fetchcontent/CMakeLists.txt`
+- Create: `tests/consumers/fetchcontent/main.cpp`
+- Create: `tools/package/run_source_consumers.py`
 - Create: `tests/cxx/test_source_consumers.py`
 - Modify: `cxx/CMakePresets.json`
 
@@ -366,7 +366,7 @@ Expected: all source-consumer unit tests pass.
 - [ ] **Step 3: Run and commit**
 
 ```console
-$ uv run python cxx/tools/package/run_source_consumers.py \
+$ uv run python tools/package/run_source_consumers.py \
     --source . \
     --build-root cxx/build/source-consumers
 ```
@@ -376,9 +376,9 @@ Expected: both consumers configure, compile, link, and run.
 ```console
 $ git add \
     cxx/CMakePresets.json \
-    cxx/tests/consumers/add_subdirectory \
-    cxx/tests/consumers/fetchcontent \
-    cxx/tools/package/run_source_consumers.py \
+    tests/consumers/add_subdirectory \
+    tests/consumers/fetchcontent \
+    tools/package/run_source_consumers.py \
     tests/cxx/test_source_consumers.py
 ```
 
@@ -398,11 +398,11 @@ EOF
 
 **Files:**
 
-- Create: `cxx/tools/package/audit_binary.py`
-- Create: `cxx/tools/package/run_library_modes.py`
+- Create: `tools/package/audit_binary.py`
+- Create: `tools/package/run_library_modes.py`
 - Create: `tests/cxx/test_library_modes.py`
-- Create: `cxx/tests/consumers/library_modes/CMakeLists.txt`
-- Create: `cxx/tests/consumers/library_modes/main.cpp`
+- Create: `tests/consumers/library_modes/CMakeLists.txt`
+- Create: `tests/consumers/library_modes/main.cpp`
 - Modify: `cxx/CMakePresets.json`
 
 - [ ] **Step 1: Run the missing mode orchestrator**
@@ -431,7 +431,7 @@ $ uv run pytest tests/cxx/test_library_modes.py -v
 Expected: all library-mode unit tests pass.
 
 ```console
-$ uv run python cxx/tools/package/run_library_modes.py
+$ uv run python tools/package/run_library_modes.py
 ```
 
 Expected: the isolated `cxx-static` and `cxx-shared` workflows both pass their
@@ -441,10 +441,10 @@ consumer and binary audits.
 
 ```console
 $ git add \
-    cxx/tools/package/audit_binary.py \
-    cxx/tools/package/run_library_modes.py \
+    tools/package/audit_binary.py \
+    tools/package/run_library_modes.py \
     tests/cxx/test_library_modes.py \
-    cxx/tests/consumers/library_modes \
+    tests/consumers/library_modes \
     cxx/CMakePresets.json
 ```
 
@@ -465,32 +465,32 @@ EOF
 **Files:**
 
 - Bind: `cxx/VERSION`
-- Bind: `cxx/cmake/Version.cmake`
-- Bind: `cxx/include/libtmux/config.hpp.in`
+- Bind: `cmake/Version.cmake`
+- Bind: `include/libtmux/config.hpp.in`
 - Bind: every existing public and generated header registered in
   `cxx/public-headers.json`
-- Bind: `cxx/tools/headers/generate_umbrella.py`
+- Bind: `tools/headers/generate_umbrella.py`
 - Modify: `cxx/public-headers.json`
-- Modify generated: `cxx/include/libtmux/libtmux.hpp`
+- Modify generated: `include/libtmux/libtmux.hpp`
 - Create: `cxx/third_party/tl-expected-1.1.0/include/tl/expected.hpp`
 - Create: `cxx/third_party/tl-expected-1.1.0/LICENSE`
 - Create: `cxx/third_party/tl-expected-1.1.0/source.json`
-- Create: `cxx/include/libtmux/compat/expected.hpp`
-- Create: `cxx/tests/consumers/cxx20/CMakeLists.txt`
-- Create: `cxx/tests/consumers/cxx20/main.cpp`
-- Create: `cxx/tests/consumers/abi_mismatch/`
+- Create: `include/libtmux/compat/expected.hpp`
+- Create: `tests/consumers/cxx20/CMakeLists.txt`
+- Create: `tests/consumers/cxx20/main.cpp`
+- Create: `tests/consumers/abi_mismatch/`
 - Create: `tests/cxx/test_cxx20_package.py`
-- Create: `cxx/tools/package/run_variant_matrix.py`
+- Create: `tools/package/run_variant_matrix.py`
 - Create: `tests/cxx/test_package_variant_matrix.py`
-- Create: `cxx/docs/guides/consuming.md`
-- Create: `cxx/docs/guides/consumer-cases.json`
-- Create: `cxx/tools/docs/check_consumer_guides.py`
+- Create: `docs/guides/consuming.md`
+- Create: `docs/guides/consumer-cases.json`
+- Create: `tools/docs/check_consumer_guides.py`
 - Create: `tests/cxx/test_consumer_guides.py`
-- Modify: `cxx/tools/package/run_installed_consumer.py`
-- Modify: `cxx/tools/package/run_source_consumers.py`
+- Modify: `tools/package/run_installed_consumer.py`
+- Modify: `tools/package/run_source_consumers.py`
 - Modify: `cxx/CMakeLists.txt`
 - Modify: `cxx/CMakePresets.json`
-- Modify: `cxx/cmake/Install.cmake`
+- Modify: `cmake/Install.cmake`
 
 **Pinned source:** tag `v1.1.0`, commit
 `292eff8bd8ee230a7df1d6a1c00c4ea0eb2f0362`, archive SHA-256
@@ -627,7 +627,7 @@ $ uv run pytest tests/cxx/test_package_variant_matrix.py -v
 Expected: all variant-matrix unit tests pass.
 
 ```console
-$ uv run python cxx/tools/package/run_variant_matrix.py \
+$ uv run python tools/package/run_variant_matrix.py \
     --standards 23 20 \
     --modes static shared \
     --output cxx/build/package-variants.json
@@ -664,9 +664,9 @@ $ uv run pytest tests/cxx/test_consumer_guides.py -v
 Expected: all consumer-guide unit tests pass.
 
 ```console
-$ uv run python cxx/tools/docs/check_consumer_guides.py \
-    --guide cxx/docs/guides/consuming.md \
-    --cases cxx/docs/guides/consumer-cases.json \
+$ uv run python tools/docs/check_consumer_guides.py \
+    --guide docs/guides/consuming.md \
+    --cases docs/guides/consumer-cases.json \
     --variant-record cxx/build/package-variants.json
 ```
 
@@ -678,23 +678,23 @@ no missing, pending, or prose-only case.
 ```console
 $ git add \
     cxx/third_party \
-    cxx/include/libtmux/compat \
+    include/libtmux/compat \
     cxx/public-headers.json \
-    cxx/include/libtmux/libtmux.hpp \
-    cxx/tests/consumers/cxx20 \
-    cxx/tests/consumers/abi_mismatch \
-    cxx/tools/package/run_variant_matrix.py \
-    cxx/tools/package/run_installed_consumer.py \
-    cxx/tools/package/run_source_consumers.py \
-    cxx/docs/guides/consuming.md \
-    cxx/docs/guides/consumer-cases.json \
-    cxx/tools/docs/check_consumer_guides.py \
+    include/libtmux/libtmux.hpp \
+    tests/consumers/cxx20 \
+    tests/consumers/abi_mismatch \
+    tools/package/run_variant_matrix.py \
+    tools/package/run_installed_consumer.py \
+    tools/package/run_source_consumers.py \
+    docs/guides/consuming.md \
+    docs/guides/consumer-cases.json \
+    tools/docs/check_consumer_guides.py \
     tests/cxx/test_cxx20_package.py \
     tests/cxx/test_package_variant_matrix.py \
     tests/cxx/test_consumer_guides.py \
     cxx/CMakeLists.txt \
     cxx/CMakePresets.json \
-    cxx/cmake/Install.cmake
+    cmake/Install.cmake
 ```
 
 ```console
@@ -714,16 +714,16 @@ EOF
 **Files:**
 
 - Bind: `cxx/VERSION`
-- Modify: `cxx/docs/guides/consuming.md`
-- Modify: `cxx/docs/guides/consumer-cases.json`
+- Modify: `docs/guides/consuming.md`
+- Modify: `docs/guides/consumer-cases.json`
 - Create: `cxx/vcpkg/ports/libtmux/portfile.cmake`
 - Create: `cxx/vcpkg/ports/libtmux/vcpkg.json`
-- Create: `cxx/tests/consumers/vcpkg/vcpkg.json`
-- Create: `cxx/tests/consumers/vcpkg/vcpkg-configuration.json`
-- Create: `cxx/tests/consumers/vcpkg/CMakeLists.txt`
-- Create: `cxx/tests/consumers/vcpkg/main.cpp`
-- Create: `cxx/tools/package/generate_vcpkg_metadata.py`
-- Create: `cxx/tools/package/run_vcpkg_consumer.py`
+- Create: `tests/consumers/vcpkg/vcpkg.json`
+- Create: `tests/consumers/vcpkg/vcpkg-configuration.json`
+- Create: `tests/consumers/vcpkg/CMakeLists.txt`
+- Create: `tests/consumers/vcpkg/main.cpp`
+- Create: `tools/package/generate_vcpkg_metadata.py`
+- Create: `tools/package/run_vcpkg_consumer.py`
 - Create: `tests/cxx/test_generate_vcpkg_metadata.py`
 - Create: `tests/cxx/test_vcpkg_consumer.py`
 - Modify: `cxx/CMakePresets.json`
@@ -769,7 +769,7 @@ $ uv run pytest \
 Expected: all focused vcpkg tests pass.
 
 ```console
-$ uv run python cxx/tools/package/generate_vcpkg_metadata.py \
+$ uv run python tools/package/generate_vcpkg_metadata.py \
     --version-file cxx/VERSION \
     --output cxx/vcpkg/ports/libtmux/vcpkg.json \
     --check
@@ -778,7 +778,7 @@ $ uv run python cxx/tools/package/generate_vcpkg_metadata.py \
 - [ ] **Step 3: Build and run the consumer matrix**
 
 ```console
-$ uv run python cxx/tools/package/run_vcpkg_consumer.py \
+$ uv run python tools/package/run_vcpkg_consumer.py \
     --standards 23 20 \
     --modes static shared \
     --output cxx/build/vcpkg-consumer.json
@@ -790,9 +790,9 @@ atomically writes the normalized current execution record consumed by the guide
 checker.
 
 ```console
-$ uv run python cxx/tools/docs/check_consumer_guides.py \
-    --guide cxx/docs/guides/consuming.md \
-    --cases cxx/docs/guides/consumer-cases.json \
+$ uv run python tools/docs/check_consumer_guides.py \
+    --guide docs/guides/consuming.md \
+    --cases docs/guides/consumer-cases.json \
     --variant-record cxx/build/package-variants.json \
     --vcpkg-record cxx/build/vcpkg-consumer.json
 ```
@@ -805,12 +805,12 @@ name successful current execution records; no pending case remains.
 ```console
 $ git add \
     cxx/CMakePresets.json \
-    cxx/docs/guides/consuming.md \
-    cxx/docs/guides/consumer-cases.json \
+    docs/guides/consuming.md \
+    docs/guides/consumer-cases.json \
     cxx/vcpkg \
-    cxx/tests/consumers/vcpkg \
-    cxx/tools/package/generate_vcpkg_metadata.py \
-    cxx/tools/package/run_vcpkg_consumer.py \
+    tests/consumers/vcpkg \
+    tools/package/generate_vcpkg_metadata.py \
+    tools/package/run_vcpkg_consumer.py \
     tests/cxx/test_generate_vcpkg_metadata.py \
     tests/cxx/test_vcpkg_consumer.py
 ```
@@ -834,11 +834,11 @@ EOF
 - Modify: `.tool-versions`
 - Modify: `.clang-format`
 - Modify: `.clang-tidy`
-- Create: `cxx/tools/toolchain.lock.json`
-- Create: `cxx/cmake/Sanitizers.cmake`
-- Create: `cxx/cmake/StaticAnalysis.cmake`
-- Create: `cxx/tools/quality/verify_tools.py`
-- Create: `cxx/tools/quality/run_quality.py`
+- Create: `tools/toolchain.lock.json`
+- Create: `cmake/Sanitizers.cmake`
+- Create: `cmake/StaticAnalysis.cmake`
+- Create: `tools/quality/verify_tools.py`
+- Create: `tools/quality/run_quality.py`
 - Create: `tests/cxx/test_verify_tools.py`
 - Create: `tests/cxx/test_run_quality.py`
 - Modify: `cxx/CMakePresets.json`
@@ -902,7 +902,7 @@ separate build trees. TSan runs the `concurrency` label and is never combined
 with ASan. It records each exact command and result.
 
 ```console
-$ uv run python cxx/tools/quality/run_quality.py
+$ uv run python tools/quality/run_quality.py
 ```
 
 Expected: exact tools run, formatting is clean, curated clang-tidy checks pass,
@@ -916,9 +916,9 @@ $ git add \
     .tool-versions \
     .clang-format \
     .clang-tidy \
-    cxx/tools/toolchain.lock.json \
-    cxx/cmake \
-    cxx/tools/quality \
+    tools/toolchain.lock.json \
+    cmake \
+    tools/quality \
     tests/cxx/test_verify_tools.py \
     tests/cxx/test_run_quality.py \
     cxx/CMakePresets.json
@@ -942,9 +942,9 @@ EOF
 **Files:**
 
 - Create: `cxx/ci/tmux-sources.json`
-- Create: `cxx/tools/tmux/build_tmux.py`
+- Create: `tools/tmux/build_tmux.py`
 - Create: `tests/cxx/test_build_tmux.py`
-- Create: `cxx/docs/evidence/tmux-sources.md`
+- Create: `docs/evidence/tmux-sources.md`
 
 **Stable locks:**
 
@@ -994,9 +994,9 @@ $ uv run pytest tests/cxx/test_build_tmux.py -v
 ```console
 $ git add \
     cxx/ci/tmux-sources.json \
-    cxx/tools/tmux \
+    tools/tmux \
     tests/cxx/test_build_tmux.py \
-    cxx/docs/evidence/tmux-sources.md
+    docs/evidence/tmux-sources.md
 ```
 
 ```console
@@ -1015,19 +1015,19 @@ EOF
 
 **Files:**
 
-- Bind: `cxx/parity/manifest.json`
+- Bind: `tools/parity/data/manifest.json`
 - Bind: `cxx/public-headers.json`
-- Bind: `cxx/tools/headers/inventory_public_api.py`
-- Bind: `cxx/parity/shards.json`
-- Bind: `cxx/tests/differential/scenario_registry.json`
-- Bind: `cxx/tools/differential/check_coverage.py`
-- Create: `cxx/tools/differential/run_matrix.py`
+- Bind: `tools/headers/inventory_public_api.py`
+- Bind: `tools/parity/data/shards.json`
+- Bind: `tests/differential/scenario_registry.json`
+- Bind: `tools/differential/check_coverage.py`
+- Create: `tools/differential/run_matrix.py`
 - Create: `tests/cxx/test_differential_matrix.py`
-- Create: `cxx/docs/evidence/differential-matrix.schema.json`
+- Create: `docs/evidence/differential-matrix.schema.json`
 - Create at execution: normalized matrix records under
-  `cxx/docs/evidence/differential-matrix/`
+  `docs/evidence/differential-matrix/`
 - Create at execution:
-  `cxx/docs/evidence/differential-matrix/matrix-coverage.json`
+  `docs/evidence/differential-matrix/matrix-coverage.json`
 
 - [ ] **Step 1: Test matrix completeness**
 
@@ -1047,7 +1047,7 @@ separately and cannot satisfy any stable cell.
 $ uv run pytest tests/cxx/test_differential_matrix.py -v
 ```
 
-Expected: FAIL importing `cxx.tools.differential.run_matrix`. An unrelated
+Expected: FAIL importing `tools.differential.run_matrix`. An unrelated
 fixture or collection error is not the intended red result.
 
 - [ ] **Step 3: Implement and verify the matrix runner**
@@ -1079,31 +1079,31 @@ The matrix runner rejects the adapter unless its executable, registration,
 source, compiler, and semantic-contract identities match this build.
 
 ```console
-$ uv run python cxx/tools/differential/run_matrix.py \
+$ uv run python tools/differential/run_matrix.py \
     --sources cxx/ci/tmux-sources.json \
-    --manifest cxx/parity/manifest.json \
-    --shards cxx/parity/shards.json \
-    --registry cxx/tests/differential/scenario_registry.json \
-    --python-adapter cxx/tools/differential/python_reference.py \
+    --manifest tools/parity/data/manifest.json \
+    --shards tools/parity/data/shards.json \
+    --registry tests/differential/scenario_registry.json \
+    --python-adapter tools/differential/python_reference.py \
     --cpp-adapter cxx/build/cxx-dev/tests/differential/cpp_adapter \
     --drivers tests/cxx/differential \
-    --output cxx/docs/evidence/differential-matrix
+    --output docs/evidence/differential-matrix
 ```
 
 Expected: Python and C++ records match or name only explicitly approved
 adaptations for all eight blocking versions. Master is reported separately.
 
 ```console
-$ uv run python cxx/tools/differential/check_coverage.py \
+$ uv run python tools/differential/check_coverage.py \
     --mode matrix \
-    --manifest cxx/parity/manifest.json \
-    --shards cxx/parity/shards.json \
-    --registry cxx/tests/differential/scenario_registry.json \
-    --python-adapter cxx/tools/differential/python_reference.py \
+    --manifest tools/parity/data/manifest.json \
+    --shards tools/parity/data/shards.json \
+    --registry tests/differential/scenario_registry.json \
+    --python-adapter tools/differential/python_reference.py \
     --cpp-adapter cxx/build/cxx-dev/tests/differential/cpp_adapter \
-    --results cxx/docs/evidence/differential-matrix \
+    --results docs/evidence/differential-matrix \
     --sources cxx/ci/tmux-sources.json \
-    --output cxx/docs/evidence/differential-matrix/matrix-coverage.json
+    --output docs/evidence/differential-matrix/matrix-coverage.json
 ```
 
 Expected: the machine report proves the complete
@@ -1114,10 +1114,10 @@ digests.
 
 ```console
 $ git add \
-    cxx/tools/differential/run_matrix.py \
+    tools/differential/run_matrix.py \
     tests/cxx/test_differential_matrix.py \
-    cxx/docs/evidence/differential-matrix.schema.json \
-    cxx/docs/evidence/differential-matrix
+    docs/evidence/differential-matrix.schema.json \
+    docs/evidence/differential-matrix
 ```
 
 ```console
@@ -1137,15 +1137,15 @@ EOF
 
 **Files:**
 
-- Bind: `cxx/parity/manifest.json`
-- Bind: `cxx/docs/guides/consuming.md`
-- Bind: `cxx/docs/guides/consumer-cases.json`
-- Bind: `cxx/tools/docs/check_consumer_guides.py`
-- Modify: `cxx/examples/CMakeLists.txt`
-- Create: `cxx/tools/docs/check_public_api.py`
-- Create: `cxx/docs/conf.py`
+- Bind: `tools/parity/data/manifest.json`
+- Bind: `docs/guides/consuming.md`
+- Bind: `docs/guides/consumer-cases.json`
+- Bind: `tools/docs/check_consumer_guides.py`
+- Modify: `examples/CMakeLists.txt`
+- Create: `tools/docs/check_public_api.py`
+- Create: `docs/conf.py`
 - Create: `tests/cxx/test_public_api_docs.py`
-- Create: `cxx/docs/api/index.md`
+- Create: `docs/api/index.md`
 
 - [ ] **Step 1: Write independent API-coverage fixtures**
 
@@ -1200,19 +1200,19 @@ Regenerate the public declaration inventory without passing the parity
 manifest:
 
 ```console
-$ uv run python cxx/tools/headers/inventory_public_api.py \
+$ uv run python tools/headers/inventory_public_api.py \
     --registry cxx/public-headers.json \
-    --include-root cxx/include \
+    --include-root include \
     --build-dir cxx/build/cxx-dev \
     --output cxx/build/public-api-inventory.json
 ```
 
 ```console
-$ uv run python cxx/tools/docs/check_public_api.py \
-    --manifest cxx/parity/manifest.json \
+$ uv run python tools/docs/check_public_api.py \
+    --manifest tools/parity/data/manifest.json \
     --public-api cxx/build/public-api-inventory.json \
-    --docs cxx/docs/api \
-    --examples cxx/examples
+    --docs docs/api \
+    --examples examples
 ```
 
 Expected: every independently inventoried public declaration maps to exactly
@@ -1222,7 +1222,7 @@ ID, with no orphaned manifest declaration.
 If the committed manifest is stale or lacks a mapping, stop and return the
 finding to the owning parity shard. This task may add prose, anchors, example
 registration, and execution evidence, but it must not edit, synchronize, or
-reclassify `cxx/parity/mapping.json` or `manifest.json`. Task 14 performs the
+reclassify `tools/parity/data/mapping.json` or `manifest.json`. Task 14 performs the
 single post-distribution evidence refresh after every source and registration
 change is complete; it may refresh execution evidence and resynchronize the
 unchanged reviewed classifications.
@@ -1231,9 +1231,9 @@ Re-run `check_consumer_guides.py` without editing the already executed consumer
 guide or its case registry.
 
 ```console
-$ uv run python cxx/tools/docs/check_consumer_guides.py \
-    --guide cxx/docs/guides/consuming.md \
-    --cases cxx/docs/guides/consumer-cases.json \
+$ uv run python tools/docs/check_consumer_guides.py \
+    --guide docs/guides/consuming.md \
+    --cases docs/guides/consumer-cases.json \
     --variant-record cxx/build/package-variants.json \
     --vcpkg-record cxx/build/vcpkg-consumer.json
 ```
@@ -1245,7 +1245,7 @@ anchors and links, and maps every compilable C++ fence to an executed example
 case. It writes only under `cxx/build/docs/`.
 
 ```console
-$ uv run sphinx-build -W --keep-going -b html cxx/docs cxx/build/docs/html
+$ uv run sphinx-build -W --keep-going -b html docs cxx/build/docs/html
 ```
 
 Expected: all pages render with no missing toctree entry, anchor, link, or code
@@ -1255,11 +1255,11 @@ example mapping. This gate is separate from the Python `just build-docs` tree.
 
 ```console
 $ git add \
-    cxx/examples \
-    cxx/tools/docs \
+    examples \
+    tools/docs \
     tests/cxx/test_public_api_docs.py \
-    cxx/docs/conf.py \
-    cxx/docs/api
+    docs/conf.py \
+    docs/api
 ```
 
 ```console
@@ -1279,8 +1279,8 @@ EOF
 **Files:**
 
 - Create: `.github/workflows/cxx.yml`
-- Create: `cxx/tools/ci/__init__.py`
-- Create: `cxx/tools/ci/verify_workflow.py`
+- Create: `tools/ci/__init__.py`
+- Create: `tools/ci/verify_workflow.py`
 - Create: `tests/cxx/test_cxx_workflow.py`
 
 - [ ] **Step 1: Write workflow-policy tests**
@@ -1292,7 +1292,7 @@ stable matrix, install/relocation/source/vcpkg consumers, examples, Python
 gates, and docs. Require master to be informational and Linux to be the only
 support claim. TSan cannot share a job or build tree with ASan.
 Keep policy parsing and diagnostics in importable functions with executable
-doctests under `cxx/tools/ci`; do not place Python tooling under `cxx/ci` where
+doctests under `tools/ci`; do not place Python tooling under `cxx/ci` where
 the repository doctest gate will miss it.
 
 ```console
@@ -1315,11 +1315,11 @@ $ uv run pytest tests/cxx/test_cxx_workflow.py -v
 ```
 
 ```console
-$ uv run pytest --doctest-modules cxx/tools/ci -v
+$ uv run pytest --doctest-modules tools/ci -v
 ```
 
 ```console
-$ uv run python -m cxx.tools.ci.verify_workflow .github/workflows/cxx.yml
+$ uv run python -m tools.ci.verify_workflow .github/workflows/cxx.yml
 ```
 
 Expected: every required job, matrix cell, immutable action pin, artifact, and
@@ -1330,8 +1330,8 @@ blocking/informational policy is present.
 ```console
 $ git add \
     .github/workflows/cxx.yml \
-    cxx/tools/ci/__init__.py \
-    cxx/tools/ci/verify_workflow.py \
+    tools/ci/__init__.py \
+    tools/ci/verify_workflow.py \
     tests/cxx/test_cxx_workflow.py
 ```
 
@@ -1353,12 +1353,12 @@ EOF
 
 - Bind: `cxx/VERSION`
 - Bind: `cxx/public-headers.json`
-- Create: `cxx/tools/audit/check_generated.py`
-- Create: `cxx/tools/audit/check_install.py`
-- Create: `cxx/tools/audit/run_reproducible.py`
+- Create: `tools/audit/check_generated.py`
+- Create: `tools/audit/check_install.py`
+- Create: `tools/audit/run_reproducible.py`
 - Create: `tests/cxx/test_generated_reproducibility.py`
 - Create: `tests/cxx/test_install_audit.py`
-- Create: `cxx/docs/evidence/reproducibility.json`
+- Create: `docs/evidence/reproducibility.json`
 
 - [ ] **Step 1: Inject timestamps and paths into test fixtures**
 
@@ -1398,12 +1398,12 @@ Expected: all focused reproducibility tests pass.
 - [ ] **Step 3: Run two clean out-of-tree builds and installs**
 
 ```console
-$ uv run python cxx/tools/audit/run_reproducible.py \
+$ uv run python tools/audit/run_reproducible.py \
     --source . \
     --build-root cxx/build/reproducible \
     --standards 23 20 \
     --modes static shared \
-    --output cxx/docs/evidence/reproducibility.json
+    --output docs/evidence/reproducibility.json
 ```
 
 Expected: for each of the four variants, committed headers, schemas, docs,
@@ -1416,10 +1416,10 @@ evidence output; existing ignored build artifacts are not deleted or reused.
 
 ```console
 $ git add \
-    cxx/tools/audit \
+    tools/audit \
     tests/cxx/test_generated_reproducibility.py \
     tests/cxx/test_install_audit.py \
-    cxx/docs/evidence/reproducibility.json
+    docs/evidence/reproducibility.json
 ```
 
 ```console
@@ -1439,34 +1439,34 @@ EOF
 
 **Files:**
 
-- Bind: `cxx/parity/mapping.json`
-- Bind: `cxx/parity/approvals.json`
-- Bind: `cxx/parity/shards.json`
-- Bind: `cxx/parity/release-v0.62.0.json`
-- Bind: `cxx/parity/development.json`
-- Modify: `cxx/parity/evidence.json`
-- Modify: `cxx/parity/manifest.json`
+- Bind: `tools/parity/data/mapping.json`
+- Bind: `tools/parity/data/approvals.json`
+- Bind: `tools/parity/data/shards.json`
+- Bind: `tools/parity/data/release-v0.62.0.json`
+- Bind: `tools/parity/data/development.json`
+- Modify: `tools/parity/data/evidence.json`
+- Modify: `tools/parity/data/manifest.json`
 - Bind: `cxx/public-headers.json`
-- Bind: `cxx/tests/differential/scenario_registry.json`
-- Bind: `cxx/tests/differential/cpp_adapter.cpp`
+- Bind: `tests/differential/scenario_registry.json`
+- Bind: `tests/differential/cpp_adapter.cpp`
 - Bind: `tests/cxx/differential/`
-- Bind: `cxx/tools/headers/inventory_public_api.py`
-- Bind: `cxx/tools/evidence/parity_gates.py`
-- Bind: `cxx/tools/differential/check_coverage.py`
-- Bind: `cxx/tools/differential/python_reference.py`
-- Bind: `cxx/tools/parity/check_api_coverage.py`
-- Bind: `cxx/tools/parity/refresh_evidence.py`
-- Bind: `cxx/tools/parity/write_completion_evidence.py`
-- Bind: `cxx/docs/evidence/parity-completion.schema.json`
-- Modify: `cxx/docs/evidence/parity-completion.json`
-- Create: `cxx/docs/reviews/final-architecture.md`
-- Create: `cxx/docs/reviews/final-cpp.md`
-- Create: `cxx/tools/audit/completion.py`
-- Create: `cxx/tools/audit/run_complete.py`
-- Create: `cxx/tools/audit/completion-owned-paths.json`
+- Bind: `tools/headers/inventory_public_api.py`
+- Bind: `tools/evidence/parity_gates.py`
+- Bind: `tools/differential/check_coverage.py`
+- Bind: `tools/differential/python_reference.py`
+- Bind: `tools/parity/check_api_coverage.py`
+- Bind: `tools/parity/refresh_evidence.py`
+- Bind: `tools/parity/write_completion_evidence.py`
+- Bind: `docs/evidence/parity-completion.schema.json`
+- Modify: `docs/evidence/parity-completion.json`
+- Create: `docs/reviews/final-architecture.md`
+- Create: `docs/reviews/final-cpp.md`
+- Create: `tools/audit/completion.py`
+- Create: `tools/audit/run_complete.py`
+- Create: `tools/audit/completion-owned-paths.json`
 - Create: `tests/cxx/test_completion_audit.py`
 - Create: `tests/cxx/test_run_complete.py`
-- Create: `cxx/docs/evidence/completion.json`
+- Create: `docs/evidence/completion.json`
 - Create at execution: `cxx/build/complete-run.json`
 
 - [ ] **Step 1: Make missing live evidence fail**
@@ -1536,9 +1536,9 @@ After all review fixes are committed, rerun every parity CTest and local
 differential scenario against the final distribution source:
 
 ```console
-$ uv run python -m cxx.tools.evidence.parity_gates \
+$ uv run python -m tools.evidence.parity_gates \
     --source-dir cxx \
-    --shards cxx/parity/shards.json \
+    --shards tools/parity/data/shards.json \
     --output-root cxx/build/evidence/ctest \
     --record cxx/build/evidence/parity-ctest-index.json
 ```
@@ -1559,28 +1559,28 @@ Regenerate and verify the independent declaration and differential coverage
 reports:
 
 ```console
-$ uv run python cxx/tools/headers/inventory_public_api.py \
+$ uv run python tools/headers/inventory_public_api.py \
     --registry cxx/public-headers.json \
-    --include-root cxx/include \
+    --include-root include \
     --build-dir cxx/build/cxx-dev \
     --output cxx/build/public-api-inventory.json
 ```
 
 ```console
-$ uv run python cxx/tools/parity/check_api_coverage.py \
-    --manifest cxx/parity/manifest.json \
+$ uv run python tools/parity/check_api_coverage.py \
+    --manifest tools/parity/data/manifest.json \
     --public-api cxx/build/public-api-inventory.json \
     --ctest-index cxx/build/evidence/parity-ctest-index.json \
     --output cxx/build/api-coverage.json
 ```
 
 ```console
-$ uv run python cxx/tools/differential/check_coverage.py \
+$ uv run python tools/differential/check_coverage.py \
     --mode local \
-    --manifest cxx/parity/manifest.json \
-    --shards cxx/parity/shards.json \
-    --registry cxx/tests/differential/scenario_registry.json \
-    --python-adapter cxx/tools/differential/python_reference.py \
+    --manifest tools/parity/data/manifest.json \
+    --shards tools/parity/data/shards.json \
+    --registry tests/differential/scenario_registry.json \
+    --python-adapter tools/differential/python_reference.py \
     --cpp-adapter cxx/build/cxx-dev/tests/differential/cpp_adapter \
     --drivers tests/cxx/differential \
     --results cxx/build/differential-results.json \
@@ -1592,24 +1592,24 @@ mapping. The differential records bind `semantic_contract_sha256`, so this
 evidence-only synchronization does not invalidate them:
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     refresh-evidence \
-    --manifest cxx/parity/manifest.json \
-    --shards cxx/parity/shards.json \
+    --manifest tools/parity/data/manifest.json \
+    --shards tools/parity/data/shards.json \
     --ctest-index cxx/build/evidence/parity-ctest-index.json \
     --differential-index cxx/build/differential-results.json \
-    --evidence cxx/parity/evidence.json
+    --evidence tools/parity/data/evidence.json
 ```
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     sync \
-    --release cxx/parity/release-v0.62.0.json \
-    --development cxx/parity/development.json \
-    --mapping cxx/parity/mapping.json \
-    --approvals cxx/parity/approvals.json \
-    --evidence cxx/parity/evidence.json \
-    --output cxx/parity/manifest.json
+    --release tools/parity/data/release-v0.62.0.json \
+    --development tools/parity/data/development.json \
+    --mapping tools/parity/data/mapping.json \
+    --approvals tools/parity/data/approvals.json \
+    --evidence tools/parity/data/evidence.json \
+    --output tools/parity/data/manifest.json
 ```
 
 Require the semantic contract digest to remain byte-identical across the sync,
@@ -1617,24 +1617,24 @@ then regenerate the full parity completion record from the refreshed manifest
 and evidence:
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode complete \
     --report cxx/build/parity-verify.json
 ```
 
 ```console
-$ uv run python cxx/tools/parity/write_completion_evidence.py \
-    --manifest cxx/parity/manifest.json \
-    --evidence cxx/parity/evidence.json \
+$ uv run python tools/parity/write_completion_evidence.py \
+    --manifest tools/parity/data/manifest.json \
+    --evidence tools/parity/data/evidence.json \
     --public-api cxx/build/public-api-inventory.json \
     --validator cxx/build/parity-verify.json \
     --ctest-index cxx/build/evidence/parity-ctest-index.json \
     --differential cxx/build/differential-results.json \
     --differential-coverage cxx/build/differential-coverage.json \
     --coverage cxx/build/api-coverage.json \
-    --output cxx/docs/evidence/parity-completion.json
+    --output docs/evidence/parity-completion.json
 ```
 
 Expected: every durable parity execution record names the final distribution
@@ -1665,18 +1665,18 @@ requires tracked/untracked status and every baseline file digest to be
 unchanged.
 
 ```console
-$ uv run python cxx/tools/audit/run_complete.py \
-    --owned-paths cxx/tools/audit/completion-owned-paths.json \
+$ uv run python tools/audit/run_complete.py \
+    --owned-paths tools/audit/completion-owned-paths.json \
     --output cxx/build/complete-run.json
 ```
 
 ```console
-$ uv run python cxx/tools/audit/completion.py \
-    --design cxx/docs/design/bakeoff-and-rewrite.md \
-    --manifest cxx/parity/manifest.json \
-    --owned-paths cxx/tools/audit/completion-owned-paths.json \
+$ uv run python tools/audit/completion.py \
+    --design docs/design/bakeoff-and-rewrite.md \
+    --manifest tools/parity/data/manifest.json \
+    --owned-paths tools/audit/completion-owned-paths.json \
     --run-record cxx/build/complete-run.json \
-    --output cxx/docs/evidence/completion.json
+    --output docs/evidence/completion.json
 ```
 
 Expected: all C++23/C++20, compiler, quality, sanitizer, real-tmux, parity,
@@ -1687,7 +1687,7 @@ manifest, `config.hpp`/compatibility-header selection, isolated package
 identity, relocation, and `SameMinorVersion` positive/negative requests.
 
 `completion.py` verifies the run record's baseline digest and post-run equality,
-then writes only `cxx/docs/evidence/completion.json`. It requires the status
+then writes only `docs/evidence/completion.json`. It requires the status
 after excluding that one declared output to equal the captured baseline and
 records these semantics without claiming the in-progress task was clean.
 Its `--check --require-clean` mode performs no write: after the task commit, it
@@ -1737,17 +1737,17 @@ baseline allowance survives the atomic commit.
 
 ```console
 $ git add \
-    cxx/parity/evidence.json \
-    cxx/parity/manifest.json \
-    cxx/docs/evidence/parity-completion.json \
-    cxx/docs/reviews/final-architecture.md \
-    cxx/docs/reviews/final-cpp.md \
-    cxx/tools/audit/completion.py \
-    cxx/tools/audit/run_complete.py \
-    cxx/tools/audit/completion-owned-paths.json \
+    tools/parity/data/evidence.json \
+    tools/parity/data/manifest.json \
+    docs/evidence/parity-completion.json \
+    docs/reviews/final-architecture.md \
+    docs/reviews/final-cpp.md \
+    tools/audit/completion.py \
+    tools/audit/run_complete.py \
+    tools/audit/completion-owned-paths.json \
     tests/cxx/test_completion_audit.py \
     tests/cxx/test_run_complete.py \
-    cxx/docs/evidence/completion.json
+    docs/evidence/completion.json
 ```
 
 ```console
@@ -1767,12 +1767,12 @@ EOF
 - [ ] **Step 9: Revalidate committed evidence from a clean checkout**
 
 ```console
-$ uv run python cxx/tools/audit/completion.py \
-    --design cxx/docs/design/bakeoff-and-rewrite.md \
-    --manifest cxx/parity/manifest.json \
-    --owned-paths cxx/tools/audit/completion-owned-paths.json \
+$ uv run python tools/audit/completion.py \
+    --design docs/design/bakeoff-and-rewrite.md \
+    --manifest tools/parity/data/manifest.json \
+    --owned-paths tools/audit/completion-owned-paths.json \
     --run-record cxx/build/complete-run.json \
-    --output cxx/docs/evidence/completion.json \
+    --output docs/evidence/completion.json \
     --check \
     --require-clean
 ```

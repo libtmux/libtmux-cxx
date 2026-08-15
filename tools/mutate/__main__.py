@@ -29,7 +29,7 @@ def main(argv: t.Sequence[str] | None = None) -> int:
     >>> callable(main)
     True
     """
-    parser = argparse.ArgumentParser(prog="python -m cxx.tools.mutate")
+    parser = argparse.ArgumentParser(prog="python -m tools.mutate")
     parser.add_argument("--preset", default="cxx-dev")
     parser.add_argument("--repository", type=pathlib.Path, default=pathlib.Path())
     parser.add_argument("--id", dest="chosen", action="append")

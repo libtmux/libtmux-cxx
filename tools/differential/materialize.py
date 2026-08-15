@@ -9,9 +9,9 @@ import stat
 import subprocess
 import typing as t
 
-from cxx.tools.parity import git_objects
-from cxx.tools.parity.drift import selected_field_digest
-from cxx.tools.parity.generate import canonical_sha256
+from tools.parity import git_objects
+from tools.parity.drift import selected_field_digest
+from tools.parity.generate import canonical_sha256
 
 
 @dataclasses.dataclass(frozen=True, slots=True)

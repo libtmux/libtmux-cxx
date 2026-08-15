@@ -218,7 +218,7 @@ def run(
     runner : Callable | None, optional
         Subprocess runner, for tests that must not invoke a compiler.
     build_root : pathlib.Path | None, optional
-        Where the presets live, defaulting to ``cxx`` under the repository.
+        Where the presets live, defaulting to the repository itself.
         Every source path stays repository-relative, so the two cannot be
         confused for one another.
 
@@ -233,7 +233,7 @@ def run(
     >>> run(mutation, pathlib.Path("."), "cxx-dev").verdict
     'not a result'
     """
-    where = build_root if build_root is not None else repository / "cxx"
+    where = build_root if build_root is not None else repository
 
     def dispatch(argv: list[str]) -> subprocess.CompletedProcess[bytes]:
         return subprocess.run(argv, capture_output=True, check=False, cwd=where)

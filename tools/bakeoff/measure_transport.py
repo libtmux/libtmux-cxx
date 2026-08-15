@@ -69,9 +69,9 @@ _CANDIDATE_CONTEXT_SOURCES = {
 _SHARED_MEASUREMENT_SOURCES = (
     "cxx/CMakeLists.txt",
     "cxx/CMakePresets.json",
-    "cxx/cmake/GoogleTest.cmake",
-    "cxx/cmake/ProjectOptions.cmake",
-    "cxx/cmake/toolchains/clang-libcxx.cmake",
+    "cmake/GoogleTest.cmake",
+    "cmake/ProjectOptions.cmake",
+    "cmake/toolchains/clang-libcxx.cmake",
     "cxx/spikes/transport/common/CMakeLists.txt",
     "cxx/spikes/transport/common/include/libtmux_spike/transport.hpp",
     "cxx/spikes/transport/common/include/libtmux_spike/transport_values.hpp",
@@ -79,21 +79,21 @@ _SHARED_MEASUREMENT_SOURCES = (
     "cxx/spikes/transport/kernel/CMakeLists.txt",
     "cxx/spikes/transport/kernel/include/transport/process.hpp",
     "cxx/spikes/transport/kernel/src/process.cpp",
-    "cxx/tests/contracts/transport/CMakeLists.txt",
-    "cxx/tests/contracts/transport/exercise.cpp",
-    "cxx/tests/contracts/transport/exercise.hpp",
-    "cxx/tests/contracts/transport/harness_self_test.cpp",
-    "cxx/tests/contracts/transport/process_contract.cpp",
-    "cxx/tests/contracts/transport/vertical_slice.cpp",
-    "cxx/tests/CMakeLists.txt",
-    "cxx/tests/data/transport/expected-errors.json",
-    "cxx/tests/data/transport/process-goldens.json",
-    "cxx/tests/support/process.cpp",
-    "cxx/tests/support/process.hpp",
-    "cxx/tests/support/process_probe.cpp",
-    "cxx/tests/support/process_test.cpp",
-    "cxx/tests/support/scoped_tmux_server.cpp",
-    "cxx/tests/support/scoped_tmux_server.hpp",
+    "tests/contracts/transport/CMakeLists.txt",
+    "tests/contracts/transport/exercise.cpp",
+    "tests/contracts/transport/exercise.hpp",
+    "tests/contracts/transport/harness_self_test.cpp",
+    "tests/contracts/transport/process_contract.cpp",
+    "tests/contracts/transport/vertical_slice.cpp",
+    "tests/CMakeLists.txt",
+    "tests/data/transport/expected-errors.json",
+    "tests/data/transport/process-goldens.json",
+    "tests/support/process.cpp",
+    "tests/support/process.hpp",
+    "tests/support/process_probe.cpp",
+    "tests/support/process_test.cpp",
+    "tests/support/scoped_tmux_server.cpp",
+    "tests/support/scoped_tmux_server.hpp",
     "cxx/spikes/grafts/control_mode/CMakeLists.txt",
     "cxx/spikes/grafts/control_mode/include/control_mode/parser.hpp",
     "cxx/spikes/grafts/control_mode/src/connection.cpp",
@@ -128,29 +128,29 @@ _REQUIRED_CONTROL_COMPILE_SOURCES = (
 )
 _TASK8_STATUS_ALLOWLIST = (
     "cxx/CMakePresets.json",
-    "cxx/docs/bakeoffs/environment.json",
-    "cxx/docs/bakeoffs/grafts/control-mode.json",
-    "cxx/docs/bakeoffs/grafts/control-mode.md",
-    "cxx/docs/bakeoffs/grafts/engine-ops-source.json",
-    "cxx/docs/bakeoffs/grafts/engine-ops.json",
-    "cxx/docs/bakeoffs/grafts/engine-ops.md",
-    "cxx/docs/bakeoffs/transport/decision.json",
-    "cxx/docs/bakeoffs/transport/diagnostics/abstract.txt",
-    "cxx/docs/bakeoffs/transport/diagnostics/closed_variant.txt",
-    "cxx/docs/bakeoffs/transport/diagnostics/function_table.txt",
-    "cxx/docs/bakeoffs/transport/measurements.json",
-    "cxx/docs/bakeoffs/transport/review.md",
-    "cxx/docs/bakeoffs/transport/scorecard.md",
-    "cxx/tools/bakeoff/measure_transport.py",
-    "cxx/tools/bakeoff/verify_decision.py",
+    "docs/bakeoffs/environment.json",
+    "docs/bakeoffs/grafts/control-mode.json",
+    "docs/bakeoffs/grafts/control-mode.md",
+    "docs/bakeoffs/grafts/engine-ops-source.json",
+    "docs/bakeoffs/grafts/engine-ops.json",
+    "docs/bakeoffs/grafts/engine-ops.md",
+    "docs/bakeoffs/transport/decision.json",
+    "docs/bakeoffs/transport/diagnostics/abstract.txt",
+    "docs/bakeoffs/transport/diagnostics/closed_variant.txt",
+    "docs/bakeoffs/transport/diagnostics/function_table.txt",
+    "docs/bakeoffs/transport/measurements.json",
+    "docs/bakeoffs/transport/review.md",
+    "docs/bakeoffs/transport/scorecard.md",
+    "tools/bakeoff/measure_transport.py",
+    "tools/bakeoff/verify_decision.py",
     "tests/cxx/test_measure_transport.py",
     "tests/cxx/test_verify_decision.py",
 )
 _COLLECTION_OUTPUT_PATHS = frozenset(
     {
-        "cxx/docs/bakeoffs/transport/diagnostics/abstract.txt",
-        "cxx/docs/bakeoffs/transport/diagnostics/closed_variant.txt",
-        "cxx/docs/bakeoffs/transport/diagnostics/function_table.txt",
+        "docs/bakeoffs/transport/diagnostics/abstract.txt",
+        "docs/bakeoffs/transport/diagnostics/closed_variant.txt",
+        "docs/bakeoffs/transport/diagnostics/function_table.txt",
     }
 )
 _SOURCE_ROLES = ("public_header", "private_header", "implementation")
@@ -1559,7 +1559,7 @@ def validate_gate_record(
     ... )  # doctest: +IGNORE_EXCEPTION_DETAIL
     Traceback (most recent call last):
     ...
-    cxx.tools.bakeoff.measure_transport.GateValidationError: missing named record...
+    tools.bakeoff.measure_transport.GateValidationError: missing named record...
     """
     record_payload = _gate_regular(record, "named record")
     try:
@@ -1788,7 +1788,7 @@ def validate_gate_pair(
     ... )  # doctest: +IGNORE_EXCEPTION_DETAIL
     Traceback (most recent call last):
     ...
-    cxx.tools.bakeoff.measure_transport.GateValidationError: missing named record...
+    tools.bakeoff.measure_transport.GateValidationError: missing named record...
     """
     result = {
         "sanitize": validate_gate_record(
@@ -2397,7 +2397,7 @@ class _DefaultCollectorRunner:
                     "reason": "accepted operation graft has separately bound evidence",
                 },
                 {
-                    "path_prefix": "cxx/tools/bakeoff",
+                    "path_prefix": "tools/bakeoff",
                     "reason": (
                         "measurement tooling is evidence machinery, not measured code"
                     ),
@@ -2700,7 +2700,7 @@ class _DefaultCollectorRunner:
         if "state_" not in stderr or "private" not in stderr:
             _fail("private diagnostic lacks the intended access error")
         diagnostic = self.repository / (
-            f"cxx/docs/bakeoffs/transport/diagnostics/{candidate}.txt"
+            f"docs/bakeoffs/transport/diagnostics/{candidate}.txt"
         )
         diagnostic.parent.mkdir(parents=True, exist_ok=True)
         diagnostic.write_text(stderr, encoding="utf-8", newline="\n")

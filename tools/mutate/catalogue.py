@@ -18,7 +18,7 @@ from .runner import Mutation
 CATALOGUE: t.Final = (
     Mutation(
         mutation_id="expand-identity-guard",
-        path="cxx/src/acquire.hpp",
+        path="src/acquire.hpp",
         find="  if (!answer.starts_with(opening)) {",
         replace="  if (answer.size() == 987654321U) {",
         target="libtmux_expand_test",
@@ -27,7 +27,7 @@ CATALOGUE: t.Final = (
     ),
     Mutation(
         mutation_id="expand-trailing-newline",
-        path="cxx/src/acquire.hpp",
+        path="src/acquire.hpp",
         find="  if (!text.empty() && text.back() == '\\n') {",
         replace="  while (!text.empty() && text.back() == '\\n') {",
         target="libtmux_expand_test",
@@ -35,7 +35,7 @@ CATALOGUE: t.Final = (
     ),
     Mutation(
         mutation_id="format-before-terminator",
-        path="cxx/src/snapshot.cpp",
+        path="src/snapshot.cpp",
         find='    const auto terminator = std::ranges::find(request, "--");\n'
         '    request.insert(terminator, {"-F", format_request(fields)});',
         replace='    request.emplace_back("-F");\n'
@@ -46,7 +46,7 @@ CATALOGUE: t.Final = (
     ),
     Mutation(
         mutation_id="environment-name-check",
-        path="cxx/src/acquire.hpp",
+        path="src/acquire.hpp",
         find="    if (name.empty() || name.find('=') != std::string::npos) {",
         replace="    if (name.size() == 987654321U) {",
         target="libtmux_environment_test",
@@ -54,7 +54,7 @@ CATALOGUE: t.Final = (
     ),
     Mutation(
         mutation_id="key-table-whitespace",
-        path="cxx/src/server.cpp",
+        path="src/server.cpp",
         find="  if (table.find_first_of("
         '" \\t\\n\\r\\f\\v"'
         ") != std::string_view::npos) {",
@@ -65,7 +65,7 @@ CATALOGUE: t.Final = (
     ),
     Mutation(
         mutation_id="control-batch-keeps-its-shape",
-        path="cxx/src/control_backend.cpp",
+        path="src/control_backend.cpp",
         find="  for (const std::vector<std::string>& command : batch.commands()) {\n"
         "    request.group.push_back(ControlCommand{command});\n"
         "  }",
@@ -77,7 +77,7 @@ CATALOGUE: t.Final = (
     ),
     Mutation(
         mutation_id="notification-bound",
-        path="cxx/src/connection.cpp",
+        path="src/connection.cpp",
         find="constexpr std::size_t maximum_notifications = 4096U;",
         replace="constexpr std::size_t maximum_notifications = 100000000U;",
         target="libtmux_control_dispatch_test",
@@ -86,7 +86,7 @@ CATALOGUE: t.Final = (
     ),
     Mutation(
         mutation_id="legacy-empty-lookup",
-        path="cxx/include/libtmux/legacy_lookup.hpp",
+        path="include/libtmux/legacy_lookup.hpp",
         find="    if (lookup.empty()) {\n"
         "      return unexpected(LookupParseError::unknown_lookup);\n"
         "    }",
@@ -97,7 +97,7 @@ CATALOGUE: t.Final = (
     ),
     Mutation(
         mutation_id="buffer-load-names-it",
-        path="cxx/src/server.cpp",
+        path="src/server.cpp",
         find='"load-buffer", "-b", std::string{name}, "--", from.string()',
         replace='"load-buffer", "--", from.string()',
         target="libtmux_buffer_test",

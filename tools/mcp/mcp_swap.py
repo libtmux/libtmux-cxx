@@ -20,27 +20,27 @@ one place.
 Examples
 --------
 ```console
-$ python cxx/tools/mcp/mcp_swap.py detect
+$ python tools/mcp/mcp_swap.py detect
 ```
 
 ```console
-$ python cxx/tools/mcp/mcp_swap.py status
+$ python tools/mcp/mcp_swap.py status
 ```
 
 ```console
-$ python cxx/tools/mcp/mcp_swap.py use-local --dry-run
+$ python tools/mcp/mcp_swap.py use-local --dry-run
 ```
 
 ```console
-$ python cxx/tools/mcp/mcp_swap.py use-local --build-dir cxx/build/cxx-gcc
+$ python tools/mcp/mcp_swap.py use-local --build-dir cxx/build/cxx-gcc
 ```
 
 ```console
-$ python cxx/tools/mcp/mcp_swap.py use-local --source published
+$ python tools/mcp/mcp_swap.py use-local --source published
 ```
 
 ```console
-$ python cxx/tools/mcp/mcp_swap.py revert
+$ python tools/mcp/mcp_swap.py revert
 ```
 
 Scope
@@ -1295,7 +1295,7 @@ def _spec_from_entry(entry: t.Any, *, info: CLIInfo) -> McpServerSpec:
 
 
 #: The file that identifies a libtmux checkout, relative to its root.
-CHECKOUT_MARKER = pathlib.Path("cxx/consumers/mcp/CMakeLists.txt")
+CHECKOUT_MARKER = pathlib.Path("apps/mcp/CMakeLists.txt")
 
 
 def find_checkout(start: pathlib.Path) -> pathlib.Path:
@@ -1343,7 +1343,7 @@ def resolve_repo_meta(repo: pathlib.Path) -> tuple[str, str]:
 #: Where the built server is looked for, in order, under a build directory.
 BUILD_SUBPATHS: tuple[str, ...] = (
     "consumers/mcp",
-    "cxx/consumers/mcp",
+    "apps/mcp",
 )
 
 #: Build directories tried by ``--source local``, most finished first.

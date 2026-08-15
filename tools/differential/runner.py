@@ -13,8 +13,8 @@ import subprocess
 import tempfile
 import typing as t
 
-from cxx.tools.parity.generate import canonical_sha256
-from cxx.tools.parity.sync import semantic_contract_sha256
+from tools.parity.generate import canonical_sha256
+from tools.parity.sync import semantic_contract_sha256
 
 from .compare import structural_diff
 from .model import (

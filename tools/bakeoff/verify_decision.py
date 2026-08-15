@@ -14,7 +14,7 @@ import subprocess
 import sys
 import typing as t
 
-from cxx.tools.bakeoff.measure_transport import (
+from tools.bakeoff.measure_transport import (
     _MEASUREMENT_FAIRNESS,
     _TASK8_STATUS_ALLOWLIST,
     CANDIDATES,
@@ -86,11 +86,11 @@ _EXPECTED_GRAFT_FILES = {
 _FOLLOW_UP_FILES = {"measurement.json", "result.json", "review.md"}
 _MEASUREMENT_ID = "transport.measurements.v1"
 _ENVIRONMENT_ID = "transport.environment.v1"
-_TRANSPORT_DIRECTORY = "cxx/docs/bakeoffs/transport"
-_GRAFT_DIRECTORY = "cxx/docs/bakeoffs/grafts"
-_ENVIRONMENT_FILE = "cxx/docs/bakeoffs/environment.json"
+_TRANSPORT_DIRECTORY = "docs/bakeoffs/transport"
+_GRAFT_DIRECTORY = "docs/bakeoffs/grafts"
+_ENVIRONMENT_FILE = "docs/bakeoffs/environment.json"
 _MEASUREMENTS_FILE = f"{_TRANSPORT_DIRECTORY}/measurements.json"
-_FOLLOW_UP_PLAN_DIRECTORY = "cxx/docs/plans/followups"
+_FOLLOW_UP_PLAN_DIRECTORY = "docs/plans/followups"
 _GATE_ORDER = ("transport-sanitize", "transport-tsan")
 _GATE_KINDS = {"transport-sanitize": "sanitize", "transport-tsan": "tsan"}
 _GATE_SELECTORS = {

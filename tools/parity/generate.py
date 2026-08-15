@@ -247,7 +247,8 @@ def load_input_manifest(
 
     Examples
     --------
-    >>> manifest, specs = load_input_manifest(pathlib.Path("tools/parity/data/inputs.json"))
+    >>> inputs = pathlib.Path("tools/parity/data/inputs.json")
+    >>> manifest, specs = load_input_manifest(inputs)
     >>> manifest["version"], bool(specs)
     (1, True)
     """
@@ -684,7 +685,8 @@ def _release_observation_path(output: pathlib.Path) -> pathlib.Path:
 
     Examples
     --------
-    >>> isinstance(_release_observation_path(pathlib.Path("tools/parity/data")), pathlib.Path)
+    >>> data = pathlib.Path("tools/parity/data")
+    >>> isinstance(_release_observation_path(data), pathlib.Path)
     True
     """
     expected = output / "release-v0.62.0.json"
@@ -764,7 +766,9 @@ def contained_regular_file(
     Examples
     --------
     >>> contained_regular_file(
-    ...     pathlib.Path.cwd(), pathlib.Path("tools/parity/data/inputs.json"), message="bad"
+    ...     pathlib.Path.cwd(),
+    ...     pathlib.Path("tools/parity/data/inputs.json"),
+    ...     message="bad",
     ... ).name
     'inputs.json'
     """

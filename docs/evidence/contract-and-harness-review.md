@@ -20,7 +20,7 @@ reproducibility claims.
 The independently reconstructed 247-entry source inventory matches the pending
 record byte for byte. The reviewable-source digest is the exact pending source
 digest, and independent evidence-core and final projections reproduce their
-published digests. No entry exists under `cxx/include`, `cxx/src`, or
+published digests. No entry exists under `include`, `src`, or
 `cxx/spikes`.
 
 All 33 command records appear once, in the required order, with zero exit

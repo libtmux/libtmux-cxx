@@ -27,7 +27,7 @@ Task 1 may begin only when:
 - The relation trigger is resolved as either `not_run` with proof or a selected
   passing layout.
 - Control-mode and engine-ops graft reports are complete.
-- No production implementation exists under `cxx/include/` or `cxx/src/`.
+- No production implementation exists under `include/` or `src/`.
 
 Task 2 may begin only after Task 1 is committed, its pre-rewrite architecture
 review has no unresolved finding, and the recorded decision has explicit user
@@ -73,10 +73,10 @@ retained assertion to fit the implementation.
 
 **Files:**
 
-- Create: `cxx/docs/bakeoffs/architecture-decision.json`
-- Create: `cxx/docs/bakeoffs/architecture-decision.md`
-- Create: `cxx/docs/reviews/pre-rewrite-architecture.md`
-- Create: `cxx/tools/bakeoff/verify_architecture.py`
+- Create: `docs/bakeoffs/architecture-decision.json`
+- Create: `docs/bakeoffs/architecture-decision.md`
+- Create: `docs/reviews/pre-rewrite-architecture.md`
+- Create: `tools/bakeoff/verify_architecture.py`
 - Create: `tests/cxx/test_verify_architecture.py`
 
 **Interfaces:**
@@ -137,12 +137,12 @@ $ uv run pytest tests/cxx/test_verify_architecture.py -v
 Expected: all architecture-verifier tests pass.
 
 ```console
-$ uv run python cxx/tools/bakeoff/verify_architecture.py \
-    --decision cxx/docs/bakeoffs/architecture-decision.json \
-    --transport cxx/docs/bakeoffs/transport/decision.json \
-    --query cxx/docs/bakeoffs/query/decision.json \
-    --control cxx/docs/bakeoffs/grafts/control-mode.json \
-    --engine cxx/docs/bakeoffs/grafts/engine-ops.json \
+$ uv run python tools/bakeoff/verify_architecture.py \
+    --decision docs/bakeoffs/architecture-decision.json \
+    --transport docs/bakeoffs/transport/decision.json \
+    --query docs/bakeoffs/query/decision.json \
+    --control docs/bakeoffs/grafts/control-mode.json \
+    --engine docs/bakeoffs/grafts/engine-ops.json \
     --require-approval
 ```
 
@@ -150,10 +150,10 @@ Expected: exit zero.
 
 ```console
 $ git add \
-    cxx/docs/bakeoffs/architecture-decision.json \
-    cxx/docs/bakeoffs/architecture-decision.md \
-    cxx/docs/reviews/pre-rewrite-architecture.md \
-    cxx/tools/bakeoff/verify_architecture.py \
+    docs/bakeoffs/architecture-decision.json \
+    docs/bakeoffs/architecture-decision.md \
+    docs/reviews/pre-rewrite-architecture.md \
+    tools/bakeoff/verify_architecture.py \
     tests/cxx/test_verify_architecture.py
 ```
 
@@ -174,16 +174,16 @@ EOF
 
 **Files:**
 
-- Create: `cxx/tests/acceptance/CMakeLists.txt`
-- Move: `cxx/tests/contracts/transport/` to
-  `cxx/tests/acceptance/transport/`
-- Move: `cxx/tests/contracts/query/` to `cxx/tests/acceptance/query/`
-- Move: `cxx/tests/contracts/compile/query/` to
-  `cxx/tests/acceptance/compile/query/`
-- Create: `cxx/tests/acceptance/public_contract.json`
-- Create: `cxx/tools/bakeoff/freeze_contract.py`
+- Create: `tests/acceptance/CMakeLists.txt`
+- Move: `tests/contracts/transport/` to
+  `tests/acceptance/transport/`
+- Move: `tests/contracts/query/` to `tests/acceptance/query/`
+- Move: `tests/contracts/compile/query/` to
+  `tests/acceptance/compile/query/`
+- Create: `tests/acceptance/public_contract.json`
+- Create: `tools/bakeoff/freeze_contract.py`
 - Create: `tests/cxx/test_freeze_contract.py`
-- Modify: `cxx/tests/CMakeLists.txt`
+- Modify: `tests/CMakeLists.txt`
 
 - [ ] **Step 1: Test contract hashing and forbidden dependencies**
 
@@ -222,10 +222,10 @@ events, deadlines, and sanitizer coverage.
 - [ ] **Step 5: Generate and verify the frozen contract**
 
 ```console
-$ uv run python cxx/tools/bakeoff/freeze_contract.py \
-    --tests cxx/tests/acceptance \
-    --schema cxx/schema \
-    --output cxx/tests/acceptance/public_contract.json
+$ uv run python tools/bakeoff/freeze_contract.py \
+    --tests tests/acceptance \
+    --schema schema \
+    --output tests/acceptance/public_contract.json
 ```
 
 Expected: a deterministic manifest with no contender dependency.
@@ -234,10 +234,10 @@ Expected: a deterministic manifest with no contender dependency.
 
 ```console
 $ git add \
-    cxx/tests/CMakeLists.txt \
-    cxx/tests/acceptance \
-    cxx/tests/contracts \
-    cxx/tools/bakeoff/freeze_contract.py \
+    tests/CMakeLists.txt \
+    tests/acceptance \
+    tests/contracts \
+    tools/bakeoff/freeze_contract.py \
     tests/cxx/test_freeze_contract.py
 ```
 
@@ -258,9 +258,9 @@ EOF
 **Files:**
 
 - Delete: `cxx/spikes/`
-- Create: `cxx/tools/bakeoff/verify_rewrite_boundary.py`
+- Create: `tools/bakeoff/verify_rewrite_boundary.py`
 - Create: `tests/cxx/test_verify_rewrite_boundary.py`
-- Create: `cxx/docs/evidence/rewrite-boundary.json`
+- Create: `docs/evidence/rewrite-boundary.json`
 - Modify: `.gitignore`
 - Modify: `cxx/CMakeLists.txt`
 
@@ -279,7 +279,7 @@ def verify_rewrite_boundary(
 
 The red test requires violations for tracked spike sources, spike symlinks,
 submodules, generated binaries, candidate include paths, production
-`cxx/include/` or `cxx/src/`, and build output outside ignored directories. It
+`include/` or `src/`, and build output outside ignored directories. It
 also requires deterministic capture of the current commit, spike subtree, and
 every regular tracked spike blob path, object ID, and mode before deletion.
 
@@ -304,8 +304,8 @@ Expected: all verifier unit tests pass and their pre-deletion fixture reports
 - [ ] **Step 3: Remove exactly the disposable subtree**
 
 Confirm the target is `cxx/spikes/`, remove only that subtree, and preserve
-`cxx/docs/bakeoffs/`, `cxx/schema/`, `cxx/tests/acceptance/`, and
-`cxx/tests/data/`.
+`docs/bakeoffs/`, `schema/`, `tests/acceptance/`, and
+`tests/data/`.
 
 Stage only the spike deletion so the verifier can inspect the deletion-ready
 index while `HEAD` still names the immutable spike baseline:
@@ -317,15 +317,15 @@ $ git add -A cxx/spikes
 - [ ] **Step 4: Prove the branch is ready for a clean rewrite**
 
 ```console
-$ uv run python cxx/tools/bakeoff/verify_rewrite_boundary.py \
-    --manifest cxx/tests/acceptance/public_contract.json \
-    --decision cxx/docs/bakeoffs/architecture-decision.json \
+$ uv run python tools/bakeoff/verify_rewrite_boundary.py \
+    --manifest tests/acceptance/public_contract.json \
+    --decision docs/bakeoffs/architecture-decision.json \
     --spike-revision HEAD \
-    --output cxx/docs/evidence/rewrite-boundary.json
+    --output docs/evidence/rewrite-boundary.json
 ```
 
-Expected: exit zero, no indexed file under `cxx/spikes/`, `cxx/include/`, or
-`cxx/src/`, and a deterministic baseline for every spike blob reachable from
+Expected: exit zero, no indexed file under `cxx/spikes/`, `include/`, or
+`src/`, and a deterministic baseline for every spike blob reachable from
 the recorded revision.
 
 - [ ] **Step 5: Commit deletion separately**
@@ -335,9 +335,9 @@ $ git add \
     -A \
     cxx/spikes \
     cxx/CMakeLists.txt \
-    cxx/tools/bakeoff/verify_rewrite_boundary.py \
+    tools/bakeoff/verify_rewrite_boundary.py \
     tests/cxx/test_verify_rewrite_boundary.py \
-    cxx/docs/evidence/rewrite-boundary.json \
+    docs/evidence/rewrite-boundary.json \
     .gitignore
 ```
 
@@ -357,27 +357,27 @@ EOF
 
 **Files:**
 
-- Create: `cxx/tools/codegen/generate_metadata.py`
+- Create: `tools/codegen/generate_metadata.py`
 - Create: `tests/cxx/test_generate_metadata.py`
 - Create: `cxx/VERSION`
-- Create: `cxx/cmake/Version.cmake`
-- Create: `cxx/include/libtmux/config.hpp.in`
-- Create: `cxx/parity/metadata/fields.json`
-- Create: `cxx/parity/metadata/formats.json`
-- Create: `cxx/parity/metadata/options.json`
-- Create: `cxx/parity/metadata/hooks.json`
-- Create: `cxx/parity/metadata/capabilities.json`
-- Create: `cxx/parity/metadata/enums.json`
-- Create: `cxx/include/libtmux/generated/fields.hpp`
-- Create: `cxx/include/libtmux/generated/formats.hpp`
-- Create: `cxx/include/libtmux/generated/options.hpp`
-- Create: `cxx/include/libtmux/generated/hooks.hpp`
-- Create: `cxx/include/libtmux/generated/capabilities.hpp`
-- Create: `cxx/include/libtmux/generated/enums.hpp`
-- Create: `cxx/tests/unit/generated_metadata_test.cpp`
-- Create: `cxx/tests/unit/CMakeLists.txt`
+- Create: `cmake/Version.cmake`
+- Create: `include/libtmux/config.hpp.in`
+- Create: `tools/parity/data/metadata/fields.json`
+- Create: `tools/parity/data/metadata/formats.json`
+- Create: `tools/parity/data/metadata/options.json`
+- Create: `tools/parity/data/metadata/hooks.json`
+- Create: `tools/parity/data/metadata/capabilities.json`
+- Create: `tools/parity/data/metadata/enums.json`
+- Create: `include/libtmux/generated/fields.hpp`
+- Create: `include/libtmux/generated/formats.hpp`
+- Create: `include/libtmux/generated/options.hpp`
+- Create: `include/libtmux/generated/hooks.hpp`
+- Create: `include/libtmux/generated/capabilities.hpp`
+- Create: `include/libtmux/generated/enums.hpp`
+- Create: `tests/unit/generated_metadata_test.cpp`
+- Create: `tests/unit/CMakeLists.txt`
 - Modify: `cxx/CMakeLists.txt`
-- Modify: `cxx/tests/CMakeLists.txt`
+- Modify: `tests/CMakeLists.txt`
 
 - [ ] **Step 1: Run the missing metadata generator test**
 
@@ -385,7 +385,7 @@ EOF
 $ uv run pytest tests/cxx/test_generate_metadata.py -v
 ```
 
-Expected: FAIL importing `cxx.tools.codegen.generate_metadata`.
+Expected: FAIL importing `tools.codegen.generate_metadata`.
 
 - [ ] **Step 2: Freeze package version and ABI namespace configuration**
 
@@ -426,7 +426,7 @@ Read only the pinned parity observations and literal AST value shapes. Generate
 stable field/format/option/hook/enum IDs, value types, operation sets, tmux
 tokens, scopes, raw version text, and capability boundaries. The committed JSON
 is the language-neutral input; the six headers are derived production output.
-`--config-template` defaults to `cxx/include/libtmux/config.hpp.in`, so later
+`--config-template` defaults to `include/libtmux/config.hpp.in`, so later
 reproducibility checks may omit the argument without selecting another ABI.
 
 - [ ] **Step 4: Prove reproducibility and version boundaries**
@@ -437,11 +437,11 @@ including exact raw `3.7`, `3.7a`, and `3.7b`; numeric ordering alone cannot
 select capabilities.
 
 ```console
-$ uv run python cxx/tools/codegen/generate_metadata.py \
+$ uv run python tools/codegen/generate_metadata.py \
     --observations cxx/parity \
-    --config-template cxx/include/libtmux/config.hpp.in \
-    --output cxx/parity/metadata \
-    --headers cxx/include/libtmux/generated \
+    --config-template include/libtmux/config.hpp.in \
+    --output tools/parity/data/metadata \
+    --headers include/libtmux/generated \
     --check
 ```
 
@@ -461,15 +461,15 @@ Expected: all metadata-generator tests pass.
 $ git add \
     cxx/CMakeLists.txt \
     cxx/VERSION \
-    cxx/cmake/Version.cmake \
-    cxx/include/libtmux/config.hpp.in \
-    cxx/tests/CMakeLists.txt \
-    cxx/tests/unit/CMakeLists.txt \
-    cxx/tools/codegen \
+    cmake/Version.cmake \
+    include/libtmux/config.hpp.in \
+    tests/CMakeLists.txt \
+    tests/unit/CMakeLists.txt \
+    tools/codegen \
     tests/cxx/test_generate_metadata.py \
-    cxx/parity/metadata \
-    cxx/include/libtmux/generated \
-    cxx/tests/unit/generated_metadata_test.cpp
+    tools/parity/data/metadata \
+    include/libtmux/generated \
+    tests/unit/generated_metadata_test.cpp
 ```
 
 ```console
@@ -493,29 +493,29 @@ EOF
 
 - Modify: `cxx/CMakeLists.txt`
 - Modify: `cxx/CMakePresets.json`
-- Create: `cxx/src/CMakeLists.txt`
-- Create: `cxx/tests/integration/CMakeLists.txt`
-- Create: `cxx/tests/compile/CMakeLists.txt`
-- Modify: `cxx/tests/unit/CMakeLists.txt`
-- Modify: `cxx/tests/CMakeLists.txt`
-- Create: `cxx/cmake/Warnings.cmake`
+- Create: `src/CMakeLists.txt`
+- Create: `tests/integration/CMakeLists.txt`
+- Create: `tests/compile/CMakeLists.txt`
+- Modify: `tests/unit/CMakeLists.txt`
+- Modify: `tests/CMakeLists.txt`
+- Create: `cmake/Warnings.cmake`
 - Bind: `cxx/VERSION`
-- Bind: `cxx/cmake/Version.cmake`
-- Bind: `cxx/include/libtmux/config.hpp.in`
-- Create: `cxx/include/libtmux/libtmux.hpp`
-- Create: `cxx/include/libtmux/error.hpp`
-- Create: `cxx/include/libtmux/command.hpp`
-- Create: `cxx/include/libtmux/ids.hpp`
-- Create: `cxx/include/libtmux/capabilities.hpp`
-- Create: `cxx/include/libtmux/version.hpp`
-- Create: `cxx/src/error.cpp`
-- Create: `cxx/src/command.cpp`
-- Create: `cxx/src/ids.cpp`
-- Create: `cxx/src/capabilities.cpp`
-- Create: `cxx/src/version.cpp`
-- Create: `cxx/tests/unit/command_test.cpp`
-- Create: `cxx/tests/unit/ids_version_test.cpp`
-- Create: `cxx/tests/compile/umbrella_only.cpp`
+- Bind: `cmake/Version.cmake`
+- Bind: `include/libtmux/config.hpp.in`
+- Create: `include/libtmux/libtmux.hpp`
+- Create: `include/libtmux/error.hpp`
+- Create: `include/libtmux/command.hpp`
+- Create: `include/libtmux/ids.hpp`
+- Create: `include/libtmux/capabilities.hpp`
+- Create: `include/libtmux/version.hpp`
+- Create: `src/error.cpp`
+- Create: `src/command.cpp`
+- Create: `src/ids.cpp`
+- Create: `src/capabilities.cpp`
+- Create: `src/version.cpp`
+- Create: `tests/unit/command_test.cpp`
+- Create: `tests/unit/ids_version_test.cpp`
+- Create: `tests/compile/umbrella_only.cpp`
 
 **Public contract:**
 
@@ -635,13 +635,13 @@ Expected: all value tests pass and no public header needs a third-party include.
 $ git add \
     cxx/CMakeLists.txt \
     cxx/CMakePresets.json \
-    cxx/cmake/Warnings.cmake \
-    cxx/include/libtmux \
-    cxx/src \
-    cxx/tests/CMakeLists.txt \
-    cxx/tests/unit \
-    cxx/tests/integration/CMakeLists.txt \
-    cxx/tests/compile
+    cmake/Warnings.cmake \
+    include/libtmux \
+    src \
+    tests/CMakeLists.txt \
+    tests/unit \
+    tests/integration/CMakeLists.txt \
+    tests/compile
 ```
 
 ```console
@@ -661,12 +661,12 @@ EOF
 
 **Files:**
 
-- Create: `cxx/src/detail/process_runner.hpp`
-- Create: `cxx/src/process_runner.cpp`
-- Bind: `cxx/tests/support/process_probe.cpp`
-- Create: `cxx/tests/unit/process_runner_test.cpp`
-- Modify: `cxx/src/CMakeLists.txt`
-- Modify: `cxx/tests/unit/CMakeLists.txt`
+- Create: `src/detail/process_runner.hpp`
+- Create: `src/process_runner.cpp`
+- Bind: `tests/support/process_probe.cpp`
+- Create: `tests/unit/process_runner_test.cpp`
+- Modify: `src/CMakeLists.txt`
+- Modify: `tests/unit/CMakeLists.txt`
 
 - [ ] **Step 1: Bind retained process acceptance cases to production**
 
@@ -721,11 +721,11 @@ dependency.
 
 ```console
 $ git add \
-    cxx/src/detail/process_runner.hpp \
-    cxx/src/process_runner.cpp \
-    cxx/src/CMakeLists.txt \
-    cxx/tests/unit/process_runner_test.cpp \
-    cxx/tests/unit/CMakeLists.txt
+    src/detail/process_runner.hpp \
+    src/process_runner.cpp \
+    src/CMakeLists.txt \
+    tests/unit/process_runner_test.cpp \
+    tests/unit/CMakeLists.txt
 ```
 
 ```console
@@ -744,15 +744,15 @@ EOF
 
 **Files:**
 
-- Create: `cxx/include/libtmux/server.hpp`
-- Create: `cxx/src/detail/backend.hpp`
-- Create: `cxx/src/detail/connection_state.hpp`
-- Create: `cxx/src/connection.cpp`
-- Create: `cxx/tests/unit/connection_test.cpp`
-- Create: `cxx/tests/integration/connection_tmux_test.cpp`
-- Modify: `cxx/src/CMakeLists.txt`
-- Modify: `cxx/tests/unit/CMakeLists.txt`
-- Modify: `cxx/tests/integration/CMakeLists.txt`
+- Create: `include/libtmux/server.hpp`
+- Create: `src/detail/backend.hpp`
+- Create: `src/detail/connection_state.hpp`
+- Create: `src/connection.cpp`
+- Create: `tests/unit/connection_test.cpp`
+- Create: `tests/integration/connection_tmux_test.cpp`
+- Modify: `src/CMakeLists.txt`
+- Modify: `tests/unit/CMakeLists.txt`
+- Modify: `tests/integration/CMakeLists.txt`
 
 **Public contract:**
 
@@ -856,14 +856,14 @@ contract reports no data race under standalone TSan.
 
 ```console
 $ git add \
-    cxx/include/libtmux/server.hpp \
-    cxx/src/detail \
-    cxx/src/connection.cpp \
-    cxx/src/CMakeLists.txt \
-    cxx/tests/unit/connection_test.cpp \
-    cxx/tests/unit/CMakeLists.txt \
-    cxx/tests/integration/connection_tmux_test.cpp \
-    cxx/tests/integration/CMakeLists.txt
+    include/libtmux/server.hpp \
+    src/detail \
+    src/connection.cpp \
+    src/CMakeLists.txt \
+    tests/unit/connection_test.cpp \
+    tests/unit/CMakeLists.txt \
+    tests/integration/connection_tmux_test.cpp \
+    tests/integration/CMakeLists.txt
 ```
 
 ```console
@@ -883,22 +883,22 @@ EOF
 
 **Files:**
 
-- Create: `cxx/include/libtmux/session.hpp`
-- Create: `cxx/include/libtmux/window.hpp`
-- Create: `cxx/include/libtmux/pane.hpp`
-- Create: `cxx/include/libtmux/client.hpp`
-- Modify: `cxx/include/libtmux/libtmux.hpp`
-- Create: `cxx/src/detail/entity_record.hpp`
-- Create: `cxx/src/detail/entity_factory.hpp`
-- Create: `cxx/src/session.cpp`
-- Create: `cxx/src/window.cpp`
-- Create: `cxx/src/pane.cpp`
-- Create: `cxx/src/client.cpp`
-- Create: `cxx/tests/unit/entity_value_shells_test.cpp`
-- Create: `cxx/tests/compile/entity_value_shells/`
-- Modify: `cxx/src/CMakeLists.txt`
-- Modify: `cxx/tests/unit/CMakeLists.txt`
-- Modify: `cxx/tests/compile/CMakeLists.txt`
+- Create: `include/libtmux/session.hpp`
+- Create: `include/libtmux/window.hpp`
+- Create: `include/libtmux/pane.hpp`
+- Create: `include/libtmux/client.hpp`
+- Modify: `include/libtmux/libtmux.hpp`
+- Create: `src/detail/entity_record.hpp`
+- Create: `src/detail/entity_factory.hpp`
+- Create: `src/session.cpp`
+- Create: `src/window.cpp`
+- Create: `src/pane.cpp`
+- Create: `src/client.cpp`
+- Create: `tests/unit/entity_value_shells_test.cpp`
+- Create: `tests/compile/entity_value_shells/`
+- Modify: `src/CMakeLists.txt`
+- Modify: `tests/unit/CMakeLists.txt`
+- Modify: `tests/compile/CMakeLists.txt`
 
 - [ ] **Step 1: Register and build the incomplete-value red**
 
@@ -955,22 +955,22 @@ copy, move, assignment, or destructor dispatches tmux I/O.
 
 ```console
 $ git add \
-    cxx/include/libtmux/libtmux.hpp \
-    cxx/include/libtmux/session.hpp \
-    cxx/include/libtmux/window.hpp \
-    cxx/include/libtmux/pane.hpp \
-    cxx/include/libtmux/client.hpp \
-    cxx/src/detail/entity_record.hpp \
-    cxx/src/detail/entity_factory.hpp \
-    cxx/src/session.cpp \
-    cxx/src/window.cpp \
-    cxx/src/pane.cpp \
-    cxx/src/client.cpp \
-    cxx/src/CMakeLists.txt \
-    cxx/tests/unit/entity_value_shells_test.cpp \
-    cxx/tests/unit/CMakeLists.txt \
-    cxx/tests/compile/entity_value_shells \
-    cxx/tests/compile/CMakeLists.txt
+    include/libtmux/libtmux.hpp \
+    include/libtmux/session.hpp \
+    include/libtmux/window.hpp \
+    include/libtmux/pane.hpp \
+    include/libtmux/client.hpp \
+    src/detail/entity_record.hpp \
+    src/detail/entity_factory.hpp \
+    src/session.cpp \
+    src/window.cpp \
+    src/pane.cpp \
+    src/client.cpp \
+    src/CMakeLists.txt \
+    tests/unit/entity_value_shells_test.cpp \
+    tests/unit/CMakeLists.txt \
+    tests/compile/entity_value_shells \
+    tests/compile/CMakeLists.txt
 ```
 
 ```console
@@ -990,23 +990,23 @@ EOF
 
 **Files:**
 
-- Create: `cxx/src/detail/compat_decode.hpp`
-- Create: `cxx/src/compat_decode.cpp`
-- Create: `cxx/src/detail/format_parser.hpp`
-- Create: `cxx/src/format_parser.cpp`
-- Create: `cxx/src/detail/relation_graph.hpp`
-- Create: `cxx/src/relation_graph.cpp`
-- Create: `cxx/include/libtmux/snapshot.hpp`
-- Bind: `cxx/include/libtmux/session.hpp`
-- Bind: `cxx/include/libtmux/window.hpp`
-- Bind: `cxx/include/libtmux/pane.hpp`
-- Bind: `cxx/include/libtmux/client.hpp`
-- Modify: `cxx/src/detail/entity_factory.hpp`
-- Create: `cxx/tests/unit/compat_decode_test.cpp`
-- Create: `cxx/tests/unit/format_parser_test.cpp`
-- Create: `cxx/tests/unit/snapshot_test.cpp`
-- Modify: `cxx/src/CMakeLists.txt`
-- Modify: `cxx/tests/unit/CMakeLists.txt`
+- Create: `src/detail/compat_decode.hpp`
+- Create: `src/compat_decode.cpp`
+- Create: `src/detail/format_parser.hpp`
+- Create: `src/format_parser.cpp`
+- Create: `src/detail/relation_graph.hpp`
+- Create: `src/relation_graph.cpp`
+- Create: `include/libtmux/snapshot.hpp`
+- Bind: `include/libtmux/session.hpp`
+- Bind: `include/libtmux/window.hpp`
+- Bind: `include/libtmux/pane.hpp`
+- Bind: `include/libtmux/client.hpp`
+- Modify: `src/detail/entity_factory.hpp`
+- Create: `tests/unit/compat_decode_test.cpp`
+- Create: `tests/unit/format_parser_test.cpp`
+- Create: `tests/unit/snapshot_test.cpp`
+- Modify: `src/CMakeLists.txt`
+- Modify: `tests/unit/CMakeLists.txt`
 
 - [ ] **Step 1: Write literal parser and snapshot tests**
 
@@ -1062,7 +1062,7 @@ Expected: all parser and lifetime tests pass.
 - [ ] **Step 5: Commit parsing and snapshots**
 
 ```console
-$ git add cxx/include/libtmux/snapshot.hpp cxx/src cxx/tests/unit
+$ git add include/libtmux/snapshot.hpp src tests/unit
 ```
 
 ```console
@@ -1081,16 +1081,16 @@ EOF
 
 **Files:**
 
-- Create: `cxx/include/libtmux/query/field.hpp`
-- Create: `cxx/include/libtmux/query/expr.hpp`
-- Create: `cxx/include/libtmux/query/visitor.hpp`
-- Bind: `cxx/include/libtmux/generated/fields.hpp`
-- Create: `cxx/src/query_evaluate.cpp`
-- Create: `cxx/tests/unit/query_expr_test.cpp`
-- Bind: `cxx/tests/acceptance/query/`
-- Modify: `cxx/src/CMakeLists.txt`
-- Modify: `cxx/tests/unit/CMakeLists.txt`
-- Modify: `cxx/tests/acceptance/CMakeLists.txt`
+- Create: `include/libtmux/query/field.hpp`
+- Create: `include/libtmux/query/expr.hpp`
+- Create: `include/libtmux/query/visitor.hpp`
+- Bind: `include/libtmux/generated/fields.hpp`
+- Create: `src/query_evaluate.cpp`
+- Create: `tests/unit/query_expr_test.cpp`
+- Bind: `tests/acceptance/query/`
+- Modify: `src/CMakeLists.txt`
+- Modify: `tests/unit/CMakeLists.txt`
+- Modify: `tests/acceptance/CMakeLists.txt`
 
 - [ ] **Step 1: Run retained query contracts against the empty surface**
 
@@ -1151,12 +1151,12 @@ and all lifetime and relation cases pass.
 
 ```console
 $ git add \
-    cxx/include/libtmux/query \
-    cxx/src/query_evaluate.cpp \
-    cxx/src/CMakeLists.txt \
-    cxx/tests/unit/query_expr_test.cpp \
-    cxx/tests/unit/CMakeLists.txt \
-    cxx/tests/acceptance/CMakeLists.txt
+    include/libtmux/query \
+    src/query_evaluate.cpp \
+    src/CMakeLists.txt \
+    tests/unit/query_expr_test.cpp \
+    tests/unit/CMakeLists.txt \
+    tests/acceptance/CMakeLists.txt
 ```
 
 ```console
@@ -1177,15 +1177,15 @@ EOF
 
 **Files:**
 
-- Create: `cxx/include/libtmux/query/algorithms.hpp`
-- Create: `cxx/include/libtmux/query/parser.hpp`
-- Create: `cxx/src/query_parser.cpp`
-- Create: `cxx/tests/unit/query_algorithms_test.cpp`
-- Create: `cxx/tests/unit/query_parser_test.cpp`
-- Bind: `cxx/tests/acceptance/compile/query/`
-- Modify: `cxx/src/CMakeLists.txt`
-- Modify: `cxx/tests/unit/CMakeLists.txt`
-- Modify: `cxx/tests/acceptance/CMakeLists.txt`
+- Create: `include/libtmux/query/algorithms.hpp`
+- Create: `include/libtmux/query/parser.hpp`
+- Create: `src/query_parser.cpp`
+- Create: `tests/unit/query_algorithms_test.cpp`
+- Create: `tests/unit/query_parser_test.cpp`
+- Bind: `tests/acceptance/compile/query/`
+- Modify: `src/CMakeLists.txt`
+- Modify: `tests/unit/CMakeLists.txt`
+- Modify: `tests/acceptance/CMakeLists.txt`
 
 - [ ] **Step 1: Run cardinality and parser contracts red**
 
@@ -1253,13 +1253,13 @@ Expected: all range, single-pass, compile-fail, and parser cases pass.
 
 ```console
 $ git add \
-    cxx/include/libtmux/query \
-    cxx/src/query_parser.cpp \
-    cxx/src/CMakeLists.txt \
-    cxx/tests/unit/query_algorithms_test.cpp \
-    cxx/tests/unit/query_parser_test.cpp \
-    cxx/tests/unit/CMakeLists.txt \
-    cxx/tests/acceptance/CMakeLists.txt
+    include/libtmux/query \
+    src/query_parser.cpp \
+    src/CMakeLists.txt \
+    tests/unit/query_algorithms_test.cpp \
+    tests/unit/query_parser_test.cpp \
+    tests/unit/CMakeLists.txt \
+    tests/acceptance/CMakeLists.txt
 ```
 
 ```console
@@ -1278,11 +1278,11 @@ EOF
 
 **Files:**
 
-- Create: `cxx/include/libtmux/serialization/query_json.hpp`
-- Create: `cxx/tests/unit/query_serialization_test.cpp`
-- Bind: `cxx/schema/filter-expression-v1.schema.json`
-- Bind: `cxx/tests/data/query/filter-expression-events-v1.json`
-- Modify: `cxx/tests/unit/CMakeLists.txt`
+- Create: `include/libtmux/serialization/query_json.hpp`
+- Create: `tests/unit/query_serialization_test.cpp`
+- Bind: `schema/filter-expression-v1.schema.json`
+- Bind: `tests/data/query/filter-expression-events-v1.json`
+- Modify: `tests/unit/CMakeLists.txt`
 
 - [ ] **Step 1: Run serializer event and failure tests red**
 
@@ -1330,9 +1330,9 @@ cross-language oracle, and injected serializer errors propagate unchanged.
 
 ```console
 $ git add \
-    cxx/include/libtmux/serialization/query_json.hpp \
-    cxx/tests/unit/query_serialization_test.cpp \
-    cxx/tests/unit/CMakeLists.txt
+    include/libtmux/serialization/query_json.hpp \
+    tests/unit/query_serialization_test.cpp \
+    tests/unit/CMakeLists.txt
 ```
 
 ```console
@@ -1351,19 +1351,19 @@ EOF
 
 **Files:**
 
-- Modify: `cxx/include/libtmux/server.hpp`
-- Modify: `cxx/include/libtmux/session.hpp`
-- Create: `cxx/src/server.cpp`
-- Modify: `cxx/src/session.cpp`
-- Modify: `cxx/src/detail/entity_factory.hpp`
-- Create: `cxx/src/acquisition.cpp`
-- Create: `cxx/tests/integration/server_session_test.cpp`
-- Create: `cxx/tests/differential/cpp_adapter.cpp`
-- Modify: `cxx/tests/differential/CMakeLists.txt`
-- Modify: `cxx/tests/differential/scenario_registry.json`
-- Modify: `cxx/tools/differential/python_reference.py`
-- Modify: `cxx/src/CMakeLists.txt`
-- Modify: `cxx/tests/integration/CMakeLists.txt`
+- Modify: `include/libtmux/server.hpp`
+- Modify: `include/libtmux/session.hpp`
+- Create: `src/server.cpp`
+- Modify: `src/session.cpp`
+- Modify: `src/detail/entity_factory.hpp`
+- Create: `src/acquisition.cpp`
+- Create: `tests/integration/server_session_test.cpp`
+- Create: `tests/differential/cpp_adapter.cpp`
+- Modify: `tests/differential/CMakeLists.txt`
+- Modify: `tests/differential/scenario_registry.json`
+- Modify: `tools/differential/python_reference.py`
+- Modify: `src/CMakeLists.txt`
+- Modify: `tests/integration/CMakeLists.txt`
 - Create: `tests/cxx/test_server_session_differential.py`
 
 **Public slice:** `Server::create`, `cmd`, `new_session`, lenient `sessions`,
@@ -1449,12 +1449,12 @@ return shapes, and errors.
 
 ```console
 $ git add \
-    cxx/include/libtmux/server.hpp \
-    cxx/include/libtmux/session.hpp \
-    cxx/src \
-    cxx/tests/integration \
-    cxx/tests/differential \
-    cxx/tools/differential/python_reference.py \
+    include/libtmux/server.hpp \
+    include/libtmux/session.hpp \
+    src \
+    tests/integration \
+    tests/differential \
+    tools/differential/python_reference.py \
     tests/cxx/test_server_session_differential.py
 ```
 
@@ -1475,10 +1475,10 @@ EOF
 
 **Files:**
 
-- Extend: `cxx/tools/bakeoff/verify_rewrite_boundary.py`
-- Bind: `cxx/docs/evidence/rewrite-boundary.json`
-- Create: `cxx/docs/evidence/clean-rewrite.json`
-- Create: `cxx/docs/reviews/clean-rewrite.md`
+- Extend: `tools/bakeoff/verify_rewrite_boundary.py`
+- Bind: `docs/evidence/rewrite-boundary.json`
+- Create: `docs/evidence/clean-rewrite.json`
+- Create: `docs/reviews/clean-rewrite.md`
 - Create: `tests/cxx/test_clean_rewrite_audit.py`
 
 - [ ] **Step 1: Add provenance and boundary failures**
@@ -1503,7 +1503,7 @@ commit, tree, blob IDs, modes, and complete path set through Git object APIs. It
 rejects an exact production blob match and any `C` or `R` record emitted by
 `git diff --find-copies-harder --find-renames=50% --diff-filter=CR` between the
 recorded revision and the path set containing `cxx/spikes/`, current
-`cxx/include/`, `cxx/src/`, `cxx/cmake/`, and the root CMake source.
+`include/`, `src/`, `cmake/`, and the root CMake source.
 Disposable-repository tests cover an exact copy, exact rename, and an edited
 copy above the fixed similarity threshold, plus a forged or unreachable
 baseline. It does not claim or attempt to prove that an implementer never
@@ -1526,13 +1526,13 @@ declared output path; no caller-supplied exclusion or other changed/untracked
 path is allowed.
 
 ```console
-$ uv run python cxx/tools/bakeoff/verify_rewrite_boundary.py \
+$ uv run python tools/bakeoff/verify_rewrite_boundary.py \
     --production \
     --two-builds \
-    --manifest cxx/tests/acceptance/public_contract.json \
-    --decision cxx/docs/bakeoffs/architecture-decision.json \
-    --spike-baseline cxx/docs/evidence/rewrite-boundary.json \
-    --output cxx/docs/evidence/clean-rewrite.json
+    --manifest tests/acceptance/public_contract.json \
+    --decision docs/bakeoffs/architecture-decision.json \
+    --spike-baseline docs/evidence/rewrite-boundary.json \
+    --output docs/evidence/clean-rewrite.json
 ```
 
 Expected: both builds and CTests pass, generated headers and normalized test
@@ -1567,10 +1567,10 @@ beyond the declared evidence output.
 
 ```console
 $ git add \
-    cxx/tools/bakeoff/verify_rewrite_boundary.py \
+    tools/bakeoff/verify_rewrite_boundary.py \
     tests/cxx/test_clean_rewrite_audit.py \
-    cxx/docs/evidence/clean-rewrite.json \
-    cxx/docs/reviews/clean-rewrite.md
+    docs/evidence/clean-rewrite.json \
+    docs/reviews/clean-rewrite.md
 ```
 
 ```console

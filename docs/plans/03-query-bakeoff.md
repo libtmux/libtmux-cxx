@@ -23,7 +23,7 @@ transport exercise.
 
 - The lookup study precedes AST implementation. No contender may hide a regex,
   Unicode, missing-value, or membership difference behind its evaluator.
-- Every semantic delta enters `cxx/parity/approvals.json` as `pending` and
+- Every semantic delta enters `tools/parity/data/approvals.json` as `pending` and
   stops this plan until the user explicitly approves or rejects it.
 - `FilterExpr<T>` is an owning value with owned `std::string` literals and no
   expression-template public type.
@@ -76,15 +76,15 @@ auto composed = panes
 
 **Files:**
 
-- Create: `cxx/tests/data/query/lookups-v1.json`
-- Create: `cxx/tests/data/query/python-results-v1.json`
-- Modify: `cxx/tools/differential/materialize.py`
-- Create: `cxx/tests/differential/query_oracle.py`
+- Create: `tests/data/query/lookups-v1.json`
+- Create: `tests/data/query/python-results-v1.json`
+- Modify: `tools/differential/materialize.py`
+- Create: `tests/differential/query_oracle.py`
 - Create: `tests/cxx/test_query_oracle.py`
 - Modify: `tests/cxx/test_differential.py`
-- Modify: `cxx/parity/mapping.json`
-- Modify: `cxx/parity/evidence.json`
-- Modify: `cxx/parity/manifest.json`
+- Modify: `tools/parity/data/mapping.json`
+- Modify: `tools/parity/data/evidence.json`
+- Modify: `tools/parity/data/manifest.json`
 
 **Interfaces:**
 
@@ -124,7 +124,7 @@ Expected: FAIL importing `query_oracle` or reporting missing operator cases.
 
 - [ ] **Step 3: Implement the source-grounded Python evaluator**
 
-Extend the retained `cxx.tools.differential.materialize` module with a CLI that
+Extend the retained `tools.differential.materialize` module with a CLI that
 accepts `--repository`, `--observation`,
 `--input-manifest`, and `--output`. It reads the commit and tree embedded in the
 development observation, materializes only the recorded Python input objects
@@ -146,29 +146,29 @@ Do not record exception messages containing local paths.
 - [ ] **Step 4: Generate and reproduce the golden results**
 
 ```console
-$ uv run python -m cxx.tools.differential.materialize \
+$ uv run python -m tools.differential.materialize \
     --repository . \
-    --observation cxx/parity/development.json \
-    --input-manifest cxx/parity/inputs.json \
+    --observation tools/parity/data/development.json \
+    --input-manifest tools/parity/data/inputs.json \
     --output cxx/build/python-source/development
 ```
 
 ```console
-$ uv run python cxx/tests/differential/query_oracle.py \
+$ uv run python tests/differential/query_oracle.py \
     --source-root cxx/build/python-source/development \
-    --input-manifest cxx/parity/inputs.json \
-    --expected-observation cxx/parity/development.json \
-    --cases cxx/tests/data/query/lookups-v1.json \
-    --output cxx/tests/data/query/python-results-v1.json
+    --input-manifest tools/parity/data/inputs.json \
+    --expected-observation tools/parity/data/development.json \
+    --cases tests/data/query/lookups-v1.json \
+    --output tests/data/query/python-results-v1.json
 ```
 
 ```console
-$ uv run python cxx/tests/differential/query_oracle.py \
+$ uv run python tests/differential/query_oracle.py \
     --source-root cxx/build/python-source/development \
-    --input-manifest cxx/parity/inputs.json \
-    --expected-observation cxx/parity/development.json \
-    --cases cxx/tests/data/query/lookups-v1.json \
-    --check cxx/tests/data/query/python-results-v1.json
+    --input-manifest tools/parity/data/inputs.json \
+    --expected-observation tools/parity/data/development.json \
+    --cases tests/data/query/lookups-v1.json \
+    --check tests/data/query/python-results-v1.json
 ```
 
 Expected: the second command exits zero and the golden has no timestamps or
@@ -185,28 +185,28 @@ Expected: all focused query-oracle tests pass.
 Synchronize the oracle evidence into the reviewed manifest before staging.
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     sync \
-    --release cxx/parity/release-v0.62.0.json \
-    --development cxx/parity/development.json \
-    --mapping cxx/parity/mapping.json \
-    --approvals cxx/parity/approvals.json \
-    --evidence cxx/parity/evidence.json \
-    --output cxx/parity/manifest.json
+    --release tools/parity/data/release-v0.62.0.json \
+    --development tools/parity/data/development.json \
+    --mapping tools/parity/data/mapping.json \
+    --approvals tools/parity/data/approvals.json \
+    --evidence tools/parity/data/evidence.json \
+    --output tools/parity/data/manifest.json
 ```
 
 - [ ] **Step 5: Commit the oracle**
 
 ```console
 $ git add \
-    cxx/tests/data/query \
-    cxx/tools/differential/materialize.py \
-    cxx/tests/differential/query_oracle.py \
+    tests/data/query \
+    tools/differential/materialize.py \
+    tests/differential/query_oracle.py \
     tests/cxx/test_query_oracle.py \
     tests/cxx/test_differential.py \
-    cxx/parity/mapping.json \
-    cxx/parity/evidence.json \
-    cxx/parity/manifest.json
+    tools/parity/data/mapping.json \
+    tools/parity/data/evidence.json \
+    tools/parity/data/manifest.json
 ```
 
 ```console
@@ -234,10 +234,10 @@ EOF
 - Create: `cxx/spikes/query/compat/tests/evaluator_test.cpp`
 - Create: `cxx/spikes/query/compat/CMakeLists.txt`
 - Modify: `cxx/CMakeLists.txt`
-- Create: `cxx/tools/bakeoff/compare_query_oracle.py`
+- Create: `tools/bakeoff/compare_query_oracle.py`
 - Create: `tests/cxx/test_compare_query_oracle.py`
-- Create: `cxx/docs/bakeoffs/query/compatibility.json`
-- Create: `cxx/docs/bakeoffs/query/compatibility.md`
+- Create: `docs/bakeoffs/query/compatibility.json`
+- Create: `docs/bakeoffs/query/compatibility.md`
 
 **Interfaces:**
 
@@ -355,10 +355,10 @@ $ uv run pytest tests/cxx/test_compare_query_oracle.py -v
 Expected: all comparator tests pass.
 
 ```console
-$ uv run python cxx/tools/bakeoff/compare_query_oracle.py \
-    --python cxx/tests/data/query/python-results-v1.json \
+$ uv run python tools/bakeoff/compare_query_oracle.py \
+    --python tests/data/query/python-results-v1.json \
     --cxx-dir cxx/build/cxx-dev/query-compat \
-    --output cxx/docs/bakeoffs/query/compatibility.json
+    --output docs/bakeoffs/query/compatibility.json
 ```
 
 Expected: every case is `matching`, `adaptation_required`, or
@@ -387,20 +387,20 @@ the required C++ API and behavior evidence exist. Then synchronize the reviewed
 records:
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     sync \
-    --release cxx/parity/release-v0.62.0.json \
-    --development cxx/parity/development.json \
-    --mapping cxx/parity/mapping.json \
-    --approvals cxx/parity/approvals.json \
-    --evidence cxx/parity/evidence.json \
-    --output cxx/parity/manifest.json
+    --release tools/parity/data/release-v0.62.0.json \
+    --development tools/parity/data/development.json \
+    --mapping tools/parity/data/mapping.json \
+    --approvals tools/parity/data/approvals.json \
+    --evidence tools/parity/data/evidence.json \
+    --output tools/parity/data/manifest.json
 ```
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode structural \
     --allow-pending \
     --require-query-approvals
@@ -414,9 +414,9 @@ Expected: exit zero with no pending query-semantic approval.
 $ git add \
     cxx/CMakeLists.txt \
     cxx/spikes/query/compat \
-    cxx/tools/bakeoff/compare_query_oracle.py \
+    tools/bakeoff/compare_query_oracle.py \
     tests/cxx/test_compare_query_oracle.py \
-    cxx/docs/bakeoffs/query \
+    docs/bakeoffs/query \
     cxx/parity
 ```
 
@@ -437,27 +437,27 @@ EOF
 
 **Files:**
 
-- Create: `cxx/tests/contracts/query/exercise.hpp`
-- Create: `cxx/tests/contracts/query/exercise.cpp`
-- Create: `cxx/tests/contracts/query/lifetime_test.cpp`
-- Create: `cxx/tests/contracts/query/ranges_test.cpp`
-- Create: `cxx/tests/contracts/query/relations_test.cpp`
-- Create: `cxx/tests/contracts/query/serialization_test.cpp`
-- Create: `cxx/tests/contracts/query/relation_probe.cpp`
-- Create: `cxx/tests/contracts/compile/query/valid/`
-- Create: `cxx/tests/contracts/compile/query/invalid/`
-- Create: `cxx/tests/contracts/compile/query/manifest.json`
-- Create: `cxx/tests/data/query/filter-expression-events-v1.json`
-- Create: `cxx/schema/filter-expression-v1.schema.json`
-- Create: `cxx/cmake/CompileContract.cmake`
-- Create: `cxx/tests/contracts/compile/query/run_compile_contract.cmake`
-- Create: `cxx/tools/bakeoff/generate_query_contract.py`
+- Create: `tests/contracts/query/exercise.hpp`
+- Create: `tests/contracts/query/exercise.cpp`
+- Create: `tests/contracts/query/lifetime_test.cpp`
+- Create: `tests/contracts/query/ranges_test.cpp`
+- Create: `tests/contracts/query/relations_test.cpp`
+- Create: `tests/contracts/query/serialization_test.cpp`
+- Create: `tests/contracts/query/relation_probe.cpp`
+- Create: `tests/contracts/compile/query/valid/`
+- Create: `tests/contracts/compile/query/invalid/`
+- Create: `tests/contracts/compile/query/manifest.json`
+- Create: `tests/data/query/filter-expression-events-v1.json`
+- Create: `schema/filter-expression-v1.schema.json`
+- Create: `cmake/CompileContract.cmake`
+- Create: `tests/contracts/compile/query/run_compile_contract.cmake`
+- Create: `tools/bakeoff/generate_query_contract.py`
 - Create: `tests/cxx/test_generate_query_contract.py`
-- Modify: `cxx/parity/mapping.json`
-- Modify: `cxx/parity/approvals.json`
-- Modify: `cxx/parity/manifest.json`
+- Modify: `tools/parity/data/mapping.json`
+- Modify: `tools/parity/data/approvals.json`
+- Modify: `tools/parity/data/manifest.json`
 - Modify: `cxx/CMakeLists.txt`
-- Modify: `cxx/tests/CMakeLists.txt`
+- Modify: `tests/CMakeLists.txt`
 
 **Interfaces:**
 
@@ -660,14 +660,14 @@ reference helpers and owning input-range overloads. Synchronize those mapping
 rows without changing any lookup approval from Task 2.
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     sync \
-    --release cxx/parity/release-v0.62.0.json \
-    --development cxx/parity/development.json \
-    --mapping cxx/parity/mapping.json \
-    --approvals cxx/parity/approvals.json \
-    --evidence cxx/parity/evidence.json \
-    --output cxx/parity/manifest.json
+    --release tools/parity/data/release-v0.62.0.json \
+    --development tools/parity/data/development.json \
+    --mapping tools/parity/data/mapping.json \
+    --approvals tools/parity/data/approvals.json \
+    --evidence tools/parity/data/evidence.json \
+    --output tools/parity/data/manifest.json
 ```
 
 ```console
@@ -694,17 +694,17 @@ with its source named, and infrastructure failure cannot count as success.
 ```console
 $ git add \
     cxx/CMakeLists.txt \
-    cxx/cmake/CompileContract.cmake \
-    cxx/tests/CMakeLists.txt \
-    cxx/tests/contracts/query \
-    cxx/tests/contracts/compile/query \
-    cxx/tests/data/query \
-    cxx/schema/filter-expression-v1.schema.json \
-    cxx/tools/bakeoff/generate_query_contract.py \
+    cmake/CompileContract.cmake \
+    tests/CMakeLists.txt \
+    tests/contracts/query \
+    tests/contracts/compile/query \
+    tests/data/query \
+    schema/filter-expression-v1.schema.json \
+    tools/bakeoff/generate_query_contract.py \
     tests/cxx/test_generate_query_contract.py \
-    cxx/parity/mapping.json \
-    cxx/parity/approvals.json \
-    cxx/parity/manifest.json
+    tools/parity/data/mapping.json \
+    tools/parity/data/approvals.json \
+    tools/parity/data/manifest.json
 ```
 
 ```console
@@ -968,21 +968,21 @@ EOF
 
 **Files:**
 
-- Create: `cxx/tools/bakeoff/relation_trigger.py`
-- Create: `cxx/tools/bakeoff/summarize_query_gates.py`
-- Create: `cxx/tools/bakeoff/measure_relation.py`
-- Bind: `cxx/tools/evidence/ctest_gate.py`
+- Create: `tools/bakeoff/relation_trigger.py`
+- Create: `tools/bakeoff/summarize_query_gates.py`
+- Create: `tools/bakeoff/measure_relation.py`
+- Bind: `tools/evidence/ctest_gate.py`
 - Create: `tests/cxx/test_relation_trigger.py`
 - Create: `tests/cxx/test_measure_relation.py`
 - Create conditionally: `cxx/spikes/query/relations/hash_graph/`
 - Create conditionally: `cxx/spikes/query/relations/sorted_tables/`
 - Create conditionally: `cxx/spikes/query/relations/row_bundles/`
-- Create conditionally: `cxx/docs/bakeoffs/query/relations/hash-graph.json`
-- Create conditionally: `cxx/docs/bakeoffs/query/relations/sorted-tables.json`
-- Create conditionally: `cxx/docs/bakeoffs/query/relations/row-bundles.json`
+- Create conditionally: `docs/bakeoffs/query/relations/hash-graph.json`
+- Create conditionally: `docs/bakeoffs/query/relations/sorted-tables.json`
+- Create conditionally: `docs/bakeoffs/query/relations/row-bundles.json`
 - Modify conditionally: `cxx/CMakeLists.txt`
-- Create: `cxx/docs/bakeoffs/query/candidate-results.json`
-- Create: `cxx/docs/bakeoffs/query/relation-decision.json`
+- Create: `docs/bakeoffs/query/candidate-results.json`
+- Create: `docs/bakeoffs/query/relation-decision.json`
 
 - [ ] **Step 1: Test the material-uncertainty trigger**
 
@@ -1047,7 +1047,7 @@ $ cmake --build --preset cxx-sanitize
 ```
 
 ```console
-$ uv run python -m cxx.tools.evidence.ctest_gate \
+$ uv run python -m tools.evidence.ctest_gate \
     --source-dir cxx \
     --preset cxx-sanitize \
     --label query \
@@ -1057,15 +1057,15 @@ $ uv run python -m cxx.tools.evidence.ctest_gate \
 ```
 
 ```console
-$ uv run python cxx/tools/bakeoff/summarize_query_gates.py \
+$ uv run python tools/bakeoff/summarize_query_gates.py \
     --gate-record cxx/build/evidence/query-relation-trigger.json \
-    --output cxx/docs/bakeoffs/query/candidate-results.json
+    --output docs/bakeoffs/query/candidate-results.json
 ```
 
 ```console
-$ uv run python cxx/tools/bakeoff/relation_trigger.py \
-    --query-results cxx/docs/bakeoffs/query/candidate-results.json \
-    --output cxx/docs/bakeoffs/query/relation-decision.json
+$ uv run python tools/bakeoff/relation_trigger.py \
+    --query-results docs/bakeoffs/query/candidate-results.json \
+    --output docs/bakeoffs/query/relation-decision.json
 ```
 
 Expected: either `not_run` with evidence that every trigger is settled or
@@ -1075,13 +1075,13 @@ Expected: either `not_run` with evidence that every trigger is settled or
 
 ```console
 $ git add \
-    cxx/tools/bakeoff/relation_trigger.py \
-    cxx/tools/bakeoff/summarize_query_gates.py \
-    cxx/tools/bakeoff/measure_relation.py \
+    tools/bakeoff/relation_trigger.py \
+    tools/bakeoff/summarize_query_gates.py \
+    tools/bakeoff/measure_relation.py \
     tests/cxx/test_relation_trigger.py \
     tests/cxx/test_measure_relation.py \
-    cxx/docs/bakeoffs/query/candidate-results.json \
-    cxx/docs/bakeoffs/query/relation-decision.json
+    docs/bakeoffs/query/candidate-results.json \
+    docs/bakeoffs/query/relation-decision.json
 ```
 
 ```console
@@ -1147,7 +1147,7 @@ $ cmake --build --preset cxx-sanitize --target query_relation_hash_graph
 ```
 
 ```console
-$ uv run python -m cxx.tools.evidence.ctest_gate \
+$ uv run python -m tools.evidence.ctest_gate \
     --source-dir cxx \
     --preset cxx-sanitize \
     --match '^query\.relation\.hash_graph$' \
@@ -1157,19 +1157,19 @@ $ uv run python -m cxx.tools.evidence.ctest_gate \
 ```
 
 ```console
-$ uv run python cxx/tools/bakeoff/measure_relation.py \
+$ uv run python tools/bakeoff/measure_relation.py \
     --candidate hash_graph \
     --build-dir cxx/build/cxx-sanitize \
     --gate-record cxx/build/evidence/query-relation-hash-graph.json \
     --repetitions 7 \
-    --output cxx/docs/bakeoffs/query/relations/hash-graph.json
+    --output docs/bakeoffs/query/relations/hash-graph.json
 ```
 
 ```console
 $ git add \
     cxx/spikes/query/relations/hash_graph \
     cxx/CMakeLists.txt \
-    cxx/docs/bakeoffs/query/relations/hash-graph.json
+    docs/bakeoffs/query/relations/hash-graph.json
 ```
 
 Commit these exact paths as `CXX(spike[relations]): Try hash graph`.
@@ -1202,7 +1202,7 @@ $ cmake --build --preset cxx-sanitize --target query_relation_sorted_tables
 ```
 
 ```console
-$ uv run python -m cxx.tools.evidence.ctest_gate \
+$ uv run python -m tools.evidence.ctest_gate \
     --source-dir cxx \
     --preset cxx-sanitize \
     --match '^query\.relation\.sorted_tables$' \
@@ -1212,19 +1212,19 @@ $ uv run python -m cxx.tools.evidence.ctest_gate \
 ```
 
 ```console
-$ uv run python cxx/tools/bakeoff/measure_relation.py \
+$ uv run python tools/bakeoff/measure_relation.py \
     --candidate sorted_tables \
     --build-dir cxx/build/cxx-sanitize \
     --gate-record cxx/build/evidence/query-relation-sorted-tables.json \
     --repetitions 7 \
-    --output cxx/docs/bakeoffs/query/relations/sorted-tables.json
+    --output docs/bakeoffs/query/relations/sorted-tables.json
 ```
 
 ```console
 $ git add \
     cxx/spikes/query/relations/sorted_tables \
     cxx/CMakeLists.txt \
-    cxx/docs/bakeoffs/query/relations/sorted-tables.json
+    docs/bakeoffs/query/relations/sorted-tables.json
 ```
 
 Commit these exact paths as `CXX(spike[relations]): Try sorted tables`.
@@ -1257,7 +1257,7 @@ $ cmake --build --preset cxx-sanitize --target query_relation_row_bundles
 ```
 
 ```console
-$ uv run python -m cxx.tools.evidence.ctest_gate \
+$ uv run python -m tools.evidence.ctest_gate \
     --source-dir cxx \
     --preset cxx-sanitize \
     --match '^query\.relation\.row_bundles$' \
@@ -1267,19 +1267,19 @@ $ uv run python -m cxx.tools.evidence.ctest_gate \
 ```
 
 ```console
-$ uv run python cxx/tools/bakeoff/measure_relation.py \
+$ uv run python tools/bakeoff/measure_relation.py \
     --candidate row_bundles \
     --build-dir cxx/build/cxx-sanitize \
     --gate-record cxx/build/evidence/query-relation-row-bundles.json \
     --repetitions 7 \
-    --output cxx/docs/bakeoffs/query/relations/row-bundles.json
+    --output docs/bakeoffs/query/relations/row-bundles.json
 ```
 
 ```console
 $ git add \
     cxx/spikes/query/relations/row_bundles \
     cxx/CMakeLists.txt \
-    cxx/docs/bakeoffs/query/relations/row-bundles.json
+    docs/bakeoffs/query/relations/row-bundles.json
 ```
 
 Commit these exact paths as `CXX(spike[relations]): Try row bundles`.
@@ -1291,10 +1291,10 @@ gate and measurement record. Compare all three only from those committed
 records:
 
 ```console
-$ uv run python cxx/tools/bakeoff/relation_trigger.py \
-    --query-results cxx/docs/bakeoffs/query/candidate-results.json \
-    --relation-results cxx/docs/bakeoffs/query/relations \
-    --output cxx/docs/bakeoffs/query/relation-decision.json
+$ uv run python tools/bakeoff/relation_trigger.py \
+    --query-results docs/bakeoffs/query/candidate-results.json \
+    --relation-results docs/bakeoffs/query/relations \
+    --output docs/bakeoffs/query/relation-decision.json
 ```
 
 Update `relation-decision.json` only after all three atomic contender commits.
@@ -1304,7 +1304,7 @@ write a tracked subordinate plan before editing a contender.
 - [ ] **Step 11: Commit the selected relation result**
 
 ```console
-$ git add cxx/docs/bakeoffs/query/relation-decision.json
+$ git add docs/bakeoffs/query/relation-decision.json
 ```
 
 ```console
@@ -1324,16 +1324,16 @@ EOF
 
 **Files:**
 
-- Create: `cxx/tools/bakeoff/measure_query.py`
+- Create: `tools/bakeoff/measure_query.py`
 - Create: `tests/cxx/test_measure_query.py`
 - Modify: `cxx/CMakePresets.json`
-- Modify: `cxx/docs/bakeoffs/query/candidate-results.json`
-- Create: `cxx/docs/bakeoffs/query/measurements.json`
-- Create: `cxx/docs/bakeoffs/query/diagnostics/`
-- Create: `cxx/docs/bakeoffs/query/decision.json`
-- Create: `cxx/docs/bakeoffs/query/scorecard.md`
-- Create: `cxx/docs/bakeoffs/query/review.md`
-- Create or extend conditionally: `cxx/docs/plans/followups/`
+- Modify: `docs/bakeoffs/query/candidate-results.json`
+- Create: `docs/bakeoffs/query/measurements.json`
+- Create: `docs/bakeoffs/query/diagnostics/`
+- Create: `docs/bakeoffs/query/decision.json`
+- Create: `docs/bakeoffs/query/scorecard.md`
+- Create: `docs/bakeoffs/query/review.md`
+- Create or extend conditionally: `docs/plans/followups/`
 
 `measure_query.py` records hard gates, clean and incremental compile time,
 public-header parse time, binary size, construction/copy/evaluation
@@ -1378,7 +1378,7 @@ $ cmake --build --preset cxx-sanitize
 ```
 
 ```console
-$ uv run python -m cxx.tools.evidence.ctest_gate \
+$ uv run python -m tools.evidence.ctest_gate \
     --source-dir cxx \
     --preset cxx-sanitize \
     --label query \
@@ -1388,9 +1388,9 @@ $ uv run python -m cxx.tools.evidence.ctest_gate \
 ```
 
 ```console
-$ uv run python cxx/tools/bakeoff/summarize_query_gates.py \
+$ uv run python tools/bakeoff/summarize_query_gates.py \
     --gate-record cxx/build/evidence/query-final.json \
-    --output cxx/docs/bakeoffs/query/candidate-results.json
+    --output docs/bakeoffs/query/candidate-results.json
 ```
 
 Expected: every selected candidate result has runtime, compile-fail, lifetime,
@@ -1417,12 +1417,12 @@ $ cmake --build --preset cxx-query-measure
 ```
 
 ```console
-$ uv run python cxx/tools/bakeoff/measure_query.py \
+$ uv run python tools/bakeoff/measure_query.py \
     --candidate all \
     --build-dir cxx/build/cxx-query-measure \
-    --gate-summary cxx/docs/bakeoffs/query/candidate-results.json \
+    --gate-summary docs/bakeoffs/query/candidate-results.json \
     --repetitions 7 \
-    --output cxx/docs/bakeoffs/query/measurements.json
+    --output docs/bakeoffs/query/measurements.json
 ```
 
 Expected: deterministic normalized JSON with one record per contender.
@@ -1435,7 +1435,7 @@ trade-offs, schema identity, and classified unknowns. Each unknown has
 `materiality`, evidence, and a follow-up disposition. A material unknown blocks
 selection until a focused follow-up spike, measurement, and review closes it;
 before that work, stop and add a tracked subordinate plan under
-`cxx/docs/plans/followups/`, named by the unknown's stable ID and listing exact
+`docs/plans/followups/`, named by the unknown's stable ID and listing exact
 paths, gates, and commits. A non-material unknown explains why it cannot change
 the public contract or winner. No fixed performance weight determines the
 result.
@@ -1458,7 +1458,7 @@ source or registration fix blocks closeout.
 - [ ] **Step 8: Verify and commit the decision**
 
 ```console
-$ uv run python cxx/tools/bakeoff/verify_decision.py \
+$ uv run python tools/bakeoff/verify_decision.py \
     --axis query \
     --require-review-closed
 ```
@@ -1470,10 +1470,10 @@ material unknown remaining.
 ```console
 $ git add \
     cxx/CMakePresets.json \
-    cxx/tools/bakeoff/measure_query.py \
+    tools/bakeoff/measure_query.py \
     tests/cxx/test_measure_query.py \
-    cxx/docs/bakeoffs/query \
-    cxx/schema \
+    docs/bakeoffs/query \
+    schema \
     cxx/parity
 ```
 

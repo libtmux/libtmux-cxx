@@ -41,7 +41,7 @@ correction below, not ahead of it.
 
 ## Correction owed to the decision
 
-`cxx/docs/bakeoffs/transport/decision.json` carries a limitation named
+`docs/bakeoffs/transport/decision.json` carries a limitation named
 `control_mode_release_deadline` whose rationale says the behaviour is scoped to
 release optimization. That is wrong on both scope and cause: the failure occurs
 in every preset, and its cause is writer residency in the test rather than

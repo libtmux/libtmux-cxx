@@ -22,7 +22,7 @@ vcpkg, and `tl::expected` 1.1.0.
 ## Global Constraints
 
 - The approved design in
-  [`cxx/docs/design/bakeoff-and-rewrite.md`](../design/bakeoff-and-rewrite.md)
+  [`docs/design/bakeoff-and-rewrite.md`](../design/bakeoff-and-rewrite.md)
   is the source of truth.
 - Linux is the only blocking platform until equivalent macOS or WSL evidence
   exists.
@@ -176,7 +176,7 @@ $ uv run mypy .
 ```
 
 ```console
-$ uv run pytest --doctest-modules cxx/tools cxx/tests/differential
+$ uv run pytest --doctest-modules tools tests/differential
 ```
 
 ```console
@@ -191,10 +191,10 @@ $ env -u __MISE_ZSH_ACTIVATE_PATH -u __MISE_ORIG_PATH uv run pytest
 
 **Files:**
 
-- Execute: `cxx/docs/plans/01-contract-and-harness.md`
-- Produce: `cxx/parity/`, `cxx/tests/support/`, `cxx/tools/differential/`
-- Produce: `cxx/docs/evidence/contract-and-harness.json`
-- Produce: `cxx/docs/evidence/contract-and-harness-review.md`
+- Execute: `docs/plans/01-contract-and-harness.md`
+- Produce: `tools/parity/data/`, `tests/support/`, `tools/differential/`
+- Produce: `docs/evidence/contract-and-harness.json`
+- Produce: `docs/evidence/contract-and-harness-review.md`
 
 **Interfaces:**
 
@@ -214,9 +214,9 @@ Expected: every C++ and Python command in `Common Task Gate` exits zero.
 - [ ] **Step 3: Verify the phase evidence is complete**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode structural \
     --allow-pending
 ```
@@ -235,8 +235,8 @@ or socket paths.
 
 **Files:**
 
-- Execute: `cxx/docs/plans/02-transport-bakeoff.md`
-- Produce: `cxx/docs/bakeoffs/transport/`
+- Execute: `docs/plans/02-transport-bakeoff.md`
+- Produce: `docs/bakeoffs/transport/`
 
 **Interfaces:**
 
@@ -265,16 +265,16 @@ Expected: all three contenders pass the semantic and sanitizer gates.
 
 - [ ] **Step 3: Require an independent architecture disposition**
 
-Expected: `cxx/docs/bakeoffs/transport/review.md` contains no unresolved
+Expected: `docs/bakeoffs/transport/review.md` contains no unresolved
 finding and `decision.json` identifies one winner plus any measured grafts.
 
 ## Task 3: Select the query design
 
 **Files:**
 
-- Execute: `cxx/docs/plans/03-query-bakeoff.md`
-- Produce: `cxx/docs/bakeoffs/query/`
-- Produce: `cxx/schema/filter-expression-v1.schema.json`
+- Execute: `docs/plans/03-query-bakeoff.md`
+- Produce: `docs/bakeoffs/query/`
+- Produce: `schema/filter-expression-v1.schema.json`
 
 **Interfaces:**
 
@@ -311,9 +311,9 @@ and zero-I/O tests.
 
 **Files:**
 
-- Execute: `cxx/docs/plans/04-clean-rewrite.md`
+- Execute: `docs/plans/04-clean-rewrite.md`
 - Delete: `cxx/spikes/`
-- Produce: `cxx/include/libtmux/`, `cxx/src/`
+- Produce: `include/libtmux/`, `src/`
 
 **Interfaces:**
 
@@ -344,8 +344,8 @@ artifact.
 
 **Files:**
 
-- Execute: `cxx/docs/plans/05-python-parity.md`
-- Modify: `cxx/parity/mapping.json`
+- Execute: `docs/plans/05-python-parity.md`
+- Modify: `tools/parity/data/mapping.json`
 - Produce: public headers, sources, tests, docs, and examples named by each
   parity shard.
 
@@ -361,9 +361,9 @@ artifact.
 - [ ] **Step 2: Reject missing API, behavior, docs, or examples**
 
 ```console
-$ uv run python -m cxx.tools.parity \
+$ uv run python -m tools.parity \
     verify \
-    --manifest cxx/parity/manifest.json \
+    --manifest tools/parity/data/manifest.json \
     --mode complete
 ```
 
@@ -379,7 +379,7 @@ first distribution gate.
 
 **Files:**
 
-- Execute: `cxx/docs/plans/06-distribution-and-audit.md`
+- Execute: `docs/plans/06-distribution-and-audit.md`
 - Produce: package config, vcpkg overlay, CI workflows, audit reports, and the
   completion ledger.
 
@@ -394,12 +394,12 @@ first distribution gate.
 - [ ] **Step 2: Revalidate the committed completion evidence**
 
 ```console
-$ uv run python cxx/tools/audit/completion.py \
-    --design cxx/docs/design/bakeoff-and-rewrite.md \
-    --manifest cxx/parity/manifest.json \
-    --owned-paths cxx/tools/audit/completion-owned-paths.json \
+$ uv run python tools/audit/completion.py \
+    --design docs/design/bakeoff-and-rewrite.md \
+    --manifest tools/parity/data/manifest.json \
+    --owned-paths tools/audit/completion-owned-paths.json \
     --run-record cxx/build/complete-run.json \
-    --output cxx/docs/evidence/completion.json \
+    --output docs/evidence/completion.json \
     --check \
     --require-clean
 ```
@@ -412,7 +412,7 @@ committed, and the checkout is clean.
 - [ ] **Step 3: Run the final Python gate**
 
 Run every command under `Common Task Gate`; the completion auditor records
-normalized current results in `cxx/docs/evidence/completion.json`.
+normalized current results in `docs/evidence/completion.json`.
 
 - [ ] **Step 4: Close both independent reviews**
 
