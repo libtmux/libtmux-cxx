@@ -1,0 +1,57 @@
+[project]
+name = "libtmux-cxx-tools"
+version = "0.1.0"
+description = "Development tooling for the libtmux C++ port: the parity ledger, the mutation catalogue, and the API reference generator."
+requires-python = ">=3.10"
+dependencies = ["jsonschema", "referencing", "tomlkit"]
+
+# Not published. This exists so `python3 -m tools.parity` resolves as a real
+# package rather than by whatever happens to be on the path, and so the lint
+# contract below travels with the code it governs.
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["tools*"]
+
+[tool.ruff]
+target-version = "py310"
+
+[tool.ruff.lint]
+# `select` is deliberately unset: ruff enables a curated default set, and an
+# explicit `select` would replace it rather than extend it.
+extend-select = [
+  "A",    # flake8-builtins
+  "B",    # flake8-bugbear
+  "C4",   # flake8-comprehensions
+  "COM",  # flake8-commas
+  "D",    # pydocstyle
+  "E",    # pycodestyle
+  "EM",   # flake8-errmsg
+  "F",    # pyflakes
+  "I",    # isort
+  "PERF", # Perflint
+  "PTH",  # flake8-use-pathlib
+  "Q",    # flake8-quotes
+  "RUF",  # Ruff-specific rules
+  "SIM",  # flake8-simplify
+  "TRY",  # tryceratops
+  "UP",   # pyupgrade
+]
+ignore = [
+  "COM812", # trailing comma, conflicts with the formatter
+]
+
+[tool.ruff.lint.per-file-ignores]
+"*/__init__.py" = ["F401"]
+"tools/mcp/mcp_swap.py" = [
+  # The swap rewrites a config file it did not write and must put the
+  # original bytes back if anything at all goes wrong on the way. A narrower
+  # catch here would leave an agent CLI with a half-written config, which is
+  # the one outcome the rollback exists to prevent.
+  "BLE001",
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
