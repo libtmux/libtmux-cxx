@@ -124,18 +124,29 @@ bool trace_gains_line(const std::filesystem::path& trace, std::string_view needl
   }
 }
 
-pid_t traced_pid(const std::filesystem::path& trace, std::string_view role) {
+// Waits, for the reason given above `trace_gains_line`: the process writes its
+// line when it gets round to it, and reading once turns "not yet" into "never
+// happened". Every caller wants the pid once it is known, and a busy runner is
+// the case that finds this.
+pid_t traced_pid(const std::filesystem::path& trace, std::string_view role,
+                 std::chrono::milliseconds patience = std::chrono::seconds{5}) {
   const auto prefix = std::string{role} + "\t";
-  for (const auto& line : read_lines(trace)) {
-    if (!line.starts_with(prefix)) {
-      continue;
+  const auto deadline = std::chrono::steady_clock::now() + patience;
+  for (;;) {
+    for (const auto& line : read_lines(trace)) {
+      if (!line.starts_with(prefix)) {
+        continue;
+      }
+      const auto position = line.find("PID=");
+      if (position != std::string::npos) {
+        return static_cast<pid_t>(std::stol(line.substr(position + 4U)));
+      }
     }
-    const auto position = line.find("PID=");
-    if (position != std::string::npos) {
-      return static_cast<pid_t>(std::stol(line.substr(position + 4U)));
+    if (std::chrono::steady_clock::now() >= deadline) {
+      return -1;
     }
+    std::this_thread::sleep_for(std::chrono::milliseconds{10});
   }
-  return -1;
 }
 
 bool report_contains(const std::shared_ptr<libtmux::test::TeardownReport>& report,
