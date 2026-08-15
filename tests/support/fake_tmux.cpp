@@ -301,7 +301,7 @@ int run_server(const std::vector<std::string>& arguments, const Selector& select
   struct sigaction action {};
   action.sa_handler =
       mode == "term-resistant" || mode == "ptrace-reap-delay" ? SIG_IGN : request_stop;
-  ::sigemptyset(&action.sa_mask);
+  sigemptyset(&action.sa_mask);
   if (::sigaction(SIGTERM, &action, nullptr) != 0) {
     return 4;
   }

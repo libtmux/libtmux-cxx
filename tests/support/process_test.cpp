@@ -603,7 +603,7 @@ TEST(ProcessSupport, RejectsIgnoredSigchldBeforeSpawn) {
   struct sigaction previous_action {};
   struct sigaction ignored_action {};
   ignored_action.sa_handler = SIG_IGN;
-  ::sigemptyset(&ignored_action.sa_mask);
+  sigemptyset(&ignored_action.sa_mask);
   ASSERT_EQ(::sigaction(SIGCHLD, &ignored_action, &previous_action), 0);
   auto child = ChildProcess::spawn(
       {.executable = LIBTMUX_FAKE_TMUX_PATH,
@@ -624,7 +624,7 @@ TEST(ProcessSupport, RejectsNoCldwaitBeforeSpawn) {
   struct sigaction no_wait_action {};
   no_wait_action.sa_handler = SIG_DFL;
   no_wait_action.sa_flags = SA_NOCLDWAIT;
-  ::sigemptyset(&no_wait_action.sa_mask);
+  sigemptyset(&no_wait_action.sa_mask);
   ASSERT_EQ(::sigaction(SIGCHLD, &no_wait_action, &previous_action), 0);
   auto child = ChildProcess::spawn(
       {.executable = LIBTMUX_FAKE_TMUX_PATH,
@@ -695,7 +695,7 @@ TEST(ProcessSupport, RepeatedEintrCannotExtendWaitDeadline) {
   struct sigaction action {};
   struct sigaction previous_action {};
   action.sa_handler = handle_interrupt;
-  ::sigemptyset(&action.sa_mask);
+  sigemptyset(&action.sa_mask);
   ASSERT_EQ(::sigaction(SIGUSR1, &action, &previous_action), 0);
 
   const auto receiver = ::pthread_self();

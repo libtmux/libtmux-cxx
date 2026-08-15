@@ -105,7 +105,7 @@ int report_pid_and_wait(bool resist_term) {
   if (resist_term) {
     struct sigaction action {};
     action.sa_handler = SIG_IGN;
-    ::sigemptyset(&action.sa_mask);
+    sigemptyset(&action.sa_mask);
     if (::sigaction(SIGTERM, &action, nullptr) != 0) {
       return 4;
     }
@@ -150,7 +150,7 @@ int term_resistant_group() {
   };
   struct sigaction action {};
   action.sa_handler = handler;
-  ::sigemptyset(&action.sa_mask);
+  sigemptyset(&action.sa_mask);
   if (::sigaction(SIGTERM, &action, nullptr) != 0) {
     static_cast<void>(::close(ready[0]));
     static_cast<void>(::close(ready[1]));
