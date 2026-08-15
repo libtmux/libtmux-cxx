@@ -112,13 +112,24 @@ read_metadata(const Selector& selector) {
   } else {
     return std::nullopt;
   }
-  std::ifstream input{metadata};
-  long raw_pid = 0;
-  std::string socket;
-  if (!(input >> raw_pid >> socket)) {
-    return std::nullopt;
+  // Briefly, rather than once. The server writes this file shortly after it
+  // starts, and a client run in the same breath can arrive first — which
+  // surfaced as a server that "failed to create a session" on one lane out of
+  // twenty, with exit status 1 and nothing else to go on. A real tmux client
+  // finding no server is a different case and still fails, just a moment later.
+  const auto give_up = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+  for (;;) {
+    std::ifstream input{metadata};
+    long raw_pid = 0;
+    std::string socket;
+    if (input >> raw_pid >> socket) {
+      return std::pair{static_cast<pid_t>(raw_pid), std::filesystem::path{socket}};
+    }
+    if (std::chrono::steady_clock::now() >= give_up) {
+      return std::nullopt;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds{5});
   }
-  return std::pair{static_cast<pid_t>(raw_pid), std::filesystem::path{socket}};
 }
 
 std::vector<std::string> trace_fields(std::string role,
