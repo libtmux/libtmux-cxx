@@ -349,16 +349,30 @@ void drain_pending_sigpipe(const sigset_t& blocked) {
     return;
   }
 #else
-  // macOS has no `sigtimedwait`. `sigwait` blocks, but only until it collects a
-  // signal that is already queued for this thread — which is the whole reason
-  // the caller checked before writing.
-  int signal = 0;
+  // macOS has no `sigtimedwait`, and the nearest call — `sigwait` — blocks
+  // forever when nothing is queued. The caller's reasoning says something is,
+  // but "should be queued" is not a safe basis for an unbounded wait on the
+  // writer thread: a platform that answers EPIPE without raising SIGPIPE would
+  // hang the connection rather than report anything.
+  //
+  // So ask first and only then take it. `sigpending` is cheap, and after it
+  // says SIGPIPE is there, `sigwait` returns without waiting.
   for (;;) {
-    const auto result = ::sigwait(&blocked, &signal);
-    if (result == EINTR) {
-      continue;
+    sigset_t queued{};
+    if (sigpending(&queued) != 0 || sigismember(&queued, SIGPIPE) != 1) {
+      return;
     }
-    return;
+    int signal = 0;
+    // POSIX has `sigwait` return the error number; macOS returns -1 and sets
+    // errno. Zero means it took one either way, and both spellings of EINTR
+    // are worth retrying.
+    const auto result = ::sigwait(&blocked, &signal);
+    if (result == 0) {
+      return;
+    }
+    if (result != EINTR && errno != EINTR) {
+      return;
+    }
   }
 #endif
 }
