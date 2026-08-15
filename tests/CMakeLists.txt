@@ -47,6 +47,14 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     PROPERTY COMPILE_OPTIONS -Wno-missing-field-initializers)
 endif()
 
+# Discover at test time rather than build time. `gtest_discover_tests` defaults
+# to running each test binary during the build to enumerate its cases, which
+# makes the build depend on those binaries being runnable right then — and on a
+# loaded runner one of them produced an empty listing and failed the build with
+# a JSON parse error. Nothing is gained by asking during the build; ctest can
+# ask when it is about to run them.
+set(CMAKE_GTEST_DISCOVER_TESTS_DISCOVERY_MODE PRE_TEST)
+
 include(GoogleTest)
 gtest_discover_tests(
   scoped_tmux_server_test
