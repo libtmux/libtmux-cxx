@@ -374,7 +374,14 @@ TEST(ScopedTmuxServerFailure, SelfExitAndStaleSocketAreSafeAtTeardown) {
     private_tree = server->tmux_tmpdir();
     stale_socket = server->socket_path();
     pid = server->server_pid();
-    std::this_thread::sleep_for(std::chrono::milliseconds{350});
+    // The fake exits on its own 250ms after it starts. Sleeping 350ms here
+    // assumed its clock and this one line up closely enough, and under a
+    // sanitizer they do not: it starts slower and exits slower, and the test
+    // called it alive when it was only late. Wait for the exit instead.
+    const auto gone_by = std::chrono::steady_clock::now() + std::chrono::seconds{30};
+    while (server->is_alive() && std::chrono::steady_clock::now() < gone_by) {
+      std::this_thread::sleep_for(std::chrono::milliseconds{10});
+    }
     EXPECT_FALSE(server->is_alive());
     EXPECT_TRUE(std::filesystem::exists(stale_socket));
   }
