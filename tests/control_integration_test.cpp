@@ -660,17 +660,24 @@ TEST(ControlModeConnection, WriterWaitHonorsDeadlineWithoutPoisoningOwner) {
   // Fewer than before: the probe makes the owner blocking observable rather
   // than likely, so a retry now only covers the owner never blocking at all.
   constexpr std::size_t kAttempts = 3;
+  // Bounded overall, not just per attempt. Each attempt can spend five seconds
+  // deciding the owner never blocked, and three of those plus their own
+  // deadlines overran the test's timeout — so a platform where the owner does
+  // not block reported as a hang rather than as the assertion below, which
+  // says exactly that. A timeout is the one failure that explains nothing.
+  const auto stop_retrying = std::chrono::steady_clock::now() + 25s;
   WriterDeadlineAttempt attempt;
   std::size_t used = 0;
   for (; used < kAttempts; ++used) {
     attempt = run_writer_deadline_attempt(used);
-    if (attempt.owner_held_writer) {
+    if (attempt.owner_held_writer ||
+        std::chrono::steady_clock::now() >= stop_retrying) {
       break;
     }
   }
   ASSERT_TRUE(attempt.owner_held_writer)
-      << "the owner never held the writer across " << kAttempts
-      << " attempts; last waiter error was: " << attempt.waiter_error;
+      << "the owner never held the writer across " << (used + 1)
+      << " attempt(s); last waiter error was: " << attempt.waiter_error;
 
   EXPECT_TRUE(attempt.waiter_within_deadline);
   ASSERT_EQ(attempt.waiter_operations, 1U);
