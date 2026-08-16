@@ -4,11 +4,14 @@ target_include_directories(
 target_link_libraries(mcp_tools INTERFACE libtmux::libtmux)
 
 if(LIBTMUX_BUILD_TESTS)
+  # `libtmux::testing` directly, not this repository's internal alias: the MCP
+  # tool surface is here to be a consumer, and a consumer reaches the fixture
+  # through the exported target.
   add_executable(mcp_tools_test tests/mcp_test.cpp)
   target_link_libraries(
     mcp_tools_test
     PRIVATE GTest::gtest_main libtmux_build_options mcp_tools
-            libtmux_test_support)
+            libtmux::testing)
   target_compile_options(mcp_tools_test PRIVATE -fno-sanitize-recover=undefined)
 
   add_test(NAME consumer.mcp COMMAND mcp_tools_test)

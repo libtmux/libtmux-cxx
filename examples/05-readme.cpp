@@ -19,6 +19,7 @@
 #include <unistd.h>
 
 #include <libtmux/libtmux.hpp>
+#include <libtmux/testing/scoped_server.hpp>
 
 #include "scratch_server.hpp"
 
@@ -256,6 +257,19 @@ int main() {
   chain.new_window("a:b", "unreachable");
   std::printf("chain valid: %s\n", chain.valid() ? "yes" : "no"); // no
   // #endregion chain
+
+  // #region fixture
+  // A private tmux for a suite of your own, gone when the scope ends.
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("my-suite")});
+  if (!fixture.has_value()) {
+    std::fprintf(stderr, "%s\n", fixture.error().c_str());
+    return 1;
+  }
+  const auto under_test =
+      libtmux::Server::at_socket_path(fixture->socket_path().string());
+  std::printf("sessions on it: %zu\n", under_test->sessions()->size());
+  // #endregion fixture
 
   // The stand-in editor's directory, which the scratch server does not own.
   std::error_code cleanup;

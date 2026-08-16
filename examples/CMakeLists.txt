@@ -15,11 +15,16 @@ cmake_minimum_required(VERSION 3.25)
 
 if(NOT TARGET libtmux::libtmux)
   project(libtmux_examples LANGUAGES CXX)
-  # The `testing` component too: an example's private tmux server comes from
-  # `libtmux::testing`, the same fixture the library's own suite runs on.
+  # `testing` too: an example's private tmux server comes from
+  # `libtmux::testing`.
   find_package(libtmux REQUIRED COMPONENTS testing)
-  include(CTest)
+  enable_testing()
 endif()
+
+# Needs a test framework the examples themselves do not, so it follows the
+# parent's tests and is off in a standalone build that did not ask.
+option(LIBTMUX_EXAMPLES_BUILD_TESTS "Build the examples' own test suite"
+       "${LIBTMUX_BUILD_TESTS}")
 
 add_library(libtmux_example_support INTERFACE)
 target_include_directories(
@@ -43,9 +48,7 @@ foreach(example 01-tour 02-workspace 03-filter 04-errors 05-readme)
     example.${example} PROPERTIES LABELS "example;real-tmux" TIMEOUT 60)
 endforeach()
 
-# A separate project; see `tests/README.md`. Needs a test framework, which the
-# examples themselves do not.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/CMakeLists.txt"
-   AND (TARGET GTest::gtest_main OR LIBTMUX_EXAMPLES_BUILD_TESTS))
+# A separate project; see `tests/README.md`.
+if(LIBTMUX_EXAMPLES_BUILD_TESTS OR TARGET GTest::gtest_main)
   add_subdirectory(tests)
 endif()

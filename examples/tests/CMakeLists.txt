@@ -28,7 +28,6 @@ endif()
 add_executable(libtmux_example_test example_test.cpp)
 target_link_libraries(
   libtmux_example_test PRIVATE GTest::gtest_main libtmux::testing)
-target_compile_features(libtmux_example_test PRIVATE cxx_std_23)
 
 # Same sanitizer flags as the fixture it links; see `src/CMakeLists.txt`.
 if(TARGET libtmux_build_options)
