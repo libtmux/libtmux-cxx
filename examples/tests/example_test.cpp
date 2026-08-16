@@ -10,9 +10,8 @@
 // `TMPDIR` at a directory the harness owns and the example's server has
 // nowhere else to go, so afterwards that directory is empty or it leaked.
 
-#include <cerrno>
+#include <algorithm>
 #include <chrono>
-#include <cstring>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -23,7 +22,7 @@
 #include <libtmux/testing/scoped_server.hpp>
 #include <libtmux/testing/tmux_version.hpp>
 
-#include <stdlib.h>
+#include <unistd.h>
 
 #include "run_program.hpp"
 
@@ -44,37 +43,47 @@ struct ExampleRun {
   std::vector<std::filesystem::path> leaked;
 };
 
-// Run one example inside a directory this harness owns, and report what it
-// left.
-//
-// The sandbox replaces `$TMPDIR` rather than nesting under another fixture
-// tree. Both names here are short on purpose: macOS spends around sixty of
-// `sun_path`'s 104 bytes on `$TMPDIR` alone, and what remains has to hold this
-// directory, the example's own fixture tree, and the socket inside it.
-ExampleRun run_example(std::string_view name, std::string_view suite) {
-  std::string sandbox =
-      (std::filesystem::temp_directory_path() / "lt-ex-XXXXXX").string();
-  if (::mkdtemp(sandbox.data()) == nullptr) {
-    ADD_FAILURE() << "mkdtemp: " << std::strerror(errno);
-    return {};
-  }
+// The label this harness gives the examples it runs. Unique per process, so
+// two of these in parallel do not read each other's leftovers.
+std::string harness_namespace() { return "ex" + std::to_string(::getpid()); }
 
+// Fixture trees this harness's runs have left in the temporary directory.
+//
+// Found by name rather than by sandboxing the child into a directory of our
+// own: a directory would add its length to a socket path that must fit in
+// `sockaddr_un::sun_path`, and on macOS `$TMPDIR` has already spent around
+// sixty of the 104 available.
+std::vector<std::filesystem::path> trees_left_behind() {
+  const std::string prefix = "libtmux-cxx-" + harness_namespace();
+  std::vector<std::filesystem::path> found;
+  std::error_code listing;
+  for (const auto& entry : std::filesystem::directory_iterator{
+           std::filesystem::temp_directory_path(), listing}) {
+    if (entry.path().filename().string().starts_with(prefix)) {
+      found.push_back(entry.path());
+    }
+  }
+  return found;
+}
+
+ExampleRun run_example(std::string_view name) {
   auto environment = libtmux::test::current_environment();
   libtmux::test::erase_environment(environment, "TMUX");
   libtmux::test::erase_environment(environment, "TMUX_PANE");
-  libtmux::test::set_environment(environment, "TMPDIR", sandbox);
-  libtmux::test::set_environment(environment, "LIBTMUX_EXAMPLE_NAMESPACE", suite);
+  libtmux::test::set_environment(environment, "LIBTMUX_EXAMPLE_NAMESPACE",
+                                 harness_namespace());
 
+  const auto before = trees_left_behind();
   auto finished = libtmux::examples::run_program(example_binary(name), environment,
                                                  std::chrono::seconds{60});
+  auto after = trees_left_behind();
 
   std::vector<std::filesystem::path> leaked;
-  std::error_code listing;
-  for (const auto& entry : std::filesystem::directory_iterator{sandbox, listing}) {
-    leaked.push_back(entry.path());
+  for (auto& path : after) {
+    if (std::find(before.begin(), before.end(), path) == before.end()) {
+      leaked.push_back(std::move(path));
+    }
   }
-  std::error_code removed;
-  std::filesystem::remove_all(sandbox, removed);
 
   EXPECT_TRUE(finished.has_value()) << finished.error();
   if (!finished.has_value()) {
@@ -86,12 +95,12 @@ ExampleRun run_example(std::string_view name, std::string_view suite) {
 class Example : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(Example, SucceedsAgainstALiveTmux) {
-  const auto run = run_example(GetParam(), "ex");
+  const auto run = run_example(GetParam());
   EXPECT_EQ(run.exit_code, 0) << run.output;
 }
 
 TEST_P(Example, LeavesNoServerAndNoDirectory) {
-  const auto run = run_example(GetParam(), "ex");
+  const auto run = run_example(GetParam());
   std::string left;
   for (const auto& path : run.leaked) {
     left += path.string() + '\n';
@@ -106,7 +115,7 @@ INSTANTIATE_TEST_SUITE_P(All, Example,
                          [](const auto& info) { return std::string{info.param}; });
 
 TEST(TourOutput, NamesTheSessionItCreated) {
-  const auto run = run_example("01_tour", "ex");
+  const auto run = run_example("01_tour");
   ASSERT_EQ(run.exit_code, 0) << run.output;
   EXPECT_NE(run.output.find("example"), std::string::npos) << run.output;
 }
