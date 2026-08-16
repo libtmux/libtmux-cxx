@@ -33,6 +33,20 @@ enum class Combine { conjunction, disjunction };
 
 // A field is a named accessor: the name is what a future tmux-format lowering
 // needs, the accessor is what in-memory evaluation needs.
+//
+// The two halves are only as consistent as whoever paired them, and nothing in
+// the type system pairs them. A field naming `pane_title` while reading
+// `pane_current_command` evaluates one way in memory and lowers to another,
+// and the built-in handles avoid that only by taking their name from the
+// entity's own `kFields` array rather than spelling it again.
+//
+// Which is enough here and not enough everywhere. A caller may build a field
+// however they like and get whatever they built — their process, their
+// predicate. What must not follow is a forged pairing crossing a process
+// boundary, so a document arriving from anywhere else is resolved by name
+// against what this library actually queries, and a name it does not know is
+// refused rather than evaluated to nothing. That check lives with the wire
+// format, in the JSON integration, because it is the boundary that needs it.
 template <typename Entity> struct StringField {
   std::string_view name;
   std::string_view (*read)(const Entity&);

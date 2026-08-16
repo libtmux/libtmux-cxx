@@ -95,6 +95,36 @@ TEST(FilterJson, EveryDocumentSurvivesTheRoundTrip) {
   }
 }
 
+// A field pairs a name with an accessor and nothing holds the two together,
+// so a forged pairing is possible in the process that built it. What must not
+// happen is one crossing a process boundary: a reader has only the name, so
+// the name is resolved against what the entities actually query.
+TEST(FilterJson, KnowsWhichFieldsTheLibraryReallyReads) {
+  EXPECT_TRUE(libtmux::json_wire::is_known_field("pane_current_command"));
+  EXPECT_TRUE(libtmux::json_wire::is_known_field("pane_title"));
+  EXPECT_TRUE(libtmux::json_wire::is_known_field("session_name"));
+  EXPECT_TRUE(libtmux::json_wire::is_known_field("window_active"));
+  EXPECT_TRUE(libtmux::json_wire::is_known_field("client_name"));
+
+  EXPECT_FALSE(libtmux::json_wire::is_known_field(""));
+  EXPECT_FALSE(libtmux::json_wire::is_known_field("pane_titl"));
+  EXPECT_FALSE(libtmux::json_wire::is_known_field("#{pane_title}"));
+  EXPECT_FALSE(libtmux::json_wire::is_known_field("invented_by_the_sender"));
+
+  // Every name the lowering itself produces is one it can read back, or the
+  // round trip below would be asserting against a rule it violates.
+  for (const LoweredExpression& expression : corpus()) {
+    for (const LoweredNode& node : expression) {
+      const bool is_test = node.kind == LoweredNode::Kind::string_test ||
+                           node.kind == LoweredNode::Kind::bool_test ||
+                           node.kind == LoweredNode::Kind::number_test;
+      if (is_test) {
+        EXPECT_TRUE(libtmux::json_wire::is_known_field(node.name)) << node.name;
+      }
+    }
+  }
+}
+
 TEST(FilterJson, RefusesADocumentItCannotRead) {
   const std::vector<std::string> malformed{
       R"([])",
@@ -109,6 +139,14 @@ TEST(FilterJson, RefusesADocumentItCannotRead) {
       R"({"version": 1, "nodes": [{"kind": "begin_group"}]})",
       R"({"version": 1, "nodes": [{"kind": "begin_relation", "name": "panes",
           "quantifier": 9}]})",
+      // A field this library does not read. Kept, it would lower to a test
+      // that matches nothing — a filter that silently stops filtering.
+      R"({"version": 1, "nodes": [{"kind": "string_test", "name": "pane_titl",
+          "op": "eq", "operand": "x"}]})",
+      R"({"version": 1, "nodes": [{"kind": "bool_test", "name": "invented",
+          "expected": true}]})",
+      R"({"version": 1, "nodes": [{"kind": "number_test", "name": "invented",
+          "op": "eq", "number": 1}]})",
   };
   for (const std::string& text : malformed) {
     const auto document = nlohmann::json::parse(text, nullptr, false);

@@ -18,12 +18,38 @@
 
 #include <nlohmann/json.hpp>
 
+#include "libtmux/entities.hpp"
 #include "libtmux/expected.hpp"
 #include "libtmux/lowered_node.hpp"
 
 namespace libtmux::json_wire {
 
 inline constexpr int kSchemaVersion = 1;
+
+// Is this a field this library actually reads?
+//
+// A field pairs a name with an accessor, and nothing in the type system holds
+// the two together: a caller can build one that reads a pane's command while
+// calling itself `pane_title`. In their own process that is their predicate to
+// get wrong. Arriving from another one it is not, because the reader has only
+// the name — so the name is resolved against what the entities really query,
+// and anything else is refused.
+//
+// Refused rather than kept, because a field this library cannot read lowers to
+// a test that matches nothing, and a filter that silently stops filtering is
+// the failure worth spending a check on.
+[[nodiscard]] inline bool is_known_field(std::string_view name) noexcept {
+  const auto holds = [name](const auto& fields) {
+    for (const std::string_view field : fields) {
+      if (field == name) {
+        return true;
+      }
+    }
+    return false;
+  };
+  return holds(Session::kFields) || holds(Window::kFields) || holds(Pane::kFields) ||
+         holds(Client::kFields);
+}
 
 // Every kind, in the spelling the schema's enum uses. One table, so the writer
 // and the reader cannot disagree about a name.
@@ -164,6 +190,9 @@ from_json(const nlohmann::json& document) {
       if (!name.has_value() || !op.has_value() || !operand.has_value()) {
         return libtmux::unexpected(std::string{"a string_test needs name, op, operand"});
       }
+      if (!is_known_field(*name)) {
+        return libtmux::unexpected("no such tmux field: " + *name);
+      }
       node.name = *std::move(name);
       node.op = *std::move(op);
       node.operand = *std::move(operand);
@@ -174,6 +203,9 @@ from_json(const nlohmann::json& document) {
       const auto expected = entry.find("expected");
       if (!name.has_value() || expected == entry.end() || !expected->is_boolean()) {
         return libtmux::unexpected(std::string{"a bool_test needs name and expected"});
+      }
+      if (!is_known_field(*name)) {
+        return libtmux::unexpected("no such tmux field: " + *name);
       }
       node.name = *std::move(name);
       node.expected = expected->get<bool>();
@@ -186,6 +218,9 @@ from_json(const nlohmann::json& document) {
       if (!name.has_value() || !op.has_value() || number == entry.end() ||
           !number->is_number_integer()) {
         return libtmux::unexpected(std::string{"a number_test needs name, op, number"});
+      }
+      if (!is_known_field(*name)) {
+        return libtmux::unexpected("no such tmux field: " + *name);
       }
       node.name = *std::move(name);
       node.op = *std::move(op);
