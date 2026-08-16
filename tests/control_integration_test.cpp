@@ -489,6 +489,117 @@ TEST(ControlModeConnection, NotificationFdPollsBesideAnotherDescriptor) {
   EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
 }
 
+// Muting one pane, and the asymmetry that makes muting the only per-pane
+// control there is.
+TEST(ControlModeConnection, MutesOnePaneAndRefusesToWidenASilentConnection) {
+  auto server = start_server(unique_name("control-mute"));
+  ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
+
+  // A connection that never asked cannot be widened, whatever it asks for.
+  {
+    auto silent = connect_to(*server);
+    ASSERT_TRUE(silent.has_value())
+        << (silent.has_value() ? "" : silent.error().message);
+    auto connection = std::move(*silent);
+    const auto refused =
+        connection.set_pane_output("%0", true, std::chrono::steady_clock::now() + 2s);
+    ASSERT_FALSE(refused.has_value());
+    EXPECT_NE(refused.error().message.find("did not ask for pane output"),
+              std::string::npos)
+        << refused.error().message;
+    static_cast<void>(connection.shutdown(std::chrono::steady_clock::now() + 2s));
+  }
+
+  auto connected =
+      Connection::connect({.tmux_binary = LIBTMUX_CONTROL_TMUX_PATH,
+                           .socket_path = server->socket_path(),
+                           .session_name = std::string{server->session_name()},
+                           .startup_timeout = 2s,
+                           .shutdown_timeout = 2s,
+                           .pane_output = true});
+  ASSERT_TRUE(connected.has_value())
+      << (connected.has_value() ? "" : connected.error().message);
+  auto connection = std::move(*connected);
+
+  const auto listed = connection.execute(group({{"list-panes", "-F", "#{pane_id}"}}),
+                                         std::chrono::steady_clock::now() + 2s);
+  ASSERT_FALSE(listed.connection_error.has_value());
+  ASSERT_FALSE(listed.operations.empty());
+  ASSERT_TRUE(listed.operations.front().block.has_value());
+  auto pane = text(required_value(listed.operations.front().block).body);
+  while (!pane.empty() && (pane.back() == '\n' || pane.back() == '\r')) {
+    pane.pop_back();
+  }
+  ASSERT_FALSE(pane.empty());
+
+  const auto muted =
+      connection.set_pane_output(pane, false, std::chrono::steady_clock::now() + 2s);
+  ASSERT_TRUE(muted.has_value()) << muted.error().message;
+
+  static_cast<void>(connection.take_notifications());
+  const auto typed = connection.execute(
+      group({{"send-keys", "-t", pane, "echo muted-pane-marker", "Enter"}}),
+      std::chrono::steady_clock::now() + 2s);
+  ASSERT_FALSE(typed.connection_error.has_value());
+
+  int outputs = 0;
+  const auto deadline = std::chrono::steady_clock::now() + 1500ms;
+  while (std::chrono::steady_clock::now() < deadline) {
+    const auto batch = connection.wait_for_notifications(deadline);
+    if (batch.empty()) {
+      break;
+    }
+    for (const Notification& notification : batch) {
+      if (libtmux::parse(notification).kind == libtmux::NotificationKind::output) {
+        ++outputs;
+      }
+    }
+  }
+  EXPECT_EQ(outputs, 0) << "a muted pane still delivered output";
+
+  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+}
+
+// The same waiting, as one loop.
+TEST(ControlModeConnection, EventsRangeYieldsWhatTheHandLoopWould) {
+  auto server = start_server(unique_name("control-events"));
+  ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
+  auto connected = connect_to(*server);
+  ASSERT_TRUE(connected.has_value())
+      << (connected.has_value() ? "" : connected.error().message);
+  auto connection = std::move(*connected);
+
+  static_cast<void>(connection.take_notifications());
+  const auto made = connection.execute(group({{"new-window", "-d", "-n", "ranged"}}),
+                                       std::chrono::steady_clock::now() + 2s);
+  ASSERT_FALSE(made.connection_error.has_value());
+
+  std::string window;
+  for (const auto& event : connection.events(std::chrono::steady_clock::now() + 3s)) {
+    EXPECT_FALSE(event.name.empty());
+    if (event.kind == libtmux::NotificationKind::window_add) {
+      window = std::string{event.window};
+      break;
+    }
+  }
+  EXPECT_FALSE(window.empty()) << "the range ended without the window";
+  EXPECT_EQ(window.front(), '@') << window;
+
+  // Ends on its own when tmux goes quiet, rather than needing a break.
+  std::size_t seen = 0;
+  const auto started = std::chrono::steady_clock::now();
+  for (const auto& event :
+       connection.events(std::chrono::steady_clock::now() + 400ms)) {
+    static_cast<void>(event);
+    ++seen;
+    ASSERT_LT(seen, 10000U) << "the range did not end";
+  }
+  EXPECT_GE(std::chrono::steady_clock::now() - started, 300ms)
+      << "the range ended before its deadline with nothing to report";
+
+  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+}
+
 TEST(ControlModeConnection, NotificationShapedCommandOutputRemainsBlockBody) {
   LIBTMUX_REQUIRES_TMUX(3, 4,
                         "keeping notification-shaped command output in the block body");

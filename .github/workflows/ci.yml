@@ -21,7 +21,6 @@ jobs:
   compatibility:
     # The C++ library claims the same tmux range as the Python one, so it is
     # tested against the same versions rather than only the newest.
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
 
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -81,7 +80,6 @@ jobs:
     # tmux is used at least as much on macOS as on Linux, and Apple Clang with
     # its own libc++ is a different compiler from the pinned one. Nothing here
     # had ever been built on it.
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
 
     runs-on: macos-latest
     timeout-minutes: 45
@@ -114,7 +112,6 @@ jobs:
     # A second compiler and standard library. Everything here built and passed
     # only under clang and libc++ until three lines of duration arithmetic were
     # spelled explicitly, which no lane would have caught.
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
 
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -142,7 +139,6 @@ jobs:
     # The C++20 configuration substitutes a different expected and carries its
     # own ABI namespace. Until this lane existed, the only thing that had ever
     # been built against it was one example program.
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
 
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -172,7 +168,6 @@ jobs:
     # checked-in corpus is the gate; it found a real ambiguity between an
     # option name that ends in an asterisk and the marker tmux uses for an
     # inherited one.
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
 
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -209,7 +204,6 @@ jobs:
     # separator this library asks it to print between format values is
     # multi-byte. A lane that is not UTF-8 is the only thing that checks the
     # library does not depend on its caller's locale.
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
 
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -239,7 +233,6 @@ jobs:
           ctest --preset cxx-dev --no-tests=error --output-on-failure
 
   sanitizers:
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
 
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -276,7 +269,6 @@ jobs:
     # tmux does something quiet, and a survivor names what went unnoticed.
     # A mutation that no longer applies, or no longer builds, fails the job
     # too: run by hand that case prints nothing and reads like a pass.
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
 
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -311,7 +303,6 @@ jobs:
     # structurally sound — and prints how far the classification has to go, so
     # the number is in front of someone on every run rather than discovered
     # months later.
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
 
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -374,7 +365,6 @@ jobs:
     # floor is set well under the current figure so it catches a collapse —
     # instrumentation silently disabled, a suite that stopped running — and
     # not the ordinary drift of a few lines.
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
 
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -403,7 +393,6 @@ jobs:
             --build build/cxx-coverage --source . --floor 65
 
   lint:
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
 
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -454,7 +443,6 @@ jobs:
   package:
     # Proves the shipped package, not the build tree: install it and build an
     # outside project that knows only find_package.
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
 
     runs-on: ubuntu-latest
     timeout-minutes: 45
