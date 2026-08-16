@@ -15,9 +15,9 @@ server, sends the text, and reads the pane back. The cost is that the suite
 needs tmux on `$PATH`; the benefit is that a passing test means the thing
 works against the program people actually run.
 
-## Every server is private
+## Every server is private, and it ships
 
-[`support/scoped_tmux_server.hpp`](support/scoped_tmux_server.hpp) is the only
+[`ScopedTmuxServer`](../include/libtmux/testing/scoped_server.hpp) is the only
 way a test starts tmux. It makes a private directory with `mkdtemp` at
 `$TMPDIR/libtmux-cxx-test-XXXXXX`, points `TMUX_TMPDIR` inside it, addresses
 the server by a socket under that tree, and erases `TMUX` and `TMUX_PANE` from
@@ -29,6 +29,30 @@ This matters more than it looks: several libtmux ports run their suites on one
 machine, and a tmux server is shared state keyed only by its socket. Two suites
 on one socket end each other's sessions, and the failure surfaces as a bug in
 whichever noticed first. See [AGENTS.md](../AGENTS.md).
+
+Which is why it is not kept here. It is `libtmux::testing`, installed with the
+package and documented in [`docs/api-testing.md`](../docs/api-testing.md), so a
+consumer's suite can use the same fixture instead of writing a worse one:
+
+```cmake
+find_package(libtmux REQUIRED COMPONENTS testing)
+target_link_libraries(your_tests PRIVATE libtmux::testing)
+```
+
+Every server it starts is filed under a namespace that reaches the socket path
+and the `tmux -L` name, so a stray directory says which suite left it —
+`/tmp/libtmux-cxx-examples-KUk4sp` rather than one more `tmux-1000` nobody
+dares delete. This suite uses the default; pass your own with
+`SocketNamespace::consumer("your-suite")`.
+
+The framework-free half is deliberate. `libtmux::testing` names no test
+framework, so a suite on Catch2 or doctest uses the same fixture;
+[`capabilities.hpp`](../include/libtmux/testing/capabilities.hpp) carries the
+GoogleTest skip macros and is a header you choose to include.
+
+`support/` is what is left: the headers that mean nothing outside this
+repository — descriptor accounting, `/proc` platform guards, the differential
+wire codec, and the fake tmux the fixture's own failure tests drive.
 
 ## What each kind proves
 
