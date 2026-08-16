@@ -234,6 +234,22 @@ public:
   // Notifications already buffered are returned without waiting at all.
   [[nodiscard]] std::vector<Notification>
   wait_for_notifications(std::chrono::steady_clock::time_point deadline);
+  // A descriptor that is readable exactly when a take would return something.
+  //
+  // For a caller who owns their own event loop. Without it, integrating means
+  // a thread blocked in `wait_for_notifications`, a queue of their own, and a
+  // self-pipe to wake the loop — which is this descriptor, rebuilt by hand on
+  // top of the thread and queue this connection already has.
+  //
+  // Do not read from it: readability is the signal and the byte is this
+  // connection's to consume. Drain with `take_notifications`, which clears it.
+  // A broken stream makes it readable too, so a poller learns of the failure
+  // rather than waiting for an answer that cannot come.
+  //
+  // Valid until the connection is destroyed or moved from; `-1` if the pipe
+  // could not be created.
+  [[nodiscard]] int notification_fd() const noexcept;
+
   [[nodiscard]] std::size_t dropped_notifications() const noexcept;
   [[nodiscard]] std::int64_t native_child_pid() const noexcept;
   expected<void, ProtocolError>

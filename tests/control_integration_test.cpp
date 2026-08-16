@@ -27,6 +27,10 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <array>
+
+#include <poll.h>
+
 #include <gtest/gtest.h>
 
 #ifndef LIBTMUX_CONTROL_TMUX_PATH
@@ -410,6 +414,78 @@ TEST(ControlModeConnection, ParsesTheNotificationsARealServerEmits) {
   EXPECT_TRUE(saw_window_add);
   ASSERT_FALSE(added_window.empty());
   EXPECT_EQ(added_window.front(), '@') << added_window;
+  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+}
+
+// The descriptor, used the way it exists to be used: one `poll` over tmux and
+// something else, on one thread, with nothing blocked on the connection.
+TEST(ControlModeConnection, NotificationFdPollsBesideAnotherDescriptor) {
+  auto server = start_server(unique_name("control-poll"));
+  ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
+  auto connected = connect_to(*server);
+  ASSERT_TRUE(connected.has_value())
+      << (connected.has_value() ? "" : connected.error().message);
+  auto connection = std::move(*connected);
+
+  const int tmux_fd = connection.notification_fd();
+  ASSERT_GE(tmux_fd, 0);
+
+  // A second descriptor, standing in for whatever else a caller's loop owns.
+  std::array<int, 2> other{-1, -1};
+  ASSERT_EQ(::pipe(other.data()), 0);
+
+  static_cast<void>(connection.take_notifications());
+
+  const auto made = connection.execute(group({{"new-window", "-d", "-n", "polled"}}),
+                                       std::chrono::steady_clock::now() + 2s);
+  ASSERT_FALSE(made.connection_error.has_value());
+
+  bool saw_window_add = false;
+  bool saw_other = false;
+  const char byte = 1;
+  ASSERT_EQ(::write(other[1], &byte, 1), 1);
+
+  const auto deadline = std::chrono::steady_clock::now() + 5s;
+  while (std::chrono::steady_clock::now() < deadline &&
+         !(saw_window_add && saw_other)) {
+    std::array<pollfd, 2> watched{
+        pollfd{.fd = tmux_fd, .events = POLLIN, .revents = 0},
+        pollfd{.fd = other[0], .events = POLLIN, .revents = 0}};
+    const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+        deadline - std::chrono::steady_clock::now());
+    if (::poll(watched.data(), watched.size(), static_cast<int>(remaining.count())) <=
+        0) {
+      break;
+    }
+    if ((watched[0].revents & POLLIN) != 0) {
+      // Readable means a take will return something, and the take clears it.
+      const auto batch = connection.take_notifications();
+      EXPECT_FALSE(batch.empty()) << "readable but nothing to take";
+      for (const Notification& notification : batch) {
+        if (libtmux::parse(notification).kind ==
+            libtmux::NotificationKind::window_add) {
+          saw_window_add = true;
+        }
+      }
+    }
+    if ((watched[1].revents & POLLIN) != 0) {
+      char drained = 0;
+      static_cast<void>(::read(other[0], &drained, 1));
+      saw_other = true;
+    }
+  }
+
+  EXPECT_TRUE(saw_window_add);
+  EXPECT_TRUE(saw_other) << "the caller's own descriptor was starved";
+
+  // Drained, so it must have gone quiet again.
+  std::array<pollfd, 1> settled{pollfd{.fd = tmux_fd, .events = POLLIN, .revents = 0}};
+  static_cast<void>(::poll(settled.data(), settled.size(), 0));
+  EXPECT_EQ(settled[0].revents & POLLIN, 0)
+      << "still readable with nothing left to take";
+
+  ::close(other[0]);
+  ::close(other[1]);
   EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
 }
 
