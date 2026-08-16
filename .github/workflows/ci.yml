@@ -481,6 +481,7 @@ jobs:
             -DLIBTMUX_CXX_STANDARD=${{ matrix.standard }} \
             -DLIBTMUX_BUILD_TESTS=OFF \
             -DLIBTMUX_BUILD_MCP_SERVER=ON \
+            -DLIBTMUX_BUILD_TESTING_LIBRARY=ON \
             -DLIBTMUX_FETCH_DEPS=ON
           cmake --build build/pkg
           cmake --install build/pkg --prefix "$PWD/build/prefix"
@@ -489,6 +490,26 @@ jobs:
             -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CXX_FLAGS=-stdlib=libc++
           cmake --build build/consume
           ./build/consume/consume
+
+      # The examples, built and run the way a reader would: as their own
+      # project, against the install above, knowing nothing but
+      # `find_package`. The in-tree lane already runs the same sources, so
+      # this is not about the examples working — it is about the package
+      # being enough to build and test them, which only fails here.
+      #
+      # tmux, because unlike every other step in this job these tests drive a
+      # real server. They start it themselves, under a namespaced socket in a
+      # directory they remove.
+      - name: The installed package is enough to test the examples
+        run: |
+          sudo apt-get install -y tmux
+          cmake -S examples -B build/examples -G Ninja \
+            -DCMAKE_PREFIX_PATH="$PWD/build/prefix" \
+            -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CXX_FLAGS=-stdlib=libc++ \
+            -DLIBTMUX_EXAMPLES_BUILD_TESTS=ON \
+            -DLIBTMUX_FETCH_DEPS=ON
+          cmake --build build/examples
+          ctest --test-dir build/examples --no-tests=error --output-on-failure
 
       # The program is the half of the package a library consumer never
       # links, so building it is not enough: this runs the installed copy the
