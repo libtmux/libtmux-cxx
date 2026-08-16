@@ -486,6 +486,9 @@ struct Connection::State {
     if (waiter.joinable()) {
       waiter.join();
     }
+    // After both threads are joined, so nothing can arm a closed descriptor.
+    close_fd(wake_write);
+    close_fd(wake_read);
     if (!waiter_started) {
       int status = 0;
       pid_t waited = -1;
@@ -527,7 +530,30 @@ struct Connection::State {
       pending_request->complete = true;
     }
     pending.clear();
+    arm_locked();
     condition.notify_all();
+  }
+
+  // Both halves hold `mutex`, which is what keeps the byte and the queue
+  // agreeing: readable if and only if a take would return something.
+  void arm_locked() noexcept {
+    if (wake_armed || wake_write < 0) {
+      return;
+    }
+    const char byte = 1;
+    if (::write(wake_write, &byte, 1) == 1) {
+      wake_armed = true;
+    }
+  }
+
+  void disarm_locked() noexcept {
+    if (!wake_armed || wake_read < 0) {
+      return;
+    }
+    char byte = 0;
+    if (::read(wake_read, &byte, 1) == 1) {
+      wake_armed = false;
+    }
   }
 
   void accept_event(Event event) {
@@ -547,6 +573,7 @@ struct Connection::State {
         ++notifications_dropped;
       }
       notifications.push_back(std::move(*notification));
+      arm_locked();
       condition.notify_all();
       return;
     }
@@ -893,6 +920,12 @@ struct Connection::State {
   // How many were discarded to keep the buffer bounded, so a caller can tell
   // "nothing happened" from "more happened than I collected".
   std::size_t notifications_dropped{0};
+  // A pipe that holds one byte exactly when there is something to take, so a
+  // caller can `poll` on tmux beside their own descriptors. A pipe rather than
+  // an eventfd because macOS is supported.
+  int wake_read{-1};
+  int wake_write{-1};
+  bool wake_armed{false};
   std::optional<ProtocolError> fatal_error;
   std::string stderr_tail;
   std::optional<int> wait_status;
@@ -957,6 +990,27 @@ expected<Connection, ProtocolError> Connection::connect(ConnectionOptions option
     return unexpected(spawned.error());
   }
   auto state = std::make_unique<State>(std::move(options), *spawned);
+  // Non-blocking on both ends: a caller polling this must never block on it,
+  // and the reader must never block writing to a caller who is not draining.
+  // At most one byte is ever outstanding, so the write cannot fill the pipe.
+  {
+    std::array<int, 2> wake{-1, -1};
+    if (::pipe(wake.data()) == 0) {
+      for (const int descriptor : wake) {
+        const int flags = ::fcntl(descriptor, F_GETFL, 0);
+        if (flags >= 0) {
+          static_cast<void>(::fcntl(descriptor, F_SETFL, flags | O_NONBLOCK));
+        }
+        const int descriptor_flags = ::fcntl(descriptor, F_GETFD, 0);
+        if (descriptor_flags >= 0) {
+          static_cast<void>(
+              ::fcntl(descriptor, F_SETFD, descriptor_flags | FD_CLOEXEC));
+        }
+      }
+      state->wake_read = wake[0];
+      state->wake_write = wake[1];
+    }
+  }
   try {
     state->waiter =
         std::thread{[raw_state = state.get()] { raw_state->waiter_main(); }};
@@ -1078,6 +1132,7 @@ std::vector<Notification> Connection::take_notifications() {
   std::lock_guard lock{state_->mutex};
   std::vector<Notification> available;
   available.swap(state_->notifications);
+  state_->disarm_locked();
   return available;
 }
 
@@ -1095,7 +1150,12 @@ Connection::wait_for_notifications(std::chrono::steady_clock::time_point deadlin
   });
   std::vector<Notification> available;
   available.swap(state_->notifications);
+  state_->disarm_locked();
   return available;
+}
+
+int Connection::notification_fd() const noexcept {
+  return state_ ? state_->wake_read : -1;
 }
 
 std::size_t Connection::dropped_notifications() const noexcept {

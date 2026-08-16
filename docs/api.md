@@ -1298,6 +1298,11 @@ Everything tmux has said since the last call, and how many were dropped to keep 
 The same, but waits for something to arrive.  `take_notifications` returns immediately, so a caller reacting to tmux had to call it in a loop and sleep between — which either wakes too often or reacts too late, and picks that trade with no idea how long the next event will take. This blocks until at least one notification is available, the connection fails, or the deadline passes, and returns whatever it has.  An empty result means the deadline passed or the stream ended; the two are told apart by asking `execute` or `shutdown`, which report the failure. Notifications already buffered are returned without waiting at all.
 
 ```cpp
+[[nodiscard]] int notification_fd() const noexcept;
+```
+A descriptor that is readable exactly when a take would return something.  For a caller who owns their own event loop. Without it, integrating means a thread blocked in `wait_for_notifications`, a queue of their own, and a self-pipe to wake the loop — which is this descriptor, rebuilt by hand on top of the thread and queue this connection already has.  Do not read from it: readability is the signal and the byte is this connection's to consume. Drain with `take_notifications`, which clears it. A broken stream makes it readable too, so a poller learns of the failure rather than waiting for an answer that cannot come.  Valid until the connection is destroyed or moved from; `-1` if the pipe could not be created.
+
+```cpp
 [[nodiscard]] std::size_t dropped_notifications() const noexcept;
 ```
 
