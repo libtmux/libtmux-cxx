@@ -522,14 +522,17 @@ target_compile_options(
 add_test(NAME libtmux.lowering COMMAND libtmux_lowering_test)
 set_tests_properties(libtmux.lowering PROPERTIES LABELS "libtmux" TIMEOUT 10)
 
-add_executable(libtmux_schema_test schema_conformance_test.cpp)
+add_executable(libtmux_schema_test lowering_structure_test.cpp)
 target_link_libraries(
   libtmux_schema_test
   PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
 target_compile_options(libtmux_schema_test PRIVATE -fno-sanitize-recover=undefined)
 
-add_test(NAME libtmux.schema COMMAND libtmux_schema_test)
-set_tests_properties(libtmux.schema PROPERTIES LABELS "libtmux" TIMEOUT 10)
+# Named for what it checks. Conformance to the published schema is
+# `schema.conformance`, which validates emitted documents against the file.
+add_test(NAME libtmux.lowering.structure COMMAND libtmux_schema_test)
+set_tests_properties(
+  libtmux.lowering.structure PROPERTIES LABELS "libtmux" TIMEOUT 10)
 
 # Compile-time contracts.
 #

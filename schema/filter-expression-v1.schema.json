@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://libtmux.git-pull.com/schema/filter-expression-v1.schema.json",
   "title": "libtmux filter expression",
-  "description": "A lowered filter expression as a flat sequence in prefix order. Groups, negations, and relations are bracketed by begin and end nodes so a reader never counts operands.",
+  "description": "A lowered filter expression as a flat sequence in prefix order. Groups, negations, and relations are bracketed by begin and end nodes so a reader never counts operands. Each node kind is a closed object: the fields it needs are required, the fields belonging to other kinds are not permitted, and the operator set is the one its kind actually uses. A schema that required only `kind` accepted `{\"kind\": \"string_test\"}`, which no reader can do anything with.",
   "type": "object",
   "required": [
     "version",
@@ -22,29 +22,43 @@
     }
   },
   "$defs": {
-    "node": {
+    "field_name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "tmux format name for a test, relation name for a relation."
+    },
+    "bracket": {
       "type": "object",
+      "additionalProperties": false,
       "required": [
         "kind"
       ],
-      "additionalProperties": false,
       "properties": {
         "kind": {
           "enum": [
-            "string_test",
-            "bool_test",
-            "number_test",
-            "begin_group",
             "end_group",
-            "begin_negation",
             "end_negation",
-            "begin_relation",
-            "end_relation"
+            "end_relation",
+            "begin_negation"
           ]
+        }
+      }
+    },
+    "string_test": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "name",
+        "op",
+        "operand"
+      ],
+      "properties": {
+        "kind": {
+          "const": "string_test"
         },
         "name": {
-          "type": "string",
-          "description": "tmux format name for a test, relation name for a relation."
+          "$ref": "#/$defs/field_name"
         },
         "op": {
           "enum": [
@@ -52,38 +66,129 @@
             "iexact",
             "contains",
             "startswith",
-            "endswith",
+            "endswith"
+          ],
+          "description": "Exactly what StringOp lowers to. Ordering operators are absent because comparing tmux text by magnitude is a question this language does not ask, and inequality is absent because it is spelled with a negation."
+        },
+        "operand": {
+          "type": "string",
+          "description": "The value compared against, owned rather than referenced."
+        }
+      }
+    },
+    "bool_test": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "name",
+        "expected"
+      ],
+      "properties": {
+        "kind": {
+          "const": "bool_test"
+        },
+        "name": {
+          "$ref": "#/$defs/field_name"
+        },
+        "expected": {
+          "type": "boolean"
+        }
+      }
+    },
+    "number_test": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "name",
+        "op",
+        "number"
+      ],
+      "properties": {
+        "kind": {
+          "const": "number_test"
+        },
+        "name": {
+          "$ref": "#/$defs/field_name"
+        },
+        "op": {
+          "enum": [
+            "eq",
             "ne",
             "lt",
             "lte",
             "gt",
             "gte"
-          ],
-          "description": "Present on string_test and number_test. A number_test uses eq, ne, lt, lte, gt or gte; a string_test uses the rest."
+          ]
         },
-        "operand": {
-          "type": "string",
-          "description": "The value compared against, owned rather than referenced."
+        "number": {
+          "type": "integer",
+          "description": "The value compared against, as a number rather than as its rendered text, so a compiler to tmux `-f` does not have to parse it back out."
+        }
+      }
+    },
+    "begin_group": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "conjunction"
+      ],
+      "properties": {
+        "kind": {
+          "const": "begin_group"
         },
         "conjunction": {
           "type": "boolean",
-          "description": "Present only on begin_group. True is and, false is or."
+          "description": "True is and, false is or."
+        }
+      }
+    },
+    "begin_relation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "name",
+        "quantifier"
+      ],
+      "properties": {
+        "kind": {
+          "const": "begin_relation"
         },
-        "expected": {
-          "type": "boolean",
-          "description": "Present only on bool_test."
+        "name": {
+          "$ref": "#/$defs/field_name"
         },
         "quantifier": {
           "type": "integer",
           "minimum": 0,
           "maximum": 3,
-          "description": "Present only on begin_relation: 0 any_of, 1 all_of, 2 none_of, 3 is."
-        },
-        "number": {
-          "type": "integer",
-          "description": "Present only on number_test: the value compared against, as a number rather than as its rendered text."
+          "description": "0 any_of, 1 all_of, 2 none_of, 3 is."
         }
       }
+    },
+    "node": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/string_test"
+        },
+        {
+          "$ref": "#/$defs/bool_test"
+        },
+        {
+          "$ref": "#/$defs/number_test"
+        },
+        {
+          "$ref": "#/$defs/begin_group"
+        },
+        {
+          "$ref": "#/$defs/begin_relation"
+        },
+        {
+          "$ref": "#/$defs/bracket"
+        }
+      ]
     }
   }
 }
