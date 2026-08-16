@@ -564,6 +564,7 @@ foreach(
   cardinality_refuses_a_temporary
   cardinality_refuses_a_produced_element
   capture_lines_refuses_a_temporary
+  parse_refuses_a_temporary
   relation_join_refuses_a_temporary)
   add_library(libtmux_compile_${probe} OBJECT EXCLUDE_FROM_ALL compile/${probe}.cpp)
   target_link_libraries(

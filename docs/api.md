@@ -1232,6 +1232,20 @@ Parse one line. Returns nullopt for a blank line so callers can feed raw output 
 
 Decode tmux's control protocol.  A control-mode stream interleaves command reply blocks with asynchronous notifications. This parser turns bytes into those events and nothing else: no threads, no process, no executor. Feeding it is the caller's job, which is what lets the same decoder serve a synchronous read loop today and an async executor later without either appearing in this header.  Framing preserves bytes. A line inside a block that looks like a notification stays block body, because control-mode framing does not make it independently attributable, and block bodies are never converted to UTF-8.
 
+### Free functions
+
+```cpp
+[[nodiscard]] std::string_view to_string(NotificationKind kind) noexcept;
+```
+
+```cpp
+[[nodiscard]] ParsedNotification parse(const Notification& notification);
+```
+
+```cpp
+ParsedNotification parse(Notification&&) = delete;
+```
+
 ### Parser
 
 ```cpp
