@@ -6,6 +6,7 @@
 // distinction between a model's mistake and tmux's refusal — which nothing
 // executed. That is the only path an MCP client ever takes.
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
@@ -168,6 +169,85 @@ TEST_F(McpProtocol, AcceptsANumberWhereAStringIsExpected) {
   // 999 is not a pane, so this is tmux refusing — not the argument decoder.
   ASSERT_TRUE(replies[0].contains("result")) << replies[0].dump();
   EXPECT_TRUE(replies[0]["result"]["isError"].get<bool>());
+}
+
+// The three that let a model do more than look: press a key, wait for
+// something to finish, and find where it happened.
+
+TEST_F(McpProtocol, PressesKeysByNameAndRefusesOneItDoesNotKnow) {
+  const auto replies = converse(
+      socket(), {call("list_panes", json::object(), 1),
+                 call("send_keys", {{"target", "mcp"}, {"keys", "Enter"}}, 2),
+                 call("send_keys", {{"target", "mcp"}, {"keys", "NotAKey"}}, 3)});
+  ASSERT_EQ(replies.size(), 3U);
+
+  ASSERT_TRUE(replies[1].contains("result")) << replies[1].dump();
+  EXPECT_FALSE(replies[1]["result"]["isError"].get<bool>());
+  EXPECT_EQ(replies[1]["result"]["content"][0]["text"].get<std::string>().front(), '%');
+
+  // A mistyped key name is the model's mistake, and must not reach the pane as
+  // stray characters.
+  EXPECT_TRUE(replies[2].contains("error")) << replies[2].dump();
+}
+
+TEST_F(McpProtocol, WaitsForTextAndReportsWhenItNeverArrives) {
+  const auto replies = converse(
+      socket(),
+      {call("send_keys", {{"target", "mcp"}, {"keys", "Enter"}}, 1),
+       call("send_text", {{"target", "mcp"}, {"text", "echo waited-for-this\n"}}, 2),
+       call("wait_for_text", {{"target", "mcp"}, {"text", "waited-for-this"}}, 3),
+       call("wait_for_text",
+            {{"target", "mcp"}, {"text", "never-appears"}, {"timeout_ms", "300"}}, 4)});
+  ASSERT_EQ(replies.size(), 4U);
+
+  ASSERT_TRUE(replies[2].contains("result")) << replies[2].dump();
+  EXPECT_NE(replies[2]["result"]["content"][0]["text"].get<std::string>().find(
+                "waited-for-this"),
+            std::string::npos);
+
+  // Not finding it is an answer, not a failure — and it says so rather than
+  // returning an empty capture the model would have to interpret.
+  ASSERT_TRUE(replies[3].contains("result")) << replies[3].dump();
+  EXPECT_NE(
+      replies[3]["result"]["content"][0]["text"].get<std::string>().find("timed out"),
+      std::string::npos);
+}
+
+TEST_F(McpProtocol, FindsWhichPaneIsShowingSomething) {
+  const auto replies = converse(
+      socket(),
+      {call("send_text", {{"target", "mcp"}, {"text", "echo find-me-here\n"}}, 1),
+       call("wait_for_text", {{"target", "mcp"}, {"text", "find-me-here"}}, 2),
+       call("search_panes", {{"text", "find-me-here"}}, 3),
+       call("search_panes", {{"text", "nothing-shows-this"}}, 4)});
+  ASSERT_EQ(replies.size(), 4U);
+
+  ASSERT_TRUE(replies[2].contains("result")) << replies[2].dump();
+  const auto found = replies[2]["result"]["content"][0]["text"].get<std::string>();
+  EXPECT_EQ(found.front(), '%') << found;
+  EXPECT_NE(found.find("find-me-here"), std::string::npos) << found;
+
+  EXPECT_TRUE(replies[3]["result"]["content"][0]["text"].get<std::string>().empty());
+}
+
+// An optional argument is optional, which is the whole reason the schema grew
+// a way to say so.
+TEST_F(McpProtocol, TakesTheOptionalTimeoutOrDoesWithoutIt) {
+  const auto replies = converse(
+      socket(), {json{{"jsonrpc", "2.0"}, {"id", 1}, {"method", "tools/list"}}});
+  ASSERT_EQ(replies.size(), 1U);
+  for (const auto& tool : replies[0]["result"]["tools"]) {
+    if (tool["name"] != "wait_for_text") {
+      continue;
+    }
+    const auto& schema = tool["inputSchema"];
+    EXPECT_TRUE(schema["properties"].contains("timeout_ms"));
+    const auto& required = schema["required"];
+    EXPECT_EQ(std::find(required.begin(), required.end(), "timeout_ms"), required.end())
+        << "timeout_ms is declared required";
+    return;
+  }
+  ADD_FAILURE() << "wait_for_text is not in tools/list";
 }
 
 } // namespace
