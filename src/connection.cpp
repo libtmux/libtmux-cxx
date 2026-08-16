@@ -436,9 +436,14 @@ struct Connection::State {
     bool complete{false};
   };
 
+  // `parser` reads `options`, which is why it is spelled out here rather than
+  // left to a default member initialiser: this order is the one the compiler
+  // checks, and a reordered declaration is a warning instead of a decoder that
+  // quietly took the defaults.
   State(ConnectionOptions requested_options, SpawnedClient client)
       : options(std::move(requested_options)), pid(client.pid), input(client.input),
-        output(client.output), error(client.error) {}
+        output(client.output), error(client.error),
+        parser(options.retained_reply_bytes, options.line_bytes) {}
 
   ~State() noexcept {
     // Kill first. Closing the input needs the writer's mutex, and a writer

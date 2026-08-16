@@ -58,8 +58,15 @@ ControlBackend::run(const std::vector<std::string>& command,
                             ? std::chrono::steady_clock::now() + *timeout
                             : std::chrono::steady_clock::time_point::max();
 
-  const std::lock_guard<std::mutex> held{mutex_};
-  ControlRequestResult result = connection_.execute(std::move(request), deadline);
+  // The lock covers the conversation and nothing else. Everything below runs
+  // released, because `CommandObserver` promises an observer that calls tmux
+  // again will not deadlock against the call that told it — and an observer is
+  // exactly the place someone reaches for tmux.
+  ControlRequestResult result;
+  {
+    const std::lock_guard<std::mutex> held{mutex_};
+    result = connection_.execute(std::move(request), deadline);
+  }
 
   const auto reported = [this, &command](CommandFailure failure) {
     observe(command, &failure);
@@ -87,16 +94,28 @@ ControlBackend::run(const std::vector<std::string>& command,
                             "the reply could not be matched to this command"));
   }
 
-  std::string body = text(operation.block->body);
-  // The same bound the subprocess transport applies, so the two agree about
-  // what a caller asked for rather than differing by transport.
-  if (output_limit.has_value() && body.size() > *output_limit) {
+  // Two bounds, both checked before the body is copied anywhere.
+  //
+  // The connection's is a bound on memory: the decoder stopped retaining at it
+  // and drained the rest, so what is held is not the reply and saying so is the
+  // only honest answer. The call's is a bound on the contract: the whole reply
+  // arrived and is larger than the caller said it would take. Conflating them
+  // is how `output_limit` came to bound the answer without bounding anything
+  // this process held.
+  const ControlBlock& block = *operation.block;
+  if (block.body_truncated) {
+    return reported(carried(FailureKind::truncated, true,
+                            "tmux produced " + std::to_string(block.body_bytes) +
+                                " bytes, more than this connection retains"));
+  }
+  if (output_limit.has_value() && block.body.size() > *output_limit) {
     return reported(carried(FailureKind::truncated, true,
                             "tmux produced more output than the " +
                                 std::to_string(*output_limit) +
                                 " byte limit this call allowed for"));
   }
-  if (operation.block->terminal == ControlTerminal::error) {
+  std::string body = text(block.body);
+  if (block.terminal == ControlTerminal::error) {
     return reported(carried(FailureKind::refused, true, std::move(body)));
   }
   observe(command, nullptr);
@@ -121,8 +140,12 @@ ControlBackend::run_batch(const CommandBatch& batch,
                             ? std::chrono::steady_clock::now() + *timeout
                             : std::chrono::steady_clock::time_point::max();
 
-  const std::lock_guard<std::mutex> held{mutex_};
-  ControlRequestResult result = connection_.execute(std::move(request), deadline);
+  // Released before anything reports, for the reason `run` gives.
+  ControlRequestResult result;
+  {
+    const std::lock_guard<std::mutex> held{mutex_};
+    result = connection_.execute(std::move(request), deadline);
+  }
 
   const auto reported = [this, &observed](CommandFailure failure) {
     observe(observed, &failure);
@@ -150,6 +173,22 @@ ControlBackend::run_batch(const CommandBatch& batch,
                               "the reply to command " + std::to_string(index + 1) +
                                   " could not be matched to it"));
     }
+    if (operation.block->body_truncated) {
+      return reported(carried(FailureKind::truncated, true,
+                              "command " + std::to_string(index + 1) + " produced " +
+                                  std::to_string(operation.block->body_bytes) +
+                                  " bytes, more than this connection retains"));
+    }
+    // Checked as the parts arrive rather than once they are all joined: a
+    // batch of replies each inside the bound can still exceed it together, and
+    // the caller already said it would not take that much.
+    if (output_limit.has_value() &&
+        body.size() + operation.block->body.size() > *output_limit) {
+      return reported(carried(FailureKind::truncated, true,
+                              "tmux produced more output than the " +
+                                  std::to_string(*output_limit) +
+                                  " byte limit this call allowed for"));
+    }
     std::string part = text(operation.block->body);
     if (operation.block->terminal == ControlTerminal::error) {
       // A batch is fail-fast, and control mode can say which member stopped
@@ -160,12 +199,6 @@ ControlBackend::run_batch(const CommandBatch& batch,
                                   std::move(part)));
     }
     body += part;
-  }
-  if (output_limit.has_value() && body.size() > *output_limit) {
-    return reported(carried(FailureKind::truncated, true,
-                            "tmux produced more output than the " +
-                                std::to_string(*output_limit) +
-                                " byte limit this call allowed for"));
   }
   observe(observed, nullptr);
   return body;

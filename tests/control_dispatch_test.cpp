@@ -374,4 +374,73 @@ TEST(ControlDispatch, AFloodIsDroppedOldestFirstAndTheCommandChannelSurvives) {
   EXPECT_EQ(*expanded, fixture->socket_path().string());
 }
 
+// `CommandObserver` promises it runs with nothing held, so that an observer
+// which itself talks to tmux does not deadlock against the call that told it.
+// Over one serialized connection that promise is load-bearing rather than
+// decorative: the observer used to run inside the lock the next command needs,
+// and an observer is exactly where someone reaches for tmux.
+//
+// A regression hangs, so this test carries the suite's ctest timeout rather
+// than a wait of its own — there is nothing to time out against once the
+// thread that would report is the thread that is stuck.
+TEST(ControlDispatch, AnObserverMayCallTmuxAgainOverTheSameConnection) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+
+  const Server* streaming = nullptr;
+  int reentered = 0;
+  std::size_t observed = 0;
+  auto observer = [&streaming, &reentered,
+                   &observed](std::string_view, const libtmux::CommandFailure*) {
+    ++observed;
+    // Once. The nested call is observed too, and an observer that recursed on
+    // its own report would never come back.
+    if (streaming == nullptr || reentered > 0) {
+      return;
+    }
+    ++reentered;
+    const auto nested = streaming->sessions();
+    EXPECT_TRUE(nested.has_value());
+  };
+
+  auto server = Server::at_socket_path(fixture->socket_path().string(), observer);
+  ASSERT_TRUE(server.has_value());
+  const auto streamed = server->over_control(fixture->session_name());
+  ASSERT_TRUE(streamed.has_value()) << streamed.error().diagnostic;
+  streaming = &*streamed;
+
+  const auto windows = streamed->windows();
+  ASSERT_TRUE(windows.has_value()) << windows.error().diagnostic;
+  EXPECT_FALSE(windows->empty());
+  EXPECT_EQ(reentered, 1);
+  // The outer command and the one the observer ran from inside it.
+  EXPECT_GE(observed, 2U);
+}
+
+// Every command reaches the observer, including the ones that failed before
+// tmux answered. Those are the commands a caller turned the observer on for.
+TEST(ControlDispatch, AFailedCommandReachesTheObserver) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+
+  std::vector<std::string> failures;
+  auto observer = [&failures](std::string_view command,
+                              const libtmux::CommandFailure* failure) {
+    if (failure != nullptr) {
+      failures.emplace_back(command);
+    }
+  };
+
+  auto server = Server::at_socket_path(fixture->socket_path().string(), observer);
+  ASSERT_TRUE(server.has_value());
+
+  // Refused by tmux, over both transports, so neither can drop it quietly.
+  EXPECT_FALSE(server->run({"kill-session", "-t", "$99999"}).has_value());
+  const auto streamed = server->over_control(fixture->session_name());
+  ASSERT_TRUE(streamed.has_value()) << streamed.error().diagnostic;
+  EXPECT_FALSE(streamed->run({"kill-session", "-t", "$99999"}).has_value());
+
+  EXPECT_EQ(failures.size(), 2U);
+}
+
 } // namespace

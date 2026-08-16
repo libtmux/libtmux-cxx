@@ -112,20 +112,29 @@ SubprocessBackend::run(const std::vector<std::string>& command,
     request.arguments.push_back(Argument{escaped_argument(argument)});
   }
 
+  // `CommandObserver` is told about every command, and these two are the
+  // commands most worth seeing: one where tmux never started, and one where
+  // the answer was too big to keep. Returning without a word left exactly the
+  // failures a caller is debugging out of the log they turned on to debug them.
+  const auto reported = [this, &command](CommandFailure failure) {
+    observe(command, &failure);
+    return unexpected(std::move(failure));
+  };
+
   const auto reply = run_posix(request);
   if (!reply.has_value()) {
-    return unexpected(CommandFailure{.kind = kind_of(reply.error().kind),
-                                     .dispatched = reply.error().dispatch_phase !=
-                                                   DispatchPhase::not_dispatched,
-                                     .exit_code = -1,
-                                     .diagnostic = reply.error().diagnostic});
+    return reported(CommandFailure{.kind = kind_of(reply.error().kind),
+                                   .dispatched = reply.error().dispatch_phase !=
+                                                 DispatchPhase::not_dispatched,
+                                   .exit_code = -1,
+                                   .diagnostic = reply.error().diagnostic});
   }
 
   if (reply->output_truncated) {
     // The runner bounds what it will hold. Returning the prefix as a complete
     // answer is the one outcome a caller cannot detect: the last line is cut
     // mid-way and looks like data.
-    return unexpected(
+    return reported(
         CommandFailure{.kind = FailureKind::truncated,
                        .dispatched = true,
                        .exit_code = 0,

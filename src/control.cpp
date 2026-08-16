@@ -169,6 +169,16 @@ Parser::feed(std::span<const std::byte> input) {
   for (;;) {
     const auto newline = std::find(pending_.begin(), pending_.end(), std::byte{0x0a});
     if (newline == pending_.end()) {
+      // Nothing to hand back and nowhere to put the rest. A line this long is
+      // not a large answer — bodies arrive as many lines — so it is the stream
+      // that is wrong, and a control stream cannot be resynchronised.
+      if (line_bytes_ != 0U && pending_.size() > line_bytes_) {
+        failure_ = ProtocolError{"control line exceeded " +
+                                 std::to_string(line_bytes_) + " bytes"};
+        pending_.clear();
+        pending_.shrink_to_fit();
+        return unexpected(*failure_);
+      }
       break;
     }
     Bytes line{pending_.begin(), newline};
@@ -195,8 +205,21 @@ Parser::feed(std::span<const std::byte> input) {
           close("%error ", ControlTerminal::error)) {
         continue;
       }
-      block_->body.insert(block_->body.end(), line.begin(), line.end());
-      block_->body.push_back(std::byte{0x0a});
+      // Counted in full, retained up to the bound. Draining the rest is what
+      // keeps the next command's reply attributable: a parser that stopped
+      // reading here would meet `%end` mid-body and lose the stream.
+      const std::size_t arriving = line.size() + 1U;
+      block_->body_bytes += arriving;
+      if (retained_reply_bytes_ == 0U || block_->body.size() + arriving <=
+                                             retained_reply_bytes_) {
+        block_->body.insert(block_->body.end(), line.begin(), line.end());
+        block_->body.push_back(std::byte{0x0a});
+      } else if (!block_->body_truncated) {
+        block_->body_truncated = true;
+        // Nothing more will be added, so the held bytes are all that is ever
+        // needed. Without this the vector keeps whatever growth reserved.
+        block_->body.shrink_to_fit();
+      }
       continue;
     }
 

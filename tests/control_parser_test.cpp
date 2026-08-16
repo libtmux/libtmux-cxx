@@ -245,4 +245,63 @@ TEST(ControlModeParser, FinishesIdempotentlyAndRejectsLaterInput) {
   EXPECT_FALSE(parser.feed(bytes("%sessions-changed\n")).has_value());
 }
 
+// The bound is on what the parser holds, not on what it reports afterwards.
+// Checking the size of an assembled reply says nothing about the memory the
+// process spent assembling it, which is the whole reason the bound moved here.
+TEST(ControlModeParser, RetainsBoundedBodyAndKeepsTheStreamAttributable) {
+  Parser parser{16U, 4096U};
+  Bytes stream;
+  append(stream, "%begin 1 2 1\n");
+  for (int line = 0; line < 64; ++line) {
+    append(stream, "0123456789abcdef\n");
+  }
+  append(stream, "%end 1 2 1\n");
+  // A second command, so the test proves the stream survived the first.
+  append(stream, "%begin 3 4 1\nkept\n%end 3 4 1\n");
+
+  const auto events = parser.feed(stream);
+  ASSERT_TRUE(events.has_value());
+  ASSERT_EQ(events->size(), 2U);
+
+  const auto& oversized = std::get<ControlBlock>(events->front());
+  EXPECT_TRUE(oversized.body_truncated);
+  EXPECT_EQ(oversized.body_bytes, 64U * 17U);
+  EXPECT_LE(oversized.body.size(), 16U);
+
+  const auto& following = std::get<ControlBlock>(events->back());
+  EXPECT_FALSE(following.body_truncated);
+  EXPECT_EQ(following.body_bytes, 5U);
+  EXPECT_EQ(hex(following.body), hex(bytes("kept\n")));
+}
+
+// A line is bounded separately, because a body arrives as many lines and no
+// legitimate one grows without end. Terminal, since a control stream offers
+// nothing to resynchronise against.
+TEST(ControlModeParser, FailsAndReleasesOnALineThatNeverEnds) {
+  Parser parser{4096U, 64U};
+  const auto first = parser.feed(bytes(std::string(128U, 'x')));
+  ASSERT_FALSE(first.has_value());
+  EXPECT_NE(first.error().message.find("control line exceeded"),
+            std::string::npos);
+  EXPECT_FALSE(parser.feed(bytes("\n%sessions-changed\n")).has_value());
+  EXPECT_FALSE(parser.finish().has_value());
+}
+
+// Zero is the escape hatch, and a test that owns both ends of the stream is
+// the only caller entitled to it.
+TEST(ControlModeParser, TreatsZeroAsUnbounded) {
+  Parser parser{0U, 0U};
+  Bytes stream;
+  append(stream, "%begin 1 2 1\n");
+  append(stream, std::string(8192U, 'y'));
+  append(stream, "\n%end 1 2 1\n");
+
+  const auto events = parser.feed(stream);
+  ASSERT_TRUE(events.has_value());
+  ASSERT_EQ(events->size(), 1U);
+  const auto& block = std::get<ControlBlock>(events->front());
+  EXPECT_FALSE(block.body_truncated);
+  EXPECT_EQ(block.body.size(), 8193U);
+}
+
 } // namespace

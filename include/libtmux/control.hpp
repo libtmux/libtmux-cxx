@@ -36,6 +36,18 @@ struct ProtocolError {
 
 enum class ControlTerminal : std::uint8_t { end, error };
 
+// How much of one reply a decoder holds, and how long a single line may grow
+// before the stream is called broken.
+//
+// A subprocess ends and gives its memory back; a connection does not, so the
+// bound has to be in the decoder rather than in whatever reads it afterwards.
+// The reply bound is the subprocess transport's capture limit, so the same
+// call costs the same memory over either transport. The line bound has no
+// subprocess equivalent: it is the point past which an unterminated line is
+// evidence of a broken stream rather than a large answer.
+inline constexpr std::size_t kDefaultRetainedReplyBytes = 1024U * 1024U;
+inline constexpr std::size_t kDefaultLineBytes = 1024U * 1024U;
+
 struct ControlBlock {
   std::uint64_t sequence;
   std::uint64_t command_number;
@@ -43,6 +55,12 @@ struct ControlBlock {
   std::vector<std::byte> begin_metadata;
   std::vector<std::byte> terminal_metadata;
   std::vector<std::byte> body;
+  // `body` holds the first `retained_reply_bytes` and stopped; `body_bytes` is
+  // how many there were. Set rather than reported as an error because framing
+  // is the parser's job and judging the answer is the caller's: the rest of the
+  // reply is still drained, so the next command's reply is still attributable.
+  bool body_truncated{false};
+  std::size_t body_bytes{0};
 };
 
 struct Notification {
@@ -53,6 +71,12 @@ using Event = std::variant<ControlBlock, Notification>;
 
 class Parser final {
 public:
+  Parser() = default;
+  // Zero means unbounded, which only a test that owns both ends should ask
+  // for.
+  Parser(std::size_t retained_reply_bytes, std::size_t line_bytes) noexcept
+      : retained_reply_bytes_{retained_reply_bytes}, line_bytes_{line_bytes} {}
+
   expected<std::vector<Event>, ProtocolError> feed(std::span<const std::byte> bytes);
   expected<void, ProtocolError> finish();
 
@@ -60,6 +84,8 @@ private:
   std::vector<std::byte> pending_;
   std::optional<ControlBlock> block_;
   std::optional<ProtocolError> failure_;
+  std::size_t retained_reply_bytes_{kDefaultRetainedReplyBytes};
+  std::size_t line_bytes_{kDefaultLineBytes};
   bool finished_{false};
 };
 
@@ -89,6 +115,11 @@ struct ConnectionOptions {
   std::string session_name;
   std::chrono::milliseconds startup_timeout{2000};
   std::chrono::milliseconds shutdown_timeout{2000};
+  // Passed to the decoder. Raise the first to hold a bigger capture; the
+  // second bounds a line that never ends and wants raising only if tmux grows
+  // a longer one.
+  std::size_t retained_reply_bytes{kDefaultRetainedReplyBytes};
+  std::size_t line_bytes{kDefaultLineBytes};
 };
 
 class Connection final {
