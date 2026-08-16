@@ -280,9 +280,15 @@ TEST(ControlModeConnection, WaitForNotificationsWakesOnTheEventNotTheDeadline) {
   EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
 }
 
-// The other half: with nothing to report it must block until its deadline,
-// which is what distinguishes it from `take_notifications`.
-TEST(ControlModeConnection, WaitForNotificationsBlocksUntilItsDeadline) {
+// The other half: an empty answer must mean the deadline was reached.
+//
+// Stated as that implication rather than as "tmux says nothing for 300ms",
+// which is a claim about tmux rather than about this call — and a false one on
+// tmux master, which is still talking after the others have gone quiet. Every
+// non-empty answer here is a legitimate early wake and is left to the test
+// above; this one retries until it sees the deadline path, which is the case
+// it exists for.
+TEST(ControlModeConnection, WaitForNotificationsReturnsEmptyOnlyAtItsDeadline) {
   auto server = start_server(unique_name("control-wait"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
   auto connected = connect_to(*server);
@@ -290,26 +296,22 @@ TEST(ControlModeConnection, WaitForNotificationsBlocksUntilItsDeadline) {
       << (connected.has_value() ? "" : connected.error().message);
   auto connection = std::move(*connected);
 
-  // Settle first: attaching produces notifications of its own, and this is
-  // about what happens when there are none.
-  const auto settle = std::chrono::steady_clock::now() + 1s;
-  while (std::chrono::steady_clock::now() < settle) {
-    if (connection.wait_for_notifications(std::chrono::steady_clock::now() + 200ms)
-            .empty()) {
-      break;
+  constexpr auto window = 300ms;
+  bool saw_deadline = false;
+  const auto give_up = std::chrono::steady_clock::now() + 10s;
+  while (std::chrono::steady_clock::now() < give_up && !saw_deadline) {
+    const auto started = std::chrono::steady_clock::now();
+    const auto batch =
+        connection.wait_for_notifications(std::chrono::steady_clock::now() + window);
+    const auto waited = std::chrono::steady_clock::now() - started;
+    if (batch.empty()) {
+      // Generously under the window, so a loaded runner cannot fail this while
+      // a version that returned immediately still would.
+      EXPECT_GE(waited, window - 50ms) << "returned empty without waiting";
+      saw_deadline = true;
     }
   }
-
-  constexpr auto window = 300ms;
-  const auto started = std::chrono::steady_clock::now();
-  const auto nothing =
-      connection.wait_for_notifications(std::chrono::steady_clock::now() + window);
-  const auto waited = std::chrono::steady_clock::now() - started;
-
-  EXPECT_TRUE(nothing.empty());
-  // Generously under the window, so a loaded runner cannot fail this, while
-  // still failing a version that returned immediately.
-  EXPECT_GE(waited, window - 50ms) << "returned without waiting";
+  EXPECT_TRUE(saw_deadline) << "tmux never paused long enough to reach a deadline";
   EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
 }
 
