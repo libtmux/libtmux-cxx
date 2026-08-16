@@ -10,11 +10,17 @@ vcpkg_from_github(
 vcpkg_cmake_configure(
   SOURCE_PATH "${SOURCE_PATH}"
   OPTIONS
-    # A package build ships the library alone: tests need GoogleTest and a
-    # real tmux, and the examples need a tmux to run against. Neither belongs
-    # in a consumer's dependency graph.
+    # This project's own tests need GoogleTest and a real tmux, and its
+    # examples need a tmux to run against. Neither belongs in a consumer's
+    # dependency graph.
     -DLIBTMUX_BUILD_TESTS=OFF
-    -DLIBTMUX_BUILD_EXAMPLES=OFF)
+    -DLIBTMUX_BUILD_EXAMPLES=OFF
+    # `libtmux::testing` does belong there, and follows those two switches
+    # unless it is asked for. It is the fixture a consumer's own suite runs
+    # on — a private tmux server per test — and it names no test framework and
+    # links nothing beyond the library, so shipping it costs a consumer an
+    # archive they never link unless they ask for the component.
+    -DLIBTMUX_BUILD_TESTING_LIBRARY=ON)
 
 vcpkg_cmake_install()
 vcpkg_cmake_config_fixup(PACKAGE_NAME libtmux CONFIG_PATH lib/cmake/libtmux)
