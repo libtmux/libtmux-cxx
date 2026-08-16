@@ -3,6 +3,10 @@
 Generated from the headers by `tools/docs/api_index.py`; the prose here
 is the prose there. Run it with `--check` to prove this page is current.
 
+## `libtmux/libtmux.hpp`
+
+libtmux: a typed C++ interface to tmux.  This umbrella header pulls in the dependency-free core: value types for the things tmux prints, snapshots that own what a command returned, entities projected from those snapshots, and expressions for selecting among them. Nothing here spawns a process; execution belongs to the connection type.
+
 ## `libtmux/server.hpp`
 
 The connection root.  A Server names which tmux server to talk to and how to reach it. It is a handle: copying one costs a reference count, and every entity taken from it keeps the same connection alive, so a listing outlives the Server value that produced it.  No transport type appears in this header. `run` is declared here and defined against a private backend, so an async or control-mode executor can replace that backend without changing a caller or breaking ABI.
