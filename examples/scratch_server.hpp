@@ -8,55 +8,51 @@
 // real session because they happened to run it from inside tmux is not a
 // trade worth making for a slightly more realistic demonstration.
 //
-// `Server::from_env()` — the call that does reach the surrounding server — has
-// an example of its own, which reads it rather than changing anything.
+// This used to be sixty lines of `mkdtemp` and socket bookkeeping copied out
+// of the test suite. It is now four lines over `libtmux::testing`, the same
+// fixture the suite runs on — which is the honest demonstration anyway: an
+// example that showed a reader how to hand-roll a private server would be
+// teaching them to reinvent something the package ships.
+//
+// `Server::from_env()` — the call that does reach the surrounding server — is
+// deliberately not used here. It has no example: reaching outward is the one
+// thing these programs must not do.
 
 #include <cstdio>
 #include <cstdlib>
-#include <filesystem>
 #include <string>
+#include <string_view>
 #include <utility>
 
-// `mkdtemp` is POSIX, but the platforms disagree about where it is declared:
-// glibc puts it in <stdlib.h> and macOS in <unistd.h>. `<cstdlib>` alone
-// promises only the `std::` names.
-#include <stdlib.h>
-#include <unistd.h>
-
 #include <libtmux/libtmux.hpp>
+#include <libtmux/testing/scoped_server.hpp>
 
 namespace example {
 
 class ScratchServer {
 public:
-  static ScratchServer open() {
-    // Named for the workspace, so a stray directory says where it came from,
-    // and distinct from the fixture the test suite uses.
-    std::string directory =
-        (std::filesystem::temp_directory_path() / "libtmux-cxx-example-XXXXXX")
-            .string();
-    if (::mkdtemp(directory.data()) == nullptr) {
-      std::perror("mkdtemp");
+  // `suite` names the run in every socket path and stray directory it leaves.
+  // The examples' own test harness overrides it through the environment so a
+  // server started by a test is distinguishable from one a reader started by
+  // running the example directly.
+  static ScratchServer open(std::string_view suite = "example") {
+    const char* const named = std::getenv("LIBTMUX_EXAMPLE_NAMESPACE");
+    auto fixture = libtmux::test::ScopedTmuxServer::start({
+        .session_name = "example",
+        .socket_namespace = libtmux::test::SocketNamespace::consumer(
+            named != nullptr && named[0] != '\0' ? named : suite),
+    });
+    if (!fixture.has_value()) {
+      std::fprintf(stderr, "%s\n", fixture.error().c_str());
       std::exit(1);
     }
-    const std::string socket = directory + "/socket";
 
-    auto server = libtmux::Server::at_socket_path(socket);
+    auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
     if (!server.has_value()) {
       std::fprintf(stderr, "%s\n", server.error().diagnostic.c_str());
       std::exit(1);
     }
-    if (const auto started = server->new_session("example"); !started.has_value()) {
-      std::fprintf(stderr, "%s\n", started.error().diagnostic.c_str());
-      std::exit(1);
-    }
-    return ScratchServer{*std::move(server), std::move(directory)};
-  }
-
-  ~ScratchServer() {
-    (void)server_.kill();
-    std::error_code ignored;
-    std::filesystem::remove_all(owned_, ignored);
+    return ScratchServer{*std::move(fixture), *std::move(server)};
   }
 
   ScratchServer(const ScratchServer&) = delete;
@@ -67,12 +63,13 @@ public:
   [[nodiscard]] const libtmux::Server& get() const noexcept { return server_; }
 
 private:
-  ScratchServer(libtmux::Server server, std::string owned)
-      : server_{std::move(server)}, owned_{std::move(owned)} {}
+  ScratchServer(libtmux::test::ScopedTmuxServer fixture, libtmux::Server server)
+      : fixture_{std::move(fixture)}, server_{std::move(server)} {}
 
+  // Declared first, destroyed last: the server handle must not outlive the
+  // tmux it addresses.
+  libtmux::test::ScopedTmuxServer fixture_;
   libtmux::Server server_;
-  // The private tree this server's socket lives in, removed with it.
-  std::string owned_;
 };
 
 } // namespace example
