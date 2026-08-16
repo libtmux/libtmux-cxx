@@ -227,13 +227,89 @@ TEST(ControlModeConnection, ConcurrentIndependentRequestsKeepReplyOwnership) {
   const auto notification_deadline = std::chrono::steady_clock::now() + 1s;
   while (std::chrono::steady_clock::now() < notification_deadline &&
          !has_notification(notifications, "%window-add ")) {
-    auto available = connection.take_notifications();
+    auto available = connection.wait_for_notifications(notification_deadline);
+    if (available.empty()) {
+      break;
+    }
     notifications.insert(notifications.end(),
                          std::make_move_iterator(available.begin()),
                          std::make_move_iterator(available.end()));
-    std::this_thread::sleep_for(1ms);
   }
   EXPECT_TRUE(has_notification(notifications, "%window-add "));
+  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+}
+
+// Waiting, rather than asking repeatedly and sleeping in between.
+TEST(ControlModeConnection, WaitForNotificationsWakesOnTheEventNotTheDeadline) {
+  auto server = start_server(unique_name("control-wait"));
+  ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
+  auto connected = connect_to(*server);
+  ASSERT_TRUE(connected.has_value())
+      << (connected.has_value() ? "" : connected.error().message);
+  auto connection = std::move(*connected);
+
+  // Drain whatever attaching produced, so the wait below is for the new event.
+  static_cast<void>(
+      connection.wait_for_notifications(std::chrono::steady_clock::now() + 250ms));
+  static_cast<void>(connection.take_notifications());
+
+  const auto created =
+      connection.execute(group({{"new-window", "-d", "-n", "waited-for"}}),
+                         std::chrono::steady_clock::now() + 2s);
+  ASSERT_FALSE(created.connection_error.has_value());
+
+  // A deadline far past when the event should land: returning long before it
+  // is what shows the wait was woken rather than timed out.
+  const auto generous = std::chrono::steady_clock::now() + 10s;
+  const auto started = std::chrono::steady_clock::now();
+  std::vector<Notification> notifications;
+  while (std::chrono::steady_clock::now() < generous &&
+         !has_notification(notifications, "%window-add ")) {
+    auto available = connection.wait_for_notifications(generous);
+    if (available.empty()) {
+      break;
+    }
+    notifications.insert(notifications.end(),
+                         std::make_move_iterator(available.begin()),
+                         std::make_move_iterator(available.end()));
+  }
+  const auto waited = std::chrono::steady_clock::now() - started;
+
+  EXPECT_TRUE(has_notification(notifications, "%window-add "));
+  EXPECT_LT(waited, 5s) << "woke on the deadline rather than the event";
+  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+}
+
+// The other half: with nothing to report it must block until its deadline,
+// which is what distinguishes it from `take_notifications`.
+TEST(ControlModeConnection, WaitForNotificationsBlocksUntilItsDeadline) {
+  auto server = start_server(unique_name("control-wait"));
+  ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
+  auto connected = connect_to(*server);
+  ASSERT_TRUE(connected.has_value())
+      << (connected.has_value() ? "" : connected.error().message);
+  auto connection = std::move(*connected);
+
+  // Settle first: attaching produces notifications of its own, and this is
+  // about what happens when there are none.
+  const auto settle = std::chrono::steady_clock::now() + 1s;
+  while (std::chrono::steady_clock::now() < settle) {
+    if (connection.wait_for_notifications(std::chrono::steady_clock::now() + 200ms)
+            .empty()) {
+      break;
+    }
+  }
+
+  constexpr auto window = 300ms;
+  const auto started = std::chrono::steady_clock::now();
+  const auto nothing =
+      connection.wait_for_notifications(std::chrono::steady_clock::now() + window);
+  const auto waited = std::chrono::steady_clock::now() - started;
+
+  EXPECT_TRUE(nothing.empty());
+  // Generously under the window, so a loaded runner cannot fail this, while
+  // still failing a version that returned immediately.
+  EXPECT_GE(waited, window - 50ms) << "returned without waiting";
   EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
 }
 

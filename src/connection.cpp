@@ -1063,6 +1063,23 @@ std::vector<Notification> Connection::take_notifications() {
   return available;
 }
 
+std::vector<Notification>
+Connection::wait_for_notifications(std::chrono::steady_clock::time_point deadline) {
+  if (!state_) {
+    return {};
+  }
+  std::unique_lock lock{state_->mutex};
+  // The same condition the reader already signals for replies. Waiting on the
+  // failure too means a broken stream wakes the caller instead of holding them
+  // to the deadline for an answer that will never come.
+  state_->condition.wait_until(lock, deadline, [this] {
+    return !state_->notifications.empty() || state_->fatal_error.has_value();
+  });
+  std::vector<Notification> available;
+  available.swap(state_->notifications);
+  return available;
+}
+
 std::size_t Connection::dropped_notifications() const noexcept {
   if (!state_) {
     return 0;

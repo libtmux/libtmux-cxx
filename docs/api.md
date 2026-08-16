@@ -1279,6 +1279,11 @@ ControlRequestResult execute(ControlRequest request, std::chrono::steady_clock::
 Everything tmux has said since the last call, and how many were dropped to keep the buffer bounded.
 
 ```cpp
+[[nodiscard]] std::vector<Notification> wait_for_notifications(std::chrono::steady_clock::time_point deadline);
+```
+The same, but waits for something to arrive.  `take_notifications` returns immediately, so a caller reacting to tmux had to call it in a loop and sleep between — which either wakes too often or reacts too late, and picks that trade with no idea how long the next event will take. This blocks until at least one notification is available, the connection fails, or the deadline passes, and returns whatever it has.  An empty result means the deadline passed or the stream ended; the two are told apart by asking `execute` or `shutdown`, which report the failure. Notifications already buffered are returned without waiting at all.
+
+```cpp
 [[nodiscard]] std::size_t dropped_notifications() const noexcept;
 ```
 
