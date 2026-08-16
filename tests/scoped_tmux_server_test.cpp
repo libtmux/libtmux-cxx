@@ -1,4 +1,3 @@
-#include "libtmux/testing/environment_guard.hpp"
 #include "libtmux/testing/scoped_server.hpp"
 
 #include <gtest/gtest.h>
@@ -91,44 +90,33 @@ TEST(ScopedTmuxServer, StartsByNameAndExposesResolvedPath) {
   EXPECT_TRUE(server->is_alive());
 }
 
-// macOS gives `$TMPDIR` a path around fifty bytes long and `sun_path` only
-// 104, so what the fixture adds on top of it is a budget, not a detail. This
-// pins the headroom on a platform with room to spare: a name carrying the
-// namespace once cost ten bytes here and failed there, with tmux reporting
-// only "File name too long".
-TEST(ScopedTmuxServer, StartsUnderATemporaryDirectoryAsLongAsMacOsGives) {
-  // What macOS effectively hands the fixture. `$TMPDIR` there is
-  // `/var/folders/<two>/<24>/T/`, and `create_private_tree` canonicalises it,
-  // which resolves `/var` to `/private/var` and adds eight more bytes. Against
-  // a 104-byte `sun_path` that leaves the fixture about forty, and the socket
-  // name is spent from it.
-  //
-  // Chosen so this bites on Linux too, where `sun_path` is 108: the name the
-  // namespace once supplied was ten bytes longer than "server", and at this
-  // length that difference is the difference between starting and not.
-  constexpr std::size_t macos_temporary_length = 62U;
-  // Measured rather than assumed: macOS returns `$TMPDIR` with a trailing
-  // separator and Linux does not, so appending a component costs a byte on one
-  // and not the other.
-  const auto root = std::filesystem::temp_directory_path();
-  const std::size_t joined = (root / "d").native().size() - 1U;
-  ASSERT_LT(joined, macos_temporary_length) << root;
-  const auto tree = root / std::string(macos_temporary_length - joined, 'd');
-  ASSERT_EQ(tree.native().size(), macos_temporary_length) << tree;
+// The socket name is spent from a budget, so it is fixed.
+//
+// `tmux -L` resolves under `$TMUX_TMPDIR`, which is already the namespaced
+// private tree, so a name carrying the namespace adds no isolation — only
+// length, to a path that must fit in `sockaddr_un::sun_path`. That is 104
+// bytes on macOS, where `$TMPDIR` is a `/var/folders` path that canonicalises
+// to `/private/var/...` and spends around sixty of them before this fixture
+// adds anything. A namespaced name once cost ten more and the server would not
+// start, reporting only "File name too long".
+TEST(ScopedTmuxServer, SocketNameDoesNotGrowWithTheNamespace) {
+  auto brief = libtmux::test::ScopedTmuxServer::start(
+      {.mode = libtmux::test::SocketMode::Name, .socket_namespace = {.label = "a"}});
+  auto verbose = libtmux::test::ScopedTmuxServer::start(
+      {.mode = libtmux::test::SocketMode::Name,
+       .socket_namespace = {.label = "libtmux-cxx-a-considerably-longer-suite"}});
+  ASSERT_TRUE(brief.has_value()) << brief.error();
+  ASSERT_TRUE(verbose.has_value()) << verbose.error();
 
-  std::error_code created;
-  std::filesystem::create_directories(tree, created);
-  ASSERT_FALSE(created) << created.message();
+  ASSERT_TRUE(brief->socket_name().has_value());
+  ASSERT_TRUE(verbose->socket_name().has_value());
+  EXPECT_EQ(*brief->socket_name(), *verbose->socket_name());
 
-  const libtmux::test::EnvironmentGuard temporary{"TMPDIR", tree.native()};
-  auto server =
-      libtmux::test::ScopedTmuxServer::start({.mode = libtmux::test::SocketMode::Name});
-  const bool started = server.has_value();
-  const std::string why = started ? std::string{} : server.error();
-
-  std::error_code removed;
-  std::filesystem::remove_all(tree, removed);
-  ASSERT_TRUE(started) << why;
+  // The namespace is still what tells the two trees apart.
+  EXPECT_NE(brief->tmux_tmpdir(), verbose->tmux_tmpdir());
+  EXPECT_NE(verbose->tmux_tmpdir().string().find("considerably-longer"),
+            std::string::npos)
+      << verbose->tmux_tmpdir();
 }
 
 TEST(ScopedTmuxServer, StartsEightServersConcurrentlyWithoutSocketCollisions) {
