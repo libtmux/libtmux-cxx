@@ -23,16 +23,24 @@ runtime.
 
 ## Tools
 
-| Tool | Required arguments | Answers with |
+| Tool | Arguments | Answers with |
 |---|---|---|
 | `list_sessions` | — | One session name per line |
 | `list_panes` | — | Pane id, window id and running command, tab separated |
 | `capture_pane` | `target` | The visible contents of that pane |
-| `send_text` | `target`, `text` | Nothing; the text is typed literally, interpreting no key names |
+| `send_text` | `target`, `text` | The pane id written to; the text is typed literally, interpreting no key names |
 | `new_window` | `session`, `name` | The new window's id |
 
 Each tool is one library call. A model cannot compose a tmux command that the
 [typed surface](../../include/libtmux/) would not have allowed.
+
+Every argument carries a description in `tools/list`, saying what it accepts
+and showing one — `target` takes a pane id such as `%1`, or anything tmux
+resolves to a pane. A model that has read the schema does not have to guess,
+and `consumer.mcp.protocol` fails if any argument stops describing itself.
+
+`inputSchema` sets `additionalProperties: false`, so a misspelt argument is
+reported rather than ignored.
 
 ## Quickstart
 

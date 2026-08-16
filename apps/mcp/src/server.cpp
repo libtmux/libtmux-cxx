@@ -73,16 +73,26 @@ read_arguments(const json& params) {
 }
 
 json describe(const libtmux::mcp::Tool& tool) {
+  // Every parameter, described, and `required` listing only the ones that are.
+  // This used to walk `required` for both, so an optional parameter could not
+  // be expressed at all and no parameter carried a description — a model was
+  // shown `capture_pane(target)` and left to guess whether `target` meant
+  // `%1`, a session name, or `session:window.pane`.
+  //
+  // `additionalProperties: false` because a misspelt argument is a mistake
+  // worth reporting rather than ignoring.
   json properties = json::object();
-  for (const std::string& name : tool.required) {
-    properties[name] = json{{"type", "string"}};
+  for (const libtmux::mcp::Parameter& parameter : tool.parameters) {
+    properties[parameter.name] =
+        json{{"type", "string"}, {"description", parameter.description}};
   }
   return json{{"name", tool.name},
               {"description", tool.description},
               {"inputSchema",
                {{"type", "object"},
                 {"properties", std::move(properties)},
-                {"required", tool.required}}}};
+                {"required", tool.required_names()},
+                {"additionalProperties", false}}}};
 }
 
 // The MCP shape for a tool's answer: content blocks, plus a flag saying
