@@ -541,6 +541,8 @@ std::string_view ScopedTmuxServer::session_name() const noexcept {
   return state_ ? std::string_view{state_->options.session_name} : std::string_view{};
 }
 
+std::vector<std::string> current_environment() { return detail::current_environment(); }
+
 void set_environment(std::vector<std::string>& environment, std::string_view name,
                      std::string_view value) {
   detail::set_environment(environment, name, value);

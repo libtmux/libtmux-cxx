@@ -45,6 +45,17 @@ The socket path has to fit in `sun_path`, so keep the prefix short;
 `socket_path_fits` in the fixture reports the case where it does not rather
 than letting tmux fail obscurely.
 
+That limit is 104 bytes on macOS against 108 on Linux, and macOS spends around
+sixty of them on `$TMPDIR` alone — `/var/folders/...` canonicalises to
+`/private/var/...`. Ten bytes of socket name, or one nested directory, is the
+difference between passing every Linux lane and failing there with only "File
+name too long". Run the suite under a directory as long as macOS gives before
+believing a green board:
+
+```console
+$ BASE=/tmp/$(printf 'm%.0s' $(seq 1 52)) && mkdir -p "$BASE" && TMPDIR="$BASE" ctest --preset cxx-dev --no-tests=error; rmdir "$BASE"
+```
+
 ## The parity ledger is read here, not written
 
 The ledger in `tools/parity/data` records what each Python `libtmux`

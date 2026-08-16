@@ -26,9 +26,13 @@ Prefixed, so a consumer's servers are distinguishable from this library's.
 ### Free functions
 
 ```cpp
+[[nodiscard]] std::vector<std::string> current_environment();
+```
+Build and edit a `NAME=VALUE` block for a child process. `current_environment` copies this process's; `set_environment` replaces any existing entry rather than appending; `erase_environment` removes every entry for the name.
+
+```cpp
 void set_environment(std::vector<std::string>& environment, std::string_view name, std::string_view value);
 ```
-Edit a `NAME=VALUE` block of the kind `child_environment()` returns. `set_environment` replaces any existing entry rather than appending; `erase_environment` removes every entry for the name.
 
 ```cpp
 void erase_environment(std::vector<std::string>& environment, std::string_view name);

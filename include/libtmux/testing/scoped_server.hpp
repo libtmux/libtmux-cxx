@@ -31,8 +31,13 @@ struct TeardownReport {
 // suites cannot collide and a leftover directory identifies its owner.
 //
 // `label` reaches the socket path, which must fit in `sockaddr_un::sun_path`
-// — 108 bytes on Linux, 104 on macOS. `start` refuses a label that would
-// overrun it, or one containing anything outside `[A-Za-z0-9._-]`.
+// — 108 bytes on Linux, 104 on macOS. Keep it under about twenty characters:
+// macOS spends roughly sixty of those on `$TMPDIR` alone, once
+// `/var/folders/...` has canonicalised to `/private/var/...`, and tmux spends
+// more again on the directory it puts the socket in. A label that overruns is
+// reported by tmux as "File name too long", naming the path.
+//
+// `start` refuses one containing anything outside `[A-Za-z0-9._-]`.
 struct SocketNamespace {
   std::string label{"libtmux-cxx-test"};
 
@@ -57,9 +62,11 @@ struct ScopedTmuxServerOptions {
   std::shared_ptr<TeardownReport> teardown_report{};
 };
 
-// Edit a `NAME=VALUE` block of the kind `child_environment()` returns.
-// `set_environment` replaces any existing entry rather than appending;
-// `erase_environment` removes every entry for the name.
+// Build and edit a `NAME=VALUE` block for a child process.
+// `current_environment` copies this process's; `set_environment` replaces any
+// existing entry rather than appending; `erase_environment` removes every
+// entry for the name.
+[[nodiscard]] std::vector<std::string> current_environment();
 void set_environment(std::vector<std::string>& environment, std::string_view name,
                      std::string_view value);
 void erase_environment(std::vector<std::string>& environment, std::string_view name);
