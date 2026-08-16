@@ -73,38 +73,34 @@ int main() {
     return 1;
   }
 
-  // Wait for tmux to say so, rather than asking repeatedly. Every answer is
-  // read for what it is: a kind, the ids it names, and — for pane output — the
-  // bytes, already unescaped.
+  // Wait for tmux to say so, rather than asking repeatedly. One loop: the
+  // range waits, ends at its deadline, and hands back each answer read for
+  // what it is — a kind, the ids it names, and for pane output the bytes,
+  // already unescaped.
   bool saw_window = false;
   bool saw_output = false;
-  const auto deadline = std::chrono::steady_clock::now() + 10s;
-  while (std::chrono::steady_clock::now() < deadline && !(saw_window && saw_output)) {
-    const auto batch = connection.wait_for_notifications(deadline);
-    if (batch.empty()) {
+  for (const auto& event : connection.events(std::chrono::steady_clock::now() + 10s)) {
+    switch (event.kind) {
+    case libtmux::NotificationKind::window_add:
+      std::printf("window added: %s\n", std::string{event.window}.c_str());
+      saw_window = true;
+      break;
+    case libtmux::NotificationKind::output:
+      if (as_text(event.payload).find("hello-from-tmux") != std::string::npos) {
+        std::printf("output from %s: %s\n", std::string{event.pane}.c_str(),
+                    readable(as_text(event.payload)).c_str());
+        saw_output = true;
+      }
+      break;
+    case libtmux::NotificationKind::paused:
+      // The only report that output was dropped, and it names the pane.
+      std::printf("paused, output lost for %s\n", std::string{event.pane}.c_str());
+      break;
+    default:
       break;
     }
-    for (const libtmux::Notification& notification : batch) {
-      const auto event = libtmux::parse(notification);
-      switch (event.kind) {
-      case libtmux::NotificationKind::window_add:
-        std::printf("window added: %s\n", std::string{event.window}.c_str());
-        saw_window = true;
-        break;
-      case libtmux::NotificationKind::output:
-        if (as_text(event.payload).find("hello-from-tmux") != std::string::npos) {
-          std::printf("output from %s: %s\n", std::string{event.pane}.c_str(),
-                      readable(as_text(event.payload)).c_str());
-          saw_output = true;
-        }
-        break;
-      case libtmux::NotificationKind::paused:
-        // The only report that output was dropped, and it names the pane.
-        std::printf("paused, output lost for %s\n", std::string{event.pane}.c_str());
-        break;
-      default:
-        break;
-      }
+    if (saw_window && saw_output) {
+      break;
     }
   }
 

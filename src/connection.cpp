@@ -1154,6 +1154,71 @@ Connection::wait_for_notifications(std::chrono::steady_clock::time_point deadlin
   return available;
 }
 
+expected<void, ProtocolError>
+Connection::set_pane_output(std::string_view pane, bool deliver,
+                            std::chrono::steady_clock::time_point deadline) {
+  if (!state_) {
+    return unexpected(ProtocolError{"connection is empty"});
+  }
+  if (!state_->options.pane_output) {
+    return unexpected(ProtocolError{
+        "this connection did not ask for pane output, and tmux cannot add it "
+        "to a client that started without it"});
+  }
+  if (pane.empty()) {
+    return unexpected(ProtocolError{"no pane named"});
+  }
+
+  ControlRequest request;
+  request.group.push_back(ControlCommand{
+      {"refresh-client", "-A", std::string{pane} + (deliver ? ":continue" : ":off")}});
+  auto result = execute(std::move(request), deadline);
+  if (result.connection_error.has_value()) {
+    return unexpected(*result.connection_error);
+  }
+  if (result.operations.empty() || !result.operations.front().block.has_value()) {
+    return unexpected(ProtocolError{"tmux did not answer the refresh"});
+  }
+  if (result.operations.front().block->terminal == ControlTerminal::error) {
+    return unexpected(
+        ProtocolError{"tmux refused to change output for " + std::string{pane}});
+  }
+  return {};
+}
+
+NotificationRange Connection::events(std::chrono::steady_clock::time_point deadline) {
+  return NotificationRange{*this, deadline};
+}
+
+const Notification* NotificationRange::next() {
+  while (true) {
+    if (index_ < batch_.size()) {
+      return &batch_[index_++];
+    }
+    if (connection_ == nullptr || std::chrono::steady_clock::now() >= deadline_) {
+      return nullptr;
+    }
+    batch_ = connection_->wait_for_notifications(deadline_);
+    index_ = 0;
+    if (batch_.empty()) {
+      return nullptr;
+    }
+  }
+}
+
+void NotificationRange::iterator::advance() {
+  if (range_ == nullptr) {
+    return;
+  }
+  const Notification* notification = range_->next();
+  if (notification == nullptr) {
+    range_ = nullptr;
+    current_ = ParsedNotification{};
+    return;
+  }
+  current_ = parse(*notification);
+}
+
 int Connection::notification_fd() const noexcept {
   return state_ ? state_->wake_read : -1;
 }

@@ -1246,6 +1246,23 @@ Decode tmux's control protocol.  A control-mode stream interleaves command reply
 ParsedNotification parse(Notification&&) = delete;
 ```
 
+```cpp
+NotificationRange(Connection& connection, std::chrono::steady_clock::time_point deadline) noexcept : connection_;
+```
+
+```cpp
+[[nodiscard]] iterator begin();
+```
+
+```cpp
+[[nodiscard]] std::default_sentinel_t end() const noexcept;
+```
+
+```cpp
+[[nodiscard]] const Notification* next();
+```
+The next notification, or nothing once the deadline has passed with none.
+
 ### Parser
 
 ```cpp
@@ -1263,6 +1280,24 @@ expected<std::vector<Event>, ProtocolError> feed(std::span<const std::byte> byte
 
 ```cpp
 expected<void, ProtocolError> finish();
+```
+
+### iterator
+
+```cpp
+iterator() = default;
+```
+
+```cpp
+explicit iterator(NotificationRange* range) : range_;
+```
+
+```cpp
+[[nodiscard]] const ParsedNotification& operator*() const noexcept;
+```
+
+```cpp
+advance();
 ```
 
 ### Connection
@@ -1301,6 +1336,16 @@ The same, but waits for something to arrive.  `take_notifications` returns immed
 [[nodiscard]] int notification_fd() const noexcept;
 ```
 A descriptor that is readable exactly when a take would return something.  For a caller who owns their own event loop. Without it, integrating means a thread blocked in `wait_for_notifications`, a queue of their own, and a self-pipe to wake the loop — which is this descriptor, rebuilt by hand on top of the thread and queue this connection already has.  Do not read from it: readability is the signal and the byte is this connection's to consume. Drain with `take_notifications`, which clears it. A broken stream makes it readable too, so a poller learns of the failure rather than waiting for an answer that cannot come.  Valid until the connection is destroyed or moved from; `-1` if the pipe could not be created.
+
+```cpp
+expected<void, ProtocolError> set_pane_output(std::string_view pane, bool deliver, std::chrono::steady_clock::time_point deadline);
+```
+Stop or resume `%output` for one pane, on a connection that asked for it.  The direction is not symmetrical, because tmux is not: a connection that started without `pane_output` cannot be made to listen to anything, and muting is the only per-pane control it offers. So this narrows what a listening connection receives; it cannot widen a silent one.  `resume` on a pane that tmux paused also clears the pause, and tmux moves that pane's offset to the current end — so whatever was produced while it was paused or muted is not delivered afterwards.
+
+```cpp
+[[nodiscard]] NotificationRange events(std::chrono::steady_clock::time_point deadline);
+```
+Everything tmux says until the deadline, as one loop rather than two.  Borrows this connection, which must outlive it.
 
 ```cpp
 [[nodiscard]] std::size_t dropped_notifications() const noexcept;

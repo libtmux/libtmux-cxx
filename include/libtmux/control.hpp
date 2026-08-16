@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <span>
@@ -205,6 +206,67 @@ struct ConnectionOptions {
   std::optional<std::chrono::seconds> pause_after{};
 };
 
+class Connection;
+
+// Everything tmux says, until the deadline, as one loop.
+//
+// Draining by hand is two nested loops and a break: ask for a batch, stop if
+// it is empty, walk it, ask again. That shape was written six times across
+// this repository's own tests and examples before this existed, which is the
+// argument for it.
+//
+// An input range, single pass. A `ParsedNotification` views the notification
+// it was read from, and this owns that notification only until the iterator
+// advances — so copy what you need out of one before asking for the next.
+class NotificationRange final {
+public:
+  class iterator final {
+  public:
+    using difference_type = std::ptrdiff_t;
+    using value_type = ParsedNotification;
+    using iterator_concept = std::input_iterator_tag;
+
+    iterator() = default;
+    explicit iterator(NotificationRange* range) : range_{range} { advance(); }
+
+    [[nodiscard]] const ParsedNotification& operator*() const noexcept {
+      return current_;
+    }
+    iterator& operator++() {
+      advance();
+      return *this;
+    }
+    void operator++(int) { advance(); }
+
+    [[nodiscard]] bool operator==(std::default_sentinel_t) const noexcept {
+      return range_ == nullptr;
+    }
+
+  private:
+    void advance();
+
+    NotificationRange* range_{nullptr};
+    ParsedNotification current_{};
+  };
+
+  NotificationRange(Connection& connection,
+                    std::chrono::steady_clock::time_point deadline) noexcept
+      : connection_{&connection}, deadline_{deadline} {}
+
+  [[nodiscard]] iterator begin() { return iterator{this}; }
+  [[nodiscard]] std::default_sentinel_t end() const noexcept { return {}; }
+
+private:
+  friend class iterator;
+  // The next notification, or nothing once the deadline has passed with none.
+  [[nodiscard]] const Notification* next();
+
+  Connection* connection_{nullptr};
+  std::chrono::steady_clock::time_point deadline_{};
+  std::vector<Notification> batch_{};
+  std::size_t index_{0};
+};
+
 class Connection final {
 public:
   static expected<Connection, ProtocolError> connect(ConnectionOptions options);
@@ -249,6 +311,26 @@ public:
   // Valid until the connection is destroyed or moved from; `-1` if the pipe
   // could not be created.
   [[nodiscard]] int notification_fd() const noexcept;
+
+  // Stop or resume `%output` for one pane, on a connection that asked for it.
+  //
+  // The direction is not symmetrical, because tmux is not: a connection that
+  // started without `pane_output` cannot be made to listen to anything, and
+  // muting is the only per-pane control it offers. So this narrows what a
+  // listening connection receives; it cannot widen a silent one.
+  //
+  // `resume` on a pane that tmux paused also clears the pause, and tmux moves
+  // that pane's offset to the current end — so whatever was produced while it
+  // was paused or muted is not delivered afterwards.
+  expected<void, ProtocolError>
+  set_pane_output(std::string_view pane, bool deliver,
+                  std::chrono::steady_clock::time_point deadline);
+
+  // Everything tmux says until the deadline, as one loop rather than two.
+  //
+  // Borrows this connection, which must outlive it.
+  [[nodiscard]] NotificationRange
+  events(std::chrono::steady_clock::time_point deadline);
 
   [[nodiscard]] std::size_t dropped_notifications() const noexcept;
   [[nodiscard]] std::int64_t native_child_pid() const noexcept;
