@@ -30,9 +30,17 @@ runtime.
 | `capture_pane` | `target` | The visible contents of that pane |
 | `send_text` | `target`, `text` | The pane id written to; the text is typed literally, interpreting no key names |
 | `new_window` | `session`, `name` | The new window's id |
+| `send_keys` | `target`, `keys` | The pane id; presses named keys such as `Enter` and `C-c`, checking every name before sending any |
+| `wait_for_text` | `target`, `text`, `timeout_ms?` | The pane contents once the text appears, or a report that it did not |
+| `search_panes` | `text` | One matching pane id per line with the line it matched, or nothing |
 
 Each tool is one library call. A model cannot compose a tmux command that the
 [typed surface](../../include/libtmux/) would not have allowed.
+
+The three at the bottom are what let a model do more than look: press a key,
+wait for something to finish rather than capturing repeatedly and guessing,
+and find which pane is showing something. `send_text` types characters and
+`send_keys` presses keys — a model that wants `C-c` needs the second.
 
 Every argument carries a description in `tools/list`, saying what it accepts
 and showing one — `target` takes a pane id such as `%1`, or anything tmux
