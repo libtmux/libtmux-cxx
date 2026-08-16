@@ -1,3 +1,4 @@
+#include "libtmux/testing/environment_guard.hpp"
 #include "libtmux/testing/scoped_server.hpp"
 
 #include <gtest/gtest.h>
@@ -88,6 +89,43 @@ TEST(ScopedTmuxServer, StartsByNameAndExposesResolvedPath) {
   EXPECT_EQ(prefix[1], "-S");
   EXPECT_EQ(prefix[2], server->socket_path().string());
   EXPECT_TRUE(server->is_alive());
+}
+
+// macOS gives `$TMPDIR` a path around fifty bytes long and `sun_path` only
+// 104, so what the fixture adds on top of it is a budget, not a detail. This
+// pins the headroom on a platform with room to spare: a name carrying the
+// namespace once cost ten bytes here and failed there, with tmux reporting
+// only "File name too long".
+TEST(ScopedTmuxServer, StartsUnderATemporaryDirectoryAsLongAsMacOsGives) {
+  // What macOS effectively hands the fixture. `$TMPDIR` there is
+  // `/var/folders/<two>/<24>/T/`, and `create_private_tree` canonicalises it,
+  // which resolves `/var` to `/private/var` and adds eight more bytes. Against
+  // a 104-byte `sun_path` that leaves the fixture about forty, and the socket
+  // name is spent from it.
+  //
+  // Chosen so this bites on Linux too, where `sun_path` is 108: the name the
+  // namespace once supplied was ten bytes longer than "server", and at this
+  // length that difference is the difference between starting and not.
+  constexpr std::size_t macos_temporary_length = 62U;
+  const auto root = std::filesystem::temp_directory_path();
+  ASSERT_LT(root.native().size() + 1U, macos_temporary_length) << root;
+  const auto tree =
+      root / std::string(macos_temporary_length - root.native().size() - 1U, 'd');
+  ASSERT_EQ(tree.native().size(), macos_temporary_length) << tree;
+
+  std::error_code created;
+  std::filesystem::create_directories(tree, created);
+  ASSERT_FALSE(created) << created.message();
+
+  const libtmux::test::EnvironmentGuard temporary{"TMPDIR", tree.native()};
+  auto server =
+      libtmux::test::ScopedTmuxServer::start({.mode = libtmux::test::SocketMode::Name});
+  const bool started = server.has_value();
+  const std::string why = started ? std::string{} : server.error();
+
+  std::error_code removed;
+  std::filesystem::remove_all(tree, removed);
+  ASSERT_TRUE(started) << why;
 }
 
 TEST(ScopedTmuxServer, StartsEightServersConcurrentlyWithoutSocketCollisions) {
