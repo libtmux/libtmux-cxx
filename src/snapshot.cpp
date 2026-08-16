@@ -10,7 +10,7 @@
 LIBTMUX_NAMESPACE_BEGIN
 
 Snapshot::Snapshot(std::shared_ptr<const detail::Backend> backend,
-                   std::vector<std::string_view> fields, std::string output)
+                   std::vector<std::string> fields, std::string output)
     : backend_{std::move(backend)}, fields_{std::move(fields)},
       output_{std::move(output)} {}
 
@@ -37,7 +37,7 @@ Snapshot::take(std::shared_ptr<const detail::Backend> backend,
   }
 
   std::shared_ptr<Snapshot> snapshot{new Snapshot{
-      std::move(backend), std::vector<std::string_view>{fields.begin(), fields.end()},
+      std::move(backend), std::vector<std::string>{fields.begin(), fields.end()},
       *std::move(output)}};
   if (!snapshot->parse()) {
     return unexpected(
@@ -52,7 +52,7 @@ Snapshot::take(std::shared_ptr<const detail::Backend> backend,
 std::shared_ptr<const Snapshot>
 Snapshot::from_recording(std::span<const std::string_view> fields, std::string output) {
   std::shared_ptr<Snapshot> snapshot{
-      new Snapshot{nullptr, std::vector<std::string_view>{fields.begin(), fields.end()},
+      new Snapshot{nullptr, std::vector<std::string>{fields.begin(), fields.end()},
                    std::move(output)}};
   if (!snapshot->parse()) {
     return nullptr;
@@ -71,6 +71,12 @@ std::size_t Snapshot::index_of(std::string_view field) const noexcept {
 
 // Parse every line, keeping no partial rows when any line does not match the
 // requested field count.
+//
+// Splitting comes before decoding, and has to: an escaped separator decodes
+// into a real one, so a buffer decoded first would split at delimiters that
+// were never delimiters. Decoding then happens in place, over the bytes each
+// value already occupies, so the rows stay views into this snapshot's storage
+// and a listing still costs one allocation.
 bool Snapshot::parse() {
   rows_.clear();
   std::vector<std::string_view> values;
@@ -83,6 +89,10 @@ bool Snapshot::parse() {
       if (!split_row(line, fields_.size(), values)) {
         rows_.clear();
         return false;
+      }
+      for (std::string_view& value : values) {
+        char* const begin = output_.data() + (value.data() - output_.data());
+        value = std::string_view{begin, decode_value(begin, value.size())};
       }
       rows_.push_back(values);
     }

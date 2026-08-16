@@ -39,18 +39,84 @@ class Backend;
 // splits at all.
 inline constexpr std::string_view kFormatSeparator = "␞";
 
+// A separator absent from every format *name* is not absent from every format
+// *value*, which is the whole difficulty. `tmux rename-window 'a␞b'` is
+// accepted, and one such name used to make every window and pane listing on
+// that server fail to split — data the caller never chose breaking reads of
+// everything else.
+//
+// So tmux escapes the separator before it can be mistaken for one. U+241B pairs
+// with it and is escaped in turn, which is what makes the transform reversible:
+// `␛S` is a separator that was in the value and `␛E` is an escape marker that
+// was, and neither has a second reading.
+inline constexpr std::string_view kFormatEscape = "␛";
+
 // Build the format argument for one entity's fields, terminating every field so
 // a trailing empty value is still a value rather than a missing column.
+//
+// The two substitutions nest rather than run in sequence, because tmux applies
+// the inner one to the raw value and the outer one to its result. In that order
+// a value already holding the escape marker is neutralised before the separator
+// pass can produce one; reversed, the two become indistinguishable.
+//
+// `#{s/…/…/:…}` predates every tmux this library supports, and neither
+// character is a regular-expression metacharacter.
+//
+// Unconditional, rather than applied only to the fields that could carry a
+// separator. Expanding the substitutions costs about 0.32us per row — a 61-row
+// listing pays 19us, against a process launch of some milliseconds — and a
+// per-field exemption list is a thing to get wrong later, once, silently.
 [[nodiscard]] inline std::string
 format_request(std::span<const std::string_view> fields) {
   std::string request;
   for (const std::string_view field : fields) {
-    request += "#{";
+    request += "#{s/";
+    request += kFormatSeparator;
+    request += '/';
+    request += kFormatEscape;
+    request += "S/:#{s/";
+    request += kFormatEscape;
+    request += '/';
+    request += kFormatEscape;
+    request += "E/:";
     request += field;
-    request += '}';
+    request += "}}";
     request += kFormatSeparator;
   }
   return request;
+}
+
+// Undo that escaping, in place.
+//
+// Escaping only ever lengthens, so the decoded bytes fit where the encoded ones
+// were: the write cursor never overtakes the read cursor, nothing moves, and
+// nothing is allocated. Answers the decoded length.
+//
+// An escape marker followed by anything else is left as written. Output this
+// library asked for contains no such sequence, and failing on one would mean a
+// recording could not carry a literal `␛`.
+[[nodiscard]] inline std::size_t decode_value(char* begin, std::size_t size) noexcept {
+  const std::string_view escape = kFormatEscape;
+  std::size_t read = 0;
+  std::size_t write = 0;
+  while (read < size) {
+    const bool marked =
+        size - read > escape.size() &&
+        std::string_view{begin + read, escape.size()} == escape;
+    const char tag = marked ? begin[read + escape.size()] : '\0';
+    const std::string_view decoded = tag == 'S'   ? kFormatSeparator
+                                     : tag == 'E' ? kFormatEscape
+                                                  : std::string_view{};
+    if (decoded.empty()) {
+      begin[write++] = begin[read++];
+      continue;
+    }
+    for (const char byte : decoded) {
+      begin[write++] = byte;
+    }
+    read += escape.size() + 1U;
+  }
+  return write;
 }
 
 // Split one tmux output line into its field values.
@@ -116,12 +182,17 @@ public:
 
 private:
   Snapshot(std::shared_ptr<const detail::Backend> backend,
-           std::vector<std::string_view> fields, std::string output);
+           std::vector<std::string> fields, std::string output);
 
   [[nodiscard]] bool parse();
 
   std::shared_ptr<const detail::Backend> backend_;
-  std::vector<std::string_view> fields_;
+  // Owned, not viewed. The entity field arrays outlive everything, but
+  // `from_recording` is public and takes whatever a caller passes: a snapshot
+  // that outlived the names it was built from would report field indices
+  // against freed memory. Every tmux format name is short enough to sit in the
+  // string itself, so owning them allocates nothing.
+  std::vector<std::string> fields_;
   std::string output_;
   std::vector<std::vector<std::string_view>> rows_;
 };

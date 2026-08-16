@@ -153,6 +153,19 @@ gtest_discover_tests(
   TEST_PREFIX libtmux.window.linking.
   PROPERTIES LABELS real-tmux TIMEOUT 60)
 
+add_executable(libtmux_snapshot_framing_test integration/snapshot_framing_test.cpp)
+target_link_libraries(
+  libtmux_snapshot_framing_test
+  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+          libtmux_test_support)
+target_compile_options(
+  libtmux_snapshot_framing_test PRIVATE -fno-sanitize-recover=undefined)
+
+gtest_discover_tests(
+  libtmux_snapshot_framing_test
+  TEST_PREFIX libtmux.snapshot.framing.
+  PROPERTIES LABELS real-tmux TIMEOUT 60)
+
 add_executable(libtmux_server_identity_test integration/server_identity_test.cpp)
 target_link_libraries(
   libtmux_server_identity_test
