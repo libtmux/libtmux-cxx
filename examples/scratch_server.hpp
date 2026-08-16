@@ -1,22 +1,13 @@
 #pragma once
 
-// Where these examples get a tmux to talk to.
+// Where these examples get a tmux to talk to: a private server of their own,
+// killed on the way out, never the one the reader is sitting in.
 //
-// Always a server of their own, on a socket under a directory named for this
-// workspace, killed on the way out. Never the server the reader is sitting in:
-// an example creates and renames and kills things, and doing that to somebody's
-// real session because they happened to run it from inside tmux is not a
-// trade worth making for a slightly more realistic demonstration.
+// `libtmux::testing` does the work. An example that hand-rolled a private
+// server would be teaching a reader to reinvent what the package ships.
 //
-// This used to be sixty lines of `mkdtemp` and socket bookkeeping copied out
-// of the test suite. It is now four lines over `libtmux::testing`, the same
-// fixture the suite runs on — which is the honest demonstration anyway: an
-// example that showed a reader how to hand-roll a private server would be
-// teaching them to reinvent something the package ships.
-//
-// `Server::from_env()` — the call that does reach the surrounding server — is
-// deliberately not used here. It has no example: reaching outward is the one
-// thing these programs must not do.
+// `Server::from_env()` is deliberately absent — reaching the surrounding
+// server is what these programs must not do.
 
 #include <cstdio>
 #include <cstdlib>
@@ -31,10 +22,8 @@ namespace example {
 
 class ScratchServer {
 public:
-  // `suite` names the run in every socket path and stray directory it leaves.
-  // The examples' own test harness overrides it through the environment so a
-  // server started by a test is distinguishable from one a reader started by
-  // running the example directly.
+  // `LIBTMUX_EXAMPLE_NAMESPACE` overrides `suite`, so the examples' own test
+  // harness can label the servers a test run leaves behind.
   static ScratchServer open(std::string_view suite = "example") {
     const char* const named = std::getenv("LIBTMUX_EXAMPLE_NAMESPACE");
     auto fixture = libtmux::test::ScopedTmuxServer::start({
@@ -66,8 +55,8 @@ private:
   ScratchServer(libtmux::test::ScopedTmuxServer fixture, libtmux::Server server)
       : fixture_{std::move(fixture)}, server_{std::move(server)} {}
 
-  // Declared first, destroyed last: the server handle must not outlive the
-  // tmux it addresses.
+  // Declared first, so it is destroyed last: the handle must not outlive the
+  // server it addresses.
   libtmux::test::ScopedTmuxServer fixture_;
   libtmux::Server server_;
 };

@@ -111,9 +111,8 @@ run_command(const std::filesystem::path& executable, std::vector<std::string> ar
                        .stderr_text = child->stderr_text()};
 }
 
-// A namespace label reaches a socket path and a `tmux -L` name, so it is not
-// free-form. Anything outside this set either needs quoting somewhere down the
-// line or makes a directory nobody can name at a shell.
+// The label reaches a socket path and a `tmux -L` name, so it is not
+// free-form.
 libtmux::expected<void, std::string> check_namespace(std::string_view label) {
   if (label.empty()) {
     return libtmux::unexpected("socket namespace must not be empty");
@@ -356,19 +355,13 @@ ScopedTmuxServer::start(ScopedTmuxServerOptions options) {
     detail::erase_environment(state->environment, name);
   }
 
-  // In both modes, not just the one that needs it. A child this fixture hands
-  // its environment to — an example program, a consumer's own binary — may
-  // reach tmux by no selector at all, and the honest answer to "the default
-  // server" for such a child is the one inside this tree, never the developer's.
+  // Set in both modes: a child given this environment may address tmux with no
+  // selector at all, and must still land inside this tree.
   detail::set_environment(state->environment, "TMUX_TMPDIR",
                           state->private_tree.string());
 
   std::vector<std::string> server_arguments{"-D", "-u", "-f", "/dev/null"};
   if (state->mode == SocketMode::Name) {
-    // `tmux -L` resolves under `$TMUX_TMPDIR`, which is already this fixture's
-    // private tree — so the name need not be unique to be safe. It carries the
-    // namespace anyway: `tmux -L` is what a person types when they go looking
-    // for a server a test left behind, and "server" tells them nothing.
     state->socket_name = state->options.socket_namespace.label;
     server_arguments.insert(server_arguments.end(), {"-L", state->socket_name});
   } else {
@@ -561,9 +554,6 @@ std::vector<std::string> ScopedTmuxServer::child_environment() const {
   if (!state_) {
     return {};
   }
-  // The fixture's own environment already has `TMUX_TMPDIR` set and
-  // `TMUX`/`TMUX_PANE` erased — the child needs exactly that, so hand it over
-  // rather than rebuilding it and risking the two drifting apart.
   return state_->environment;
 }
 

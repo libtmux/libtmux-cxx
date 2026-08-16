@@ -1,23 +1,14 @@
 // The examples, tested the only way a program can be: by running it.
 //
-// This suite is a consumer. It links `libtmux::testing` out of the installed
-// package exactly as a third party would, and knows nothing about this
-// repository's build tree — no private headers, no `tests/support`, no
-// compile definitions carrying answers the build already worked out. If it
-// passes, an outside project can test its own tmux code the same way.
+// A consumer of the installed package — `libtmux::testing` and nothing from
+// this repository's build tree. Three assertions per example: it exits zero,
+// its output still says what the prose around it claims, and it leaves no
+// tmux server and no directory behind.
 //
-// Three things are asserted per example, and the third is the one no existing
-// test covered:
-//
-//   1. it exits zero;
-//   2. its output still contains what the prose around it claims;
-//   3. it leaves no tmux server and no directory behind.
-//
-// (3) works because every example gets its private tree from the same fixture
-// this harness uses, and a fixture tree lives under `$TMPDIR`. Point `TMPDIR`
-// at a directory this harness owns and an example's server has nowhere else to
-// go — so after it exits, that directory is either empty or the example
-// leaked, and there is no third possibility.
+// The last one works because an example takes its private tree from the same
+// fixture this harness uses, and a fixture tree lives under `$TMPDIR`. Point
+// `TMPDIR` at a directory the harness owns and the example's server has
+// nowhere else to go, so afterwards that directory is empty or it leaked.
 
 #include <chrono>
 #include <filesystem>
@@ -27,7 +18,6 @@
 
 #include <gtest/gtest.h>
 
-#include <libtmux/testing/environment_guard.hpp>
 #include <libtmux/testing/scoped_server.hpp>
 #include <libtmux/testing/tmux_version.hpp>
 
@@ -39,8 +29,6 @@ using libtmux::test::ScopedTmuxServer;
 using libtmux::test::ScopedTmuxServerOptions;
 using libtmux::test::SocketNamespace;
 
-// Where the built example programs are. The build passes it rather than this
-// guessing: an installed-package consumer has no layout convention to rely on.
 std::filesystem::path example_binary(std::string_view name) {
   return std::filesystem::path{LIBTMUX_EXAMPLE_BINARY_DIR} /
          ("libtmux_example_" + std::string{name});
@@ -54,10 +42,8 @@ struct ExampleRun {
 
 // Run one example inside a tree this harness owns, and report what it left.
 ExampleRun run_example(std::string_view name, std::string_view suite) {
-  // The harness's own server. The example does not use it — it starts its own —
-  // but starting one here is what creates the private tree, and pointing
-  // `TMPDIR` inside it is what makes the example's tree land where this can
-  // see it.
+  // Started for its private tree, not to be used: pointing `TMPDIR` inside it
+  // is what makes the example's own tree land where this can inspect it.
   auto harness = ScopedTmuxServer::start(ScopedTmuxServerOptions{
       .session_name = "example_harness",
       .socket_namespace = SocketNamespace::consumer("examples")});
@@ -110,26 +96,18 @@ INSTANTIATE_TEST_SUITE_P(All, Example,
                                          "04_errors", "05_readme"),
                          [](const auto& info) { return std::string{info.param}; });
 
-// The tour prints what it found. If it stops naming the session it made, the
-// example still exits zero and still proves nothing.
 TEST(TourOutput, NamesTheSessionItCreated) {
   const auto run = run_example("01_tour", "examples");
   ASSERT_EQ(run.exit_code, 0) << run.output;
   EXPECT_NE(run.output.find("example"), std::string::npos) << run.output;
 }
 
-// A consumer of the package can ask which tmux it is talking to without this
-// repository's configure-time stamp — that is the whole point of resolving it
-// at runtime.
 TEST(Package, ReportsTheRunningTmuxToAConsumer) {
   const auto described = libtmux::test::describe_running_tmux();
   EXPECT_NE(described, "unknown");
   EXPECT_EQ(described.rfind("tmux ", 0), 0U) << described;
 }
 
-// Two fixtures asked for at once must not land on one server. This is the
-// property the whole namespace scheme exists to provide, and it is asserted
-// here — from outside the package — rather than only in its own suite.
 TEST(Package, NamespacedServersDoNotCollide) {
   auto mine = ScopedTmuxServer::start(
       ScopedTmuxServerOptions{.socket_namespace = SocketNamespace::consumer("alpha")});

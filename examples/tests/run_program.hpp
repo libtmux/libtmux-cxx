@@ -2,17 +2,9 @@
 
 // Run a program, capture what it said, and report how it ended.
 //
-// Deliberately this suite's own, and deliberately small. `libtmux::testing`
-// has a far better process supervisor inside it — pidfd reaping, descriptor
-// accounting, interposed-syscall failure injection — and does not export it,
-// because a tmux fixture is not a subprocess library and should not become
-// one by accident.
-//
-// So there is duplication here, and it is the right kind: forty lines a
-// consumer can read, versus a public API this project would then owe
-// compatibility to forever. This is exactly what an outside project testing
-// its own tmux code would have to write, which makes writing it here part of
-// what is being tested.
+// `libtmux::testing` has a better process supervisor — pidfd reaping,
+// descriptor accounting, interposed-syscall failure injection — and does not
+// export it. This is the duplication that costs.
 
 #include <array>
 #include <cerrno>

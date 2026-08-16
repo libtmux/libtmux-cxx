@@ -17,10 +17,7 @@ import sys
 import typing as t
 
 HEADER_ORDER = [
-    # First, because it is what a reader includes first. Its absence from this
-    # list is what the completeness check in `render` found the moment it
-    # existed: the one header everybody uses had never been in the reference.
-    "libtmux.hpp",
+    "libtmux.hpp",  # first, because it is what a reader includes first
     "server.hpp",
     "entities.hpp",
     "snapshot.hpp",
@@ -45,10 +42,6 @@ HEADER_ORDER = [
     "abi.hpp",
 ]
 
-# `libtmux::testing` gets a page of its own rather than a section at the end of
-# the library's. A reference is read by someone deciding what to call, and the
-# first thing they should meet is the library — not the scaffolding for testing
-# against it, which is a separate target they have to ask for by name.
 TESTING_HEADER_ORDER = [
     "scoped_server.hpp",
     "capabilities.hpp",
@@ -229,11 +222,8 @@ def read_header(path: pathlib.Path) -> tuple[list[str], dict[str, list[Entry]]]:
 
 def render(root: pathlib.Path, page: Page) -> str:
     """Render one page's headers, and refuse to leave any of them out."""
-    # The order list decides order, not membership. It used to decide both, by
-    # skipping anything it did not name — so a new public header was absent
-    # from the reference and `--check` stayed green, which is the one thing a
-    # documentation gate must never do. Membership now comes from the
-    # directory, and a header nobody has placed is an error naming itself.
+    # Membership comes from the directory; the order list only orders. A
+    # header it does not name is an error, not a silent omission.
     present = {path.name for path in root.glob("*.hpp")}
     unplaced = sorted(present - set(page.headers))
     if unplaced:
