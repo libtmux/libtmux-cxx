@@ -362,7 +362,12 @@ ScopedTmuxServer::start(ScopedTmuxServerOptions options) {
 
   std::vector<std::string> server_arguments{"-D", "-u", "-f", "/dev/null"};
   if (state->mode == SocketMode::Name) {
-    state->socket_name = state->options.socket_namespace.label;
+    // Short, and not the namespace. `tmux -L` resolves under `$TMUX_TMPDIR`,
+    // which is already the namespaced private tree, so a namespaced name adds
+    // no isolation — and it adds its length to a path that must fit in
+    // `sockaddr_un::sun_path`, 104 bytes on macOS, where `$TMPDIR` alone is
+    // around fifty.
+    state->socket_name = "server";
     server_arguments.insert(server_arguments.end(), {"-L", state->socket_name});
   } else {
     state->socket_path = state->private_tree / "socket";

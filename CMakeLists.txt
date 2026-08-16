@@ -45,11 +45,16 @@ option(LIBTMUX_BUILD_EXAMPLES "Build and run the examples"
        ${PROJECT_IS_TOP_LEVEL})
 # `libtmux::testing` — the private-tmux-server fixture, installed alongside
 # the library so a consumer's own suite can use it instead of reinventing it.
-# On whenever tests are, because they run on it; separately switchable so an
-# install can ship it without building this project's suite, or omit it from
+# On whenever the tests or the examples are, because both run on it; separately
+# switchable so an install can ship it without building either, or omit it from
 # a distribution package that has no business carrying test scaffolding.
+if(LIBTMUX_BUILD_TESTS OR LIBTMUX_BUILD_EXAMPLES)
+  set(LIBTMUX_TESTING_LIBRARY_DEFAULT ON)
+else()
+  set(LIBTMUX_TESTING_LIBRARY_DEFAULT OFF)
+endif()
 option(LIBTMUX_BUILD_TESTING_LIBRARY "Build and install libtmux::testing"
-       ${LIBTMUX_BUILD_TESTS})
+       ${LIBTMUX_TESTING_LIBRARY_DEFAULT})
 # Off by default: the fuzzer runtime this toolchain ships is built against a
 # different standard library from the one the presets select, so the fuzzers
 # get their own configuration rather than constraining every other build.
@@ -88,13 +93,15 @@ if(LIBTMUX_BUILD_TESTING_LIBRARY)
   add_subdirectory(src/testing)
 endif()
 
+if((LIBTMUX_BUILD_TESTS OR LIBTMUX_BUILD_EXAMPLES) AND NOT TARGET libtmux::testing)
+  message(
+    FATAL_ERROR
+      "LIBTMUX_BUILD_TESTS and LIBTMUX_BUILD_EXAMPLES both need "
+      "LIBTMUX_BUILD_TESTING_LIBRARY: the suite and every example take their "
+      "private tmux server from the fixture the package ships")
+endif()
+
 if(LIBTMUX_BUILD_TESTS)
-  if(NOT TARGET libtmux::testing)
-    message(
-      FATAL_ERROR
-        "LIBTMUX_BUILD_TESTS needs LIBTMUX_BUILD_TESTING_LIBRARY: the suite "
-        "runs on the same fixture the package ships")
-  endif()
   include(cmake/GoogleTest.cmake)
   libtmux_resolve_googletest()
   add_subdirectory(examples/workspace)
