@@ -14,12 +14,20 @@ bugs in whichever one noticed first.
 So every tmux this workspace starts gets a socket of its own, under a
 directory named for the workspace:
 
-- **Tests** already do this. `ScopedTmuxServer` makes a private tree with
-  `mkdtemp` at `$TMPDIR/libtmux-cxx-test-XXXXXX`, points `TMUX_TMPDIR`
-  inside it, and addresses the server with `-L server` or `-S <tree>/socket`
-  under that tree. It erases `TMUX` and `TMUX_PANE` from the child
-  environment so a suite run from inside tmux cannot reach the outer server.
-  Use the fixture; do not start tmux another way in a test.
+- **Tests** already do this. `ScopedTmuxServer`, in
+  `include/libtmux/testing/scoped_server.hpp`, makes a private tree with
+  `mkdtemp` at `$TMPDIR/<namespace>-XXXXXX`, points `TMUX_TMPDIR` inside it,
+  and addresses the server with `-L <namespace>` or `-S <tree>/socket` under
+  that tree. It erases `TMUX` and `TMUX_PANE` from the child environment so a
+  suite run from inside tmux cannot reach the outer server. Use the fixture;
+  do not start tmux another way in a test.
+
+  It is shipped, as `libtmux::testing` — a separate target behind
+  `find_package(libtmux COMPONENTS testing)`, so the examples' own suite and
+  any outside consumer run on the same one rather than reinventing it. That
+  makes the namespace load-bearing rather than cosmetic: pass
+  `SocketNamespace::consumer("your-suite")` so a stray directory names who
+  left it.
 - **Spikes and one-off probes** must do the same by hand:
 
 ```console

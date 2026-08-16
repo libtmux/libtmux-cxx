@@ -82,9 +82,25 @@ answers. [`tests/compile/`](../../tests/compile/) proves each refusal stays one.
 namespaces, so linking an object from one against a library built the other way
 fails at the link step instead of corrupting memory at run time.
 
+## Testing against it
+
+[`testing/`](testing/) is not part of the library. It is `libtmux::testing`, a
+separate target carrying the private-tmux-server fixture this project's own
+suite runs on, so a consumer's suite can run on it too:
+
+```cmake
+find_package(libtmux REQUIRED COMPONENTS testing)
+```
+
+Asking is the only way to get it — `find_package(libtmux)` alone leaves the
+target undefined, so a program that would link a test archive by accident
+fails at configure time instead of shipping one.
+
 ## Related
 
 - [The library](../../README.md) — installing it, and what using it looks like
 - [`docs/api.md`](../../docs/api.md) — the generated reference
+- [`docs/api-testing.md`](../../docs/api-testing.md) — the same for
+  `libtmux::testing`
 - [`src/`](../../src/README.md) — what implements this, and may change freely
 - [`tests/`](../../tests/README.md) — where each promise above is pinned

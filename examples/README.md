@@ -1,8 +1,10 @@
 # Examples
 
-Programs that read top to bottom, plus two larger consumers. Every one of them
-runs against a real tmux server of its own and is executed as a test on every
-build — so nothing here can quietly stop compiling or stop being true.
+Programs that read top to bottom, plus two larger consumers. The five numbered
+ones each run against a real tmux server of their own and are executed as tests
+on every build — so nothing here can quietly stop compiling or stop being true.
+[`consume/`](consume/README.md) is the exception, and deliberately never
+contacts tmux; CI builds and runs it against a real install.
 
 ```console
 $ cmake --build --preset cxx-dev --target libtmux_example_01_tour
@@ -20,8 +22,22 @@ $ ctest --preset cxx-dev -R example
 
 Each starts a private server through
 [`scratch_server.hpp`](scratch_server.hpp) and kills it on the way out, so
-running one never touches a tmux you are using. That header is worth reading
-first if you plan to write tests of your own.
+running one never touches a tmux you are using. That header is four lines over
+`libtmux::testing`, the same fixture the library's own suite runs on — if you
+plan to write tests of your own, that is the thing to read, and
+[`tests/`](tests/README.md) here is a worked example of using it from outside
+the package.
+
+These also build as their own project, against an install rather than this
+build tree:
+
+```console
+$ cmake -S examples -B build/examples -DCMAKE_PREFIX_PATH="$PWD/build/prefix"
+```
+
+That is the only way to prove an example compiles against what a reader would
+actually install, rather than against a build tree with this repository's
+include paths and warning flags leaking into it.
 
 ## The short ones
 
