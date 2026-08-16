@@ -432,6 +432,9 @@ jobs:
         run: |
           python3 tools/docs/api_index.py \
             --include include/libtmux --output docs/api.md --check
+          python3 tools/docs/api_index.py \
+            --include include/libtmux/testing --output docs/api-testing.md \
+            --page testing --check
 
       # The README's C++ is quoted from an example that is compiled and run.
       # This is the half that checks the quoting; the example lane checks that

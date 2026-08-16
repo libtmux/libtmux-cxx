@@ -17,6 +17,10 @@ import sys
 import typing as t
 
 HEADER_ORDER = [
+    # First, because it is what a reader includes first. Its absence from this
+    # list is what the completeness check in `render` found the moment it
+    # existed: the one header everybody uses had never been in the reference.
+    "libtmux.hpp",
     "server.hpp",
     "entities.hpp",
     "snapshot.hpp",
@@ -40,6 +44,54 @@ HEADER_ORDER = [
     "expected.hpp",
     "abi.hpp",
 ]
+
+# `libtmux::testing` gets a page of its own rather than a section at the end of
+# the library's. A reference is read by someone deciding what to call, and the
+# first thing they should meet is the library — not the scaffolding for testing
+# against it, which is a separate target they have to ask for by name.
+TESTING_HEADER_ORDER = [
+    "scoped_server.hpp",
+    "capabilities.hpp",
+    "tmux_version.hpp",
+    "environment_guard.hpp",
+]
+
+
+class Page(t.NamedTuple):
+    """One generated reference page and the headers it covers."""
+
+    title: str
+    preamble: list[str]
+    headers: list[str]
+    include_prefix: str
+    order_name: str
+    output: str
+
+
+PAGES = {
+    "library": Page(
+        title="API reference",
+        preamble=[],
+        headers=HEADER_ORDER,
+        include_prefix="libtmux/",
+        order_name="HEADER_ORDER",
+        output="docs/api.md",
+    ),
+    "testing": Page(
+        title="Testing API reference",
+        preamble=[
+            "`libtmux::testing` — the private-tmux-server fixture this project's own",
+            "suite runs on, shipped so a consumer's suite can run on it too. Ask for",
+            "it with `find_package(libtmux COMPONENTS testing)`; it is not part of",
+            "the library, and a program that only uses libtmux links none of it.",
+            "",
+        ],
+        headers=TESTING_HEADER_ORDER,
+        include_prefix="libtmux/testing/",
+        order_name="TESTING_HEADER_ORDER",
+        output="docs/api-testing.md",
+    ),
+}
 
 DECLARATION = re.compile(
     r"^\s*(?:\[\[nodiscard\]\]\s*)?"
@@ -175,21 +227,38 @@ def read_header(path: pathlib.Path) -> tuple[list[str], dict[str, list[Entry]]]:
     return overview, grouped
 
 
-def render(root: pathlib.Path) -> str:
-    """Render every public header into one page."""
+def render(root: pathlib.Path, page: Page) -> str:
+    """Render one page's headers, and refuse to leave any of them out."""
+    # The order list decides order, not membership. It used to decide both, by
+    # skipping anything it did not name — so a new public header was absent
+    # from the reference and `--check` stayed green, which is the one thing a
+    # documentation gate must never do. Membership now comes from the
+    # directory, and a header nobody has placed is an error naming itself.
+    present = {path.name for path in root.glob("*.hpp")}
+    unplaced = sorted(present - set(page.headers))
+    if unplaced:
+        listed = ", ".join(unplaced)
+        msg = (
+            f"{root} has public headers missing from {page.order_name} in "
+            f"tools/docs/api_index.py: {listed}. Add them where they should "
+            f"read, then regenerate {page.output}."
+        )
+        raise SystemExit(msg)
+
     out: list[str] = [
-        "# API reference",
+        f"# {page.title}",
         "",
+        *page.preamble,
         "Generated from the headers by `tools/docs/api_index.py`; the prose here",
         "is the prose there. Run it with `--check` to prove this page is current.",
         "",
     ]
-    for name in HEADER_ORDER:
+    for name in page.headers:
         path = root / name
         if not path.exists():
             continue
         overview, grouped = read_header(path)
-        out.append(f"## `libtmux/{name}`")
+        out.append(f"## `{page.include_prefix}{name}`")
         out.append("")
         if overview:
             out.extend([" ".join(overview).strip(), ""])
@@ -215,10 +284,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--include", type=pathlib.Path, required=True)
     parser.add_argument("--output", type=pathlib.Path, required=True)
+    parser.add_argument("--page", choices=sorted(PAGES), default="library")
     parser.add_argument("--check", action="store_true")
     arguments = parser.parse_args()
 
-    rendered = render(arguments.include)
+    rendered = render(arguments.include, PAGES[arguments.page])
     if arguments.check:
         current = (
             arguments.output.read_text(encoding="utf-8")
