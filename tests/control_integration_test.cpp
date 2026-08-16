@@ -315,6 +315,62 @@ TEST(ControlModeConnection, WaitForNotificationsReturnsEmptyOnlyAtItsDeadline) {
   EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
 }
 
+// Pane output arrives only when the connection asked for it at connect time.
+//
+// Both halves matter and neither is obvious. A connection that did not ask
+// cannot be made to listen — tmux ignores `refresh-client -A "%N:on"` on a
+// client started with `no-output`, which is why this is an option rather than
+// a subscription. The measurements behind that are in
+// `docs/design/pane-output-streaming.md`.
+TEST(ControlModeConnection, DeliversPaneOutputOnlyWhenAskedAtConnectTime) {
+  auto server = start_server(unique_name("control-output"));
+  ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
+
+  const auto collect = [&](bool pane_output) {
+    auto connected =
+        Connection::connect({.tmux_binary = LIBTMUX_CONTROL_TMUX_PATH,
+                             .socket_path = server->socket_path(),
+                             .session_name = std::string{server->session_name()},
+                             .startup_timeout = 2s,
+                             .shutdown_timeout = 2s,
+                             .pane_output = pane_output});
+    EXPECT_TRUE(connected.has_value())
+        << (connected.has_value() ? "" : connected.error().message);
+    if (!connected.has_value()) {
+      return 0;
+    }
+    auto connection = std::move(*connected);
+
+    const auto typed = connection.execute(
+        group({{"send-keys", "-t", std::string{server->session_name()}, "echo hi",
+                "Enter"}}),
+        std::chrono::steady_clock::now() + 2s);
+    static_cast<void>(typed);
+
+    int outputs = 0;
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    while (std::chrono::steady_clock::now() < deadline) {
+      const auto batch = connection.wait_for_notifications(deadline);
+      if (batch.empty()) {
+        break;
+      }
+      for (const Notification& notification : batch) {
+        if (text(notification.body).starts_with("%output ")) {
+          ++outputs;
+        }
+      }
+      if (outputs > 0) {
+        break;
+      }
+    }
+    static_cast<void>(connection.shutdown(std::chrono::steady_clock::now() + 2s));
+    return outputs;
+  };
+
+  EXPECT_EQ(collect(false), 0) << "output arrived on a connection that never asked";
+  EXPECT_GT(collect(true), 0) << "asked for output and none arrived";
+}
+
 TEST(ControlModeConnection, NotificationShapedCommandOutputRemainsBlockBody) {
   LIBTMUX_REQUIRES_TMUX(3, 4,
                         "keeping notification-shaped command output in the block body");

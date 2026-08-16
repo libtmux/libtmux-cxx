@@ -27,6 +27,7 @@ Why a thing is the way it is, written when the decision was made.
 
 | Note | Settles |
 |---|---|
+| [`design/pane-output-streaming.md`](design/pane-output-streaming.md) | What a control connection may subscribe to, and what tmux does when the reader falls behind |
 | [`design/control-transport.md`](design/control-transport.md) | Dispatching entities over one held-open connection, and what the protocol asks for in return |
 | [`design/cxx20-fallback.md`](design/cxx20-fallback.md) | Why the C++20 build exists, and what the second ABI namespace costs |
 | [`design/engine-ops-study.md`](design/engine-ops-study.md) | What the Python operations experiment taught this library, and what was declined |
