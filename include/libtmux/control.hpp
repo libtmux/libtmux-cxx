@@ -111,8 +111,8 @@ struct ControlRequestResult {
 
 struct ConnectionOptions {
   std::filesystem::path tmux_binary{"tmux"};
-  std::filesystem::path socket_path;
-  std::string session_name;
+  std::filesystem::path socket_path{};
+  std::string session_name{};
   std::chrono::milliseconds startup_timeout{2000};
   std::chrono::milliseconds shutdown_timeout{2000};
   // Passed to the decoder. Raise the first to hold a bigger capture; the
@@ -120,6 +120,28 @@ struct ConnectionOptions {
   // a longer one.
   std::size_t retained_reply_bytes{kDefaultRetainedReplyBytes};
   std::size_t line_bytes{kDefaultLineBytes};
+
+  // Deliver `%output` for every pane, as notifications.
+  //
+  // Off, so tmux is not asked to buffer pane output for a caller who never
+  // reads it. It is fixed at connect time because tmux fixes it: a connection
+  // started without output cannot be made to listen later, so this cannot be
+  // a subscription. See `docs/design/pane-output-streaming.md`.
+  bool pane_output{false};
+
+  // Discard a pane's queued output once it is this far behind, and say so
+  // with `%pause`.
+  //
+  // A data-loss policy rather than backpressure, and unset is a policy too:
+  // tmux then buffers until a queued block is five minutes old and closes the
+  // connection with `too far behind`. Set this and a slow reader survives
+  // having lost output; leave it and a slow enough reader loses the
+  // connection. Only meaningful with `pane_output`.
+  //
+  // `%pause` is the sole report that anything was dropped, and it names the
+  // pane. A caller that sets this and ignores notifications has chosen to
+  // lose output silently.
+  std::optional<std::chrono::seconds> pause_after{};
 };
 
 class Connection final {

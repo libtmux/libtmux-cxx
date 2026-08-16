@@ -266,17 +266,35 @@ expected<SpawnedClient, ProtocolError> spawn_client(const ConnectionOptions& opt
     return fail_attributes("posix_spawnattr_setpgroup", result);
   }
 
+  // tmux takes these as one comma-separated list. `no-output` and
+  // `pause-after` are opposites in effect and both may be absent, so the list
+  // is built rather than spelled.
+  std::vector<std::string> client_flags;
+  if (!options.pane_output) {
+    client_flags.emplace_back("no-output");
+  } else if (options.pause_after.has_value()) {
+    client_flags.push_back("pause-after=" +
+                           std::to_string(options.pause_after->count()));
+  }
+  std::string flags;
+  for (const std::string& flag : client_flags) {
+    if (!flags.empty()) {
+      flags += ',';
+    }
+    flags += flag;
+  }
+
   std::vector<std::string> arguments{options.tmux_binary.string(),
                                      "-N",
                                      "-u",
                                      "-S",
                                      options.socket_path.string(),
                                      "-C",
-                                     "attach-session",
-                                     "-f",
-                                     "no-output",
-                                     "-t",
-                                     "=" + options.session_name};
+                                     "attach-session"};
+  if (!flags.empty()) {
+    arguments.insert(arguments.end(), {"-f", flags});
+  }
+  arguments.insert(arguments.end(), {"-t", "=" + options.session_name});
   auto argument_pointers = writable_pointers(arguments);
   auto environment = sanitized_environment();
   auto environment_pointers = writable_pointers(environment);
