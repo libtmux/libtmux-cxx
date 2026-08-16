@@ -57,9 +57,27 @@ jobs:
           sha512="$(sha512sum "libtmux-cxx-${version}.tar.gz" | cut -d' ' -f1)"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "sha512=${sha512}" >> "$GITHUB_OUTPUT"
-          # The vcpkg port needs this exact value; printing it in the log means
-          # nobody has to recompute it to publish the port.
-          echo "SHA512 for ports/libtmux/portfile.cmake: ${sha512}"
+          # Not the value the vcpkg port needs. `vcpkg_from_github` downloads
+          # the tarball GitHub generates for the tag, and that is not
+          # byte-identical to this one — same contents, different gzip. The
+          # port's hash is computed from GitHub's copy below.
+          echo "SHA512 of the release asset: ${sha512}"
+
+      - name: The SHA512 the vcpkg port needs
+        run: |
+          # GitHub's generated tarball, which is what `vcpkg_from_github`
+          # fetches. Retried because it is produced on demand and can 404 for
+          # a moment after the tag appears.
+          url="https://github.com/${GITHUB_REPOSITORY}/archive/${GITHUB_REF_NAME}.tar.gz"
+          for attempt in 1 2 3 4 5; do
+            if curl -fsSL --retry 3 -o generated.tar.gz "$url"; then
+              break
+            fi
+            echo "attempt ${attempt} failed; waiting" >&2
+            sleep 10
+          done
+          test -s generated.tar.gz
+          echo "SHA512 for ports/libtmux/portfile.cmake: $(sha512sum generated.tar.gz | cut -d" " -f1)"
 
       - name: The archive builds and installs on its own
         run: |
