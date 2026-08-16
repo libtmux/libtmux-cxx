@@ -35,11 +35,32 @@ struct ToolError {
 using ToolResult = libtmux::expected<std::string, ToolError>;
 using Handler = std::function<ToolResult(const Server&, const Arguments&)>;
 
+// One named argument, as a model sees it.
+//
+// `description` is the whole of what a model has to go on. A name alone does
+// not say whether `target` takes `%1`, a session name, or `session:window.pane`
+// — so each says what it accepts and shows one.
+struct Parameter {
+  std::string name;
+  std::string description;
+  bool required{true};
+};
+
 struct Tool {
   std::string name;
   std::string description;
-  std::vector<std::string> required;
+  std::vector<Parameter> parameters;
   Handler handle;
+
+  [[nodiscard]] std::vector<std::string> required_names() const {
+    std::vector<std::string> names;
+    for (const Parameter& parameter : parameters) {
+      if (parameter.required) {
+        names.push_back(parameter.name);
+      }
+    }
+    return names;
+  }
 };
 
 [[nodiscard]] inline const std::string* argument(const Arguments& arguments,
@@ -62,11 +83,14 @@ public:
       if (tool.name != name) {
         continue;
       }
-      for (const std::string& required : tool.required) {
-        const std::string* value = argument(arguments, required);
+      for (const Parameter& parameter : tool.parameters) {
+        if (!parameter.required) {
+          continue;
+        }
+        const std::string* value = argument(arguments, parameter.name);
         if (value == nullptr || value->empty()) {
           return libtmux::unexpected(
-              ToolError{true, "missing required argument: " + required});
+              ToolError{true, "missing required argument: " + parameter.name});
         }
       }
       return tool.handle(server, arguments);
@@ -83,8 +107,10 @@ private:
 [[nodiscard]] inline ToolSet default_tools() {
   ToolSet set;
   set.add(Tool{.name = "list_sessions",
-               .description = "List every session on the server, one name per line.",
-               .required = {},
+               .description = "List every session on the server, one name per "
+                              "line. Names are what `target` arguments accept "
+                              "wherever a session is asked for.",
+               .parameters = {},
                .handle = [](const Server& server, const Arguments&) -> ToolResult {
                  const auto sessions = server.sessions();
                  if (!sessions.has_value()) {
@@ -99,8 +125,10 @@ private:
                  return out;
                }});
   set.add(Tool{.name = "list_panes",
-               .description = "List every pane, as id, window and running command.",
-               .required = {},
+               .description = "List every pane as three tab-separated columns: "
+                              "pane id, window id, and the command running in "
+                              "it. The pane id is what `target` accepts.",
+               .parameters = {},
                .handle = [](const Server& server, const Arguments&) -> ToolResult {
                  const auto panes = server.panes();
                  if (!panes.has_value()) {
@@ -120,8 +148,13 @@ private:
                }});
   set.add(Tool{
       .name = "capture_pane",
-      .description = "Return the visible contents of one pane.",
-      .required = {"target"},
+      .description = "Return the visible contents of one pane, as text.",
+      .parameters = {{.name = "target",
+                      .description = "Which pane. A pane id such as `%1`, or "
+                                     "anything tmux resolves to one: a session "
+                                     "name, `session:window`, or "
+                                     "`session:window.pane`. `list_panes` "
+                                     "returns ids."}},
       .handle = [](const Server& server, const Arguments& arguments) -> ToolResult {
         // Resolving the target first is what turns "there is no such pane"
         // into a distinct answer instead of empty output.
@@ -137,8 +170,15 @@ private:
       }});
   set.add(Tool{
       .name = "send_text",
-      .description = "Type literal text into one pane, interpreting nothing.",
-      .required = {"target", "text"},
+      .description = "Type literal text into one pane. Nothing is interpreted: "
+                     "key names like `C-c` and `Enter` arrive as those "
+                     "characters, not as keys. Returns the pane id written to.",
+      .parameters = {{.name = "target",
+                      .description = "Which pane. A pane id such as `%1`, or "
+                                     "anything tmux resolves to one."},
+                     {.name = "text",
+                      .description = "The literal characters to type. Include a "
+                                     "trailing newline to submit a line."}},
       .handle = [](const Server& server, const Arguments& arguments) -> ToolResult {
         const auto pane = server.pane(*argument(arguments, "target"));
         if (!pane.has_value()) {
@@ -152,8 +192,14 @@ private:
       }});
   set.add(Tool{
       .name = "new_window",
-      .description = "Create a detached window in one session and name it.",
-      .required = {"session", "name"},
+      .description = "Create a window in one session without switching to it. "
+                     "Returns the new window id, such as `@3`.",
+      .parameters = {{.name = "session",
+                      .description = "Which session, by name as `list_sessions` "
+                                     "reports it, or a session id such as `$0`."},
+                     {.name = "name",
+                      .description = "The window name, as it appears in the "
+                                     "status line."}},
       .handle = [](const Server& server, const Arguments& arguments) -> ToolResult {
         const auto session = server.session(*argument(arguments, "session"));
         if (!session.has_value()) {

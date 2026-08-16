@@ -19,6 +19,25 @@ if(LIBTMUX_BUILD_TESTS)
     consumer.mcp PROPERTIES LABELS "consumer;real-tmux" TIMEOUT 30)
 endif()
 
+# The server as a program, over JSON-RPC, against a real tmux. Needs the JSON
+# parser and the binary, so it follows the server rather than the tool surface.
+if(LIBTMUX_BUILD_TESTS AND LIBTMUX_BUILD_MCP_SERVER)
+  add_executable(mcp_protocol_test tests/protocol_test.cpp)
+  target_link_libraries(
+    mcp_protocol_test
+    PRIVATE GTest::gtest_main libtmux_build_options libtmux::testing
+            nlohmann_json::nlohmann_json)
+  target_compile_definitions(
+    mcp_protocol_test
+    PRIVATE "LIBTMUX_MCP_SERVER_PATH=\"$<TARGET_FILE:libtmux_mcp_server>\"")
+  target_compile_options(mcp_protocol_test PRIVATE -fno-sanitize-recover=undefined)
+  add_dependencies(mcp_protocol_test libtmux_mcp_server)
+
+  add_test(NAME consumer.mcp.protocol COMMAND mcp_protocol_test)
+  set_tests_properties(
+    consumer.mcp.protocol PROPERTIES LABELS "consumer;real-tmux" TIMEOUT 120)
+endif()
+
 if(LIBTMUX_BUILD_MCP_SERVER)
   # Resolved here rather than at the top of the file: the library encodes
   # nothing, so everything that needs a JSON parser is in this directory.
