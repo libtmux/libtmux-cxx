@@ -11,8 +11,15 @@ updates:
     groups:
       actions:
         patterns: ['*']
+    # The trailing space stops Dependabot appending a colon.
+    commit-message:
+      prefix: "ci(deps) "
 
+  # vcpkg.json gets no entry: no version constraints and no builtin-baseline,
+  # so the updater has nothing to move.
   - package-ecosystem: pip
     directory: /
     schedule:
       interval: monthly
+    commit-message:
+      prefix: "cxx(deps[dev]) "
