@@ -157,8 +157,8 @@ from_json(const nlohmann::json& document) {
     return libtmux::unexpected(std::string{"nodes must be an array"});
   }
 
-  const auto text = [](const nlohmann::json& node, const char* key)
-      -> libtmux::expected<std::string, std::string> {
+  const auto text = [](const nlohmann::json& node,
+                       const char* key) -> libtmux::expected<std::string, std::string> {
     const auto found = node.find(key);
     if (found == node.end() || !found->is_string()) {
       return libtmux::unexpected(std::string{key} + " must be a string");
@@ -188,7 +188,8 @@ from_json(const nlohmann::json& document) {
       auto op = text(entry, "op");
       auto operand = text(entry, "operand");
       if (!name.has_value() || !op.has_value() || !operand.has_value()) {
-        return libtmux::unexpected(std::string{"a string_test needs name, op, operand"});
+        return libtmux::unexpected(
+            std::string{"a string_test needs name, op, operand"});
       }
       if (!is_known_field(*name)) {
         return libtmux::unexpected("no such tmux field: " + *name);

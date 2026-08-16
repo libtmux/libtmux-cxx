@@ -111,7 +111,6 @@ TEST(ControlDispatch, AServerSelectedByNameOpensAControlConnection) {
   EXPECT_EQ(over_subprocess->front(), sessions->front());
 }
 
-
 TEST(ControlDispatch, EveryEntityOperationWorksOverAConnection) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
@@ -414,8 +413,8 @@ TEST(ControlDispatch, AnObserverMayCallTmuxAgainOverTheSameConnection) {
   const Server* streaming = nullptr;
   int reentered = 0;
   std::size_t observed = 0;
-  auto observer = [&streaming, &reentered,
-                   &observed](std::string_view, const libtmux::CommandFailure*) {
+  auto observer = [&streaming, &reentered, &observed](std::string_view,
+                                                      const libtmux::CommandFailure*) {
     ++observed;
     // Once. The nested call is observed too, and an observer that recursed on
     // its own report would never come back.

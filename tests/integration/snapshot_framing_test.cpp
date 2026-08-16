@@ -49,9 +49,8 @@ TEST(SnapshotFraming, AWindowNamedWithTheSeparatorIsReadBack) {
   // one poisoned value failed the whole snapshot, not just its own row.
   const auto windows = server.windows();
   ASSERT_TRUE(windows.has_value()) << windows.error().diagnostic;
-  EXPECT_TRUE(std::ranges::any_of(*windows, [&](const libtmux::Window& one) {
-    return one.name() == hostile;
-  }));
+  EXPECT_TRUE(std::ranges::any_of(
+      *windows, [&](const libtmux::Window& one) { return one.name() == hostile; }));
 
   const auto panes = server.panes();
   ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
@@ -101,9 +100,10 @@ TEST(SnapshotFraming, DecodingInvertsTheEscapingItWasBuiltFor) {
   };
 
   for (const std::string& value :
-       {std::string{}, std::string{"plain"}, kSeparator, kEscape,
-        kEscape + kSeparator, kSeparator + kEscape, kEscape + "S", kEscape + "E",
-        kEscape + kEscape + kSeparator + kSeparator, std::string{"a"} + kEscape + "b"}) {
+       {std::string{}, std::string{"plain"}, kSeparator, kEscape, kEscape + kSeparator,
+        kSeparator + kEscape, kEscape + "S", kEscape + "E",
+        kEscape + kEscape + kSeparator + kSeparator,
+        std::string{"a"} + kEscape + "b"}) {
     std::string buffer = encoded(value);
     const std::size_t size = libtmux::decode_value(buffer.data(), buffer.size());
     EXPECT_EQ(std::string_view(buffer.data(), size), value)

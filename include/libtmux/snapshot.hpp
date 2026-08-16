@@ -100,9 +100,8 @@ format_request(std::span<const std::string_view> fields) {
   std::size_t read = 0;
   std::size_t write = 0;
   while (read < size) {
-    const bool marked =
-        size - read > escape.size() &&
-        std::string_view{begin + read, escape.size()} == escape;
+    const bool marked = size - read > escape.size() &&
+                        std::string_view{begin + read, escape.size()} == escape;
     const char tag = marked ? begin[read + escape.size()] : '\0';
     const std::string_view decoded = tag == 'S'   ? kFormatSeparator
                                      : tag == 'E' ? kFormatEscape

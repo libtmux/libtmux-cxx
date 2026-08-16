@@ -26,8 +26,7 @@ detail::Row::run(const std::vector<std::string>& command,
   // answering held the calling thread for the life of the process.
   const ExecutionPolicy& policy = backend()->policy();
   return backend()->run(command, policy.timeout,
-                        output_limit.has_value() ? output_limit
-                                                 : policy.output_limit);
+                        output_limit.has_value() ? output_limit : policy.output_limit);
 }
 
 namespace {
@@ -43,7 +42,8 @@ namespace {
 // An unidentified value — one read out of a recording — is not on a server
 // rather than on a different one, and `run` says that better than this could.
 template <typename Left, typename Right>
-[[nodiscard]] bool from_different_servers(const Left& left, const Right& right) noexcept {
+[[nodiscard]] bool from_different_servers(const Left& left,
+                                          const Right& right) noexcept {
   const std::string_view mine = left.connection_identity();
   const std::string_view theirs = right.connection_identity();
   return !mine.empty() && !theirs.empty() && mine != theirs;

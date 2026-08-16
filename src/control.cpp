@@ -210,8 +210,8 @@ Parser::feed(std::span<const std::byte> input) {
       // reading here would meet `%end` mid-body and lose the stream.
       const std::size_t arriving = line.size() + 1U;
       block_->body_bytes += arriving;
-      if (retained_reply_bytes_ == 0U || block_->body.size() + arriving <=
-                                             retained_reply_bytes_) {
+      if (retained_reply_bytes_ == 0U ||
+          block_->body.size() + arriving <= retained_reply_bytes_) {
         block_->body.insert(block_->body.end(), line.begin(), line.end());
         block_->body.push_back(std::byte{0x0a});
       } else if (!block_->body_truncated) {

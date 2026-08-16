@@ -27,8 +27,8 @@ int main() {
   const libtmux::Server& server = scratch.get();
 
   // #region connect
-  // Nothing throws. Every call answers with a value that is either the result
-  // or the reason there isn't one.
+  // No tmux failure is thrown. Every call answers with a value that is either
+  // the result or the reason there isn't one.
   const auto sessions = server.sessions();
   if (!sessions.has_value()) {
     std::fprintf(stderr, "%s\n", sessions.error().diagnostic.c_str());

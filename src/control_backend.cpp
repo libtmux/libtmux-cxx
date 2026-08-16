@@ -43,10 +43,9 @@ ControlBackend::open(std::vector<std::string> selector, std::string socket_path,
   if (!connection.has_value()) {
     return unexpected(connection.error());
   }
-  return std::make_shared<const ControlBackend>(*std::move(connection),
-                                                std::move(selector),
-                                                std::move(identity),
-                                                std::move(observer), policy);
+  return std::make_shared<const ControlBackend>(
+      *std::move(connection), std::move(selector), std::move(identity),
+      std::move(observer), policy);
 }
 
 expected<std::string, CommandFailure>

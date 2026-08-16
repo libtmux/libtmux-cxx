@@ -316,8 +316,7 @@ TEST(ServerContract, ATypedCallInheritsTheServersDeadline) {
   // The same server with a workable deadline answers, so the refusal above was
   // the policy and not a broken fixture.
   const libtmux::ExecutionPolicy patient{.timeout = std::chrono::seconds{20}};
-  auto unhurried =
-      Server::at_socket_path(fixture->socket_path().string(), {}, patient);
+  auto unhurried = Server::at_socket_path(fixture->socket_path().string(), {}, patient);
   ASSERT_TRUE(unhurried.has_value());
   const auto again = unhurried->sessions();
   ASSERT_TRUE(again.has_value()) << again.error().diagnostic;

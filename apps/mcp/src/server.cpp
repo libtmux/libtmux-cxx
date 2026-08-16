@@ -123,7 +123,8 @@ public:
     });
     const bool is_notification = !request.contains("id");
     if (!is_notification && identifier == nullptr) {
-      return failure(json{}, kInvalidRequest, "an id must be a string, a number or null");
+      return failure(json{}, kInvalidRequest,
+                     "an id must be a string, a number or null");
     }
     const json id = identifier == nullptr ? json{} : *identifier;
 

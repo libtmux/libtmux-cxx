@@ -137,7 +137,8 @@ private:
 class SubprocessBackend final : public Backend {
 public:
   explicit SubprocessBackend(std::vector<std::string> connection,
-                             CommandObserver observer = {}, ExecutionPolicy policy = {});
+                             CommandObserver observer = {},
+                             ExecutionPolicy policy = {});
 
   // Declaring an override hides the base's other overload, and the
   // one-argument form is how most callers spell "no timeout".

@@ -10,29 +10,29 @@ The connection root.  A Server names which tmux server to talk to and how to rea
 ### Server
 
 ```cpp
-[[nodiscard]] static expected<Server, CommandFailure> at_socket_path(std::string_view path, CommandObserver observer = {});
+[[nodiscard]] static expected<Server, CommandFailure> at_socket_path(std::string_view path, CommandObserver observer = {}, ExecutionPolicy policy = {});
 ```
-`-S path`: the socket file, used verbatim.  These report `CommandFailure`, the same type every other call reports, rather than the `SocketError` the argument builders use: a factory that failed differently is a factory nothing can be chained onto. The reason a selector was rejected is in the diagnostic, and `socket_path_arguments` still returns the enum for a caller that wants to branch on it.  An observer, if given, is told about every command this server runs. It is fixed at construction because the connection is immutable afterwards, and that is what makes a Server safe to copy between threads.
+`-S path`: the socket file, used verbatim.  These report `CommandFailure`, the same type every other call reports, rather than the `SocketError` the argument builders use: a factory that failed differently is a factory nothing can be chained onto. The reason a selector was rejected is in the diagnostic, and `socket_path_arguments` still returns the enum for a caller that wants to branch on it.  An observer, if given, is told about every command this server runs. It is fixed at construction because the connection is immutable afterwards, and that is what makes a Server safe to copy between threads. The policy is fixed for the same reason, and says what a call gets when it names no timeout or limit of its own.
 
 ```cpp
-[[nodiscard]] static expected<Server, CommandFailure> at_socket_name(std::string_view name, CommandObserver observer = {});
+[[nodiscard]] static expected<Server, CommandFailure> at_socket_name(std::string_view name, CommandObserver observer = {}, ExecutionPolicy policy = {});
 ```
 `-L name`: resolved under tmux's socket directory, as the tmux flag does.
 
 ```cpp
-[[nodiscard]] static expected<Server, CommandFailure> from_env(CommandObserver observer = {});
+[[nodiscard]] static expected<Server, CommandFailure> from_env(CommandObserver observer = {}, ExecutionPolicy policy = {});
 ```
 The server this process is running inside.  tmux exports `TMUX` to everything it starts, as `<socket path>,<server pid>,<session id>`. Only the socket path is read: the session id is stale the moment a pane moves, and a `#()` job carries no session at all — so a caller who wants the session asks tmux, rather than trusting what it inherited.
 
 ```cpp
-[[nodiscard]] static expected<Server, CommandFailure> at_default(CommandObserver observer = {});
+[[nodiscard]] static expected<Server, CommandFailure> at_default(CommandObserver observer = {}, ExecutionPolicy policy = {});
 ```
 The server tmux would talk to with no `-L` or `-S` at all, which is the one a person means when they say "my tmux".
 
 ```cpp
 run(const std::vector<std::string>& command, std::optional<std::chrono::milliseconds> timeout = {}, std::optional<std::size_t> output_limit = {}) const;
 ```
-The timeout rides on the call, not on the server: how long a caller will wait is a property of what they asked for, and listing sessions does not share a deadline with attaching a client. `output_limit` bounds how much of tmux's answer this call will hold. Past it the command reports `truncated` rather than returning a prefix that reads like a complete answer. Unset uses the package default, which is ample for every listing and can be too small for a long scrollback.
+The timeout still rides on the call: how long a caller will wait is a property of what they asked for, and listing sessions does not share a deadline with attaching a client. Unset takes the server's `ExecutionPolicy`, which is thirty seconds rather than forever — a floor, not a guess at what this particular command needs. `output_limit` bounds how much of tmux's answer this call will hold. Past it the command reports `truncated` rather than returning a prefix that reads like a complete answer. Unset uses the package default, which is ample for every listing and can be too small for a long scrollback.
 
 ```cpp
 [[nodiscard]] expected<std::string, CommandFailure> run_batch(const CommandBatch& batch) const;
@@ -923,7 +923,12 @@ tmux format requests and the snapshots their output becomes.  A snapshot is ever
 ```cpp
 [[nodiscard]] inline std::string format_request(std::span<const std::string_view> fields);
 ```
-Build the format argument for one entity's fields, terminating every field so a trailing empty value is still a value rather than a missing column.
+Build the format argument for one entity's fields, terminating every field so a trailing empty value is still a value rather than a missing column.  The two substitutions nest rather than run in sequence, because tmux applies the inner one to the raw value and the outer one to its result. In that order a value already holding the escape marker is neutralised before the separator pass can produce one; reversed, the two become indistinguishable.  `#{s/…/…/:…}` predates every tmux this library supports, and neither character is a regular-expression metacharacter.  Unconditional, rather than applied only to the fields that could carry a separator. Expanding the substitutions costs about 0.32us per row — a 61-row listing pays 19us, against a process launch of some milliseconds — and a per-field exemption list is a thing to get wrong later, once, silently.
+
+```cpp
+[[nodiscard]] inline std::size_t decode_value(char* begin, std::size_t size) noexcept;
+```
+Undo that escaping, in place.  Escaping only ever lengthens, so the decoded bytes fit where the encoded ones were: the write cursor never overtakes the read cursor, nothing moves, and nothing is allocated. Answers the decoded length.  An escape marker followed by anything else is left as written. Output this library asked for contains no such sequence, and failing on one would mean a recording could not carry a literal `␛`.
 
 ```cpp
 [[nodiscard]] inline bool split_row(std::string_view line, std::size_t fields, std::vector<std::string_view>& values);
@@ -1226,6 +1231,15 @@ Decode tmux's control protocol.  A control-mode stream interleaves command reply
 ### Parser
 
 ```cpp
+Parser() = default;
+```
+
+```cpp
+Parser(std::size_t retained_reply_bytes, std::size_t line_bytes) noexcept : retained_reply_bytes_;
+```
+Zero means unbounded, which only a test that owns both ends should ask for.
+
+```cpp
 expected<std::vector<Event>, ProtocolError> feed(std::span<const std::byte> bytes);
 ```
 
@@ -1368,7 +1382,7 @@ Accept a key with any number of C-, M-, or S- modifiers.
 ```cpp
 [[nodiscard]] inline expected<std::vector<std::string>, KeyError> literal_arguments(std::string_view text);
 ```
-Send text exactly as written.
+Send text exactly as written: the flag, the end of flags, and the text.  `--` is part of the fragment rather than something a caller appends, because text beginning with a dash is read as another `send-keys` option without it and that is not a mistake worth making twice. It was made twice: this returned the flag and the text alone, `Pane::send_text` inserted the separator afterwards, and `Chain::send_text` did not — so the same text through the two spellings reached tmux as two different commands.
 
 ## `libtmux/capture.hpp`
 

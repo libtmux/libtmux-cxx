@@ -140,13 +140,12 @@ SubprocessBackend::run(const std::vector<std::string>& command,
     // The runner bounds what it will hold. Returning the prefix as a complete
     // answer is the one outcome a caller cannot detect: the last line is cut
     // mid-way and looks like data.
-    return reported(
-        CommandFailure{.kind = FailureKind::truncated,
-                       .dispatched = true,
-                       .exit_code = 0,
-                       .diagnostic = "tmux produced more output than the " +
-                                     std::to_string(request.capture_limit) +
-                                     " byte limit this call allowed for"});
+    return reported(CommandFailure{.kind = FailureKind::truncated,
+                                   .dispatched = true,
+                                   .exit_code = 0,
+                                   .diagnostic = "tmux produced more output than the " +
+                                                 std::to_string(request.capture_limit) +
+                                                 " byte limit this call allowed for"});
   }
 
   std::string out = text(reply->stdout_bytes);

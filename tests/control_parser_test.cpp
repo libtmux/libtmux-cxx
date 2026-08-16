@@ -281,8 +281,7 @@ TEST(ControlModeParser, FailsAndReleasesOnALineThatNeverEnds) {
   Parser parser{4096U, 64U};
   const auto first = parser.feed(bytes(std::string(128U, 'x')));
   ASSERT_FALSE(first.has_value());
-  EXPECT_NE(first.error().message.find("control line exceeded"),
-            std::string::npos);
+  EXPECT_NE(first.error().message.find("control line exceeded"), std::string::npos);
   EXPECT_FALSE(parser.feed(bytes("\n%sessions-changed\n")).has_value());
   EXPECT_FALSE(parser.finish().has_value());
 }
