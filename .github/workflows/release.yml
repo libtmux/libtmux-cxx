@@ -29,6 +29,22 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # The tag names the release; `VERSION` is what the library reports about
+      # itself and what CMake writes into the package config. Nothing kept the
+      # two together, so a `v0.2.0` tag on a tree that still said `0.1.0` would
+      # publish an archive whose library disagrees with the release it came
+      # from — and the mismatch is invisible until somebody reads
+      # `library_version()` and is told the wrong thing.
+      - name: The tag and VERSION agree
+        run: |
+          tagged="${GITHUB_REF_NAME#v}"
+          declared="$(tr -d '[:space:]' < VERSION)"
+          if [ "$tagged" != "$declared" ]; then
+            echo "tag ${GITHUB_REF_NAME} says ${tagged}; VERSION says ${declared}" >&2
+            exit 1
+          fi
+          echo "both say ${declared}"
+
       - name: Build the source archive and hash it
         id: archive
         run: |

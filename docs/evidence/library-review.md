@@ -90,13 +90,38 @@ directory propagates, and its header installs beside ours. Verified by
 installing the C++20 build and consuming it from an outside project.
 
 
-**Relation nodes carry an opaque child.** A relation crosses entity types, so
+**Relation nodes carry an opaque child.** ~~A relation crosses entity types, so
 its child expression cannot live in `FilterExpr<Entity>`'s variant. The node
 keeps the relation name and quantifier, and evaluation by value, but the child
 does not lower. That is fine for in-memory filtering and blocks a relation from
-ever compiling to a tmux `-f` expression.
+ever compiling to a tmux `-f` expression.~~
 
-**Nothing verifies that a view outlives nothing.** The lifetime rule — views
+Superseded. The child cannot live in the parent's variant, but its *lowered*
+form can, and does: a relation lowers its child when it is built and replays it
+between `begin_relation` and `end_relation`. An emitted document shows it —
+
+```json
+{"version": 1, "nodes": [
+  {"kind": "begin_relation", "name": "panes", "quantifier": 0},
+  {"kind": "bool_test", "name": "pane_active", "expected": true},
+  {"kind": "end_relation"}]}
+```
+
+— and `apps/mcp/tests/filter_json_test.cpp` writes exactly that for
+`tools/schema` to validate. Nothing about a relation blocks a `-f` compiler.
+
+**Nothing verifies that a view outlives nothing.** ~~The lifetime rule — views
 never outlive snapshot storage — is enforced by ownership and stated in
 comments, not by a test that would fail if it were violated. A sanitizer run
-over a deliberately dangling use would close that.
+over a deliberately dangling use would close that.~~
+
+Partly superseded, and by something better than a sanitizer run: the cases
+that could dangle are refused at compile time, and `tests/compile/` proves the
+refusals stay refusals — `cardinality_refuses_a_temporary`,
+`cardinality_refuses_a_produced_element`, `capture_lines_refuses_a_temporary`
+and `relation_join_refuses_a_temporary`. A test that has to run to find a
+dangle is a test that can miss it; one that fails to build cannot.
+
+Still open for what the type system does not reach: an entity outliving the
+`shared_ptr` chain is impossible by construction, but a caller who copies a
+`string_view` out of one and keeps it is not stopped by anything.
