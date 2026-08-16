@@ -36,3 +36,11 @@ foreach(example 01-tour 02-workspace 03-filter 04-errors 05-readme)
   set_tests_properties(
     example.${example} PROPERTIES LABELS "example;real-tmux" TIMEOUT 60)
 endforeach()
+
+# The examples' own test suite, which is a separate project on purpose — see
+# `tests/README.md` there. Only built when a test framework is available,
+# because unlike the examples it needs one.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/CMakeLists.txt"
+   AND (TARGET GTest::gtest_main OR LIBTMUX_EXAMPLES_BUILD_TESTS))
+  add_subdirectory(tests)
+endif()
