@@ -48,11 +48,12 @@ option(LIBTMUX_BUILD_EXAMPLES "Build and run the examples"
 # get their own configuration rather than constraining every other build.
 option(LIBTMUX_BUILD_FUZZERS "Build the parser fuzzers" OFF)
 # The MCP server is a program, not part of the library, and it is the one
-# thing here that needs a JSON parser. Defaulting to the tests' setting keeps
-# a plain build unchanged while letting a packager build and install the
-# program without also building the suite.
-option(LIBTMUX_BUILD_MCP_SERVER "Build the MCP server program"
-       ${LIBTMUX_BUILD_TESTS})
+# thing here that needs a JSON parser. Off, because a top-level build of a
+# library should not acquire a dependency for a program the builder did not
+# ask for — it followed the tests, which follow being top level, so a plain
+# `cmake -S . -B build` wanted nlohmann/json and the documented default said
+# otherwise. The presets and CI turn it on explicitly.
+option(LIBTMUX_BUILD_MCP_SERVER "Build the MCP server program" OFF)
 option(LIBTMUX_ENABLE_COVERAGE "Instrument for coverage" OFF)
 set(LIBTMUX_CXX_STANDARD "23" CACHE STRING "C++ package standard: 20 or 23")
 set_property(CACHE LIBTMUX_CXX_STANDARD PROPERTY STRINGS 20 23)

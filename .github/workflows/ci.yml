@@ -520,6 +520,43 @@ jobs:
           print("tools:", ", ".join(names))
           PROBE
 
+      # Well-formed JSON that is not a well-formed request. Each of these
+      # parsed cleanly and then threw out of a typed read, which escaped main
+      # and ended the process — so a peer could stop the server with a line
+      # containing `[1,2,3]`. Malformed JSON was already handled; being valid
+      # JSON of the wrong shape was the gap.
+      - name: The installed MCP server survives valid JSON of the wrong shape
+        run: |
+          printf '%s\n' \
+            '[1,2,3]' \
+            '"a string"' \
+            '42' \
+            'null' \
+            '{"jsonrpc":2.0,"id":1,"method":"ping"}' \
+            '{"jsonrpc":"2.0","id":{"not":"scalar"},"method":"ping"}' \
+            '{"jsonrpc":"2.0","id":1}' \
+            '{"jsonrpc":"2.0","id":2,"method":42}' \
+            '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":[]}' \
+            '{not json at all' \
+            '{"jsonrpc":"2.0","id":99,"method":"ping"}' \
+            | build/prefix/bin/libtmux-mcp-server > /tmp/mcp-hostile.jsonl
+          python3 - <<'PROBE'
+          import json, pathlib, sys
+          lines = [line for line in
+                   pathlib.Path("/tmp/mcp-hostile.jsonl").read_text().splitlines()
+                   if line.strip()]
+          replies = [json.loads(line) for line in lines]
+          for reply in replies:
+              if "error" not in reply and reply.get("id") != 99:
+                  sys.exit(f"expected an error reply, got {reply}")
+          # The last request is well formed, so the server must still be there
+          # to answer it: surviving means answering, not merely not crashing.
+          final = [reply for reply in replies if reply.get("id") == 99]
+          if len(final) != 1 or "result" not in final[0]:
+              sys.exit(f"the server stopped answering: {replies}")
+          print(f"answered {len(replies)} lines and stayed up")
+          PROBE
+
   all-checks-passed:
     # Branch protection requires this one job. Naming every matrix leg there
     # instead would mean editing the protection rule whenever a tmux version

@@ -100,14 +100,47 @@ public:
       : server_{std::move(server)}, tools_{libtmux::mcp::default_tools()} {}
 
   [[nodiscard]] std::optional<json> handle(const json& request) {
-    const json id = request.value("id", json{});
-    const bool is_notification = !request.contains("id");
+    // Shape first. `value()` on a non-object throws, and a valid JSON array on
+    // a line — `[1,2,3]` — parsed cleanly and then killed the process here,
+    // where an `Invalid Request` was the whole answer required.
+    if (!request.is_object()) {
+      return failure(json{}, kInvalidRequest, "a request must be a JSON object");
+    }
 
-    if (!request.is_object() || request.value("jsonrpc", "") != "2.0") {
+    // Read with `find` and a type check rather than `value`, which throws when
+    // the key is present with the wrong type. A peer that sends
+    // `{"jsonrpc": 2.0}` is making a mistake, not ending the conversation.
+    const auto typed = [&request](const char* key, auto predicate) -> const json* {
+      const auto found = request.find(key);
+      return found != request.end() && predicate(*found) ? &*found : nullptr;
+    };
+
+    // JSON-RPC allows a string, a number or null, and nothing else. An id of
+    // some other shape cannot be echoed back, so there is no reply that
+    // correlates and the request is not one.
+    const json* const identifier = typed("id", [](const json& value) {
+      return value.is_string() || value.is_number() || value.is_null();
+    });
+    const bool is_notification = !request.contains("id");
+    if (!is_notification && identifier == nullptr) {
+      return failure(json{}, kInvalidRequest, "an id must be a string, a number or null");
+    }
+    const json id = identifier == nullptr ? json{} : *identifier;
+
+    const json* const version =
+        typed("jsonrpc", [](const json& value) { return value.is_string(); });
+    if (version == nullptr || version->get<std::string>() != "2.0") {
       return failure(id, kInvalidRequest, "not a JSON-RPC 2.0 request");
     }
-    const std::string method = request.value("method", "");
-    const json params = request.value("params", json::object());
+    const json* const named =
+        typed("method", [](const json& value) { return value.is_string(); });
+    if (named == nullptr) {
+      return failure(id, kInvalidRequest, "a request needs a method name");
+    }
+    const std::string method = named->get<std::string>();
+    const json* const supplied =
+        typed("params", [](const json& value) { return value.is_object(); });
+    const json params = supplied == nullptr ? json::object() : *supplied;
 
     if (method == "initialize") {
       return success(id,
@@ -202,20 +235,32 @@ int main(int argc, char** argv) {
   // Unbuffered enough to be a conversation: a client waits for each reply.
   std::ios::sync_with_stdio(false);
 
+  // One request is one line, and a line is bounded. Without this a peer that
+  // never sends a newline grows this string until the process is killed for
+  // it, which is a denial of service written as an omission.
+  constexpr std::string::size_type kMaximumLineBytes = 8U * 1024U * 1024U;
+
   for (std::string line; std::getline(std::cin, line);) {
     if (line.empty()) {
       continue;
     }
-    json request;
-    try {
-      request = json::parse(line);
-    } catch (const json::parse_error& error) {
-      std::cout << failure(json{}, kParseError, error.what()).dump() << '\n'
+    if (line.size() > kMaximumLineBytes) {
+      std::cout << failure(json{}, kInvalidRequest, "request line too long").dump()
+                << '\n'
                 << std::flush;
       continue;
     }
-    if (const auto reply = session.handle(request); reply.has_value()) {
-      std::cout << reply->dump() << '\n' << std::flush;
+    // Every JSON error, not only the parse ones. `json::type_error` comes out
+    // of ordinary reads, and catching the narrower type left it to escape
+    // `main` and terminate a server that only had to answer "invalid request".
+    try {
+      const json request = json::parse(line);
+      if (const auto reply = session.handle(request); reply.has_value()) {
+        std::cout << reply->dump() << '\n' << std::flush;
+      }
+    } catch (const json::exception& error) {
+      std::cout << failure(json{}, kParseError, error.what()).dump() << '\n'
+                << std::flush;
     }
   }
   return 0;

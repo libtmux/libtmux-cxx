@@ -3,7 +3,7 @@
 This is an overlay port, not a submission to the vcpkg registry. Use it with
 
 ```console
-$ vcpkg install libtmux --overlay-ports=packaging/vcpkg
+$ vcpkg install libtmux --overlay-ports=ports
 ```
 
 The port builds the library alone. Tests are disabled because they need

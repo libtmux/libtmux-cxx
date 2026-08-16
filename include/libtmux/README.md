@@ -60,8 +60,14 @@ with the prose from its header, regenerated on every build so it cannot drift.
 
 ## What the headers promise
 
-**Nothing throws.** Every call returns `expected<T, CommandFailure>`. A `throw`
-from this library would be a bug, not an error path.
+**Failure is a value.** Every call returns `expected<T, CommandFailure>`, and
+no tmux or transport failure is ever signalled by throwing — a `throw` on an
+error path here would be a bug.
+
+That is narrower than `noexcept` on the whole surface, and deliberately so:
+these headers allocate, so `std::bad_alloc` can come out of them, and a
+`CommandObserver` a caller supplies can throw whatever it likes. The promise is
+about how failure is reported, not that no exception can cross the boundary.
 
 **No transport type appears here.** Nothing in this directory names a process,
 a pipe or a file descriptor, which is what lets the implementation behind it be

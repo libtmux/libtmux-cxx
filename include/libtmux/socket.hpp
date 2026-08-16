@@ -16,10 +16,18 @@
 #include <string_view>
 #include <vector>
 
+#include <sys/un.h>
+
 LIBTMUX_NAMESPACE_BEGIN
 
-// sun_path on Linux holds 108 bytes including the terminator.
-inline constexpr std::size_t kSocketPathLimit = 107;
+// The address this platform can hold, less its terminator.
+//
+// Taken from the header rather than written down: it is 107 on Linux and 103
+// on macOS, and the hardcoded Linux number let a 104-byte path pass validation
+// on a platform that would then refuse it at connect time, with a message
+// naming neither the limit nor the path — which is the failure this check
+// exists to replace.
+inline constexpr std::size_t kSocketPathLimit = sizeof(sockaddr_un::sun_path) - 1U;
 
 enum class SocketError {
   empty,

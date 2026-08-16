@@ -43,10 +43,14 @@ if (auto pane = libtmux::first(editing)) {
 }
 ```
 
-Two things make it different from a wrapper around `system()`: **nothing
-throws** — every call hands back a value that is either the answer or the
-reason there isn't one — and **queries are typed**, so a filter that asks a
-number whether it starts with a string does not compile.
+Two things make it different from a wrapper around `system()`: **failure is a
+value** — no tmux or transport error is ever thrown, every call hands back
+either the answer or the reason there isn't one — and **queries are typed**, so
+a filter that asks a number whether it starts with a string does not compile.
+
+(Not a `noexcept` claim on the whole surface: allocation can throw, and so can
+a `CommandObserver` you supply. What the library will not do is signal a tmux
+failure by throwing.)
 
 ### Features
 
@@ -154,14 +158,16 @@ target_link_libraries(your_target PRIVATE libtmux::libtmux)
 
 | Option | Default | What it does |
 |---|---|---|
-| `LIBTMUX_CXX_STANDARD` | `23` | `20` substitutes pinned `tl::expected` |
+| `LIBTMUX_CXX_STANDARD` | `23` | `20` uses `tl::expected`: a system one, or the pinned fallback |
 | `LIBTMUX_BUILD_TESTS` | on if top-level | The suite, which needs tmux and GoogleTest |
 | `LIBTMUX_BUILD_EXAMPLES` | on if top-level | The programs in [`examples/`](examples/README.md) |
 | `LIBTMUX_BUILD_MCP_SERVER` | off | [The MCP server](#the-mcp-server), which needs a JSON parser |
 | `LIBTMUX_FETCH_DEPS` | off | Download what is missing instead of failing |
 
 `LIBTMUX_FETCH_DEPS` is off on purpose: a build that would reach the network
-says so and stops, rather than downloading quietly.
+says so and stops, rather than downloading quietly. That covers every
+dependency, the C++20 lane's `tl::expected` included — it looks for an
+installed one first, and says what to install when there is none.
 
 ## Quickstart
 
@@ -174,8 +180,8 @@ ever disagree.
 ### Connect and look around
 
 ```cpp
-// Nothing throws. Every call answers with a value that is either the result
-// or the reason there isn't one.
+// No tmux failure is thrown. Every call answers with a value that is either
+// the result or the reason there isn't one.
 const auto sessions = server.sessions();
 if (!sessions.has_value()) {
   std::fprintf(stderr, "%s\n", sessions.error().diagnostic.c_str());
@@ -621,8 +627,8 @@ at a time and reports any that nothing notices.
 
 [CONTRIBUTING.md](CONTRIBUTING.md) covers getting a build, what a change needs
 to carry, and the gate to run before opening a pull request. The short version:
-every capability needs a test against real tmux, nothing throws, and no test
-starts a tmux server the fixture did not make.
+every capability needs a test against real tmux, failures are returned rather
+than thrown, and no test starts a tmux server the fixture did not make.
 
 ## License
 

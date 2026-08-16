@@ -34,25 +34,20 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 
 if(LIBTMUX_CXX_STANDARD STREQUAL "20")
-  # std::expected is C++23. Under C++20 the package substitutes the reference
-  # implementation it was modelled on, and carries that choice in its compiled
-  # identity so a mismatched link fails rather than reading the wrong bytes.
-  include(FetchContent)
-  FetchContent_Declare(
-    tl_expected
-    URL https://github.com/TartanLlama/expected/archive/refs/tags/v1.1.0.tar.gz
-    URL_HASH
-      SHA256=1db357f46dd2b24447156aaf970c4c40a793ef12a8a9c2ad9e096d9801368df6)
-  set(EXPECTED_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-  FetchContent_MakeAvailable(tl_expected)
+  include("${PROJECT_SOURCE_DIR}/cmake/TlExpected.cmake")
+  libtmux_resolve_tl_expected(LIBTMUX_TL_EXPECTED_INCLUDE LIBTMUX_TL_EXPECTED_INSTALL)
   # Never linked, only included. tl::expected is header-only, so linking it
-  # adds nothing but would put the FetchContent target in our exported link
+  # adds nothing but would put the resolved target in our exported link
   # interface, where a consumer cannot resolve it.
   target_include_directories(
-    libtmux PUBLIC $<BUILD_INTERFACE:${tl_expected_SOURCE_DIR}/include>)
+    libtmux PUBLIC $<BUILD_INTERFACE:${LIBTMUX_TL_EXPECTED_INCLUDE}>)
   target_compile_definitions(libtmux PUBLIC LIBTMUX_USE_TL_EXPECTED)
-  install(DIRECTORY "${tl_expected_SOURCE_DIR}/include/tl"
-          DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+  if(LIBTMUX_INSTALL AND LIBTMUX_TL_EXPECTED_INSTALL)
+    # Only the copy this build fetched. One the system already provides is
+    # already installed, and copying it under this prefix would shadow it.
+    install(DIRECTORY "${LIBTMUX_TL_EXPECTED_INSTALL}"
+            DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+  endif()
 endif()
 # The full version, prerelease tag and all — `PROJECT_VERSION` has had the tag
 # stripped so CMake would accept it, and a library that reports "0.1.0" while
