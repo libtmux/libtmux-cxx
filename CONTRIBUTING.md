@@ -92,6 +92,20 @@ row: an entry in `mapping.json`, the test that proves it in `evidence.json`, and
 `python3 -m tools.parity sync`. An evidence record cannot cite a test nobody
 wrote — every case is resolved in the file it names.
 
+## Check the socket-path budget before macOS does
+
+`sockaddr_un::sun_path` holds 104 bytes on macOS and 108 on Linux, and macOS
+spends around sixty of them on `$TMPDIR` before this fixture adds anything:
+`/var/folders/...` canonicalises to `/private/var/...`. A name or a nested
+directory that costs ten bytes passes every Linux lane and fails there with
+nothing but "File name too long".
+
+Run the suite under a temporary directory as long as the one macOS gives:
+
+```console
+$ BASE=/tmp/$(printf 'm%.0s' $(seq 1 52)) && mkdir -p "$BASE" && TMPDIR="$BASE" ctest --preset cxx-dev --no-tests=error; rmdir "$BASE"
+```
+
 ## Style
 
 `.clang-format` and `.clang-tidy` are in the repository and CI enforces both, so

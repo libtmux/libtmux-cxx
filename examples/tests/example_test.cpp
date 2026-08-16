@@ -10,7 +10,9 @@
 // `TMPDIR` at a directory the harness owns and the example's server has
 // nowhere else to go, so afterwards that directory is empty or it leaked.
 
+#include <cerrno>
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -20,6 +22,8 @@
 
 #include <libtmux/testing/scoped_server.hpp>
 #include <libtmux/testing/tmux_version.hpp>
+
+#include <stdlib.h>
 
 #include "run_program.hpp"
 
@@ -40,36 +44,41 @@ struct ExampleRun {
   std::vector<std::filesystem::path> leaked;
 };
 
-// Run one example inside a tree this harness owns, and report what it left.
+// Run one example inside a directory this harness owns, and report what it
+// left.
+//
+// The sandbox replaces `$TMPDIR` rather than nesting under another fixture
+// tree. Both names here are short on purpose: macOS spends around sixty of
+// `sun_path`'s 104 bytes on `$TMPDIR` alone, and what remains has to hold this
+// directory, the example's own fixture tree, and the socket inside it.
 ExampleRun run_example(std::string_view name, std::string_view suite) {
-  // Started for its private tree, not to be used: pointing `TMPDIR` inside it
-  // is what makes the example's own tree land where this can inspect it.
-  auto harness = ScopedTmuxServer::start(ScopedTmuxServerOptions{
-      .session_name = "example_harness",
-      .socket_namespace = SocketNamespace::consumer("examples")});
-  EXPECT_TRUE(harness.has_value()) << harness.error();
-  if (!harness.has_value()) {
+  std::string sandbox =
+      (std::filesystem::temp_directory_path() / "lt-ex-XXXXXX").string();
+  if (::mkdtemp(sandbox.data()) == nullptr) {
+    ADD_FAILURE() << "mkdtemp: " << std::strerror(errno);
     return {};
   }
 
-  const std::filesystem::path sandbox = harness->tmux_tmpdir() / "examples";
-  std::filesystem::create_directory(sandbox);
-
-  auto environment = harness->child_environment();
-  libtmux::test::set_environment(environment, "TMPDIR", sandbox.string());
-  libtmux::test::set_environment(environment, "LIBTMUX_EXAMPLE_NAMESPACE",
-                                 std::string{suite});
+  auto environment = libtmux::test::current_environment();
+  libtmux::test::erase_environment(environment, "TMUX");
+  libtmux::test::erase_environment(environment, "TMUX_PANE");
+  libtmux::test::set_environment(environment, "TMPDIR", sandbox);
+  libtmux::test::set_environment(environment, "LIBTMUX_EXAMPLE_NAMESPACE", suite);
 
   auto finished = libtmux::examples::run_program(example_binary(name), environment,
                                                  std::chrono::seconds{60});
+
+  std::vector<std::filesystem::path> leaked;
+  std::error_code listing;
+  for (const auto& entry : std::filesystem::directory_iterator{sandbox, listing}) {
+    leaked.push_back(entry.path());
+  }
+  std::error_code removed;
+  std::filesystem::remove_all(sandbox, removed);
+
   EXPECT_TRUE(finished.has_value()) << finished.error();
   if (!finished.has_value()) {
     return {};
-  }
-
-  std::vector<std::filesystem::path> leaked;
-  for (const auto& entry : std::filesystem::directory_iterator{sandbox}) {
-    leaked.push_back(entry.path());
   }
   return {finished->exit_code, finished->output, std::move(leaked)};
 }
@@ -77,12 +86,12 @@ ExampleRun run_example(std::string_view name, std::string_view suite) {
 class Example : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(Example, SucceedsAgainstALiveTmux) {
-  const auto run = run_example(GetParam(), "examples");
+  const auto run = run_example(GetParam(), "ex");
   EXPECT_EQ(run.exit_code, 0) << run.output;
 }
 
 TEST_P(Example, LeavesNoServerAndNoDirectory) {
-  const auto run = run_example(GetParam(), "examples");
+  const auto run = run_example(GetParam(), "ex");
   std::string left;
   for (const auto& path : run.leaked) {
     left += path.string() + '\n';
@@ -97,7 +106,7 @@ INSTANTIATE_TEST_SUITE_P(All, Example,
                          [](const auto& info) { return std::string{info.param}; });
 
 TEST(TourOutput, NamesTheSessionItCreated) {
-  const auto run = run_example("01_tour", "examples");
+  const auto run = run_example("01_tour", "ex");
   ASSERT_EQ(run.exit_code, 0) << run.output;
   EXPECT_NE(run.output.find("example"), std::string::npos) << run.output;
 }

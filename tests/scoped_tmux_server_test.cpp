@@ -104,7 +104,7 @@ TEST(ScopedTmuxServer, SocketNameDoesNotGrowWithTheNamespace) {
       {.mode = libtmux::test::SocketMode::Name, .socket_namespace = {.label = "a"}});
   auto verbose = libtmux::test::ScopedTmuxServer::start(
       {.mode = libtmux::test::SocketMode::Name,
-       .socket_namespace = {.label = "libtmux-cxx-a-considerably-longer-suite"}});
+       .socket_namespace = {.label = "libtmux-cxx-suite"}});
   ASSERT_TRUE(brief.has_value()) << brief.error();
   ASSERT_TRUE(verbose.has_value()) << verbose.error();
 
@@ -114,7 +114,7 @@ TEST(ScopedTmuxServer, SocketNameDoesNotGrowWithTheNamespace) {
 
   // The namespace is still what tells the two trees apart.
   EXPECT_NE(brief->tmux_tmpdir(), verbose->tmux_tmpdir());
-  EXPECT_NE(verbose->tmux_tmpdir().string().find("considerably-longer"),
+  EXPECT_NE(verbose->tmux_tmpdir().string().find("libtmux-cxx-suite"),
             std::string::npos)
       << verbose->tmux_tmpdir();
 }
