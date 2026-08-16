@@ -1440,6 +1440,7 @@ Build tmux target specifiers.  tmux addresses objects either by id (`$0`, `@0`, 
 ```cpp
 [[nodiscard]] constexpr bool is_pane_id(std::string_view value) noexcept;
 ```
+Whether a value is written as an id, which is what decides that it needs no separator validation below — not whether tmux would resolve it. `%x` is an id by this test and no pane by tmux's, and both are right: it carries no separator, so composing it can only produce the caller's own mistake back.
 
 ```cpp
 [[nodiscard]] constexpr bool is_window_id(std::string_view value) noexcept;
