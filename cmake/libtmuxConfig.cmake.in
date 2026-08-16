@@ -7,4 +7,42 @@ find_dependency(Threads)
 
 include("${CMAKE_CURRENT_LIST_DIR}/libtmuxTargets.cmake")
 
+# The `testing` component: `libtmux::testing`, the private-tmux-server fixture
+# the project's own suite runs on.
+#
+# Loaded only when asked for. A consumer linking the library into a program
+# should not find a test archive on their link line because it happened to be
+# installed, and `find_package(libtmux)` alone leaves the target undefined so
+# that mistake fails at configure time rather than shipping.
+if("testing" IN_LIST libtmux_FIND_COMPONENTS)
+  set(_libtmux_testing_targets
+      "${CMAKE_CURRENT_LIST_DIR}/libtmuxTestingTargets.cmake")
+  if(EXISTS "${_libtmux_testing_targets}")
+    include("${_libtmux_testing_targets}")
+    set(libtmux_testing_FOUND TRUE)
+  else()
+    # It is not in every install: `-DLIBTMUX_BUILD_TESTING_LIBRARY=OFF` omits
+    # it, so asking has to fail by saying which switch was off.
+    #
+    # The message and `libtmux_FOUND` are both set here, and deliberately not
+    # left to `check_required_components`: that macro sets the flag and no
+    # message, so the failure reads "set libtmux_FOUND to FALSE" — which tells
+    # a reader the package is broken rather than that an option was off.
+    set(libtmux_testing_FOUND FALSE)
+    set(_libtmux_testing_reason
+        "this libtmux was installed without its testing library, so the \"testing\" component is unavailable. Reconfigure and reinstall it with -DLIBTMUX_BUILD_TESTING_LIBRARY=ON.")
+    if(libtmux_FIND_REQUIRED_testing)
+      set(libtmux_FOUND FALSE)
+      set(libtmux_NOT_FOUND_MESSAGE "${_libtmux_testing_reason}")
+      unset(_libtmux_testing_targets)
+      unset(_libtmux_testing_reason)
+      return()
+    elseif(NOT libtmux_FIND_QUIETLY)
+      message(WARNING "${_libtmux_testing_reason}")
+    endif()
+    unset(_libtmux_testing_reason)
+  endif()
+  unset(_libtmux_testing_targets)
+endif()
+
 check_required_components(libtmux)

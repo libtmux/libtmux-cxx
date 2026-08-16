@@ -1,5 +1,5 @@
 #include "libtmux/expected.hpp"
-#include "support/process.hpp"
+#include "process.hpp"
 
 #include <gtest/gtest.h>
 

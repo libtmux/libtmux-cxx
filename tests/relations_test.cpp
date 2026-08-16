@@ -13,7 +13,7 @@
 #include "libtmux/entities.hpp"
 #include "libtmux/relations.hpp"
 #include "libtmux/server.hpp"
-#include "support/scoped_tmux_server.hpp"
+#include "libtmux/testing/scoped_server.hpp"
 
 namespace {
 

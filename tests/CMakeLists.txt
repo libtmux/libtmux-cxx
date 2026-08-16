@@ -4,15 +4,19 @@ target_link_libraries(
 add_test(NAME build_smoke COMMAND build_smoke)
 set_tests_properties(build_smoke PROPERTIES LABELS "contract")
 
-add_library(
-  libtmux_test_support STATIC
-  support/process.cpp
-  support/scoped_tmux_server.cpp)
+# What is left of this suite's own scaffolding once the reusable part has been
+# extracted: `libtmux::testing` carries the fixture, and this carries the
+# handful of headers that are only meaningful inside this repository —
+# descriptor accounting, `/proc` platform guards, the differential wire codec.
+#
+# An INTERFACE target now, not a static library. It compiles nothing; it says
+# "the exported fixture, plus this directory on the include path", which is
+# exactly what every test here needs and nothing a consumer would want.
+add_library(libtmux_test_support INTERFACE)
 target_include_directories(
-  libtmux_test_support PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+  libtmux_test_support INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(
-  libtmux_test_support PUBLIC libtmux::libtmux
-  PRIVATE libtmux_build_options)
+  libtmux_test_support INTERFACE libtmux::testing GTest::gtest)
 
 add_executable(fake_tmux support/fake_tmux.cpp)
 target_link_libraries(fake_tmux PRIVATE libtmux_build_options)
@@ -25,6 +29,12 @@ add_executable(
 target_compile_definitions(
   scoped_tmux_server_test
   PRIVATE LIBTMUX_FAKE_TMUX_PATH="$<TARGET_FILE:fake_tmux>")
+# The fixture's own tests reach past its public header into the process
+# supervision it is built on — the pidfd reaping, the interposed syscalls
+# below. That is a privilege of living in this repository, not part of what
+# `libtmux::testing` promises anyone else.
+target_include_directories(
+  scoped_tmux_server_test PRIVATE "${PROJECT_SOURCE_DIR}/src/testing")
 target_link_libraries(
   scoped_tmux_server_test
   PRIVATE GTest::gtest_main libtmux_build_options libtmux_test_support)
@@ -479,13 +489,12 @@ if(NOT LIBTMUX_TEST_TMUX_VERSION MATCHES
       "control-mode tests need tmux 3.2 or newer, found ${LIBTMUX_TEST_TMUX_VERSION}")
 endif()
 
-# Added here rather than beside the rest of the support library: it needs the
-# version resolved above, and the resolution needs a tmux to ask.
-target_sources(libtmux_test_support PRIVATE support/tmux_capabilities.cpp)
-target_compile_definitions(
-  libtmux_test_support PRIVATE
-  LIBTMUX_TEST_TMUX_VERSION="${LIBTMUX_TEST_TMUX_VERSION}")
-target_link_libraries(libtmux_test_support PUBLIC GTest::gtest)
+# The version is no longer stamped into the support library from here.
+# `libtmux::testing` asks the binary it is about to spawn, at runtime, which
+# is both more honest — a configure-time answer can name a different tmux than
+# the one that runs — and the thing that made the fixture installable at all.
+# The check above stays: it is worth failing configuration over a tmux this
+# library does not claim, rather than discovering it 200 tests later.
 
 foreach(control_case parser integration)
   add_executable(

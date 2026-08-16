@@ -1,4 +1,4 @@
-#include "support/scoped_tmux_server.hpp"
+#include "libtmux/testing/scoped_server.hpp"
 
 #include <gtest/gtest.h>
 

@@ -95,8 +95,13 @@ if(LIBTMUX_INSTALL)
     ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
     LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
     RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+  # `testing/` is excluded and installed by `src/testing` instead. Headers for
+  # a target that was not built would be an offer the package cannot keep: a
+  # consumer who includes one gets a link error rather than the configure-time
+  # refusal the component is there to give them.
   install(DIRECTORY "${PROJECT_SOURCE_DIR}/include/libtmux"
-          DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+          DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+          PATTERN "testing" EXCLUDE)
   install(
     EXPORT libtmuxTargets
     NAMESPACE libtmux::

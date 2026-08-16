@@ -16,8 +16,8 @@
 #include "libtmux/cardinality.hpp"
 #include "libtmux/entities.hpp"
 #include "libtmux/server.hpp"
-#include "support/scoped_tmux_server.hpp"
-#include "support/tmux_capabilities.hpp"
+#include "libtmux/testing/capabilities.hpp"
+#include "libtmux/testing/scoped_server.hpp"
 
 namespace {
 

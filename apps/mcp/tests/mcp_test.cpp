@@ -4,7 +4,7 @@
 
 #include <gtest/gtest.h>
 
-#include "support/scoped_tmux_server.hpp"
+#include "libtmux/testing/scoped_server.hpp"
 
 namespace {
 

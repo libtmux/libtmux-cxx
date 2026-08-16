@@ -1,5 +1,5 @@
+#include "libtmux/testing/scoped_server.hpp"
 #include "support/descriptors.hpp"
-#include "support/scoped_tmux_server.hpp"
 
 #include <gtest/gtest-spi.h>
 #include <gtest/gtest.h>
