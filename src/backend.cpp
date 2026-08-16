@@ -89,8 +89,8 @@ void Backend::observe(const std::vector<std::string>& command,
 }
 
 SubprocessBackend::SubprocessBackend(std::vector<std::string> connection,
-                                     CommandObserver observer)
-    : Backend{std::move(observer)}, connection_{std::move(connection)},
+                                     CommandObserver observer, ExecutionPolicy policy)
+    : Backend{std::move(observer), policy}, connection_{std::move(connection)},
       identity_{resolved_socket_path(connection_).value_or(std::string{})} {}
 
 expected<std::string, CommandFailure>

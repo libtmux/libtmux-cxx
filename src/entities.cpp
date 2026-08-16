@@ -21,7 +21,13 @@ detail::Row::run(const std::vector<std::string>& command,
   if (backend() == nullptr) {
     return unexpected(detail::disconnected());
   }
-  return backend()->run(command, std::nullopt, output_limit);
+  // Every typed method arrives here, and every one of them used to pass no
+  // deadline at all: `window.rename(...)` against a tmux that stopped
+  // answering held the calling thread for the life of the process.
+  const ExecutionPolicy& policy = backend()->policy();
+  return backend()->run(command, policy.timeout,
+                        output_limit.has_value() ? output_limit
+                                                 : policy.output_limit);
 }
 
 namespace {

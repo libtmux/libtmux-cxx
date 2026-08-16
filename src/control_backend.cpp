@@ -27,14 +27,15 @@ CommandFailure carried(FailureKind kind, bool dispatched, std::string diagnostic
 } // namespace
 
 ControlBackend::ControlBackend(Connection connection, std::vector<std::string> selector,
-                               std::string identity, CommandObserver observer)
-    : Backend{std::move(observer)}, connection_{std::move(connection)},
+                               std::string identity, CommandObserver observer,
+                               ExecutionPolicy policy)
+    : Backend{std::move(observer), policy}, connection_{std::move(connection)},
       selector_{std::move(selector)}, identity_{std::move(identity)} {}
 
 expected<std::shared_ptr<const ControlBackend>, ProtocolError>
 ControlBackend::open(std::vector<std::string> selector, std::string socket_path,
                      std::string identity, std::string session,
-                     CommandObserver observer) {
+                     CommandObserver observer, ExecutionPolicy policy) {
   ConnectionOptions options;
   options.socket_path = std::move(socket_path);
   options.session_name = std::move(session);
@@ -45,7 +46,7 @@ ControlBackend::open(std::vector<std::string> selector, std::string socket_path,
   return std::make_shared<const ControlBackend>(*std::move(connection),
                                                 std::move(selector),
                                                 std::move(identity),
-                                                std::move(observer));
+                                                std::move(observer), policy);
 }
 
 expected<std::string, CommandFailure>

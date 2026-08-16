@@ -53,12 +53,16 @@ public:
   //
   // An observer, if given, is told about every command this server runs. It is
   // fixed at construction because the connection is immutable afterwards, and
-  // that is what makes a Server safe to copy between threads.
+  // that is what makes a Server safe to copy between threads. The policy is
+  // fixed for the same reason, and says what a call gets when it names no
+  // timeout or limit of its own.
   [[nodiscard]] static expected<Server, CommandFailure>
-  at_socket_path(std::string_view path, CommandObserver observer = {});
+  at_socket_path(std::string_view path, CommandObserver observer = {},
+                 ExecutionPolicy policy = {});
   // `-L name`: resolved under tmux's socket directory, as the tmux flag does.
   [[nodiscard]] static expected<Server, CommandFailure>
-  at_socket_name(std::string_view name, CommandObserver observer = {});
+  at_socket_name(std::string_view name, CommandObserver observer = {},
+                 ExecutionPolicy policy = {});
 
   // The server this process is running inside.
   //
@@ -68,18 +72,20 @@ public:
   // no session at all — so a caller who wants the session asks tmux, rather
   // than trusting what it inherited.
   [[nodiscard]] static expected<Server, CommandFailure>
-  from_env(CommandObserver observer = {});
+  from_env(CommandObserver observer = {}, ExecutionPolicy policy = {});
 
   // The server tmux would talk to with no `-L` or `-S` at all, which is the
   // one a person means when they say "my tmux".
   [[nodiscard]] static expected<Server, CommandFailure>
-  at_default(CommandObserver observer = {});
+  at_default(CommandObserver observer = {}, ExecutionPolicy policy = {});
 
   // Run one command and return its standard output.
   [[nodiscard]] expected<std::string, CommandFailure>
-  // The timeout rides on the call, not on the server: how long a caller will
-  // wait is a property of what they asked for, and listing sessions does not
-  // share a deadline with attaching a client.
+  // The timeout still rides on the call: how long a caller will wait is a
+  // property of what they asked for, and listing sessions does not share a
+  // deadline with attaching a client. Unset takes the server's
+  // `ExecutionPolicy`, which is thirty seconds rather than forever — a floor,
+  // not a guess at what this particular command needs.
   // `output_limit` bounds how much of tmux's answer this call will hold. Past
   // it the command reports `truncated` rather than returning a prefix that
   // reads like a complete answer. Unset uses the package default, which is

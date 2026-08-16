@@ -39,7 +39,8 @@ namespace detail {
 class Backend {
 public:
   Backend() = default;
-  explicit Backend(CommandObserver observer) : observer_{std::move(observer)} {}
+  explicit Backend(CommandObserver observer, ExecutionPolicy policy = {})
+      : observer_{std::move(observer)}, policy_{policy} {}
   Backend(const Backend&) = delete;
   Backend& operator=(const Backend&) = delete;
   Backend(Backend&&) = delete;
@@ -99,6 +100,11 @@ public:
   // connection over the same selector keeps watching the same way.
   [[nodiscard]] const CommandObserver& observer() const noexcept { return observer_; }
 
+  // What a call that names no timeout of its own gets. Applied where a caller
+  // reaches the library, not here: this layer keeps taking `nullopt` to mean
+  // no deadline, which is what `wait_for` needs to be able to ask for.
+  [[nodiscard]] const ExecutionPolicy& policy() const noexcept { return policy_; }
+
 protected:
   // Render a command the way tmux received it and hand it to the observer, if
   // there is one. Called after the command finishes and outside any lock.
@@ -107,6 +113,7 @@ protected:
 
 private:
   CommandObserver observer_;
+  ExecutionPolicy policy_;
 };
 
 // Do two backends talk to one tmux?
@@ -130,7 +137,7 @@ private:
 class SubprocessBackend final : public Backend {
 public:
   explicit SubprocessBackend(std::vector<std::string> connection,
-                             CommandObserver observer = {});
+                             CommandObserver observer = {}, ExecutionPolicy policy = {});
 
   // Declaring an override hides the base's other overload, and the
   // one-argument form is how most callers spell "no timeout".

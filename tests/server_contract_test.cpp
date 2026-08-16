@@ -286,3 +286,61 @@ TEST(ServerContract, ARefusalNamesTheCommandAndCarriesNoStrayNewline) {
   // Both consumers put this straight into a message field.
   EXPECT_FALSE(diagnostic.ends_with("\n")) << diagnostic;
 }
+
+// Typed methods passed no deadline at all, so `window.rename(...)` against a
+// tmux that never answers held the calling thread for the life of the process.
+// "tmux is normally fast" is not a liveness guarantee; the policy is the floor
+// under every call that did not name one of its own.
+TEST(ServerContract, ATypedCallInheritsTheServersDeadline) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+
+  const libtmux::ExecutionPolicy impatient{.timeout = std::chrono::milliseconds{150}};
+  auto server = Server::at_socket_path(fixture->socket_path().string(), {}, impatient);
+  ASSERT_TRUE(server.has_value());
+
+  // `run-shell` without `-b` makes tmux wait for the command, so this is a
+  // typed call that genuinely does not answer in time rather than one raced
+  // against the clock.
+  const auto started = std::chrono::steady_clock::now();
+  const auto slow = server->run_shell("sleep 5");
+  const auto elapsed = std::chrono::steady_clock::now() - started;
+
+  ASSERT_FALSE(slow.has_value()) << "a 150ms deadline should not have been met";
+  EXPECT_EQ(slow.error().kind, libtmux::FailureKind::timeout);
+  // Reported as dispatched: tmux ran it, and what it did is not yet known.
+  EXPECT_TRUE(slow.error().dispatched);
+  EXPECT_LT(elapsed, std::chrono::seconds{3})
+      << "the call outlived the deadline it was given";
+
+  // The same server with a workable deadline answers, so the refusal above was
+  // the policy and not a broken fixture.
+  const libtmux::ExecutionPolicy patient{.timeout = std::chrono::seconds{20}};
+  auto unhurried =
+      Server::at_socket_path(fixture->socket_path().string(), {}, patient);
+  ASSERT_TRUE(unhurried.has_value());
+  const auto again = unhurried->sessions();
+  ASSERT_TRUE(again.has_value()) << again.error().diagnostic;
+  EXPECT_FALSE(again->empty());
+}
+
+// Waiting is the whole request, so `wait_for` is the one call the floor must
+// not cut short. It reaches the transport directly for that reason.
+TEST(ServerContract, WaitingOutlivesTheServersDeadline) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+
+  const libtmux::ExecutionPolicy impatient{.timeout = std::chrono::milliseconds{1}};
+  auto server = Server::at_socket_path(fixture->socket_path().string(), {}, impatient);
+  ASSERT_TRUE(server.has_value());
+
+  const auto started = std::chrono::steady_clock::now();
+  const auto waited =
+      server->wait_for("nobody-signals-this", std::chrono::milliseconds{300});
+  const auto elapsed = std::chrono::steady_clock::now() - started;
+
+  EXPECT_FALSE(waited.has_value());
+  // The caller's 300ms, not the policy's 1ms.
+  EXPECT_GE(elapsed, std::chrono::milliseconds{250})
+      << "the policy cut short a wait the caller asked for";
+}

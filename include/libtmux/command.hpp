@@ -11,7 +11,10 @@
 // that races a user closing a pane.
 
 #include "libtmux/abi.hpp"
+#include <chrono>
+#include <cstddef>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -74,5 +77,24 @@ struct CommandFailure {
 // threads has to say so itself.
 using CommandObserver =
     std::function<void(std::string_view command, const CommandFailure* failure)>;
+
+// What a call waits and holds when the caller did not say.
+//
+// A timeout on the call is still how a caller says "this one in particular":
+// listing sessions does not share a deadline with attaching a client. What was
+// missing was a floor. Typed methods passed no timeout at all, so
+// `window.rename(...)` waited for as long as the process ran if tmux never
+// answered — and "tmux is normally fast" is not a liveness guarantee when a
+// hook blocks, a filesystem stops answering, or a connection breaks without
+// closing the pipe.
+//
+// Thirty seconds is far past every tmux command that works and far short of
+// forever. `wait_for` opts out, because waiting is the whole request.
+struct ExecutionPolicy {
+  // Absent means wait. That is a thing to mean deliberately.
+  std::optional<std::chrono::milliseconds> timeout{std::chrono::seconds{30}};
+  // Absent leaves the transport's own bound, which is one megabyte.
+  std::optional<std::size_t> output_limit{};
+};
 
 LIBTMUX_NAMESPACE_END

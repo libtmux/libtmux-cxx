@@ -37,7 +37,7 @@ public:
   // control connection would compare as two.
   [[nodiscard]] static expected<std::shared_ptr<const ControlBackend>, ProtocolError>
   open(std::vector<std::string> selector, std::string socket_path, std::string identity,
-       std::string session, CommandObserver observer);
+       std::string session, CommandObserver observer, ExecutionPolicy policy = {});
 
   using Backend::run;
 
@@ -68,7 +68,8 @@ public:
   [[nodiscard]] std::size_t dropped_notifications() const noexcept override;
 
   ControlBackend(Connection connection, std::vector<std::string> selector,
-                 std::string identity, CommandObserver observer);
+                 std::string identity, CommandObserver observer,
+                 ExecutionPolicy policy);
 
 private:
   mutable std::mutex mutex_;

@@ -44,16 +44,18 @@ CommandFailure rejected_selector(std::string_view selector, SocketError error) {
 } // namespace
 
 expected<Server, CommandFailure> Server::at_socket_path(std::string_view path,
-                                                        CommandObserver observer) {
+                                                        CommandObserver observer,
+                                                        ExecutionPolicy policy) {
   auto arguments = socket_path_arguments(path);
   if (!arguments.has_value()) {
     return unexpected(rejected_selector(path, arguments.error()));
   }
   return detail::server_over(std::make_shared<const detail::SubprocessBackend>(
-      *std::move(arguments), std::move(observer)));
+      *std::move(arguments), std::move(observer), policy));
 }
 
-expected<Server, CommandFailure> Server::from_env(CommandObserver observer) {
+expected<Server, CommandFailure> Server::from_env(CommandObserver observer,
+                                                  ExecutionPolicy policy) {
   const char* const inherited = std::getenv("TMUX");
   if (inherited == nullptr || *inherited == '\0') {
     return unexpected(CommandFailure{
@@ -75,31 +77,38 @@ expected<Server, CommandFailure> Server::from_env(CommandObserver observer) {
                                      .exit_code = 0,
                                      .diagnostic = "TMUX names no socket path"});
   }
-  return at_socket_path(socket, std::move(observer));
+  return at_socket_path(socket, std::move(observer), policy);
 }
 
-expected<Server, CommandFailure> Server::at_default(CommandObserver observer) {
+expected<Server, CommandFailure> Server::at_default(CommandObserver observer,
+                                                    ExecutionPolicy policy) {
   // No selector at all, which is what tmux itself does: the default socket
   // under the directory it chooses, honouring TMUX_TMPDIR as tmux does.
   return detail::server_over(std::make_shared<const detail::SubprocessBackend>(
-      std::vector<std::string>{}, std::move(observer)));
+      std::vector<std::string>{}, std::move(observer), policy));
 }
 
 expected<Server, CommandFailure> Server::at_socket_name(std::string_view name,
-                                                        CommandObserver observer) {
+                                                        CommandObserver observer,
+                                                        ExecutionPolicy policy) {
   auto arguments = socket_name_arguments(name);
   if (!arguments.has_value()) {
     return unexpected(rejected_selector(name, arguments.error()));
   }
   return detail::server_over(std::make_shared<const detail::SubprocessBackend>(
-      *std::move(arguments), std::move(observer)));
+      *std::move(arguments), std::move(observer), policy));
 }
 
 expected<std::string, CommandFailure>
 Server::run(const std::vector<std::string>& command,
             std::optional<std::chrono::milliseconds> timeout,
             std::optional<std::size_t> output_limit) const {
-  return backend_->run(command, timeout, output_limit);
+  // The policy fills in what the call did not say. Applied here rather than in
+  // the backend, because the backend still has to be able to be told "no
+  // deadline" — `wait_for` means it, and it is the only caller that does.
+  const ExecutionPolicy& policy = backend_->policy();
+  return backend_->run(command, timeout.has_value() ? timeout : policy.timeout,
+                       output_limit.has_value() ? output_limit : policy.output_limit);
 }
 
 expected<std::string, CommandFailure>
@@ -110,7 +119,8 @@ Server::run_batch(const CommandBatch& batch) const {
                                      .exit_code = 0,
                                      .diagnostic = "empty batch"});
   }
-  return backend_->run_batch(batch, std::nullopt, std::nullopt);
+  const ExecutionPolicy& policy = backend_->policy();
+  return backend_->run_batch(batch, policy.timeout, policy.output_limit);
 }
 
 expected<std::string, CommandFailure> Server::run_chain(const Chain& chain) const {
@@ -180,10 +190,9 @@ expected<Server, CommandFailure> Server::over_control(std::string_view session) 
                        .exit_code = 0,
                        .diagnostic = "this server has no socket to connect to"});
   }
-  auto backend =
-      detail::ControlBackend::open(selector, std::string{resolved},
-                                   std::string{resolved}, std::string{session},
-                                   backend_->observer());
+  auto backend = detail::ControlBackend::open(
+      selector, std::string{resolved}, std::string{resolved}, std::string{session},
+      backend_->observer(), backend_->policy());
   if (!backend.has_value()) {
     // The same kind a control connection reports when it breaks mid-command,
     // because it is the same thing failing. Not dispatched: no command ran,
@@ -221,7 +230,11 @@ Server::wait_for(std::string_view channel,
                                      .exit_code = 0,
                                      .diagnostic = "a channel needs a name"});
   }
-  const auto waited = run({"wait-for", std::string{channel}}, timeout);
+  // Straight to the backend, so an absent timeout still means wait. Waiting is
+  // the request here; the policy's floor exists for calls that should have
+  // answered by now, and this one has not been asked yet.
+  const auto waited =
+      backend_->run({"wait-for", std::string{channel}}, timeout, std::nullopt);
   if (!waited.has_value()) {
     return unexpected(waited.error());
   }
