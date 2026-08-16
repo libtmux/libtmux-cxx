@@ -111,7 +111,29 @@ run_command(const std::filesystem::path& executable, std::vector<std::string> ar
                        .stderr_text = child->stderr_text()};
 }
 
-libtmux::expected<std::filesystem::path, std::string> create_private_tree() {
+// A namespace label reaches a socket path and a `tmux -L` name, so it is not
+// free-form. Anything outside this set either needs quoting somewhere down the
+// line or makes a directory nobody can name at a shell.
+libtmux::expected<void, std::string> check_namespace(std::string_view label) {
+  if (label.empty()) {
+    return libtmux::unexpected("socket namespace must not be empty");
+  }
+  for (const char character : label) {
+    const bool allowed = (character >= 'a' && character <= 'z') ||
+                         (character >= 'A' && character <= 'Z') ||
+                         (character >= '0' && character <= '9') || character == '.' ||
+                         character == '_' || character == '-';
+    if (!allowed) {
+      return libtmux::unexpected(
+          "socket namespace may only contain [A-Za-z0-9._-], found '" +
+          std::string{character} + "' in \"" + std::string{label} + '"');
+    }
+  }
+  return {};
+}
+
+libtmux::expected<std::filesystem::path, std::string>
+create_private_tree(std::string_view label) {
   const auto* temporary = std::getenv("TMPDIR");
   const auto parent = temporary != nullptr && temporary[0] != '\0'
                           ? std::filesystem::path{temporary}
@@ -122,11 +144,11 @@ libtmux::expected<std::filesystem::path, std::string> create_private_tree() {
     return libtmux::unexpected("temporary directory canonicalization failed: " +
                                error.message());
   }
-  // Named for the workspace, not just for this library: several checkouts of
+  // Named for the suite, not just for this library: several checkouts of
   // libtmux in different languages run tests on one machine, and a stray
   // server should say which one left it. Kept short because the whole socket
   // path has to fit in `sun_path`, which `socket_path_fits` then checks.
-  auto pattern = (absolute_parent / "libtmux-cxx-test-XXXXXX").string();
+  auto pattern = (absolute_parent / (std::string{label} + "-XXXXXX")).string();
   if (::mkdtemp(pattern.data()) == nullptr) {
     return libtmux::unexpected(std::string{"mkdtemp: "} + std::strerror(errno));
   }
@@ -299,9 +321,13 @@ ScopedTmuxServer::start(ScopedTmuxServerOptions options) {
   if (options.session_name.empty()) {
     return libtmux::unexpected("session name must not be empty");
   }
+  if (const auto named = check_namespace(options.socket_namespace.label);
+      !named.has_value()) {
+    return libtmux::unexpected(named.error());
+  }
 
   auto state = std::make_unique<State>(std::move(options));
-  auto private_tree = create_private_tree();
+  auto private_tree = create_private_tree(state->options.socket_namespace.label);
   if (!private_tree.has_value()) {
     return libtmux::unexpected(private_tree.error());
   }
@@ -330,11 +356,20 @@ ScopedTmuxServer::start(ScopedTmuxServerOptions options) {
     detail::erase_environment(state->environment, name);
   }
 
+  // In both modes, not just the one that needs it. A child this fixture hands
+  // its environment to — an example program, a consumer's own binary — may
+  // reach tmux by no selector at all, and the honest answer to "the default
+  // server" for such a child is the one inside this tree, never the developer's.
+  detail::set_environment(state->environment, "TMUX_TMPDIR",
+                          state->private_tree.string());
+
   std::vector<std::string> server_arguments{"-D", "-u", "-f", "/dev/null"};
   if (state->mode == SocketMode::Name) {
-    state->socket_name = "server";
-    detail::set_environment(state->environment, "TMUX_TMPDIR",
-                            state->private_tree.string());
+    // `tmux -L` resolves under `$TMUX_TMPDIR`, which is already this fixture's
+    // private tree — so the name need not be unique to be safe. It carries the
+    // namespace anyway: `tmux -L` is what a person types when they go looking
+    // for a server a test left behind, and "server" tells them nothing.
+    state->socket_name = state->options.socket_namespace.label;
     server_arguments.insert(server_arguments.end(), {"-L", state->socket_name});
   } else {
     state->socket_path = state->private_tree / "socket";
@@ -506,6 +541,30 @@ const std::filesystem::path& ScopedTmuxServer::tmux_tmpdir() const noexcept {
 
 std::string_view ScopedTmuxServer::session_name() const noexcept {
   return state_ ? std::string_view{state_->options.session_name} : std::string_view{};
+}
+
+void set_environment(std::vector<std::string>& environment, std::string_view name,
+                     std::string_view value) {
+  detail::set_environment(environment, name, value);
+}
+
+void erase_environment(std::vector<std::string>& environment, std::string_view name) {
+  detail::erase_environment(environment, name);
+}
+
+std::string_view ScopedTmuxServer::socket_namespace() const noexcept {
+  return state_ ? std::string_view{state_->options.socket_namespace.label}
+                : std::string_view{};
+}
+
+std::vector<std::string> ScopedTmuxServer::child_environment() const {
+  if (!state_) {
+    return {};
+  }
+  // The fixture's own environment already has `TMUX_TMPDIR` set and
+  // `TMUX`/`TMUX_PANE` erased — the child needs exactly that, so hand it over
+  // rather than rebuilding it and risking the two drifting apart.
+  return state_->environment;
 }
 
 int ScopedTmuxServer::server_pid() const noexcept {
