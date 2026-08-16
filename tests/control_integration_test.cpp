@@ -371,6 +371,48 @@ TEST(ControlModeConnection, DeliversPaneOutputOnlyWhenAskedAtConnectTime) {
   EXPECT_GT(collect(true), 0) << "asked for output and none arrived";
 }
 
+// The parser against what tmux actually sends, rather than what its source
+// suggests it sends.
+TEST(ControlModeConnection, ParsesTheNotificationsARealServerEmits) {
+  auto server = start_server(unique_name("control-parsed"));
+  ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
+  auto connected = connect_to(*server);
+  ASSERT_TRUE(connected.has_value())
+      << (connected.has_value() ? "" : connected.error().message);
+  auto connection = std::move(*connected);
+
+  const auto made =
+      connection.execute(group({{"new-window", "-d", "-n", "parsed-window"}}),
+                         std::chrono::steady_clock::now() + 2s);
+  ASSERT_FALSE(made.connection_error.has_value());
+
+  bool saw_window_add = false;
+  std::string added_window;
+  const auto deadline = std::chrono::steady_clock::now() + 3s;
+  while (std::chrono::steady_clock::now() < deadline && !saw_window_add) {
+    const auto batch = connection.wait_for_notifications(deadline);
+    if (batch.empty()) {
+      break;
+    }
+    for (const Notification& notification : batch) {
+      const auto parsed = libtmux::parse(notification);
+      // Nothing a real server sends may parse as a name this build cannot
+      // read; the set only grows, and this tmux is inside the supported range.
+      EXPECT_NE(parsed.name.size(), 0U);
+      EXPECT_EQ(parsed.name.front(), '%');
+      if (parsed.kind == libtmux::NotificationKind::window_add) {
+        saw_window_add = true;
+        added_window = std::string{parsed.window};
+      }
+    }
+  }
+
+  EXPECT_TRUE(saw_window_add);
+  ASSERT_FALSE(added_window.empty());
+  EXPECT_EQ(added_window.front(), '@') << added_window;
+  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+}
+
 TEST(ControlModeConnection, NotificationShapedCommandOutputRemainsBlockBody) {
   LIBTMUX_REQUIRES_TMUX(3, 4,
                         "keeping notification-shaped command output in the block body");

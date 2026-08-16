@@ -1,6 +1,7 @@
 #include "libtmux/control.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -304,3 +305,114 @@ TEST(ControlModeParser, TreatsZeroAsUnbounded) {
 }
 
 } // namespace
+
+// Reading a notification's name and arguments.
+//
+// tmux types its arguments by prefix, so the grammar is the same for every
+// notification: `%name` then `$session`, `@window`, `%pane` in whatever
+// combination that one carries, then any free text. The shapes below are the
+// ones tmux writes, taken from its source across 3.2a to master.
+
+namespace {
+
+libtmux::Notification notification_of(std::string_view line) {
+  const auto* first = reinterpret_cast<const std::byte*>(line.data());
+  return libtmux::Notification{std::vector<std::byte>{first, first + line.size()}};
+}
+
+std::string as_text(std::span<const std::byte> bytes) {
+  return std::string{reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+}
+
+} // namespace
+
+TEST(NotificationParse, ReadsTheNameOfEveryShapeTmuxWrites) {
+  struct Case {
+    std::string_view line;
+    libtmux::NotificationKind kind;
+  };
+  constexpr std::array<Case, 8> cases{{
+      {"%sessions-changed", libtmux::NotificationKind::sessions_changed},
+      {"%window-add @1", libtmux::NotificationKind::window_add},
+      {"%window-close @2", libtmux::NotificationKind::window_close},
+      {"%session-changed $0 work", libtmux::NotificationKind::session_changed},
+      {"%window-pane-changed @1 %4", libtmux::NotificationKind::window_pane_changed},
+      {"%pane-mode-changed %3", libtmux::NotificationKind::pane_mode_changed},
+      {"%paste-buffer-changed buffer0",
+       libtmux::NotificationKind::paste_buffer_changed},
+      {"%client-detached tty", libtmux::NotificationKind::client_detached},
+  }};
+  for (const Case& one : cases) {
+    const auto held = notification_of(one.line);
+    const auto parsed = libtmux::parse(held);
+    EXPECT_EQ(parsed.kind, one.kind) << one.line;
+    EXPECT_EQ(parsed.name, one.line.substr(0, one.line.find(' '))) << one.line;
+  }
+}
+
+TEST(NotificationParse, PutsEachIdInTheFieldItsPrefixNames) {
+  const auto session = notification_of("%session-window-changed $2 @7");
+  const auto parsed = libtmux::parse(session);
+  EXPECT_EQ(parsed.session, "$2");
+  EXPECT_EQ(parsed.window, "@7");
+  EXPECT_TRUE(parsed.pane.empty());
+
+  const auto pane = notification_of("%window-pane-changed @1 %4");
+  const auto pane_parsed = libtmux::parse(pane);
+  EXPECT_EQ(pane_parsed.window, "@1");
+  EXPECT_EQ(pane_parsed.pane, "%4");
+  EXPECT_TRUE(pane_parsed.session.empty());
+}
+
+TEST(NotificationParse, KeepsFreeTextWholeIncludingItsSpaces) {
+  const auto held = notification_of("%window-renamed @3 a name with spaces");
+  const auto parsed = libtmux::parse(held);
+  EXPECT_EQ(parsed.kind, libtmux::NotificationKind::window_renamed);
+  EXPECT_EQ(parsed.window, "@3");
+  EXPECT_EQ(parsed.text, "a name with spaces");
+}
+
+// The payload is already unescaped by the time it is a notification, so it may
+// hold the spaces and newlines that would otherwise separate fields. Only the
+// prefix is tokenised.
+TEST(NotificationParse, TakesOutputPayloadWholeAfterItsPane) {
+  const auto held = notification_of("%output %2 two words\nand a newline");
+  const auto parsed = libtmux::parse(held);
+  EXPECT_EQ(parsed.kind, libtmux::NotificationKind::output);
+  EXPECT_EQ(parsed.pane, "%2");
+  EXPECT_EQ(as_text(parsed.payload), "two words\nand a newline");
+}
+
+TEST(NotificationParse, ReadsTheAgeOfExtendedOutput) {
+  const auto held = notification_of("%extended-output %5 1234 : late bytes");
+  const auto parsed = libtmux::parse(held);
+  EXPECT_EQ(parsed.kind, libtmux::NotificationKind::extended_output);
+  EXPECT_EQ(parsed.pane, "%5");
+  ASSERT_TRUE(parsed.age.has_value());
+  EXPECT_EQ(*parsed.age, 1234U);
+  EXPECT_EQ(as_text(parsed.payload), "late bytes");
+}
+
+// A name this build does not know is a newer tmux, not a failure: the set has
+// only ever grown across the supported range.
+TEST(NotificationParse, ReportsAnUnknownNameWithoutLosingIt) {
+  const auto held = notification_of("%something-tmux-added-later @9 detail");
+  const auto parsed = libtmux::parse(held);
+  EXPECT_EQ(parsed.kind, libtmux::NotificationKind::unknown);
+  EXPECT_EQ(parsed.name, "%something-tmux-added-later");
+  EXPECT_EQ(parsed.window, "@9");
+}
+
+TEST(NotificationParse, NamesEveryKindItCanReport) {
+  // Round-trips the table, so a kind added without a name cannot pass.
+  constexpr std::array<libtmux::NotificationKind, 4> sample{
+      libtmux::NotificationKind::output, libtmux::NotificationKind::paused,
+      libtmux::NotificationKind::resumed,
+      libtmux::NotificationKind::subscription_changed};
+  for (const auto kind : sample) {
+    const auto name = libtmux::to_string(kind);
+    EXPECT_NE(name, "unknown");
+    EXPECT_EQ(name.front(), '%');
+  }
+  EXPECT_EQ(libtmux::to_string(libtmux::NotificationKind::unknown), "unknown");
+}

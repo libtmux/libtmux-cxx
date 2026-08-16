@@ -1,6 +1,7 @@
 #include "libtmux/control.hpp"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
@@ -9,6 +10,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -268,6 +270,143 @@ expected<void, ProtocolError> Parser::finish() {
   }
   finished_ = true;
   return {};
+}
+
+namespace {
+
+struct KindName {
+  std::string_view name;
+  NotificationKind kind;
+};
+
+// Every name tmux writes, across 3.2a to master. The two paste-buffer ones
+// arrived in 3.4; an older server simply never sends them.
+constexpr std::array<KindName, 21> kNotificationNames{{
+    {"%output", NotificationKind::output},
+    {"%extended-output", NotificationKind::extended_output},
+    {"%pause", NotificationKind::paused},
+    {"%continue", NotificationKind::resumed},
+    {"%sessions-changed", NotificationKind::sessions_changed},
+    {"%session-changed", NotificationKind::session_changed},
+    {"%session-renamed", NotificationKind::session_renamed},
+    {"%session-window-changed", NotificationKind::session_window_changed},
+    {"%client-detached", NotificationKind::client_detached},
+    {"%client-session-changed", NotificationKind::client_session_changed},
+    {"%window-add", NotificationKind::window_add},
+    {"%window-close", NotificationKind::window_close},
+    {"%window-renamed", NotificationKind::window_renamed},
+    {"%window-pane-changed", NotificationKind::window_pane_changed},
+    {"%unlinked-window-add", NotificationKind::unlinked_window_add},
+    {"%unlinked-window-close", NotificationKind::unlinked_window_close},
+    {"%unlinked-window-renamed", NotificationKind::unlinked_window_renamed},
+    {"%pane-mode-changed", NotificationKind::pane_mode_changed},
+    {"%paste-buffer-changed", NotificationKind::paste_buffer_changed},
+    {"%paste-buffer-deleted", NotificationKind::paste_buffer_deleted},
+    {"%subscription-changed", NotificationKind::subscription_changed},
+}};
+
+// The arguments before any free text or payload, split on single spaces. Only
+// the leading region is tokenised: an output payload is already unescaped, so
+// it may hold spaces and newlines that are data rather than separators.
+std::vector<std::string_view> leading_fields(std::string_view line, std::size_t limit) {
+  std::vector<std::string_view> fields;
+  std::size_t index = 0;
+  while (index < line.size() && fields.size() < limit) {
+    const auto space = line.find(' ', index);
+    if (space == std::string_view::npos) {
+      fields.push_back(line.substr(index));
+      break;
+    }
+    fields.push_back(line.substr(index, space - index));
+    index = space + 1U;
+  }
+  return fields;
+}
+
+void place_argument(ParsedNotification& parsed, std::string_view field) {
+  if (field.size() > 1U && field.front() == '$') {
+    parsed.session = field;
+  } else if (field.size() > 1U && field.front() == '@') {
+    parsed.window = field;
+  } else if (field.size() > 1U && field.front() == '%') {
+    parsed.pane = field;
+  }
+}
+
+} // namespace
+
+std::string_view to_string(NotificationKind kind) noexcept {
+  for (const KindName& known : kNotificationNames) {
+    if (known.kind == kind) {
+      return known.name;
+    }
+  }
+  return "unknown";
+}
+
+ParsedNotification parse(const Notification& notification) {
+  ParsedNotification parsed;
+  const std::string_view line = text(notification.body);
+  const auto first_space = line.find(' ');
+  parsed.name = line.substr(0, first_space);
+  for (const KindName& known : kNotificationNames) {
+    if (known.name == parsed.name) {
+      parsed.kind = known.kind;
+      break;
+    }
+  }
+  if (first_space == std::string_view::npos) {
+    return parsed;
+  }
+
+  // Output kinds end in bytes rather than fields, so their prefix is fixed
+  // width and everything after it is payload.
+  if (parsed.kind == NotificationKind::output ||
+      parsed.kind == NotificationKind::extended_output) {
+    const std::size_t argument_count =
+        parsed.kind == NotificationKind::output ? 2U : 4U;
+    const auto fields = leading_fields(line, argument_count);
+    if (fields.size() < argument_count) {
+      return parsed;
+    }
+    place_argument(parsed, fields[1]);
+    std::size_t consumed = 0;
+    for (std::size_t index = 0; index < argument_count; ++index) {
+      consumed += fields[index].size() + 1U;
+    }
+    if (parsed.kind == NotificationKind::extended_output) {
+      std::uint64_t age = 0;
+      const auto& digits = fields[2];
+      if (std::from_chars(digits.data(), digits.data() + digits.size(), age).ec ==
+          std::errc{}) {
+        parsed.age = age;
+      }
+    }
+    if (consumed <= notification.body.size()) {
+      parsed.payload = std::span<const std::byte>{notification.body}.subspan(consumed);
+    }
+    return parsed;
+  }
+
+  // Everything else is `%name` then space-separated arguments, with any free
+  // text — a session or window or buffer name — last.
+  const auto fields = leading_fields(line, 8U);
+  std::size_t placed = 0;
+  for (std::size_t index = 1; index < fields.size(); ++index) {
+    const auto before = std::tuple{parsed.session, parsed.window, parsed.pane};
+    place_argument(parsed, fields[index]);
+    if (std::tuple{parsed.session, parsed.window, parsed.pane} != before) {
+      placed = index;
+      continue;
+    }
+    // The first field that is not an id begins the free text, which runs to
+    // the end of the line.
+    parsed.text =
+        line.substr(static_cast<std::size_t>(fields[index].data() - line.data()));
+    return parsed;
+  }
+  static_cast<void>(placed);
+  return parsed;
 }
 
 LIBTMUX_NAMESPACE_END

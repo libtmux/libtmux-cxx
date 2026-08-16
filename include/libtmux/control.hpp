@@ -20,6 +20,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -68,6 +69,66 @@ struct Notification {
 };
 
 using Event = std::variant<ControlBlock, Notification>;
+
+// What a notification is, once its name and arguments have been read.
+//
+// `unknown` is not a failure. tmux has only ever added notifications across
+// the range this library supports — nineteen at 3.2a, twenty-one from 3.4 —
+// so a name this build does not know is a newer tmux, and the body is still
+// there to read. That is also why this is a kind and fields rather than a
+// variant: an exhaustive `std::visit` would turn every such addition into a
+// caller-breaking change.
+enum class NotificationKind : std::uint8_t {
+  unknown,
+  output,
+  extended_output,
+  paused,
+  resumed,
+  sessions_changed,
+  session_changed,
+  session_renamed,
+  session_window_changed,
+  client_detached,
+  client_session_changed,
+  window_add,
+  window_close,
+  window_renamed,
+  window_pane_changed,
+  unlinked_window_add,
+  unlinked_window_close,
+  unlinked_window_renamed,
+  pane_mode_changed,
+  paste_buffer_changed,
+  paste_buffer_deleted,
+  subscription_changed,
+};
+
+[[nodiscard]] std::string_view to_string(NotificationKind kind) noexcept;
+
+// A notification's arguments, as views into the notification it was read from.
+//
+// tmux types its arguments by prefix — `$0` a session, `@1` a window, `%2` a
+// pane — so each lands in the field it belongs to and the others stay empty.
+// `payload` is the pane bytes of an output notification, already unescaped;
+// it is empty for every other kind.
+//
+// Everything here borrows. The notification must outlive it, which is why
+// there is no overload taking a temporary.
+struct ParsedNotification {
+  NotificationKind kind{NotificationKind::unknown};
+  std::string_view name{};
+  std::string_view session{};
+  std::string_view window{};
+  std::string_view pane{};
+  std::string_view text{};
+  std::span<const std::byte> payload{};
+  // Milliseconds this output was behind when tmux wrote it. Only
+  // `extended_output` carries one.
+  std::optional<std::uint64_t> age{};
+};
+
+[[nodiscard]] ParsedNotification parse(const Notification& notification);
+ParsedNotification parse(Notification&&) = delete;
 
 class Parser final {
 public:
