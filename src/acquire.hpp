@@ -139,13 +139,22 @@ append_environment(std::vector<std::string>& command,
 // Not a template: the only things an entity contributes are the name of its
 // id field and the noun for the diagnostic, both of them string views. The
 // body is compiled once and the three entity types share it.
+// `expected_identity` is what the id field must answer, when that is not the
+// target itself. A window linked into several sessions has to be addressed as
+// `$id:@id` — a bare window id leaves tmux to pick which session supplies the
+// session-relative half of the format context — but it still answers `@id`,
+// so the target and the identity are two different strings and the guard needs
+// to be told which one it is checking. Empty means they are the same, which
+// they are for a session and a pane.
 [[nodiscard]] inline expected<std::string, CommandFailure>
 expand_format(const std::shared_ptr<const Backend>& backend, std::string_view target,
               std::string_view identity_field, std::string_view noun,
-              std::string_view format) {
+              std::string_view format, std::string_view expected_identity = {}) {
   if (backend == nullptr) {
     return unexpected(disconnected());
   }
+  const std::string_view identity =
+      expected_identity.empty() ? target : expected_identity;
   std::string request{"#{"};
   request += identity_field;
   request += "}";
@@ -157,7 +166,7 @@ expand_format(const std::shared_ptr<const Backend>& backend, std::string_view ta
     return unexpected(reply.error());
   }
   std::string answer = without_trailing_newline(std::move(*reply));
-  std::string opening{target};
+  std::string opening{identity};
   opening += kFormatSeparator;
   if (!answer.starts_with(opening)) {
     return unexpected(CommandFailure{.kind = FailureKind::missing,
@@ -175,8 +184,9 @@ expand_format(const std::shared_ptr<const Backend>& backend, std::string_view ta
 template <typename Entity>
 [[nodiscard]] expected<std::string, CommandFailure>
 expand_format(const std::shared_ptr<const Backend>& backend, std::string_view target,
-              std::string_view format) {
-  return expand_format(backend, target, Entity::kFields.front(), Entity::kNoun, format);
+              std::string_view format, std::string_view expected_identity = {}) {
+  return expand_format(backend, target, Entity::kFields.front(), Entity::kNoun, format,
+                       expected_identity);
 }
 
 // Every to-one link and every lookup by target is the same tmux question:

@@ -103,13 +103,20 @@ inline constexpr std::array kNamedKeys{
   return false;
 }
 
-// Send text exactly as written.
+// Send text exactly as written: the flag, the end of flags, and the text.
+//
+// `--` is part of the fragment rather than something a caller appends, because
+// text beginning with a dash is read as another `send-keys` option without it
+// and that is not a mistake worth making twice. It was made twice: this
+// returned the flag and the text alone, `Pane::send_text` inserted the
+// separator afterwards, and `Chain::send_text` did not — so the same text
+// through the two spellings reached tmux as two different commands.
 [[nodiscard]] inline expected<std::vector<std::string>, KeyError>
 literal_arguments(std::string_view text) {
   if (text.empty()) {
     return unexpected(KeyError::empty);
   }
-  return std::vector<std::string>{"-l", std::string{text}};
+  return std::vector<std::string>{"-l", "--", std::string{text}};
 }
 
 LIBTMUX_NAMESPACE_END

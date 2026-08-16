@@ -57,6 +57,39 @@ TEST(Chain, AnInvalidChainNeverReachesTmux) {
   EXPECT_FALSE(outcome.error().dispatched);
 }
 
+// A chain step and the entity method it mirrors are the same tmux command.
+//
+// They were not: both asked `literal_arguments` for the fragment, and only
+// `Pane::send_text` added the `--` that keeps a leading dash out of
+// `send-keys`' own flags. Text starting with a dash therefore worked through a
+// pane and was refused through a chain — the failure a second argv builder
+// exists to produce. This asserts the argv, because the divergence was in the
+// argv and a behavioural check on ordinary text never saw it.
+TEST(Chain, SendsTheSameCommandAPaneWouldForTextStartingWithADash) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto server = Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value());
+
+  const auto panes = server->panes();
+  ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
+  ASSERT_FALSE(panes->empty());
+  const auto& pane = panes->front();
+
+  Chain chain;
+  chain.send_text(std::string{pane.id()}, "-n not a flag");
+  ASSERT_TRUE(chain.valid()) << chain.error();
+  const auto argv = chain.batch().argv();
+  EXPECT_EQ(argv, (std::vector<std::string>{"send-keys", "-t", std::string{pane.id()},
+                                            "-l", "--", "-n not a flag"}));
+
+  // And tmux takes it, over both spellings, rather than reading `-n` as an
+  // option it does not have.
+  EXPECT_TRUE(server->run_chain(chain).has_value());
+  const auto sent = pane.send_text("-n not a flag");
+  EXPECT_TRUE(sent.has_value()) << sent.error().diagnostic;
+}
+
 TEST(Chain, BuildsRealWindowsInOneGroup) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();

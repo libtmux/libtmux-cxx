@@ -337,13 +337,19 @@ expected<void, CommandFailure> Window::select() const {
   return effect(run({"select-window", "-t", target()}));
 }
 
+// Both carry the session, like every other window operation here.
+//
+// A bare window id is not wrong so much as under-specified: a window linked
+// into several sessions has several homes, and tmux picks one of them to
+// supply the session-relative half of the format context. `#{session_name}`
+// expanded against a bare id answers about whichever session tmux chose, which
+// is the answer to a question nobody asked.
 expected<void, CommandFailure> Window::show_message(std::string_view text) const {
-  return effect(
-      run({"display-message", "-t", std::string{id()}, "--", std::string{text}}));
+  return effect(run({"display-message", "-t", target(), "--", std::string{text}}));
 }
 
 expected<std::string, CommandFailure> Window::expand(std::string_view format) const {
-  return detail::expand_format<Window>(backend(), id(), format);
+  return detail::expand_format<Window>(backend(), target(), format, id());
 }
 
 expected<void, CommandFailure> Window::kill() const {
@@ -455,9 +461,6 @@ expected<void, CommandFailure> Pane::send_text(std::string_view text) const {
   }
   std::vector<std::string> command{"send-keys", "-t", std::string{id()}};
   command.insert(command.end(), arguments->begin(), arguments->end());
-  // The text follows `-l`, and `--` keeps a leading dash in it from being
-  // read as a flag of send-keys.
-  command.insert(command.end() - 1, "--");
   return effect(run(command));
 }
 

@@ -128,7 +128,14 @@ TEST(Compatibility, LiteralTextRefusesTheEmptyString) {
 
   const auto text = libtmux::literal_arguments("echo hi");
   ASSERT_TRUE(text.has_value());
-  EXPECT_EQ(*text, (std::vector<std::string>{"-l", "echo hi"}));
+  EXPECT_EQ(*text, (std::vector<std::string>{"-l", "--", "echo hi"}));
+
+  // The separator is part of the fragment, not something a caller remembers.
+  // While it was the caller's, one of the two callers forgot, and text
+  // beginning with a dash went to tmux as a flag of send-keys.
+  const auto dashed = libtmux::literal_arguments("-n --force");
+  ASSERT_TRUE(dashed.has_value());
+  EXPECT_EQ(*dashed, (std::vector<std::string>{"-l", "--", "-n --force"}));
 }
 
 TEST(Compatibility, AControlByteIsNotAKeyName) {

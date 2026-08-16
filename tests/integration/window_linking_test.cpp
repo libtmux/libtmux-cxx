@@ -89,4 +89,56 @@ TEST(WindowLinking, UnlinkRemovesTheLinkTheValueNamesAndRefusesTheLast) {
   EXPECT_FALSE(refused.error().diagnostic.empty());
 }
 
+// A format expanded against a linked window answers about the session the
+// value came from.
+//
+// `unlink` and `move_to` already carried the session for this reason. `expand`
+// and `show_message` did not: they addressed the window by bare id, which
+// leaves tmux to pick which of the links supplies the session-relative half of
+// the format context. The picked one is not the one the caller is holding, so
+// `#{session_name}` answered about a session they never mentioned.
+TEST(WindowLinking, AFormatAnswersAboutTheSessionTheValueCameFrom) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  auto home = server.session(fixture->session_name());
+  ASSERT_TRUE(home.has_value()) << home.error().diagnostic;
+  const auto elsewhere = server.new_session("elsewhere");
+  ASSERT_TRUE(elsewhere.has_value()) << elsewhere.error().diagnostic;
+  const auto shared = home->active_window();
+  ASSERT_TRUE(shared.has_value()) << shared.error().diagnostic;
+  ASSERT_TRUE(shared->link_to(*elsewhere).has_value());
+
+  // The same window, read once through each session. One id, two values, and
+  // each has to answer about its own side of the link.
+  const auto from_home = home->windows();
+  ASSERT_TRUE(from_home.has_value()) << from_home.error().diagnostic;
+  const auto here = std::ranges::find_if(
+      *from_home, [&](const libtmux::Window& one) { return one.id() == shared->id(); });
+  ASSERT_NE(here, from_home->end());
+
+  const auto from_elsewhere = elsewhere->windows();
+  ASSERT_TRUE(from_elsewhere.has_value()) << from_elsewhere.error().diagnostic;
+  const auto there =
+      std::ranges::find_if(*from_elsewhere, [&](const libtmux::Window& one) {
+        return one.id() == shared->id();
+      });
+  ASSERT_NE(there, from_elsewhere->end());
+
+  const auto named_here = here->expand("#{session_name}");
+  ASSERT_TRUE(named_here.has_value()) << named_here.error().diagnostic;
+  EXPECT_EQ(*named_here, fixture->session_name());
+
+  const auto named_there = there->expand("#{session_name}");
+  ASSERT_TRUE(named_there.has_value()) << named_there.error().diagnostic;
+  EXPECT_EQ(*named_there, "elsewhere");
+
+  // Different answers from the same window id is the whole point.
+  EXPECT_NE(*named_here, *named_there);
+
+  // And the message goes to the named link rather than to tmux's choice.
+  EXPECT_TRUE(here->show_message("from home").has_value());
+  EXPECT_TRUE(there->show_message("from elsewhere").has_value());
+}
+
 } // namespace
