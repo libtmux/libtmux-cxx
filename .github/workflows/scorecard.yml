@@ -14,6 +14,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
+      # Restated, not inherited. A job-level `permissions:` replaces the
+      # workflow-level block rather than adding to it, so leaving this out
+      # left the job without read access to its own repository and every run
+      # failed at checkout with "Repository not found".
+      contents: read
       # Writes the result to the Security tab.
       security-events: write
       # Lets the run be traced back to the workflow that produced it.
