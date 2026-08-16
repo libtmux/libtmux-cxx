@@ -75,6 +75,14 @@ public:
   // The `-L name` or `-S path` pair that selects the server.
   [[nodiscard]] virtual const std::vector<std::string>& connection() const noexcept = 0;
 
+  // Which tmux server this talks to, as the socket path tmux would resolve the
+  // selector to. Empty when there is no socket behind it — a scripted backend
+  // in a test — and an empty identity names nothing, not even itself.
+  //
+  // The selector cannot serve here: `-L work` and `-S <the path work resolves
+  // to>` select one server and compare as two.
+  [[nodiscard]] virtual std::string_view identity() const noexcept { return {}; }
+
   // Which tmux is behind this connection. How to ask depends on the executor,
   // so the executor answers.
   [[nodiscard]] virtual expected<Version, CommandFailure> version() const = 0;
@@ -101,12 +109,28 @@ private:
   CommandObserver observer_;
 };
 
+// Do two backends talk to one tmux?
+//
+// The pointer first, because a value and its refresh share a backend and that
+// answer costs nothing. Then the socket, so two `Server`s opened on one socket
+// agree — which is what a caller means by the same server, and what a command
+// combining two entities has to be able to ask.
+[[nodiscard]] inline bool same_server(const Backend* left,
+                                      const Backend* right) noexcept {
+  if (left == right) {
+    return true;
+  }
+  if (left == nullptr || right == nullptr) {
+    return false;
+  }
+  return !left->identity().empty() && left->identity() == right->identity();
+}
+
 // tmux in a child process: the only executor this library binds to.
 class SubprocessBackend final : public Backend {
 public:
   explicit SubprocessBackend(std::vector<std::string> connection,
-                             CommandObserver observer = {})
-      : Backend{std::move(observer)}, connection_{std::move(connection)} {}
+                             CommandObserver observer = {});
 
   // Declaring an override hides the base's other overload, and the
   // one-argument form is how most callers spell "no timeout".
@@ -121,12 +145,20 @@ public:
     return connection_;
   }
 
+  [[nodiscard]] std::string_view identity() const noexcept override {
+    return identity_;
+  }
+
   // `tmux -V` answers without connecting, so this works against a socket with
   // no server on it.
   [[nodiscard]] expected<Version, CommandFailure> version() const override;
 
 private:
   std::vector<std::string> connection_;
+  // Resolved once, at construction: the answer depends on `TMUX_TMPDIR` and on
+  // the filesystem, and a server that changed which tmux it meant partway
+  // through its life would be worse than one that cannot say.
+  std::string identity_;
 };
 
 // Build a Server over any backend. The only way to reach the private

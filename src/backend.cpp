@@ -6,6 +6,7 @@
 #include <variant>
 
 #include "process.hpp"
+#include "socket_identity.hpp"
 
 // The ABI macros, not `namespace libtmux::detail`: that spelling opens a
 // namespace beside the inline ABI one. A member definition still resolves
@@ -86,6 +87,11 @@ void Backend::observe(const std::vector<std::string>& command,
   }
   observer_(rendered_command(command), failure);
 }
+
+SubprocessBackend::SubprocessBackend(std::vector<std::string> connection,
+                                     CommandObserver observer)
+    : Backend{std::move(observer)}, connection_{std::move(connection)},
+      identity_{resolved_socket_path(connection_).value_or(std::string{})} {}
 
 expected<std::string, CommandFailure>
 SubprocessBackend::run(const std::vector<std::string>& command,

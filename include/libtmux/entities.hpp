@@ -203,14 +203,20 @@ public:
   // the escape hatch should be able to see that they are back to raw argv.
   [[nodiscard]] expected<Server, CommandFailure> server() const;
 
-  // Which connection this came from, as an opaque token. Equality and hashing
-  // are defined in terms of it; there is nothing else a caller can do with it,
-  // which is deliberate — the connection type is private.
-  [[nodiscard]] const void* connection_identity() const noexcept {
-    return static_cast<const void*>(snapshot_->backend().get());
-  }
+  // Which tmux server this came from: the socket path, resolved the way tmux
+  // resolves it. Equality and hashing are defined in terms of it, and it is
+  // the socket rather than the `Server` object on purpose — two handles opened
+  // on one socket describe one tmux, and a caller who built them separately
+  // still means the same thing by them.
+  //
+  // Empty for a value read out of a recording, which is on no server at all.
+  [[nodiscard]] std::string_view connection_identity() const noexcept;
 
 protected:
+  // Whether another value came from the same tmux server. Out of line because
+  // answering it needs the connection type, which no installed header sees.
+  [[nodiscard]] bool same_connection(const Row& other) const noexcept;
+
 private:
   std::shared_ptr<const Snapshot> snapshot_;
   std::size_t row_;
@@ -257,7 +263,7 @@ public:
   // same connection — not when they were listed at the same moment. A
   // session refreshed after a rename equals the one it was refreshed from.
   [[nodiscard]] bool operator==(const Session& other) const noexcept {
-    return backend() == other.backend() && id() == other.id();
+    return same_connection(other) && id() == other.id();
   }
 
   [[nodiscard]] expected<std::vector<Window>, CommandFailure> windows() const;
@@ -393,7 +399,7 @@ public:
   // same connection — not when they were listed at the same moment. A
   // window refreshed after a rename equals the one it was refreshed from.
   [[nodiscard]] bool operator==(const Window& other) const noexcept {
-    return backend() == other.backend() && id() == other.id();
+    return same_connection(other) && id() == other.id();
   }
 
   // How to address this window, and the reason a window id alone will not do.
@@ -542,7 +548,7 @@ public:
   // same connection — not when they were listed at the same moment. A
   // pane refreshed after a rename equals the one it was refreshed from.
   [[nodiscard]] bool operator==(const Pane& other) const noexcept {
-    return backend() == other.backend() && id() == other.id();
+    return same_connection(other) && id() == other.id();
   }
 
   [[nodiscard]] expected<Window, CommandFailure> window() const;
@@ -688,7 +694,7 @@ public:
   [[nodiscard]] std::string_view usage() const noexcept { return value(2); }
 
   [[nodiscard]] bool operator==(const Command& other) const noexcept {
-    return backend() == other.backend() && name() == other.name();
+    return same_connection(other) && name() == other.name();
   }
 };
 
@@ -721,7 +727,7 @@ public:
   }
 
   [[nodiscard]] bool operator==(const Buffer& other) const noexcept {
-    return backend() == other.backend() && name() == other.name();
+    return same_connection(other) && name() == other.name();
   }
 
   // The whole contents. tmux prints them with no trailing newline, so what
@@ -772,7 +778,7 @@ public:
   // Two values are the same client when they name the same terminal on the
   // same connection.
   [[nodiscard]] bool operator==(const Client& other) const noexcept {
-    return backend() == other.backend() && name() == other.name();
+    return same_connection(other) && name() == other.name();
   }
 
   [[nodiscard]] expected<Session, CommandFailure> session() const;

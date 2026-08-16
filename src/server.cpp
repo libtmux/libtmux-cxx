@@ -124,13 +124,16 @@ expected<std::string, CommandFailure> Server::run_chain(const Chain& chain) cons
 }
 
 expected<Connection, ProtocolError> Server::control(std::string_view session) const {
-  const std::vector<std::string>& connection = backend_->connection();
-  // The connection needs the socket itself, not the argv pair that selects it.
-  if (connection.size() != 2 || connection.front() != "-S") {
-    return unexpected(ProtocolError{"control mode requires a socket path"});
+  // A control client is launched against a path, and every selector resolves
+  // to one — tmux resolves the same rule to find the socket in the first
+  // place. Only a server with no socket at all, which is a scripted backend in
+  // a test, has nothing to hand it.
+  const std::string_view resolved = backend_->identity();
+  if (resolved.empty()) {
+    return unexpected(ProtocolError{"this server has no socket to connect to"});
   }
   ConnectionOptions options;
-  options.socket_path = connection.back();
+  options.socket_path = std::string{resolved};
   options.session_name = std::string{session};
   return Connection::connect(std::move(options));
 }
@@ -165,17 +168,22 @@ std::size_t Server::dropped_notifications() const noexcept {
 
 expected<Server, CommandFailure> Server::over_control(std::string_view session) const {
   const std::vector<std::string>& selector = backend_->connection();
-  // A control client is started against a socket path, so a server selected
-  // by name has no path to hand it.
-  if (selector.size() != 2 || selector.front() != "-S") {
+  // Every selector resolves to a path, so `-L work` and the default socket
+  // reach the faster transport too. They could not before, which left the
+  // measured 4.6x behind whichever of the four constructors a caller had
+  // happened to pick.
+  const std::string_view resolved = backend_->identity();
+  if (resolved.empty()) {
     return unexpected(
         CommandFailure{.kind = FailureKind::validation,
                        .dispatched = false,
                        .exit_code = 0,
-                       .diagnostic = "control mode requires a socket path"});
+                       .diagnostic = "this server has no socket to connect to"});
   }
-  auto backend = detail::ControlBackend::open(
-      selector, selector.back(), std::string{session}, backend_->observer());
+  auto backend =
+      detail::ControlBackend::open(selector, std::string{resolved},
+                                   std::string{resolved}, std::string{session},
+                                   backend_->observer());
   if (!backend.has_value()) {
     // The same kind a control connection reports when it breaks mid-command,
     // because it is the same thing failing. Not dispatched: no command ran,

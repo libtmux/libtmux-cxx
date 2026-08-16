@@ -4,7 +4,7 @@ include(GNUInstallDirs)
 
 add_library(
   libtmux STATIC version.cpp server.cpp backend.cpp control_backend.cpp
-  snapshot.cpp entities.cpp
+  snapshot.cpp entities.cpp socket_identity.cpp
   process.cpp control.cpp connection.cpp)
 add_library(libtmux::libtmux ALIAS libtmux)
 

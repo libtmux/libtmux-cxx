@@ -19,6 +19,7 @@
 #include "libtmux/cardinality.hpp"
 #include "libtmux/entities.hpp"
 #include "libtmux/server.hpp"
+#include "support/environment_guard.hpp"
 #include "support/scoped_tmux_server.hpp"
 
 namespace {
@@ -68,25 +69,48 @@ TEST(ControlDispatch, OpeningAndUsingAStreamingServerShareOneErrorType) {
   EXPECT_GE(*counted, 1U);
 }
 
-TEST(ControlDispatch, AServerSelectedByNameCannotOpenAControlConnection) {
-  // A control client is launched against a socket path, so this is the
-  // caller's description being unusable rather than anything going wrong on
-  // the wire — and it is reported as such, before anything is spawned.
+// The value of a socket name is where tmux resolves it to, and the library
+// resolves it the same way tmux does — so a server selected by `-L`, or by
+// nothing at all, reaches the faster transport too. It could not before: a
+// control client is launched against a path, and only `-S` had one to hand it,
+// which left the measured speedup behind whichever constructor a caller
+// happened to pick.
+//
+// `TMUX_TMPDIR` is set here because it is what tmux reads and what the fixture
+// started its server under. That is not a workaround, it is the arrangement a
+// caller of `-L` has: the name means a path, and the path depends on the
+// environment both ends share.
+TEST(ControlDispatch, AServerSelectedByNameOpensAControlConnection) {
   libtmux::test::ScopedTmuxServerOptions options;
   options.mode = libtmux::test::SocketMode::Name;
   auto fixture = libtmux::test::ScopedTmuxServer::start(std::move(options));
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const auto name = fixture->socket_name();
   ASSERT_TRUE(name.has_value());
+
+  const libtmux::test::EnvironmentGuard tmpdir{"TMUX_TMPDIR",
+                                               fixture->tmux_tmpdir().string()};
   auto server = Server::at_socket_name(std::string{*name});
   ASSERT_TRUE(server.has_value());
 
-  const auto streamed = server->over_control(fixture->session_name());
+  // It really is the fixture's server, not one the name found somewhere else.
+  const auto socket = server->expand("#{socket_path}");
+  ASSERT_TRUE(socket.has_value()) << socket.error().diagnostic;
 
-  ASSERT_FALSE(streamed.has_value());
-  EXPECT_EQ(streamed.error().kind, libtmux::FailureKind::validation);
-  EXPECT_FALSE(streamed.error().dispatched);
+  const auto streamed = server->over_control(fixture->session_name());
+  ASSERT_TRUE(streamed.has_value()) << streamed.error().diagnostic;
+
+  const auto sessions = streamed->sessions();
+  ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
+  EXPECT_FALSE(sessions->empty());
+
+  // And the two spellings of one server are one server, so values from the
+  // subprocess side and the control side are the same objects.
+  const auto over_subprocess = server->sessions();
+  ASSERT_TRUE(over_subprocess.has_value()) << over_subprocess.error().diagnostic;
+  EXPECT_EQ(over_subprocess->front(), sessions->front());
 }
+
 
 TEST(ControlDispatch, EveryEntityOperationWorksOverAConnection) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();

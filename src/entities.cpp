@@ -24,6 +24,44 @@ detail::Row::run(const std::vector<std::string>& command,
   return backend()->run(command, std::nullopt, output_limit);
 }
 
+namespace {
+
+// Do these two values name objects on two different tmux servers?
+//
+// tmux numbers ids per server, so `$0`, `@0` and `%0` exist on almost every
+// socket at once. A command combining two entities runs against one of their
+// servers and carries the other's id as text, so across two servers it finds a
+// live, unrelated object with that id there — and tmux reports success.
+// Nothing downstream can detect that, which is why it is refused here.
+//
+// An unidentified value — one read out of a recording — is not on a server
+// rather than on a different one, and `run` says that better than this could.
+template <typename Left, typename Right>
+[[nodiscard]] bool from_different_servers(const Left& left, const Right& right) noexcept {
+  const std::string_view mine = left.connection_identity();
+  const std::string_view theirs = right.connection_identity();
+  return !mine.empty() && !theirs.empty() && mine != theirs;
+}
+
+[[nodiscard]] CommandFailure crossed_servers() {
+  return CommandFailure{.kind = FailureKind::validation,
+                        .dispatched = false,
+                        .exit_code = 0,
+                        .diagnostic =
+                            "the two values name objects on different tmux servers"};
+}
+
+} // namespace
+
+std::string_view detail::Row::connection_identity() const noexcept {
+  const auto& connection = backend();
+  return connection == nullptr ? std::string_view{} : connection->identity();
+}
+
+bool detail::Row::same_connection(const Row& other) const noexcept {
+  return detail::same_server(backend().get(), other.backend().get());
+}
+
 expected<Server, CommandFailure> detail::Row::server() const {
   if (backend() == nullptr) {
     return unexpected(detail::disconnected());
@@ -392,6 +430,9 @@ expected<Pane, CommandFailure> Window::select_last_pane() const {
 }
 
 expected<void, CommandFailure> Window::link_to(const Session& target) const {
+  if (from_different_servers(*this, target)) {
+    return unexpected(crossed_servers());
+  }
   return effect(run(
       {"link-window", "-s", std::string{id()}, "-t", std::string{target.id()} + ":"}));
 }
@@ -403,6 +444,9 @@ expected<void, CommandFailure> Window::unlink() const {
 }
 
 expected<void, CommandFailure> Window::swap_with(const Window& other) const {
+  if (from_different_servers(*this, other)) {
+    return unexpected(crossed_servers());
+  }
   return effect(run({"swap-window", "-s", target(), "-t", other.target()}));
 }
 
@@ -520,6 +564,9 @@ expected<void, CommandFailure> Pane::set_height(long long height) const {
 }
 
 expected<void, CommandFailure> Pane::swap_with(const Pane& other) const {
+  if (from_different_servers(*this, other)) {
+    return unexpected(crossed_servers());
+  }
   return effect(
       run({"swap-pane", "-d", "-s", std::string{id()}, "-t", std::string{other.id()}}));
 }
@@ -552,6 +599,9 @@ expected<Window, CommandFailure> Pane::break_out(std::string_view name) const {
 }
 
 expected<void, CommandFailure> Pane::join(const Window& target) const {
+  if (from_different_servers(*this, target)) {
+    return unexpected(crossed_servers());
+  }
   return effect(
       run({"join-pane", "-s", std::string{id()}, "-t", std::string{target.id()}}));
 }
@@ -644,6 +694,9 @@ expected<void, CommandFailure> Pane::unset_option(std::string_view name) const {
 // --- Client ----------------------------------------------------------------
 
 expected<void, CommandFailure> Pane::paste(const Buffer& buffer, bool consume) const {
+  if (from_different_servers(*this, buffer)) {
+    return unexpected(crossed_servers());
+  }
   std::vector<std::string> command{"paste-buffer", "-t", std::string{id()}, "-b",
                                    std::string{buffer.name()}};
   if (consume) {
@@ -669,6 +722,9 @@ expected<Session, CommandFailure> Client::session() const {
 }
 
 expected<void, CommandFailure> Client::switch_to(const Session& session) const {
+  if (from_different_servers(*this, session)) {
+    return unexpected(crossed_servers());
+  }
   return effect(run(
       {"switch-client", "-c", std::string{name()}, "-t", std::string{session.id()}}));
 }
@@ -706,8 +762,9 @@ namespace {
 
 // The connection and the id, which is what equality compares.
 template <typename Entity>
-std::size_t hash_identity(const void* connection, std::string_view identity) noexcept {
-  const std::size_t left = std::hash<const void*>{}(connection);
+std::size_t hash_identity(std::string_view connection,
+                          std::string_view identity) noexcept {
+  const std::size_t left = std::hash<std::string_view>{}(connection);
   const std::size_t right = std::hash<std::string_view>{}(identity);
   // The mix libstdc++ and libc++ both use for pairs.
   return left ^ (right + 0x9e3779b9U + (left << 6U) + (left >> 2U));

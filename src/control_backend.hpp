@@ -30,9 +30,14 @@ namespace detail {
 
 class ControlBackend final : public Backend {
 public:
+  // `socket_path` is where the client is launched; `identity` is which server
+  // that is. They are the same string today and are still two parameters,
+  // because a connection opened over a resolved path must keep identifying as
+  // the server the caller selected — otherwise a `-L` server and its own
+  // control connection would compare as two.
   [[nodiscard]] static expected<std::shared_ptr<const ControlBackend>, ProtocolError>
-  open(std::vector<std::string> selector, std::string socket_path, std::string session,
-       CommandObserver observer);
+  open(std::vector<std::string> selector, std::string socket_path, std::string identity,
+       std::string session, CommandObserver observer);
 
   using Backend::run;
 
@@ -43,6 +48,10 @@ public:
 
   [[nodiscard]] const std::vector<std::string>& connection() const noexcept override {
     return selector_;
+  }
+
+  [[nodiscard]] std::string_view identity() const noexcept override {
+    return identity_;
   }
 
   // `tmux -V` is a flag of the binary, not a command a connection can carry,
@@ -59,12 +68,13 @@ public:
   [[nodiscard]] std::size_t dropped_notifications() const noexcept override;
 
   ControlBackend(Connection connection, std::vector<std::string> selector,
-                 CommandObserver observer);
+                 std::string identity, CommandObserver observer);
 
 private:
   mutable std::mutex mutex_;
   mutable Connection connection_;
   std::vector<std::string> selector_;
+  std::string identity_;
 };
 
 } // namespace detail
