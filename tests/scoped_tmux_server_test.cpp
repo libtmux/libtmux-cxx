@@ -107,10 +107,13 @@ TEST(ScopedTmuxServer, StartsUnderATemporaryDirectoryAsLongAsMacOsGives) {
   // namespace once supplied was ten bytes longer than "server", and at this
   // length that difference is the difference between starting and not.
   constexpr std::size_t macos_temporary_length = 62U;
+  // Measured rather than assumed: macOS returns `$TMPDIR` with a trailing
+  // separator and Linux does not, so appending a component costs a byte on one
+  // and not the other.
   const auto root = std::filesystem::temp_directory_path();
-  ASSERT_LT(root.native().size() + 1U, macos_temporary_length) << root;
-  const auto tree =
-      root / std::string(macos_temporary_length - root.native().size() - 1U, 'd');
+  const std::size_t joined = (root / "d").native().size() - 1U;
+  ASSERT_LT(joined, macos_temporary_length) << root;
+  const auto tree = root / std::string(macos_temporary_length - joined, 'd');
   ASSERT_EQ(tree.native().size(), macos_temporary_length) << tree;
 
   std::error_code created;
