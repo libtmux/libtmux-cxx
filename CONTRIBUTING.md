@@ -34,9 +34,10 @@ one noticed first.
 
 The fixture already handles this: every test server gets a private tree and its
 own socket, with `TMUX` and `TMUX_PANE` erased from the child environment. Use
-[`ScopedTmuxServer`](tests/support/scoped_tmux_server.hpp); do not start tmux
-another way in a test. For one-off probes, do the same by hand — the rule and
-the recipe are in [AGENTS.md](AGENTS.md).
+[`ScopedTmuxServer`](include/libtmux/testing/scoped_server.hpp); do not start
+tmux another way in a test. It ships as `libtmux::testing`, so a suite outside
+this repository uses the same one. For one-off probes, do the same by hand —
+the rule and the recipe are in [AGENTS.md](AGENTS.md).
 
 Never run a bare `tmux` command against the default server while working here.
 It is somebody's real session.

@@ -484,9 +484,28 @@ Five tools: `list_sessions`, `list_panes`, `capture_pane`, `send_text`,
 
 ## Testing your own tmux tools
 
-Writing something that drives tmux? The suite's fixture is worth copying:
-[`tests/support/scoped_tmux_server.hpp`](tests/support/scoped_tmux_server.hpp)
-gives every test a private server on its own socket, under its own
+Writing something that drives tmux? The fixture this project's own suite runs
+on is installed with the package. Ask for it by name:
+
+```cmake
+find_package(libtmux REQUIRED COMPONENTS testing)
+target_link_libraries(your_tests PRIVATE libtmux::testing)
+```
+
+```cpp
+// A private tmux for a suite of your own, gone when the scope ends.
+auto fixture = libtmux::test::ScopedTmuxServer::start(
+    {.socket_namespace = libtmux::test::SocketNamespace::consumer("my-suite")});
+if (!fixture.has_value()) {
+  std::fprintf(stderr, "%s\n", fixture.error().c_str());
+  return 1;
+}
+const auto under_test =
+    libtmux::Server::at_socket_path(fixture->socket_path().string());
+std::printf("sessions on it: %zu\n", under_test->sessions()->size());
+```
+
+That gives you a private server on its own socket, under its own
 `TMUX_TMPDIR`, with `TMUX` and `TMUX_PANE` erased from the child environment —
 then kills it and removes the tree, including when the test fails.
 
@@ -494,7 +513,11 @@ That last part matters more than it looks: a tmux server is shared state keyed
 only by its socket, so a suite that uses the default server will end somebody
 else's session, and the failure will look like a bug in whatever noticed first.
 
-**[How this project tests →](tests/README.md)**
+It links no test framework, so GoogleTest, Catch2 and doctest all work.
+
+**[Testing API reference →](docs/api-testing.md)** ·
+**[How this project tests →](tests/README.md)** ·
+**[A worked consumer →](examples/tests/README.md)**
 
 ## Compatibility
 
