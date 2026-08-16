@@ -5,12 +5,14 @@
 // resolve — it resolves to something else, and tmux reports success. Every
 // assertion here rests on that: the fixtures deliberately collide.
 
+#include <filesystem>
 #include <string>
 #include <unordered_set>
 
 #include <gtest/gtest.h>
 
 #include "libtmux/cardinality.hpp"
+#include "libtmux/command.hpp"
 #include "libtmux/entities.hpp"
 #include "libtmux/server.hpp"
 #include "libtmux/testing/environment_guard.hpp"
@@ -213,3 +215,77 @@ TEST(ServerIdentity, ResolutionAgreesWithTheRunningTmux) {
 }
 
 } // namespace
+
+// `Server::from_env()` — the one factory that reaches a server this process
+// did not create.
+//
+// It reads `$TMUX`, which tmux sets inside every pane as
+// `<socket path>,<server pid>,<session id>`. A socket path may itself contain
+// a comma, so the split is at the last one that could begin the pid rather
+// than the first found — and until these tests there was nothing holding that
+// apart from the simpler reading that breaks on such a path.
+
+TEST(ServerFromEnvironment, RefusesWhenNotRunningInsideTmux) {
+  const libtmux::test::EnvironmentGuard outside{"TMUX", ""};
+  const auto server = Server::from_env();
+  ASSERT_FALSE(server.has_value());
+  EXPECT_EQ(server.error().kind, libtmux::FailureKind::validation);
+  EXPECT_FALSE(server.error().dispatched);
+  EXPECT_NE(server.error().diagnostic.find("not running inside tmux"),
+            std::string::npos)
+      << server.error().diagnostic;
+}
+
+TEST(ServerFromEnvironment, RefusesAValueThatNamesNoSocket) {
+  const libtmux::test::EnvironmentGuard inside{"TMUX", ",1,0"};
+  const auto server = Server::from_env();
+  ASSERT_FALSE(server.has_value());
+  EXPECT_EQ(server.error().kind, libtmux::FailureKind::validation);
+  EXPECT_NE(server.error().diagnostic.find("no socket path"), std::string::npos)
+      << server.error().diagnostic;
+}
+
+TEST(ServerFromEnvironment, ReachesTheServerTheValueNames) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+
+  const libtmux::test::EnvironmentGuard inside{
+      "TMUX", fixture->socket_path().string() + "," +
+                  std::to_string(fixture->server_pid()) + ",0"};
+  const auto server = Server::from_env();
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+
+  const auto sessions = server->sessions();
+  ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
+  bool found = false;
+  for (const libtmux::Session& session : *sessions) {
+    found = found || session.name() == fixture->session_name();
+  }
+  EXPECT_TRUE(found) << "reached a server, but not the one $TMUX named";
+}
+
+// The case the split exists for. `mkdtemp` never produces a comma, so this
+// path cannot arise by accident and would go unnoticed until someone's
+// directory had one.
+TEST(ServerFromEnvironment, ReadsASocketPathThatContainsACommaItself) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+
+  const auto comma_directory = fixture->tmux_tmpdir() / "a,b";
+  std::error_code created;
+  std::filesystem::create_directory(comma_directory, created);
+  ASSERT_FALSE(created) << created.message();
+
+  const auto socket = comma_directory / "socket";
+  std::error_code linked;
+  std::filesystem::create_symlink(fixture->socket_path(), socket, linked);
+  ASSERT_FALSE(linked) << linked.message();
+
+  const libtmux::test::EnvironmentGuard inside{
+      "TMUX", socket.string() + "," + std::to_string(fixture->server_pid()) + ",0"};
+  const auto server = Server::from_env();
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+  const auto sessions = server->sessions();
+  ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
+  EXPECT_FALSE(sessions->empty());
+}
