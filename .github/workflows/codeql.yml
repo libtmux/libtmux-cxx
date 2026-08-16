@@ -35,7 +35,12 @@ jobs:
 
       - uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4
         with:
-          language: ${{ matrix.language }}
+          # `languages`, plural. The singular is not an input, and an action
+          # ignores what it does not recognise rather than failing — so CodeQL
+          # never saw a restriction, autodetected both languages in both matrix
+          # jobs, and the Python job died finalising a C++ database it had been
+          # told not to build.
+          languages: ${{ matrix.language }}
           queries: security-and-quality
 
       - name: Build the library for analysis
