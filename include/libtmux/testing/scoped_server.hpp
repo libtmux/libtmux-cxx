@@ -1,5 +1,20 @@
 #pragma once
 
+// A tmux server that belongs to one test, and dies with it.
+//
+// This ships. Anyone writing tests *against* this library has the same problem
+// its own suite has — a tmux server is shared state keyed only by its socket,
+// so two suites that pick the same one delete each other's sessions and
+// produce failures that look like bugs in whichever noticed first. Solving
+// that correctly means a private `$TMUX_TMPDIR`, a socket under it, an erased
+// `TMUX`/`TMUX_PANE` so a suite run from inside tmux cannot reach outward, and
+// a teardown that reaps the server even when the test aborts. That is too much
+// to ask every consumer to rediscover, and a consumer who gets it wrong takes
+// somebody's real session with them.
+//
+// So it is exported as `libtmux::testing`, separately from the library: a
+// program that only *uses* libtmux links none of this.
+
 #include "libtmux/expected.hpp"
 
 #include <chrono>

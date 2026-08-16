@@ -1,7 +1,7 @@
-#include "support/scoped_tmux_server.hpp"
+#include "libtmux/testing/scoped_server.hpp"
 #include "libtmux/expected.hpp"
 
-#include "support/process.hpp"
+#include "process.hpp"
 
 #include <algorithm>
 #include <cerrno>

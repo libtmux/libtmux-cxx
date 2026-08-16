@@ -13,8 +13,8 @@
 #include "libtmux/cardinality.hpp"
 #include "libtmux/entities.hpp"
 #include "libtmux/server.hpp"
-#include "support/environment_guard.hpp"
-#include "support/scoped_tmux_server.hpp"
+#include "libtmux/testing/environment_guard.hpp"
+#include "libtmux/testing/scoped_server.hpp"
 
 namespace {
 

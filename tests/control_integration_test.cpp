@@ -1,9 +1,9 @@
 #include "libtmux/control.hpp"
 #include "libtmux/expected.hpp"
 
+#include "libtmux/testing/capabilities.hpp"
+#include "libtmux/testing/scoped_server.hpp"
 #include "support/platform.hpp"
-#include "support/scoped_tmux_server.hpp"
-#include "support/tmux_capabilities.hpp"
 
 #include <algorithm>
 #include <atomic>
