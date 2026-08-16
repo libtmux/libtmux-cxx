@@ -199,7 +199,8 @@ jobs:
           cmake -S . -B build/fuzz -G Ninja \
             -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
             -DLIBTMUX_CXX_STANDARD=20 -DLIBTMUX_BUILD_FUZZERS=ON \
-            -DLIBTMUX_BUILD_TESTS=OFF -DLIBTMUX_BUILD_EXAMPLES=OFF
+            -DLIBTMUX_BUILD_TESTS=OFF -DLIBTMUX_BUILD_EXAMPLES=OFF \
+            -DLIBTMUX_FETCH_DEPS=ON
           cmake --build build/fuzz
           ctest --test-dir build/fuzz --no-tests=error --output-on-failure
 
