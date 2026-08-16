@@ -280,6 +280,18 @@ int run_server(const std::vector<std::string>& arguments, const Selector& select
     return 4;
   }
 
+  // Recorded before any of the work below, all of which can fail or be
+  // interrupted. A test that asks which pid this server had is asking about a
+  // process that started, not one that got as far as writing a socket — and
+  // with a 200ms startup and a 200ms teardown, a loaded machine can SIGKILL it
+  // in between. Every value in the line is already known here, and nothing
+  // outside this file reads any field but the pid.
+  auto fields = trace_fields("server", arguments);
+  fields.push_back("PID=" + std::to_string(::getpid()));
+  fields.push_back("SOCKET=" + socket.string());
+  fields.push_back("REPORTED_SOCKET=" + reported_socket.string());
+  append_trace(fields);
+
   std::error_code error;
   std::filesystem::create_directories(socket.parent_path(), error);
   {
@@ -296,12 +308,6 @@ int run_server(const std::vector<std::string>& arguments, const Selector& select
     std::ofstream output{destination};
     output << ::getpid() << '\n' << reported_socket.string() << '\n';
   }
-
-  auto fields = trace_fields("server", arguments);
-  fields.push_back("PID=" + std::to_string(::getpid()));
-  fields.push_back("SOCKET=" + socket.string());
-  fields.push_back("REPORTED_SOCKET=" + reported_socket.string());
-  append_trace(fields);
 
   if (mode == "large-output") {
     write_large_output();
