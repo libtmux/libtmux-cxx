@@ -11,6 +11,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -50,6 +51,12 @@ public:
   ScratchServer& operator=(ScratchServer&&) = delete;
 
   [[nodiscard]] const libtmux::Server& get() const noexcept { return server_; }
+
+  // For the one example that opens a control connection, which is addressed by
+  // socket rather than through `Server`.
+  [[nodiscard]] std::filesystem::path socket_path() const {
+    return fixture_.socket_path();
+  }
 
 private:
   ScratchServer(libtmux::test::ScopedTmuxServer fixture, libtmux::Server server)

@@ -111,7 +111,7 @@ TEST_P(Example, LeavesNoServerAndNoDirectory) {
 
 INSTANTIATE_TEST_SUITE_P(All, Example,
                          testing::Values("01_tour", "02_workspace", "03_filter",
-                                         "04_errors", "05_readme"),
+                                         "04_errors", "05_readme", "06_streaming"),
                          [](const auto& info) { return std::string{info.param}; });
 
 TEST(TourOutput, NamesTheSessionItCreated) {
