@@ -24,18 +24,14 @@ std::string trim(std::string text) {
 }
 
 Resolved ask(const std::filesystem::path& tmux_binary) {
-  // Two things this call gets right that are easy to get wrong. `arguments` is
-  // argv *after* argv[0] — `ChildProcess` prepends the executable, and passing
-  // it again runs `tmux tmux -V`. And the environment is the caller's, not a
-  // stripped one: `tmux_binary` defaults to a bare name, so `PATH` picks which
-  // tmux answers, and it has to be the same `PATH` that will pick when the
-  // fixture spawns the server.
+  // `arguments` excludes argv[0]; `ChildProcess` prepends the executable.
+  // The caller's environment, so `PATH` resolves the same tmux the fixture
+  // will spawn.
   auto child =
       detail::ChildProcess::spawn({.executable = tmux_binary,
                                    .arguments = {"-V"},
                                    .environment = detail::current_environment()});
   if (!child.has_value()) {
-    // Unreadable: report the newest possible, so nothing is skipped.
     return {Version{.unbounded = true}, "unknown"};
   }
   const auto deadline = detail::ProcessClock::now() + std::chrono::milliseconds{5000};
@@ -54,8 +50,6 @@ Resolved ask(const std::filesystem::path& tmux_binary) {
   return {*parsed, std::move(description)};
 }
 
-// Keyed by the binary asked about, so a suite that drives two tmux builds in
-// one process gets the right answer for each.
 const Resolved& resolve(const std::filesystem::path& tmux_binary) {
   static std::mutex guard;
   static std::map<std::string, Resolved> cache;
@@ -70,7 +64,7 @@ const Resolved& resolve(const std::filesystem::path& tmux_binary) {
 
 } // namespace
 
-const Version& running_tmux(const std::filesystem::path& tmux_binary) {
+Version running_tmux(const std::filesystem::path& tmux_binary) {
   return resolve(tmux_binary).version;
 }
 

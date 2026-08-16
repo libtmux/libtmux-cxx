@@ -29,11 +29,9 @@ proves the package.
 | Says what the prose claims | An example can exit zero and print nothing |
 | Leaves no server and no directory | Nothing checked this before |
 
-The third is the one worth having. Every example takes its private tree from
-`ScopedTmuxServer`, and a fixture tree lives under `$TMPDIR` — so the harness
-points `TMPDIR` at a directory it owns, and afterwards that directory is either
-empty or the example leaked. There is no third possibility, which is what makes
-the assertion worth writing.
+Every example takes its private tree from `ScopedTmuxServer`, and a fixture
+tree lives under `$TMPDIR`. The harness points `TMPDIR` at a directory it owns,
+so afterwards that directory is empty or the example leaked.
 
 ## Namespaces
 
@@ -64,10 +62,9 @@ them.
 descriptor accounting, interposed-syscall failure injection — and does not
 export.
 
-That is the right trade. A tmux fixture is not a subprocess library and should
-not become one because a test needed forty lines. Writing those forty lines
-here is also part of what is being tested: it is what an outside project would
-have to write, so it should be visible.
+A tmux fixture is not a subprocess library. The forty lines here are what an
+outside project would have to write, which is the cost of the split and is
+meant to be visible.
 
 ## Related
 

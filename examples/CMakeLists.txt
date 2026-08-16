@@ -1,16 +1,16 @@
-# Examples are programs, not snippets: each one builds, runs, and is checked by
-# the same CTest run as everything else, so none of them can quietly rot.
+# Examples are programs, not snippets: each builds, runs and is checked by the
+# same CTest run as everything else.
 #
-# This directory configures two ways. Added by the parent build it uses the
-# targets already defined; pointed at on its own — `cmake -S examples -B out
-# -DCMAKE_PREFIX_PATH=<install prefix>` — it finds the installed package
-# instead. The second way is not a convenience. It is the only thing that
-# proves an example compiles against what a reader would actually install,
-# rather than against a build tree with this repository's include paths and
-# warning flags leaking into it.
+# Configures two ways — added by the parent build, or standalone against an
+# install:
 #
-# `consume` is the exception and stays one: it exists to prove the installed
-# package links, and deliberately never contacts tmux.
+#   cmake -S examples -B out -DCMAKE_PREFIX_PATH=<install prefix>
+#
+# Only the second compiles them against what a reader installs, without this
+# repository's include paths and warning flags.
+#
+# `consume` is the exception: it proves the package links, and never contacts
+# tmux.
 cmake_minimum_required(VERSION 3.25)
 
 if(NOT TARGET libtmux::libtmux)
@@ -27,6 +27,12 @@ target_include_directories(
 target_link_libraries(
   libtmux_example_support INTERFACE libtmux::libtmux libtmux::testing)
 
+# Same sanitizer flags as the fixture they link; see `src/CMakeLists.txt`.
+# Absent standalone, where a consumer supplies their own.
+if(TARGET libtmux_build_options)
+  target_link_libraries(libtmux_example_support INTERFACE libtmux_build_options)
+endif()
+
 foreach(example 01-tour 02-workspace 03-filter 04-errors 05-readme)
   string(REPLACE "-" "_" target "libtmux_example_${example}")
   add_executable(${target} "${example}.cpp")
@@ -37,9 +43,8 @@ foreach(example 01-tour 02-workspace 03-filter 04-errors 05-readme)
     example.${example} PROPERTIES LABELS "example;real-tmux" TIMEOUT 60)
 endforeach()
 
-# The examples' own test suite, which is a separate project on purpose — see
-# `tests/README.md` there. Only built when a test framework is available,
-# because unlike the examples it needs one.
+# A separate project; see `tests/README.md`. Needs a test framework, which the
+# examples themselves do not.
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/CMakeLists.txt"
    AND (TARGET GTest::gtest_main OR LIBTMUX_EXAMPLES_BUILD_TESTS))
   add_subdirectory(tests)

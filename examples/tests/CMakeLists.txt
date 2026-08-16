@@ -1,12 +1,10 @@
 # The examples' test suite — a consumer of the package, not a part of it.
 #
-# Everything it uses arrives through `find_package(libtmux COMPONENTS testing)`.
-# It has no path into this repository's build tree, no private headers, and no
-# compile definition carrying an answer the library's own configure step
-# already worked out. That is the point: if this suite can test tmux code with
-# only the installed package, so can anybody.
+# Everything it uses arrives through `find_package(libtmux COMPONENTS testing)`:
+# no path into this repository's build tree, no private headers, no compile
+# definition carrying an answer the library's own configure step worked out.
 #
-# It configures standalone, which is how CI proves the claim:
+# It configures standalone, which is where that fails if it is not true:
 #
 #   cmake -S examples -B out -DCMAKE_PREFIX_PATH=<prefix>
 cmake_minimum_required(VERSION 3.25)
@@ -18,13 +16,11 @@ if(NOT TARGET libtmux::testing)
 endif()
 
 if(NOT TARGET GTest::gtest_main)
-  # A test framework is the one thing this suite needs that the package does
-  # not supply, and deliberately so: `libtmux::testing` names no framework, so
-  # picking one is the consumer's business. This reuses the library's own
-  # resolver — a system GoogleTest if there is one, the pinned fallback when
-  # `LIBTMUX_FETCH_DEPS` is on — because a consumer building with libc++ cannot
-  # link a distribution GoogleTest built against libstdc++, and discovering
-  # that through a page of `std::__cxx11` link errors is a bad afternoon.
+  # `libtmux::testing` names no framework, so this suite brings its own. It
+  # reuses the library's resolver — a system GoogleTest if there is one, the
+  # pinned fallback under `LIBTMUX_FETCH_DEPS` — because a build using libc++
+  # cannot link a distribution GoogleTest built against libstdc++, and the
+  # symptom is a page of `std::__cxx11` link errors.
   include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/GoogleTest.cmake")
   libtmux_resolve_googletest()
 endif()
@@ -34,9 +30,13 @@ target_link_libraries(
   libtmux_example_test PRIVATE GTest::gtest_main libtmux::testing)
 target_compile_features(libtmux_example_test PRIVATE cxx_std_23)
 
-# The examples are programs this suite runs, so it has to be told where they
-# landed. A generator expression, not a guessed path: an installed-package
-# consumer has no layout to rely on, and this is what one would write.
+# Same sanitizer flags as the fixture it links; see `src/CMakeLists.txt`.
+if(TARGET libtmux_build_options)
+  target_link_libraries(libtmux_example_test PRIVATE libtmux_build_options)
+endif()
+
+# The examples are programs this suite runs; a consumer of an installed
+# package has no layout convention to guess from.
 target_compile_definitions(
   libtmux_example_test
   PRIVATE
