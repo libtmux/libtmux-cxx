@@ -150,6 +150,32 @@ gtest_discover_tests(
   # survive generation either.
   PROPERTIES LABELS real-tmux TIMEOUT 60)
 
+add_executable(libtmux_server_options_test integration/server_options_test.cpp)
+target_link_libraries(
+  libtmux_server_options_test
+  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+          libtmux_test_support)
+target_compile_options(
+  libtmux_server_options_test PRIVATE -fno-sanitize-recover=undefined)
+
+gtest_discover_tests(
+  libtmux_server_options_test
+  TEST_PREFIX libtmux.server.options.
+  PROPERTIES LABELS real-tmux TIMEOUT 60)
+
+add_executable(libtmux_format_target_test integration/format_and_target_test.cpp)
+target_link_libraries(
+  libtmux_format_target_test
+  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+          libtmux_test_support)
+target_compile_options(
+  libtmux_format_target_test PRIVATE -fno-sanitize-recover=undefined)
+
+gtest_discover_tests(
+  libtmux_format_target_test
+  TEST_PREFIX libtmux.format.target.
+  PROPERTIES LABELS real-tmux TIMEOUT 60)
+
 add_executable(libtmux_window_linking_test integration/window_linking_test.cpp)
 target_link_libraries(
   libtmux_window_linking_test

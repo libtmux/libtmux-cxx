@@ -31,6 +31,10 @@ enum class TargetError {
   return "unknown target error";
 }
 
+// Whether a value is written as an id, which is what decides that it needs no
+// separator validation below — not whether tmux would resolve it. `%x` is an
+// id by this test and no pane by tmux's, and both are right: it carries no
+// separator, so composing it can only produce the caller's own mistake back.
 [[nodiscard]] constexpr bool is_pane_id(std::string_view value) noexcept {
   return value.size() > 1 && value.front() == '%';
 }
