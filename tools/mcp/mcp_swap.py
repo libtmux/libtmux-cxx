@@ -1388,12 +1388,22 @@ def find_built_binary(
 
 
 def find_published_binary(binary: str, prefix: str | None = None) -> pathlib.Path:
-    """Return an installed server, from ``prefix`` or from ``PATH``."""
+    """Return an installed server, from ``prefix`` or from ``PATH``.
+
+    A prefix is searched in both places a published server lands. ``cmake
+    --install`` puts a program in ``bin/``; vcpkg moves it to
+    ``tools/<port>/``, because a static triplet has no ``bin/`` for it to
+    stay in. Looking in only one of them finds the server for half the
+    people who installed it.
+    """
     if prefix is not None:
-        candidate = pathlib.Path(prefix).expanduser() / "bin" / binary
-        if candidate.is_file() and os.access(candidate, os.X_OK):
-            return candidate.resolve()
-        msg = f"{candidate} is not an executable"
+        root = pathlib.Path(prefix).expanduser()
+        looked = [root / "bin" / binary, root / "tools" / "libtmux" / binary]
+        for candidate in looked:
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return candidate.resolve()
+        searched = " or ".join(str(path) for path in looked)
+        msg = f"no executable {binary} at {searched}"
         raise RuntimeError(msg)
     found = shutil.which(binary)
     if found is None:
@@ -2349,8 +2359,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--prefix",
         metavar="DIR",
         help=(
-            "Install prefix to take a published server from; its bin/ is "
-            "searched. Implies --source published."
+            "Install prefix to take a published server from; its bin/ and "
+            "tools/libtmux/ are searched, covering a cmake --install and a "
+            "vcpkg install. Implies --source published."
         ),
     )
     pu.add_argument(
