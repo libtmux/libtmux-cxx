@@ -13,11 +13,20 @@ from __future__ import annotations
 import argparse
 import pathlib
 
-from tools.vcpkg import check, probe
+from tools.vcpkg import check, probe, release
 
 
 def _run_check(args: argparse.Namespace) -> int:
     return check.run(args.root.resolve(), how=args.how)
+
+
+def _run_release(args: argparse.Namespace) -> int:
+    return release.run(
+        args.root.resolve(),
+        version=args.version,
+        sha512=args.sha512,
+        port=args.port,
+    )
 
 
 def _run_probe(args: argparse.Namespace) -> int:
@@ -78,6 +87,19 @@ def main() -> int:
         help="write the throwaway consumer here and leave it behind",
     )
     install.set_defaults(handler=_run_probe)
+
+    cut = subparsers.add_parser(
+        "release",
+        help="point the port at a release whose tag now exists",
+    )
+    cut.add_argument("--version", required=True, help="version the tag names")
+    cut.add_argument(
+        "--sha512",
+        required=True,
+        help="SHA512 of the archive GitHub generates for that tag",
+    )
+    cut.add_argument("--port", default="libtmux", help="port to update")
+    cut.set_defaults(handler=_run_release)
 
     args = parser.parse_args()
     return int(args.handler(args))

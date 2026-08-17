@@ -25,6 +25,7 @@ jobs:
     timeout-minutes: 15
     outputs:
       sha512: ${{ steps.archive.outputs.sha512 }}
+      port_sha512: ${{ steps.port.outputs.sha512 }}
       version: ${{ steps.archive.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -64,6 +65,7 @@ jobs:
           echo "SHA512 of the release asset: ${sha512}"
 
       - name: The SHA512 the vcpkg port needs
+        id: port
         run: |
           # GitHub's generated tarball, which is what `vcpkg_from_github`
           # fetches. Retried because it is produced on demand and can 404 for
@@ -77,7 +79,9 @@ jobs:
             sleep 10
           done
           test -s generated.tar.gz
-          echo "SHA512 for ports/libtmux/portfile.cmake: $(sha512sum generated.tar.gz | cut -d" " -f1)"
+          sha512="$(sha512sum generated.tar.gz | cut -d" " -f1)"
+          echo "sha512=${sha512}" >> "$GITHUB_OUTPUT"
+          echo "SHA512 for ports/libtmux/portfile.cmake: ${sha512}"
 
       - name: The archive builds and installs on its own
         run: |
@@ -229,18 +233,117 @@ jobs:
             across compilers, standard libraries or standard versions, and
             this one carries two ABI namespaces on purpose.
 
+            This repository is its own [vcpkg registry][registry], because the
+            project is too new to meet vcpkg's maturity bar for the curated
+            one. Name it in `vcpkg-configuration.json`, leaving `baseline`
+            empty:
+
+            ```json
+            {
+              "registries": [
+                {
+                  "kind": "git",
+                  "repository": "https://github.com/${{ github.repository }}",
+                  "baseline": "",
+                  "packages": ["libtmux"]
+                }
+              ]
+            }
+            ```
+
+            Then let vcpkg fill it in. The same command moves an existing pin
+            forward to this release:
+
             ```console
-            $ vcpkg install libtmux
+            $ vcpkg x-update-baseline --add-initial-baseline
             ```
 
             The `libtmux-mcp-server-*` binaries below are the exception —
             that is a program, not a library. Verify one with
             `gh attestation verify <file> --repo ${{ github.repository }}`.
 
-            ## For the vcpkg port
+            [registry]: https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/vcpkg-registry.md
 
-            `SHA512` of the source archive:
+            ## Checksums
+
+            `SHA512` of the source archive attached below:
 
             ```
             ${{ needs.source.outputs.sha512 }}
             ```
+
+            `SHA512` of the archive GitHub generates for this tag, which is
+            the one the vcpkg port fetches. They differ: same contents,
+            different gzip.
+
+            ```
+            ${{ needs.source.outputs.port_sha512 }}
+            ```
+
+  registry:
+    # The port fetches its source archive by hash, and that hash cannot exist
+    # before the tag does: GitHub generates the archive on demand, and it is
+    # not byte-identical to `git archive`'s. So the port is pointed at a
+    # release only after that release is tagged, which is why this commit lands
+    # on master rather than inside the tag it describes.
+    needs: [source]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Point the port at this release
+        env:
+          VERSION: ${{ needs.source.outputs.version }}
+          PORT_SHA512: ${{ needs.source.outputs.port_sha512 }}
+        run: |
+          python3 -m tools.vcpkg release \
+            --version "$VERSION" --sha512 "$PORT_SHA512"
+
+      - name: Publish it in the versions database
+        env:
+          VERSION: ${{ needs.source.outputs.version }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email \
+            '41898282+github-actions[bot]@users.noreply.github.com'
+
+          # `x-add-version` records the git-tree of what is committed, so the
+          # port goes in first. Folding `versions/` into the same commit with
+          # --amend afterwards leaves the `ports/` subtree hash untouched, so
+          # the tree it recorded still describes the commit carrying it.
+          git add ports
+          if git diff --cached --quiet; then
+            echo "the port already describes ${VERSION}"
+            exit 0
+          fi
+          git commit -m "vcpkg(feat[registry]): Serve ${VERSION}" \
+            -m "why: The tag exists, so the archive it names exists, so the port can finally be pointed at it." \
+            -m "what:
+          - Set the port's version and source hash to ${VERSION}
+          - Record the git-tree it publishes from"
+
+          git clone --filter=blob:none \
+            https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP/vcpkg"
+          "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+          "$RUNNER_TEMP/vcpkg/vcpkg" \
+            --x-builtin-ports-root=./ports \
+            --x-builtin-registry-versions-dir=./versions \
+            x-add-version --all --verbose
+
+          git add versions
+          git commit --amend --no-edit
+          python3 -m tools.vcpkg check
+
+          # Another commit may have landed while the release ran. Rebasing can
+          # move the port's tree, so the check runs again before the retry.
+          if ! git push origin HEAD:master; then
+            git pull --rebase origin master
+            python3 -m tools.vcpkg check
+            git push origin HEAD:master
+          fi
