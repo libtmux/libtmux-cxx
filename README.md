@@ -10,7 +10,7 @@
 </div>
 
 > [!WARNING]
-> **Alpha prerelease — `0.1.0-alpha.1`.** The API is not stable. Names,
+> **Alpha prerelease — `0.1.0-alpha.2`.** The API is not stable. Names,
 > signatures and behaviour may change between alphas with no deprecation
 > period, and there is no upgrade path promised until `0.1.0`. It is tested
 > hard — against real tmux, across compilers and tmux versions — but "tested"
@@ -95,7 +95,7 @@ include(FetchContent)
 FetchContent_Declare(
   libtmux
   GIT_REPOSITORY https://github.com/libtmux/libtmux-cxx.git
-  GIT_TAG        v0.1.0-alpha.1  # or a commit; never a moving branch
+  GIT_TAG        v0.1.0-alpha.2  # or a commit; never a moving branch
 )
 FetchContent_MakeAvailable(libtmux)
 target_link_libraries(your_target PRIVATE libtmux::libtmux)
