@@ -20,7 +20,13 @@ vcpkg_cmake_configure(
     # on — a private tmux server per test — and it names no test framework and
     # links nothing beyond the library, so shipping it costs a consumer an
     # archive they never link unless they ask for the component.
-    -DLIBTMUX_BUILD_TESTING_LIBRARY=ON)
+    -DLIBTMUX_BUILD_TESTING_LIBRARY=ON
+    # Every dependency this port does not declare must fail the build rather
+    # than reach the network for a pinned fallback.
+    -DLIBTMUX_FETCH_DEPS=OFF
+    # Pinned, not left to the upstream default: under C++20 the package
+    # substitutes `tl::expected`, which this port does not depend on.
+    -DLIBTMUX_CXX_STANDARD=23)
 
 vcpkg_cmake_install()
 vcpkg_cmake_config_fixup(PACKAGE_NAME libtmux CONFIG_PATH lib/cmake/libtmux)
@@ -30,6 +36,13 @@ vcpkg_cmake_config_fixup(PACKAGE_NAME libtmux CONFIG_PATH lib/cmake/libtmux)
 # which is right there and wrong here — vcpkg keeps a port's copyright at
 # `share/libtmux/copyright` and rejects a `debug/share` outright.
 file(REMOVE_RECURSE "${CURRENT_PACKAGES_DIR}/debug/include"
-                    "${CURRENT_PACKAGES_DIR}/debug/share")
+                    "${CURRENT_PACKAGES_DIR}/debug/share"
+                    "${CURRENT_PACKAGES_DIR}/share/licenses")
+
+# The generated usage text names `libtmux::testing` beside the library, but the
+# package config defines that target only for `COMPONENTS testing` — pasting
+# what vcpkg would generate fails to configure.
+configure_file("${CMAKE_CURRENT_LIST_DIR}/usage"
+               "${CURRENT_PACKAGES_DIR}/share/${PORT}/usage" COPYONLY)
 
 vcpkg_install_copyright(FILE_LIST "${SOURCE_PATH}/LICENSE")

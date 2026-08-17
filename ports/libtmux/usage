@@ -1,0 +1,10 @@
+The package libtmux provides CMake targets:
+
+    find_package(libtmux CONFIG REQUIRED)
+    target_link_libraries(main PRIVATE libtmux::libtmux)
+
+The private-tmux-server test fixture is a separate component, so a program that
+does not ask for it never links it:
+
+    find_package(libtmux CONFIG REQUIRED COMPONENTS testing)
+    target_link_libraries(my_tests PRIVATE libtmux::testing)

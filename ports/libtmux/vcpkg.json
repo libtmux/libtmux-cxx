@@ -1,14 +1,13 @@
 {
   "name": "libtmux",
   "version-semver": "0.1.0-alpha.1",
+  "maintainers": "Tony Narlock <tony@git-pull.com>",
   "description": [
     "A typed C++ interface to the tmux terminal multiplexer.",
     "Alpha prerelease: the API is not stable and may change without a deprecation period."
   ],
-  "maintainers": [
-    "Tony Narlock <tony@git-pull.com>"
-  ],
   "homepage": "https://github.com/libtmux/libtmux-cxx",
+  "documentation": "https://github.com/libtmux/libtmux-cxx#readme",
   "license": "MIT",
   "supports": "!windows",
   "dependencies": [
