@@ -37,6 +37,7 @@ def _run_probe(args: argparse.Namespace) -> int:
         triplet=args.triplet,
         features=args.feature,
         keep=args.keep,
+        repository=args.repository,
     )
 
 
@@ -85,6 +86,15 @@ def main() -> int:
         type=pathlib.Path,
         default=None,
         help="write the throwaway consumer here and leave it behind",
+    )
+    install.add_argument(
+        "--repository",
+        default=None,
+        help=(
+            "registry URL to point the consumer at, instead of this checkout. "
+            "Use the public URL to prove the baseline commit was pushed and "
+            "resolves over HTTPS"
+        ),
     )
     install.set_defaults(handler=_run_probe)
 

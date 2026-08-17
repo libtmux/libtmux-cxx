@@ -124,8 +124,16 @@ def run(
     triplet: str | None = None,
     features: list[str] | None = None,
     keep: pathlib.Path | None = None,
+    repository: str | None = None,
 ) -> int:
-    """Resolve the port from this repository as a registry, and build on it."""
+    """Resolve the port from this repository as a registry, and build on it.
+
+    ``repository`` overrides what the consumer is pointed at. It defaults to
+    this checkout, which is what a gate wants: it tests the tree under review.
+    Naming the public URL instead tests something the local path cannot -- that
+    the baseline commit was actually pushed, and that vcpkg can fetch it over
+    HTTPS from a machine that has never seen this working copy.
+    """
     features = features or []
     vcpkg = vcpkg_root / "vcpkg"
     if not vcpkg.is_file():
@@ -161,10 +169,11 @@ def run(
         (work / "vcpkg.json").write_text(
             _manifest(port, version, features, builtin) + "\n",
         )
+        origin = repository or str(root)
         (work / "vcpkg-configuration.json").write_text(
-            _configuration(port, str(root), baseline) + "\n",
+            _configuration(port, origin, baseline) + "\n",
         )
-        print(f"registry {root} @ {baseline[:12]} -> {port} {version}")
+        print(f"registry {origin} @ {baseline[:12]} -> {port} {version}")
 
         build = work / "build"
         configure = [
@@ -182,6 +191,12 @@ def run(
             configure.append(f"-DVCPKG_TARGET_TRIPLET={triplet}")
         if _run(configure) != 0:
             print("error: the consumer did not configure", file=sys.stderr)
+            if repository is not None:
+                print(
+                    f"note: {origin} must already carry commit {baseline}. "
+                    f"An unpushed baseline fails exactly here.",
+                    file=sys.stderr,
+                )
             return 1
 
         if _run(["cmake", "--build", str(build)]) != 0:
