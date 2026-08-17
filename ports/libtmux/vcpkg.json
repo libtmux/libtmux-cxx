@@ -19,5 +19,13 @@
       "name": "vcpkg-cmake-config",
       "host": true
     }
-  ]
+  ],
+  "features": {
+    "mcp": {
+      "description": "Build libtmux-mcp-server, the MCP tool server over stdio",
+      "dependencies": [
+        "nlohmann-json"
+      ]
+    }
+  }
 }

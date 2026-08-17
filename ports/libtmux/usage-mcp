@@ -1,0 +1,5 @@
+
+The mcp feature installs an MCP server over stdio, which is run rather than
+linked:
+
+    ${VCPKG_ROOT}/installed/${VCPKG_TARGET_TRIPLET}/tools/libtmux/libtmux-mcp-server

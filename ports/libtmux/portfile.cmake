@@ -7,9 +7,14 @@ vcpkg_from_github(
   SHA512 23cfb3723834b3982bfc2bba6ca9a7998f1817bf60700e13db154638e45d4e68346a8f5f65f1293187fe39326aed1e76f5113b6d0fbd0090a984d6d0e8a65439
   HEAD_REF master)
 
+vcpkg_check_features(
+  OUT_FEATURE_OPTIONS FEATURE_OPTIONS
+  FEATURES mcp LIBTMUX_BUILD_MCP_SERVER)
+
 vcpkg_cmake_configure(
   SOURCE_PATH "${SOURCE_PATH}"
   OPTIONS
+    ${FEATURE_OPTIONS}
     # This project's own tests need GoogleTest and a real tmux, and its
     # examples need a tmux to run against. Neither belongs in a consumer's
     # dependency graph.
@@ -31,6 +36,12 @@ vcpkg_cmake_configure(
 vcpkg_cmake_install()
 vcpkg_cmake_config_fixup(PACKAGE_NAME libtmux CONFIG_PATH lib/cmake/libtmux)
 
+if("mcp" IN_LIST FEATURES)
+  # A program, so it moves out of `bin/` — which a static triplet does not
+  # otherwise have — and into the port's own tools directory.
+  vcpkg_copy_tools(TOOL_NAMES libtmux-mcp-server AUTO_CLEAN)
+endif()
+
 # Headers come from the release tree, and so does the license: the project
 # installs it to `share/licenses/libtmux/` for an ordinary `cmake --install`,
 # which is right there and wrong here — vcpkg keeps a port's copyright at
@@ -44,5 +55,9 @@ file(REMOVE_RECURSE "${CURRENT_PACKAGES_DIR}/debug/include"
 # what vcpkg would generate fails to configure.
 configure_file("${CMAKE_CURRENT_LIST_DIR}/usage"
                "${CURRENT_PACKAGES_DIR}/share/${PORT}/usage" COPYONLY)
+if("mcp" IN_LIST FEATURES)
+  file(READ "${CMAKE_CURRENT_LIST_DIR}/usage-mcp" LIBTMUX_USAGE_MCP)
+  file(APPEND "${CURRENT_PACKAGES_DIR}/share/${PORT}/usage" "${LIBTMUX_USAGE_MCP}")
+endif()
 
 vcpkg_install_copyright(FILE_LIST "${SOURCE_PATH}/LICENSE")
