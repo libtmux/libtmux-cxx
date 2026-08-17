@@ -13,6 +13,24 @@ qualifies. This project is none of those, and
 closed for that reason rather than a technical one. Nothing here is a
 workaround — a registry is the answer vcpkg's own documentation gives.
 
+## The order a consumer has to keep
+
+Naming any registry makes the *default* registry's baseline mandatory, and
+vcpkg enforces that while loading the configuration — before it runs whatever
+you asked it to do. So `vcpkg x-update-baseline --add-initial-baseline`, the
+command that would supply that baseline, fails once `vcpkg-configuration.json`
+exists:
+
+```
+Using registries requires that a baseline is set for the default registry
+or that the default registry is null.
+```
+
+The manifest therefore comes first and the registry file second, which is the
+order [the README](../README.md#vcpkg) gives. A `baseline` of `""` is the
+placeholder that survives parsing; the field cannot simply be omitted, because
+a git registry is required to have one.
+
 ## Layout
 
 vcpkg recognises a registry by two directories. Everything else in the

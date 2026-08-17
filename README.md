@@ -146,8 +146,27 @@ resolves `libtmux` by version the way it resolves anything else. It is not in
 the curated registry — the project is far too new to meet vcpkg's maturity bar,
 and serving your own registry is what vcpkg's documentation recommends instead.
 
-Put a `vcpkg-configuration.json` beside your manifest. Leave `baseline` empty;
-the next command fills it in:
+Declare the dependency in `vcpkg.json` first, with no registry file yet:
+
+```json
+{
+  "name": "your-project",
+  "version": "0.1.0",
+  "dependencies": ["libtmux"]
+}
+```
+
+Pin vcpkg's own baseline before naming any registry. **The order matters**:
+once a configuration names a registry, vcpkg refuses to load it until the
+default registry has a baseline — including when you run the command that
+would add one.
+
+```console
+$ vcpkg x-update-baseline --add-initial-baseline
+```
+
+Now add `vcpkg-configuration.json` beside the manifest, leaving `baseline`
+empty for the next command to fill:
 
 ```json
 {
@@ -162,20 +181,8 @@ the next command fills it in:
 }
 ```
 
-Depend on it from `vcpkg.json` as usual:
-
-```json
-{
-  "name": "your-project",
-  "version": "0.1.0",
-  "dependencies": ["libtmux"]
-}
-```
-
-Then let vcpkg pin both baselines — this registry's, and its own:
-
 ```console
-$ vcpkg x-update-baseline --add-initial-baseline
+$ vcpkg x-update-baseline
 ```
 
 That writes a commit of this repository into `baseline`, which is what your

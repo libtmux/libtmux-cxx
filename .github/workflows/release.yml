@@ -235,8 +235,15 @@ jobs:
 
             This repository is its own [vcpkg registry][registry], because the
             project is too new to meet vcpkg's maturity bar for the curated
-            one. Name it in `vcpkg-configuration.json`, leaving `baseline`
-            empty:
+            one. With `libtmux` in your `vcpkg.json`, pin vcpkg's own baseline
+            *before* naming any registry — a configuration that names one will
+            not load until the default registry has a baseline:
+
+            ```console
+            $ vcpkg x-update-baseline --add-initial-baseline
+            ```
+
+            Then add `vcpkg-configuration.json`, leaving `baseline` empty:
 
             ```json
             {
@@ -251,11 +258,11 @@ jobs:
             }
             ```
 
-            Then let vcpkg fill it in. The same command moves an existing pin
-            forward to this release:
+            This fills it in, and moves an existing pin forward to this
+            release:
 
             ```console
-            $ vcpkg x-update-baseline --add-initial-baseline
+            $ vcpkg x-update-baseline
             ```
 
             The `libtmux-mcp-server-*` binaries below are the exception —
