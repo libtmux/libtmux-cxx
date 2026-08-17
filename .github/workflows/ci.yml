@@ -570,6 +570,43 @@ jobs:
           print(f"answered {len(replies)} lines and stayed up")
           PROBE
 
+  registry:
+    # This repository is a vcpkg git registry, so a consumer resolves the port
+    # through `versions/` rather than from `ports/` directly. Two questions,
+    # and the cheap one does not answer the expensive one: whether the database
+    # still describes the ports, and whether vcpkg can actually resolve them.
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # Unshallowed because vcpkg fetches the baseline commit out of this
+      # clone, and resolves the port from the git-tree recorded against it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: The versions database describes the ports
+        run: python3 -m tools.vcpkg check
+
+      - name: Install vcpkg
+        run: |
+          git clone --filter=blob:none \
+            https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP/vcpkg"
+          "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+
+      # The whole chain a consumer walks: baseline commit, git-tree, release
+      # tarball by hash, package config, find_package. It is also the only
+      # place the shipped MCP server is run from an installed tree rather than
+      # a build tree.
+      - name: A consumer resolves the port and builds on it
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+          python3 -m tools.vcpkg probe \
+            --vcpkg "$RUNNER_TEMP/vcpkg" \
+            --triplet x64-linux \
+            --feature mcp
+
   all-checks-passed:
     # Branch protection requires this one job. Naming every matrix leg there
     # instead would mean editing the protection rule whenever a tmux version
@@ -589,6 +626,7 @@ jobs:
       - coverage
       - lint
       - package
+      - registry
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
