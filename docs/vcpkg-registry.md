@@ -71,13 +71,31 @@ version is the git-tree of that port at `HEAD`. When it is not, the registry
 serves the old port while the repository shows the new one.
 
 ```console
-$ python3 -m tools.vcpkg
+$ python3 -m tools.vcpkg check
 ```
 
 This check exists because `x-add-version` does not fail loudly enough to gate
 on. Given a port edited without a version bump it prints the disagreement, then
 **exits 0 and writes nothing** — so a job keyed on exit status passes, and so
 does one keyed on `git diff versions/`, because there is no diff to find.
+
+Agreement between two files is not the same as a consumer being able to resolve
+them, so the second check is a real one. It writes the two files a consumer
+writes, points them at this checkout, and builds
+[`examples/consume/`](../examples/consume/) — which needs no tmux server —
+through the vcpkg toolchain:
+
+```console
+$ python3 -m tools.vcpkg probe \
+    --vcpkg ~/vcpkg \
+    --triplet x64-linux \
+    --feature mcp
+```
+
+That is the only check that exercises resolution: the baseline commit, the
+git-tree behind it, and the package config arriving somewhere `find_package`
+looks. With `--feature mcp` it also runs the installed server over stdio and
+requires it to answer with its tools.
 
 ## Related
 

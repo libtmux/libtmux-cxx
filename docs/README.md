@@ -28,7 +28,7 @@ registry. What that means, the order a release has to keep, and the check that
 catches a versions database drifting from the ports beside it:
 
 ```console
-$ python3 -m tools.vcpkg
+$ python3 -m tools.vcpkg check
 ```
 
 ## Design notes
