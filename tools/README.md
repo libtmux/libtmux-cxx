@@ -25,6 +25,7 @@ Both are run from the repository root.
 | [`mutate/`](mutate/) | `python3 -m tools.mutate` | Whether the tests can actually fail |
 | [`docs/`](docs/) | `python3 tools/docs/api_index.py` | Generates [`docs/api.md`](../docs/api.md) from the headers, so the reference cannot outrun them |
 | [`mcp/`](mcp/) | `python3 tools/mcp/mcp_swap.py` | Points every installed agent CLI at a chosen build of [the MCP server](../apps/mcp/README.md), and puts them back |
+| [`vcpkg/`](vcpkg/) | `python3 -m tools.vcpkg` | Whether [the registry](../docs/vcpkg-registry.md) still publishes the ports beside it |
 | [`coverage/`](coverage/) | — | How much of the shipped surface the tests reach |
 | [`differential/`](differential/) | — | The same question asked of this library and of Python libtmux, compared |
 | [`bakeoff/`](bakeoff/) | — | The transport measurements behind [`docs/bakeoffs/`](../docs/bakeoffs/) |

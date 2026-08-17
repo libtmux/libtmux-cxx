@@ -21,6 +21,16 @@ tmux fixture installed alongside the library:
 $ python3 tools/docs/api_index.py --include include/libtmux/testing --output docs/api-testing.md --page testing
 ```
 
+## Packaging
+
+**[`vcpkg-registry.md`](vcpkg-registry.md)** — this repository is a vcpkg git
+registry. What that means, the order a release has to keep, and the check that
+catches a versions database drifting from the ports beside it:
+
+```console
+$ python3 -m tools.vcpkg
+```
+
 ## Design notes
 
 Why a thing is the way it is, written when the decision was made.

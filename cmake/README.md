@@ -30,5 +30,5 @@ are for the tests, the examples, and the MCP server.
 ## Related
 
 - [The library](../README.md#build-options) — what each option does
-- [`ports/`](../ports/README.md) — the vcpkg port, which drives all of this
+- [`ports/libtmux/`](../ports/libtmux/) — the vcpkg port, which drives all of this
 - [`CMakePresets.json`](../CMakePresets.json) — the configurations CI builds

@@ -95,7 +95,7 @@ include(FetchContent)
 FetchContent_Declare(
   libtmux
   GIT_REPOSITORY https://github.com/libtmux/libtmux-cxx.git
-  GIT_TAG        master  # pin a commit; the first alpha is not tagged yet
+  GIT_TAG        v0.1.0-alpha.1  # or a commit; never a moving branch
 )
 FetchContent_MakeAvailable(libtmux)
 target_link_libraries(your_target PRIVATE libtmux::libtmux)
@@ -141,18 +141,62 @@ target_link_libraries(your_target PRIVATE libtmux::libtmux)
 
 ### vcpkg
 
-An overlay port lives in [`ports/`](ports/README.md), and lands with the first
-tagged alpha — it fetches a release tarball by hash, so it has nothing to point
-at until one is published:
+This repository is a [vcpkg git registry](docs/vcpkg-registry.md), so vcpkg
+resolves `libtmux` by version the way it resolves anything else. It is not in
+the curated registry — the project is far too new to meet vcpkg's maturity bar,
+and serving your own registry is what vcpkg's documentation recommends instead.
+
+Put a `vcpkg-configuration.json` beside your manifest. Leave `baseline` empty;
+the next command fills it in:
+
+```json
+{
+  "registries": [
+    {
+      "kind": "git",
+      "repository": "https://github.com/libtmux/libtmux-cxx",
+      "baseline": "",
+      "packages": ["libtmux"]
+    }
+  ]
+}
+```
+
+Depend on it from `vcpkg.json` as usual:
+
+```json
+{
+  "name": "your-project",
+  "version": "0.1.0",
+  "dependencies": ["libtmux"]
+}
+```
+
+Then let vcpkg pin both baselines — this registry's, and its own:
 
 ```console
-$ vcpkg install libtmux --overlay-ports=ports
+$ vcpkg x-update-baseline --add-initial-baseline
 ```
+
+That writes a commit of this repository into `baseline`, which is what your
+build resolves against from then on. Re-run it to move to a newer release.
 
 ```cmake
 find_package(libtmux CONFIG REQUIRED)
 target_link_libraries(your_target PRIVATE libtmux::libtmux)
 ```
+
+[The MCP server](#the-mcp-server) is a feature rather than a second package,
+because it ships from this same source. Ask for it by name:
+
+```json
+{
+  "dependencies": [{ "name": "libtmux", "features": ["mcp"] }]
+}
+```
+
+It installs as a program, at
+`installed/<triplet>/tools/libtmux/libtmux-mcp-server` — nothing links it.
 
 ### Build options
 
@@ -589,7 +633,8 @@ sends is pinned.
 | [`apps/`](apps/README.md) | Programs built on the library — chiefly [the MCP server](apps/mcp/README.md). |
 | [`tools/`](tools/README.md) | The parity ledger, the mutation catalogue, the reference generator. Never installed. |
 | [`docs/`](docs/README.md) | Design notes, bakeoffs, and the generated [API reference](docs/api.md). |
-| [`ports/`](ports/README.md) | The vcpkg overlay port. |
+| [`ports/`](ports/libtmux/) | The vcpkg port, served by [this repository's registry](docs/vcpkg-registry.md). |
+| [`versions/`](versions/) | The registry's versions database. Generated, never edited by hand. |
 | [`cmake/`](cmake/README.md) | Helper modules and the package config template. |
 
 ## How it is checked
@@ -630,7 +675,7 @@ at a time and reports any that nothing notices.
 [MCP server](apps/mcp/README.md) ·
 [Tests](tests/README.md) ·
 [Tooling](tools/README.md) ·
-[vcpkg port](ports/README.md)
+[vcpkg registry](docs/vcpkg-registry.md)
 
 **Design notes:**
 [Entity behaviour](docs/bakeoffs/entity-behavior/scorecard.md) ·

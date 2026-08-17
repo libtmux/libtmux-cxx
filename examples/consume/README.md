@@ -55,4 +55,4 @@ exported the wrong thing fails here rather than in someone else's project.
 
 - [The library](../../README.md#installation) — the other ways to depend on it
 - [`examples/`](../README.md) — the programs that do talk to tmux
-- [`ports/`](../../ports/README.md) — the vcpkg port, which does exactly this
+- [`ports/libtmux/`](../../ports/libtmux/) — the vcpkg port, which does exactly this
