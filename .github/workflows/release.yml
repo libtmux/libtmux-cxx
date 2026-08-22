@@ -9,8 +9,10 @@ permissions:
   contents: read
 
 concurrency:
+  # One registry cut at a time, never cancelled. GitHub holds at most one
+  # pending run per group, so a superseded tag must be re-run by hand.
   group: release-registry
-  queue: max
+  cancel-in-progress: false
 
 defaults:
   run:
