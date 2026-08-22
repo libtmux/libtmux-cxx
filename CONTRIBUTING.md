@@ -64,12 +64,24 @@ default.
 
 ## Before you open a pull request
 
-Run what CI runs. The five build lanes disagree often enough to be worth the
+Run what CI runs. The six build lanes disagree often enough to be worth the
 time — clang with libc++, GCC with libstdc++, the C++20 build over
 `tl::expected`, and the sanitizers:
 
 ```console
-$ for p in cxx-dev cxx-sanitize cxx-tsan cxx-gcc cxx20; do cmake --preset $p && cmake --build --preset $p && ctest --preset $p --no-tests=error; done
+$ (set -e; for p in \
+    cxx-dev \
+    cxx-sanitize \
+    cxx-sanitize-cxx20 \
+    cxx-tsan \
+    cxx-gcc \
+    cxx20; do \
+    cmake --preset "$p"; \
+    cmake --build --preset "$p"; \
+    ctest \
+      --preset "$p" \
+      --no-tests=error; \
+  done)
 ```
 
 ```console

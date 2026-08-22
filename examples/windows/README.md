@@ -2,9 +2,12 @@
 
 The runner gives the example or MCP server a high-entropy `-L` namespace, an
 empty configuration file created for that run, and no inherited tmux or psmux
-routing variables. On exit it kills only the exact fixture session, waits for
-that session's exact registry files to disappear, and removes the configuration
-file. It never runs `kill-server` and never deletes the `.psmux` directory.
+routing variables. After a fixture launch is attempted, it kills only the exact
+fixture session and waits for that session's exact registry files to disappear.
+It removes the configuration file only after both steps are proven; otherwise
+the error reports the exact socket, session, and config path needed for recovery.
+It never invokes psmux session cleanup before a launch attempt, never runs
+`kill-server`, and never deletes the `.psmux` directory.
 
 Build the `windows-psmux` preset from a Developer PowerShell, then run the
 native example through the fixture:

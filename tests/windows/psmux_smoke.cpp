@@ -174,6 +174,159 @@ private:
   std::filesystem::path path_;
 };
 
+struct RecoveryTarget {
+  std::string socket_name;
+  std::string session_name;
+  bool cleanup_proven{false};
+};
+
+class RecoveryState final {
+public:
+  void note_session_may_exist(std::string socket_name, std::string session_name) {
+    targets_.push_back(RecoveryTarget{.socket_name = std::move(socket_name),
+                                      .session_name = std::move(session_name)});
+  }
+
+  void prove_namespace_cleanup(std::string_view socket_name) noexcept {
+    for (auto& target : targets_) {
+      if (target.socket_name == socket_name) {
+        target.cleanup_proven = true;
+      }
+    }
+  }
+
+  [[nodiscard]] bool preserve_config() const noexcept {
+    for (const auto& target : targets_) {
+      if (!target.cleanup_proven) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  [[nodiscard]] const std::vector<RecoveryTarget>& targets() const noexcept {
+    return targets_;
+  }
+
+private:
+  std::vector<RecoveryTarget> targets_;
+};
+
+[[nodiscard]] bool recovery_state_self_test() {
+  RecoveryState state;
+  if (state.preserve_config()) {
+    return false;
+  }
+  state.note_session_may_exist("self-test", "first");
+  if (!state.preserve_config()) {
+    return false;
+  }
+  state.prove_namespace_cleanup("other");
+  if (!state.preserve_config()) {
+    return false;
+  }
+  state.prove_namespace_cleanup("self-test");
+  if (state.preserve_config()) {
+    return false;
+  }
+  state.note_session_may_exist("self-test", "replacement");
+  if (!state.preserve_config()) {
+    return false;
+  }
+  state.prove_namespace_cleanup("self-test");
+  return !state.preserve_config();
+}
+
+class ScopedRecoveryConfig final {
+public:
+  explicit ScopedRecoveryConfig(std::filesystem::path path) : path_{std::move(path)} {}
+  ~ScopedRecoveryConfig() {
+    if (removed_) {
+      return;
+    }
+    if (state_.preserve_config()) {
+      report_unproved_cleanup();
+      return;
+    }
+    static_cast<void>(remove_and_verify(true));
+  }
+
+  ScopedRecoveryConfig(const ScopedRecoveryConfig&) = delete;
+  ScopedRecoveryConfig& operator=(const ScopedRecoveryConfig&) = delete;
+
+  void note_session_may_exist(std::string_view socket_name,
+                              std::string_view session_name) {
+    state_.note_session_may_exist(std::string{socket_name}, std::string{session_name});
+  }
+
+  void prove_namespace_cleanup(std::string_view socket_name) noexcept {
+    state_.prove_namespace_cleanup(socket_name);
+  }
+
+  [[nodiscard]] bool finish() {
+    if (removed_) {
+      return true;
+    }
+    if (state_.preserve_config()) {
+      report_unproved_cleanup();
+      return false;
+    }
+    return remove_and_verify(true);
+  }
+
+private:
+  [[nodiscard]] bool remove_and_verify(bool report) {
+    std::error_code remove_failed;
+    static_cast<void>(std::filesystem::remove(path_, remove_failed));
+    if (remove_failed) {
+      if (report) {
+        std::cerr << "FAIL: could not remove the task-owned psmux configuration: "
+                  << remove_failed.message() << '\n'
+                  << "RECOVERY: PSMUX_CONFIG_FILE=" << path_ << '\n';
+      }
+      return false;
+    }
+    std::error_code exists_failed;
+    const bool exists = std::filesystem::exists(path_, exists_failed);
+    if (exists_failed || exists) {
+      if (report) {
+        std::cerr << "FAIL: could not verify removal of the task-owned psmux "
+                     "configuration";
+        if (exists_failed) {
+          std::cerr << ": " << exists_failed.message();
+        }
+        std::cerr << '\n' << "RECOVERY: PSMUX_CONFIG_FILE=" << path_ << '\n';
+      }
+      return false;
+    }
+    removed_ = true;
+    return true;
+  }
+
+  void report_unproved_cleanup() {
+    if (recovery_reported_) {
+      return;
+    }
+    recovery_reported_ = true;
+    std::cerr << "FAIL: exact psmux cleanup was not proven; preserving the trusted "
+                 "configuration\n"
+              << "RECOVERY: PSMUX_CONFIG_FILE=" << path_ << '\n';
+    for (const auto& target : state_.targets()) {
+      if (!target.cleanup_proven) {
+        std::cerr << "RECOVERY: namespace=[" << target.socket_name << "] session=["
+                  << target.session_name << "]\n";
+      }
+    }
+    std::cerr << "RECOVERY: inspect only these exact identifiers; do not use "
+                 "default-server or broad cleanup\n";
+  }
+
+  std::filesystem::path path_;
+  RecoveryState state_;
+  bool removed_{false};
+  bool recovery_reported_{false};
+};
+
 void report_command(std::string_view message, const CommandFailure& failure) {
   std::cerr << "FAIL: " << message << ": " << failure.diagnostic << '\n';
 }
@@ -448,6 +601,11 @@ private:
 int main() {
   using namespace std::chrono_literals;
 
+  if (!require(recovery_state_self_test(),
+               "the recovery state must preserve unproved cleanup only")) {
+    return EXIT_FAILURE;
+  }
+
   const std::string socket_name = unique_namespace();
   std::error_code directory_error;
   const auto temporary = std::filesystem::temp_directory_path(directory_error);
@@ -463,7 +621,7 @@ int main() {
     return EXIT_FAILURE;
   }
   empty_config.close();
-  ScopedFile config_cleanup{config};
+  ScopedRecoveryConfig config_cleanup{config};
   if (!configure_environment(config)) {
     return EXIT_FAILURE;
   }
@@ -581,6 +739,7 @@ int main() {
                "Server::tmux_version must parse the psmux version line")) {
     return EXIT_FAILURE;
   }
+  config_cleanup.note_session_may_exist(socket_name, "must-not-create");
   const auto typed_creation = server.new_session("must-not-create");
   if (!require(!typed_creation &&
                    typed_creation.error().kind == libtmux::FailureKind::unsupported &&
@@ -588,8 +747,10 @@ int main() {
                "racy psmux session creation must fail before dispatch")) {
     return EXIT_FAILURE;
   }
+  config_cleanup.note_session_may_exist(socket_name, "alpha");
   const auto alpha_created =
       server.run({"new-session", "-d", "-s", "alpha", "-n", "alpha-main", "--", "cmd"});
+  config_cleanup.note_session_may_exist(socket_name, "beta");
   const auto beta_created = raw_psmux(
       socket_name, {"new-session", "-d", "-s", "beta", "-x", "117", "-y", "31"});
   if (!require(alpha_created && beta_created && beta_created->exit_code == 0,
@@ -662,6 +823,7 @@ int main() {
     return EXIT_FAILURE;
   }
 
+  config_cleanup.note_session_may_exist(socket_name, "alpha.1");
   auto ambiguous_session = server.new_session("alpha.1");
   if (!require(!ambiguous_session,
                "psmux target-shaped session names must be rejected") ||
@@ -669,6 +831,7 @@ int main() {
                "a target-shaped session name must fail before dispatch")) {
     return EXIT_FAILURE;
   }
+  config_cleanup.note_session_may_exist(socket_name, "safe ; kill-session");
   const auto unsafe_session = server.new_session("safe ; kill-session");
   if (!require(!unsafe_session &&
                    unsafe_session.error().kind == libtmux::FailureKind::validation &&
@@ -686,6 +849,7 @@ int main() {
   }
 
   const std::string nested_socket = socket_name + "__nested";
+  config_cleanup.note_session_may_exist(nested_socket, "inner");
   const auto nested_created =
       raw_psmux(nested_socket, {"new-session", "-d", "-s", "inner", "-P"});
   if (!require(nested_created.has_value() && nested_created->exit_code == 0,
@@ -1192,12 +1356,14 @@ int main() {
                "rejecting rename-session must leave beta intact")) {
     return EXIT_FAILURE;
   }
+  config_cleanup.note_session_may_exist(socket_name, "gamma");
   const auto external_rename =
       raw_psmux(socket_name, {"rename-session", "-t", "alpha", "gamma"});
   if (!require(external_rename.has_value() && external_rename->exit_code == 0,
                "could not simulate an external psmux session rename")) {
     return EXIT_FAILURE;
   }
+  config_cleanup.note_session_may_exist(socket_name, "alpha");
   const auto replacement_created =
       raw_psmux(socket_name, {"new-session", "-d", "-s", "alpha"});
   if (!require(replacement_created && replacement_created->exit_code == 0,
@@ -1291,8 +1457,10 @@ int main() {
     return EXIT_FAILURE;
   }
 
+  config_cleanup.note_session_may_exist(socket_name, "alpha.1");
   const auto dotted_created =
       raw_psmux(socket_name, {"new-session", "-d", "-s", "alpha.1"});
+  config_cleanup.note_session_may_exist(socket_name, "=alpha");
   const auto equals_created =
       raw_psmux(socket_name, {"new-session", "-d", "-s", "=alpha"});
   if (!require(dotted_created && dotted_created->exit_code == 0 && equals_created &&
@@ -1317,6 +1485,7 @@ int main() {
   if (!scoped.finish()) {
     return EXIT_FAILURE;
   }
+  config_cleanup.prove_namespace_cleanup(socket_name);
   if (!require(nested.alive(),
                "killing a psmux namespace must not kill a nested prefix")) {
     return EXIT_FAILURE;
@@ -1325,12 +1494,13 @@ int main() {
                "could not clean the adversarial nested psmux session")) {
     return EXIT_FAILURE;
   }
+  config_cleanup.prove_namespace_cleanup(nested_socket);
   if (!require(config_cleanup.finish(),
                "could not remove the task-owned psmux configuration")) {
     return EXIT_FAILURE;
   }
   std::cout << "PASS: native psmux " << parsed_version->major << '.'
-            << parsed_version->minor << '.' << parsed_version->patch
+            << parsed_version->minor << '.' << parsed_version->revision
             << " through namespace " << socket_name << '\n';
   return EXIT_SUCCESS;
 }

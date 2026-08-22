@@ -29,10 +29,10 @@ template <class... Functions> struct Overloaded : Functions... {
 };
 
 [[nodiscard]] json encode(const StructuredValue& value) {
-  return std::visit(Overloaded{[](std::nullptr_t) { return json{nullptr}; },
-                               [](bool item) { return json{item}; },
-                               [](std::int64_t item) { return json{item}; },
-                               [](const std::string& item) { return json{item}; },
+  return std::visit(Overloaded{[](std::nullptr_t) { return json(nullptr); },
+                               [](bool item) { return json(item); },
+                               [](std::int64_t item) { return json(item); },
+                               [](const std::string& item) { return json(item); },
                                [](const StructuredValue::Array& items) {
                                  json result = json::array();
                                  for (const auto& item : items) {

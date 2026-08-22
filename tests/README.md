@@ -85,11 +85,25 @@ The suite runs under every preset in
 be worth the time:
 
 ```console
-$ for p in cxx-dev cxx-sanitize cxx-tsan cxx-gcc cxx20; do cmake --preset $p && cmake --build --preset $p && ctest --preset $p --no-tests=error; done
+$ (set -e; for p in \
+    cxx-dev \
+    cxx-sanitize \
+    cxx-sanitize-cxx20 \
+    cxx-tsan \
+    cxx-gcc \
+    cxx20; do \
+    cmake --preset "$p"; \
+    cmake --build --preset "$p"; \
+    ctest \
+      --preset "$p" \
+      --no-tests=error; \
+  done)
 ```
 
 clang with libc++, GCC with libstdc++, the C++20 build over `tl::expected`,
-address and undefined-behaviour sanitizers, and the thread sanitizer.
+address and undefined-behaviour sanitizers, and the thread sanitizer. The
+C++20 sanitizer lane repeats ASan/UBSan with libstdc++ so allocator matching
+remains strict despite Ubuntu's split libc++/libc++abi exception ownership.
 
 ## Proving a test can fail
 

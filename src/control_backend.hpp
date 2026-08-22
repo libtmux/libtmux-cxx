@@ -32,6 +32,7 @@ namespace detail {
 [[nodiscard]] ConnectionOptions routed_control_options(ConnectionOptions options,
                                                        std::string socket_path,
                                                        std::string session);
+[[nodiscard]] ControlRequest batch_request(const CommandBatch& batch);
 
 class ControlBackend final : public Backend {
 public:

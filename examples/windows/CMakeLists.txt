@@ -35,4 +35,16 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(
     example.07-windows-psmux
     PROPERTIES LABELS "example;windows;psmux;real-tmux" TIMEOUT 120)
+
+  add_test(
+    NAME example.windows-psmux-runner-safety
+    COMMAND
+      "${LIBTMUX_EXAMPLE_POWERSHELL}" -NoLogo -NoProfile -NonInteractive
+      -ExecutionPolicy Bypass -File
+      "${CMAKE_CURRENT_SOURCE_DIR}/run_psmux_example_test.ps1" -Runner
+      "${CMAKE_CURRENT_SOURCE_DIR}/run_psmux_example.ps1" -PowerShellExecutable
+      "${LIBTMUX_EXAMPLE_POWERSHELL}")
+  set_tests_properties(
+    example.windows-psmux-runner-safety
+    PROPERTIES LABELS "example;windows;contract" TIMEOUT 30)
 endif()

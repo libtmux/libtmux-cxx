@@ -268,29 +268,86 @@ empty configuration file, and a state file used by the commands below:
 
 ```console
 $ & {
+    $ErrorActionPreference = "Stop"
+    function Remove-ExactArtifact {
+        param([string] $Path)
+        try {
+            Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+        }
+        catch [System.Management.Automation.ItemNotFoundException] {
+        }
+        try {
+            $null = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+            throw "artifact still exists after cleanup: $Path"
+        }
+        catch [System.Management.Automation.ItemNotFoundException] {
+        }
+    }
+
     $root = Join-Path $env:LOCALAPPDATA "libtmux-cxx-mcp"
     $statePath = Join-Path $root "psmux-state.json"
-    if (Test-Path -LiteralPath $statePath) {
-        throw "clean up the existing libtmux-cxx MCP fixture first"
-    }
-    New-Item -ItemType Directory -Force -Path $root | Out-Null
+    New-Item -ItemType Directory -Force -Path $root -ErrorAction Stop | Out-Null
     $suffix = [Guid]::NewGuid().ToString("N")
     $socketName = "libtmux-cxx-mcp-$suffix"
     $sessionName = "agent-$suffix"
     $configPath = Join-Path $root "$socketName.conf"
-    $oldConfig = $env:PSMUX_CONFIG_FILE
-    $oldNoWarm = $env:PSMUX_NO_WARM
+    $environmentNames = @(
+        "PATHEXT",
+        "PSMUX_ACTIVE",
+        "PSMUX_CONFIG_FILE",
+        "PSMUX_DATA_DIR",
+        "PSMUX_NO_WARM",
+        "PSMUX_REMOTE_ATTACH",
+        "PSMUX_SESSION",
+        "PSMUX_SESSION_NAME",
+        "PSMUX_TARGET",
+        "PSMUX_TARGET_FULL",
+        "PSMUX_TARGET_SESSION",
+        "TMUX",
+        "TMUX_PANE"
+    )
+    $originalEnvironment = @{}
+    foreach ($name in $environmentNames) {
+        $originalEnvironment[$name] =
+            [Environment]::GetEnvironmentVariable($name, "Process")
+    }
     $creationAttempted = $false
+    $stateClaimed = $false
+    $configClaimed = $false
+    $setupFailure = $null
     try {
-        [IO.File]::WriteAllText($configPath, "")
-        [pscustomobject]@{
+        foreach ($name in $environmentNames) {
+            [Environment]::SetEnvironmentVariable($name, $null, "Process")
+        }
+        $env:PATHEXT = ".COM;.EXE;.BAT;.CMD"
+        $stateJson = [pscustomobject]@{
             socket_name = $socketName
             session_name = $sessionName
             config_path = $configPath
-        } | ConvertTo-Json | Set-Content `
-            -LiteralPath $statePath `
-            -Encoding UTF8 `
-            -ErrorAction Stop
+        } | ConvertTo-Json
+        $stateBytes = [Text.UTF8Encoding]::new($false).GetBytes($stateJson)
+        $stateStream = [IO.File]::Open(
+            $statePath,
+            [IO.FileMode]::CreateNew,
+            [IO.FileAccess]::Write,
+            [IO.FileShare]::None
+        )
+        $stateClaimed = $true
+        try {
+            $stateStream.Write($stateBytes, 0, $stateBytes.Length)
+            $stateStream.Flush($true)
+        }
+        finally {
+            $stateStream.Dispose()
+        }
+        $configStream = [IO.File]::Open(
+            $configPath,
+            [IO.FileMode]::CreateNew,
+            [IO.FileAccess]::Write,
+            [IO.FileShare]::None
+        )
+        $configClaimed = $true
+        $configStream.Dispose()
         $env:PSMUX_CONFIG_FILE = $configPath
         $env:PSMUX_NO_WARM = "1"
         $creationAttempted = $true
@@ -300,28 +357,61 @@ $ & {
         }
     }
     catch {
-        $message = $_.Exception.Message
+        $setupFailure = $_.Exception.Message
         if (-not $creationAttempted) {
-            Remove-Item `
-                -LiteralPath $configPath, $statePath `
-                -Force -ErrorAction SilentlyContinue
-            throw $message
+            try {
+                if ($configClaimed) {
+                    Remove-ExactArtifact -Path $configPath
+                }
+                if ($stateClaimed) {
+                    Remove-ExactArtifact -Path $statePath
+                }
+            }
+            catch {
+                $setupFailure += "; prelaunch artifact cleanup failed: " +
+                    "$($_.Exception.Message); config=$configPath state=$statePath"
+            }
         }
-        throw "$message; recovery preserved at $statePath with " +
-            "socket=$socketName session=$sessionName config=$configPath"
     }
     finally {
-        $env:PSMUX_CONFIG_FILE = $oldConfig
-        $env:PSMUX_NO_WARM = $oldNoWarm
+        foreach ($name in $environmentNames) {
+            try {
+                [Environment]::SetEnvironmentVariable(
+                    $name,
+                    $originalEnvironment[$name],
+                    "Process"
+                )
+            }
+            catch {
+                $restoreFailure = "failed to restore ${name}: " +
+                    "$($_.Exception.Message)"
+                if ($null -eq $setupFailure) {
+                    $setupFailure = $restoreFailure
+                }
+                else {
+                    $setupFailure += "; $restoreFailure"
+                }
+            }
+        }
+    }
+    if ($null -ne $setupFailure) {
+        if ($creationAttempted) {
+            throw "$setupFailure; recovery preserved at $statePath with " +
+                "socket=$socketName session=$sessionName config=$configPath"
+        }
+        throw $setupFailure
     }
     Get-Content -LiteralPath $statePath
   }
 ```
 
-The recovery state and empty configuration are written before psmux is
-launched. If launch is attempted but does not report success, both are
-preserved with the exact identifiers in the error instead of guessing that no
-fixture exists; use the guarded cleanup below.
+The recovery state is claimed atomically and the empty configuration is created
+before psmux is launched. A concurrent setup cannot overwrite or delete the
+first setup's state. If launch is attempted but does not report success, both
+artifacts are preserved with the exact identifiers in the error instead of
+guessing that no fixture exists; use the guarded cleanup below. Setup clears
+inherited tmux and psmux routing variables for the launch, then restores every
+original value.
 
 Replace the executable path, then register the native server with Codex. This
 uses the documented [Codex stdio environment
@@ -349,13 +439,80 @@ Close clients using the MCP server and remove or disable their registration
 before cleanup. This paste-and-run command validates the recorded names and
 configuration path before using them, kills only the exact session, and stops
 without deleting artifacts if the kill or registry audit fails. It never
-issues `kill-server`:
+issues `kill-server`. It isolates routing variables during cleanup and restores
+their original values before removing the task artifacts:
 
 ```console
 $ & {
+    $ErrorActionPreference = "Stop"
+    function Get-PsmuxRegistryItems {
+        param([string] $Root, [string] $Filter)
+        try {
+            $rootItem = Get-Item -LiteralPath $Root -Force -ErrorAction Stop
+        }
+        catch [System.Management.Automation.ItemNotFoundException] {
+            return
+        }
+        if (-not $rootItem.PSIsContainer) {
+            throw "psmux registry root is not a directory: $Root"
+        }
+        return @(
+            Get-ChildItem -LiteralPath $Root `
+                -Filter $Filter `
+                -Force -ErrorAction Stop
+        )
+    }
+    function Resolve-PsmuxProfileRoot {
+        $candidate = [Environment]::GetEnvironmentVariable(
+            "USERPROFILE",
+            "Process"
+        )
+        if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+            return $candidate
+        }
+        $candidate = [Environment]::GetFolderPath("UserProfile")
+        if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+            return $candidate
+        }
+        $homeDrive = [Environment]::GetEnvironmentVariable(
+            "HOMEDRIVE",
+            "Process"
+        )
+        $homePath = [Environment]::GetEnvironmentVariable(
+            "HOMEPATH",
+            "Process"
+        )
+        if (-not [string]::IsNullOrWhiteSpace($homeDrive) -and
+            -not [string]::IsNullOrWhiteSpace($homePath)) {
+            $candidate = "$homeDrive$homePath"
+            if ([IO.Directory]::Exists($candidate)) {
+                return $candidate
+            }
+        }
+        $candidate = [Environment]::GetEnvironmentVariable("HOME", "Process")
+        if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+            return $candidate
+        }
+        throw "could not resolve the Windows profile used by psmux"
+    }
+    function Remove-ExactArtifact {
+        param([string] $Path)
+        try {
+            Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+        }
+        catch [System.Management.Automation.ItemNotFoundException] {
+        }
+        try {
+            $null = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+            throw "artifact still exists after cleanup: $Path"
+        }
+        catch [System.Management.Automation.ItemNotFoundException] {
+        }
+    }
+
     $root = Join-Path $env:LOCALAPPDATA "libtmux-cxx-mcp"
     $statePath = Join-Path $root "psmux-state.json"
-    $state = Get-Content -LiteralPath $statePath | ConvertFrom-Json
+    $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
     $socketName = [string]$state.socket_name
     $sessionName = [string]$state.session_name
     $prefix = "libtmux-cxx-mcp-"
@@ -381,26 +538,36 @@ $ & {
     if ($config.PSIsContainer -or $config.Length -ne 0 -or $linked) {
         throw "refusing a nonempty, directory, or linked task configuration"
     }
-    $profileRoot = [Environment]::GetFolderPath("UserProfile")
-    if ([string]::IsNullOrWhiteSpace($profileRoot)) {
-        $homeDrive = [Environment]::GetEnvironmentVariable("HOMEDRIVE", "Process")
-        $homePath = [Environment]::GetEnvironmentVariable("HOMEPATH", "Process")
-        if (-not [string]::IsNullOrWhiteSpace($homeDrive) -and
-            -not [string]::IsNullOrWhiteSpace($homePath)) {
-            $profileRoot = "$homeDrive$homePath"
-        }
-    }
-    if ([string]::IsNullOrWhiteSpace($profileRoot)) {
-        $profileRoot = $env:HOME
-    }
-    if ([string]::IsNullOrWhiteSpace($profileRoot)) {
-        throw "could not resolve the Windows profile used by psmux"
-    }
+    $profileRoot = Resolve-PsmuxProfileRoot
     $registry = Join-Path $profileRoot ".psmux"
     $filter = "$socketName`__$sessionName.*"
-    $oldConfig = $env:PSMUX_CONFIG_FILE
-    $oldNoWarm = $env:PSMUX_NO_WARM
+    $environmentNames = @(
+        "PATHEXT",
+        "PSMUX_ACTIVE",
+        "PSMUX_CONFIG_FILE",
+        "PSMUX_DATA_DIR",
+        "PSMUX_NO_WARM",
+        "PSMUX_REMOTE_ATTACH",
+        "PSMUX_SESSION",
+        "PSMUX_SESSION_NAME",
+        "PSMUX_TARGET",
+        "PSMUX_TARGET_FULL",
+        "PSMUX_TARGET_SESSION",
+        "TMUX",
+        "TMUX_PANE"
+    )
+    $originalEnvironment = @{}
+    foreach ($name in $environmentNames) {
+        $originalEnvironment[$name] =
+            [Environment]::GetEnvironmentVariable($name, "Process")
+    }
+    $cleanupFailure = $null
+    $fixtureCleanupProven = $false
     try {
+        foreach ($name in $environmentNames) {
+            [Environment]::SetEnvironmentVariable($name, $null, "Process")
+        }
+        $env:PATHEXT = ".COM;.EXE;.BAT;.CMD"
         $env:PSMUX_CONFIG_FILE = $expectedConfig
         $env:PSMUX_NO_WARM = "1"
         & tmux.exe -u -L $socketName kill-session -t $sessionName
@@ -410,12 +577,11 @@ $ & {
         $deadline = [DateTime]::UtcNow.AddSeconds(3)
         do {
             $residue = @(
-                Get-ChildItem -LiteralPath $registry `
-                    -Filter $filter `
-                    -File -ErrorAction SilentlyContinue
+                Get-PsmuxRegistryItems -Root $registry -Filter $filter
             )
             $live = @(
                 $residue | Where-Object {
+                    -not $_.PSIsContainer -and
                     $_.Extension -in ".port", ".key", ".pid"
                 }
             )
@@ -427,37 +593,69 @@ $ & {
         }
         $unknown = @(
             $residue | Where-Object {
+                $_.PSIsContainer -or
                 $_.Extension -notin ".sid", ".port", ".key", ".pid"
             }
         )
         if ($unknown.Count -ne 0) {
-            throw "psmux left unknown exact registry files: $($unknown.FullName -join ', ')"
+            throw "psmux left unknown exact registry items: $($unknown.FullName -join ', ')"
         }
         foreach ($file in @(
-            $residue | Where-Object { $_.Extension -eq ".sid" }
+            $residue | Where-Object {
+                -not $_.PSIsContainer -and $_.Extension -eq ".sid"
+            }
         )) {
             Remove-Item -LiteralPath $file.FullName -Force -ErrorAction Stop
         }
         $sid = @(
-            Get-ChildItem -LiteralPath $registry `
-                -Filter "$socketName`__$sessionName.sid" `
-                -File -ErrorAction SilentlyContinue
+            Get-PsmuxRegistryItems `
+                -Root $registry `
+                -Filter "$socketName`__$sessionName.sid" |
+                Where-Object { -not $_.PSIsContainer }
         )
         if ($sid.Count -ne 0) {
             throw "psmux left an exact SID registry file"
         }
-        Remove-Item -LiteralPath $expectedConfig -Force -ErrorAction Stop
-        if (Test-Path -LiteralPath $expectedConfig) {
-            throw "task configuration still exists after cleanup"
-        }
-        Remove-Item -LiteralPath $statePath -Force -ErrorAction Stop
-        if (Test-Path -LiteralPath $statePath) {
-            throw "task state still exists after cleanup"
-        }
+        $fixtureCleanupProven = $true
+    }
+    catch {
+        $cleanupFailure = $_.Exception.Message
     }
     finally {
-        $env:PSMUX_CONFIG_FILE = $oldConfig
-        $env:PSMUX_NO_WARM = $oldNoWarm
+        foreach ($name in $environmentNames) {
+            try {
+                [Environment]::SetEnvironmentVariable(
+                    $name,
+                    $originalEnvironment[$name],
+                    "Process"
+                )
+            }
+            catch {
+                $restoreFailure = "failed to restore ${name}: " +
+                    "$($_.Exception.Message)"
+                if ($null -eq $cleanupFailure) {
+                    $cleanupFailure = $restoreFailure
+                }
+                else {
+                    $cleanupFailure += "; $restoreFailure"
+                }
+            }
+        }
+    }
+    if (-not $fixtureCleanupProven -or $null -ne $cleanupFailure) {
+        if ($null -eq $cleanupFailure) {
+            $cleanupFailure = "exact psmux fixture cleanup was not proven"
+        }
+        throw "$cleanupFailure; recovery state=$statePath socket=$socketName " +
+            "session=$sessionName config=$expectedConfig"
+    }
+    try {
+        Remove-ExactArtifact -Path $expectedConfig
+        Remove-ExactArtifact -Path $statePath
+    }
+    catch {
+        throw "$($_.Exception.Message); recovery state=$statePath " +
+            "socket=$socketName session=$sessionName config=$expectedConfig"
     }
   }
 ```

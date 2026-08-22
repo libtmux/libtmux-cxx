@@ -197,7 +197,8 @@ TEST(ControlDispatch, TheStreamThatJustifiesTheOpenConnectionIsReadable) {
   for (int attempt = 0; attempt < 200 && (!announced || !emitted); ++attempt) {
     for (libtmux::Notification& notification : streamed->take_notifications()) {
       announced = announced || text(notification).starts_with("%window-add");
-      emitted = emitted || text(notification).starts_with("%output ");
+      emitted = emitted || libtmux::parse(notification).kind ==
+                               libtmux::NotificationKind::extended_output;
       heard.push_back(std::move(notification));
     }
     if (!announced || !emitted) {
@@ -206,7 +207,7 @@ TEST(ControlDispatch, TheStreamThatJustifiesTheOpenConnectionIsReadable) {
   }
   ASSERT_FALSE(heard.empty()) << "the connection heard nothing at all";
   EXPECT_TRUE(announced) << "nothing in the stream announced the new window";
-  EXPECT_TRUE(emitted) << "the requested pane-output stream stayed silent";
+  EXPECT_TRUE(emitted) << "the pause-aware pane-output stream stayed silent";
 
   // Nothing was dropped at this volume, and what was taken is not handed out
   // a second time.

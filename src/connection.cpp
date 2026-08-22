@@ -1,6 +1,7 @@
 #include "libtmux/control.hpp"
 
 #include "libtmux/expected.hpp"
+#include "notification_buffer.hpp"
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -563,16 +564,8 @@ struct Connection::State {
       if (text == "%exit" || text.starts_with("%exit ")) {
         saw_exit = true;
       }
-      // Bounded. A caller that never drains — and a subprocess-shaped caller
-      // never will — would otherwise grow this for the life of the
-      // connection, one entry per mutating command. The oldest go first,
-      // because what a watcher wants is what just happened.
-      constexpr std::size_t maximum_notifications = 4096U;
-      if (notifications.size() >= maximum_notifications) {
-        notifications.erase(notifications.begin());
-        ++notifications_dropped;
-      }
-      notifications.push_back(std::move(*notification));
+      detail::retain_notification(notifications, notifications_dropped,
+                                  std::move(*notification));
       arm_locked();
       condition.notify_all();
       return;

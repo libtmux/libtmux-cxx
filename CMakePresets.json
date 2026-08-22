@@ -77,6 +77,18 @@
       }
     },
     {
+      "name": "cxx-sanitize-cxx20",
+      "displayName": "Clang sanitizers with libstdc++ and C++20",
+      "inherits": "cxx-gcc",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "LIBTMUX_CXX_STANDARD": "20",
+        "LIBTMUX_ENABLE_SANITIZERS": "ON",
+        "LIBTMUX_ENABLE_THREAD_SANITIZER": "OFF"
+      }
+    },
+    {
       "name": "cxx20",
       "displayName": "C++20 over the pinned compatibility type",
       "inherits": "cxx-base",
@@ -124,6 +136,10 @@
       "configurePreset": "cxx-sanitize"
     },
     {
+      "name": "cxx-sanitize-cxx20",
+      "configurePreset": "cxx-sanitize-cxx20"
+    },
+    {
       "name": "cxx-tsan",
       "configurePreset": "cxx-tsan"
     },
@@ -160,6 +176,13 @@
     {
       "name": "cxx-sanitize",
       "configurePreset": "cxx-sanitize",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "cxx-sanitize-cxx20",
+      "configurePreset": "cxx-sanitize-cxx20",
       "output": {
         "outputOnFailure": true
       }

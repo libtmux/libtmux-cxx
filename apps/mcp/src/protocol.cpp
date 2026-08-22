@@ -355,13 +355,11 @@ Route ProtocolSession::call_tool(const json& id, const json& params, bool notifi
   if (notification) {
     return {};
   }
-  const auto allowed =
-      era == ProtocolEra::modern
-          ? std::initializer_list<std::string_view>{"name", "arguments",
-                                                    "inputResponses", "requestState",
-                                                    "_meta"}
-          : std::initializer_list<std::string_view>{"name", "arguments", "_meta"};
-  if (const auto key = unexpected_key(params, allowed); key.has_value()) {
+  const auto key = era == ProtocolEra::modern
+                       ? unexpected_key(params, {"name", "arguments", "inputResponses",
+                                                 "requestState", "_meta"})
+                       : unexpected_key(params, {"name", "arguments", "_meta"});
+  if (key.has_value()) {
     return Route::answering(
         failure(id, kInvalidParams, "unknown tools/call parameter: " + *key));
   }
@@ -372,19 +370,11 @@ Route ProtocolSession::call_tool(const json& id, const json& params, bool notifi
 
   std::optional<json> progress;
   if (era == ProtocolEra::legacy) {
-    const auto metadata = params.find("_meta");
-    if (metadata != params.end()) {
-      if (!metadata->is_object()) {
-        return Route::answering(
-            failure(id, kInvalidParams, "tools/call _meta must be an object"));
-      }
-      const auto token = metadata->find("progressToken");
-      if (token != metadata->end() && !progress_token(*token)) {
-        return Route::answering(
-            failure(id, kInvalidParams, "progressToken must be a string or number"));
-      }
-      progress = legacy_progress_token(params);
+    if (!valid_legacy_metadata(params)) {
+      return Route::answering(
+          failure(id, kInvalidParams, "tools/call _meta is invalid"));
     }
+    progress = legacy_progress_token(params);
   }
   return Route::dispatching(
       CallRequest{.id = id,

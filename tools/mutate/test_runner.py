@@ -36,6 +36,55 @@ class MutationRunnerTest(unittest.TestCase):
                 hashlib.sha256(b"windows executable").hexdigest(),
             )
 
+    def test_run_can_fingerprint_an_output_named_differently_from_its_target(
+        self,
+    ) -> None:
+        """Track an executable whose OUTPUT_NAME differs from its CMake target."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "guard.cpp"
+            source.write_text("guard = true;\n", encoding="utf-8")
+            executable = root / "build" / "cxx-dev" / "libtmux-mcp-server"
+            executable.parent.mkdir(parents=True)
+            executable.write_bytes(b"before")
+            builds = 0
+            tests = 0
+
+            def execute(argv: list[str]) -> subprocess.CompletedProcess[bytes]:
+                nonlocal builds, tests
+                if argv[0] == "cmake":
+                    builds += 1
+                    if builds == 2:
+                        executable.write_bytes(b"after")
+                    elif builds == 3:
+                        executable.write_bytes(b"restored")
+                    return subprocess.CompletedProcess(argv, 0, b"", b"")
+                if "--show-only=json-v1" in argv:
+                    listing = json.dumps({"tests": [{"name": "protocol"}]}).encode()
+                    return subprocess.CompletedProcess(argv, 0, listing, b"")
+                tests += 1
+                return subprocess.CompletedProcess(
+                    argv, 1 if tests == 2 else 0, b"", b""
+                )
+
+            outcome = run(
+                Mutation(
+                    mutation_id="renamed-output",
+                    path="guard.cpp",
+                    find="true",
+                    replace="false",
+                    target="libtmux_mcp_server",
+                    executable="libtmux-mcp-server",
+                    guards="the renamed executable",
+                    test_regex=r"^protocol$",
+                ),
+                root,
+                "cxx-dev",
+                runner=execute,
+            )
+
+            self.assertEqual(outcome.verdict, "killed")
+
     def test_run_uses_the_explicit_test_selector(self) -> None:
         """Run a target whose CTest name cannot be inferred from its target."""
         with tempfile.TemporaryDirectory() as directory:

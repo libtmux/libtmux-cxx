@@ -185,6 +185,11 @@ bool valid_legacy_metadata(const json& params) {
   if (!metadata->is_object()) {
     return false;
   }
+  if (!std::ranges::all_of(metadata->items(), [](const auto& item) {
+        return valid_meta_key(item.key());
+      })) {
+    return false;
+  }
   const auto token = metadata->find("progressToken");
   return token == metadata->end() || progress_token(*token);
 }

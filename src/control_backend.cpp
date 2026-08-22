@@ -33,6 +33,16 @@ ConnectionOptions routed_control_options(ConnectionOptions options,
   return options;
 }
 
+ControlRequest batch_request(const CommandBatch& batch) {
+  // The protocol separator belongs between operations; flattening it into an
+  // argv makes tmux read the remaining commands as arguments to the first.
+  ControlRequest request;
+  for (const std::vector<std::string>& command : batch.commands()) {
+    request.group.push_back(ControlCommand{command});
+  }
+  return request;
+}
+
 ControlBackend::ControlBackend(Connection connection, std::vector<std::string> selector,
                                std::string identity, CommandObserver observer,
                                ExecutionPolicy policy)
@@ -135,14 +145,7 @@ expected<std::string, CommandFailure>
 ControlBackend::run_batch(const CommandBatch& batch,
                           std::optional<std::chrono::milliseconds> timeout,
                           std::optional<std::size_t> output_limit) const {
-  // One operation per command, so the separator between them is the
-  // protocol's. Flattened into a single argv the separator would be escaped
-  // like any other byte and arrive as a literal semicolon, which tmux reads
-  // as an argument to the first command — and then reports success.
-  ControlRequest request;
-  for (const std::vector<std::string>& command : batch.commands()) {
-    request.group.push_back(ControlCommand{command});
-  }
+  ControlRequest request = batch_request(batch);
   const std::vector<std::string> observed = batch.argv();
 
   const auto deadline = timeout.has_value()

@@ -57,6 +57,8 @@ class Mutation:
     guards : str
         What this mutation is asking about, in one line, so a survivor
         says what is untested rather than only which text changed.
+    executable : str | None, optional
+        Executable file name when it differs from the CMake target name.
     test_regex : str | None, optional
         Explicit CTest regular expression. When omitted, the legacy target-name
         convention is used.
@@ -71,6 +73,7 @@ class Mutation:
     replace: str
     target: str
     guards: str
+    executable: str | None = None
     test_regex: str | None = None
     presets: tuple[str, ...] = ()
 
@@ -267,7 +270,8 @@ def run(
     )
     if restored.returncode != 0:
         return Outcome(mutation, "not a result", "the target does not build unmutated")
-    before = _fingerprint(where, preset, mutation.target)
+    executable = mutation.executable or mutation.target
+    before = _fingerprint(where, preset, executable)
     if before is None:
         return Outcome(mutation, "not a result", "the target executable was not found")
     test_regex = mutation.test_regex or mutation.target.replace(
@@ -321,7 +325,7 @@ def run(
         )
         if build.returncode != 0:
             return Outcome(mutation, "not a result", "the mutation did not build")
-        after = _fingerprint(where, preset, mutation.target)
+        after = _fingerprint(where, preset, executable)
         if after is None or after == before:
             return Outcome(
                 mutation,
@@ -336,7 +340,7 @@ def run(
     )
     if restored_after_mutation.returncode != 0:
         return Outcome(mutation, "not a result", "the restored target did not build")
-    restored_fingerprint = _fingerprint(where, preset, mutation.target)
+    restored_fingerprint = _fingerprint(where, preset, executable)
     if restored_fingerprint is None or restored_fingerprint == after:
         return Outcome(
             mutation,
