@@ -119,7 +119,8 @@ subscribing, checks events in bounded slices, and falls back to 50 ms capture
 polling if control mode is unavailable or loses events. One end-to-end deadline
 covers target resolution, the initial capture, control-socket expansion,
 connection startup, and later captures. The returned `mode` states which path
-produced the answer.
+produced the answer. `pane_id` is present only once the target resolves, so a
+wait that expires during lookup reports `mode: pane-lookup` without it.
 
 A `progressToken` in legacy `tools/call` `_meta`, or in a current request's
 required `_meta`, enables `notifications/progress` during a wait.

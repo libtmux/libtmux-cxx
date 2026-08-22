@@ -190,6 +190,16 @@ CATALOGUE: t.Final = (
         guards="lookup, capture, control setup, and polling share one wait deadline",
     ),
     Mutation(
+        mutation_id="mcp-wait-omits-unresolved-pane",
+        path="apps/mcp/src/wait_for_text.cpp",
+        find="  if (!answer.pane_id.empty()) {",
+        replace="  if (true) {",
+        target="mcp_schema_test",
+        test_regex=r"^consumer[.]mcp[.]schema$",
+        guards="a wait that expired before resolving a target omits pane_id "
+        "rather than publishing an empty one its schema refuses",
+    ),
+    Mutation(
         mutation_id="buffer-load-names-it",
         path="src/server.cpp",
         find='"load-buffer", "-b", std::string{name}, "--",',

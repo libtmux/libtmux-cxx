@@ -134,15 +134,42 @@ if(LIBTMUX_BUILD_MCP_SERVER)
 
   if(LIBTMUX_BUILD_TESTS AND NOT WIN32)
     add_executable(mcp_schema_test tests/schema_test.cpp src/schema.cpp)
-    target_include_directories(mcp_schema_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_include_directories(
+      mcp_schema_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
+                              "${PROJECT_SOURCE_DIR}/src")
     target_link_libraries(
       mcp_schema_test
       PRIVATE GTest::gtest_main libtmux_build_options mcp_tools
-              nlohmann_json::nlohmann_json)
+              nlohmann_json::nlohmann_json libtmux::testing)
     target_compile_options(mcp_schema_test PRIVATE -fno-sanitize-recover=undefined)
-    add_test(NAME consumer.mcp.schema COMMAND mcp_schema_test)
+    add_test(
+      NAME consumer.mcp.schema
+      COMMAND mcp_schema_test "--gtest_filter=McpProtocolSchema.*")
     set_tests_properties(
       consumer.mcp.schema PROPERTIES LABELS "consumer;contract" TIMEOUT 30)
+
+    # The same split as the filter corpus: the C++ side calls every tool and
+    # writes what a client receives, and a real JSON Schema validator reads it.
+    if(Python3_Interpreter_FOUND)
+      set(LIBTMUX_MCP_OUTPUT_CORPUS "${CMAKE_CURRENT_BINARY_DIR}/tool-answers.jsonl")
+      add_test(
+        NAME consumer.mcp.schema.real-tmux
+        COMMAND mcp_schema_test "--gtest_filter=McpProtocolSchemaTmux.*")
+      set_tests_properties(
+        consumer.mcp.schema.real-tmux
+        PROPERTIES LABELS "consumer;real-tmux" TIMEOUT 60
+                   FIXTURES_SETUP mcp_output_corpus
+                   ENVIRONMENT "LIBTMUX_MCP_OUTPUT_CORPUS=${LIBTMUX_MCP_OUTPUT_CORPUS}")
+      add_test(
+        NAME consumer.mcp.schema.conformance
+        COMMAND Python3::Interpreter -m tools.schema.tool_outputs
+                --corpus "${LIBTMUX_MCP_OUTPUT_CORPUS}"
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+      set_tests_properties(
+        consumer.mcp.schema.conformance
+        PROPERTIES LABELS "schema;real-tmux" TIMEOUT 60
+                   FIXTURES_REQUIRED mcp_output_corpus)
+    endif()
   endif()
 
   if(WIN32 AND LIBTMUX_BUILD_TESTS)
