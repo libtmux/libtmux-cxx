@@ -56,7 +56,7 @@ function Resolve-PsmuxProfileRoot {
             "Process"
         ),
         [AllowEmptyString()]
-        [string] $Home = [Environment]::GetEnvironmentVariable(
+        [string] $HomeValue = [Environment]::GetEnvironmentVariable(
             "HOME",
             "Process"
         )
@@ -75,8 +75,8 @@ function Resolve-PsmuxProfileRoot {
             return $combinedHome
         }
     }
-    if (-not [string]::IsNullOrWhiteSpace($Home)) {
-        return $Home
+    if (-not [string]::IsNullOrWhiteSpace($HomeValue)) {
+        return $HomeValue
     }
     throw "could not resolve the Windows profile used by psmux"
 }
@@ -158,14 +158,14 @@ function Invoke-RegistryHelperSelfTest {
             -FolderProfile "folder-profile" `
             -HomeDrive $testRoot `
             -HomePath "${separator}combined-home" `
-            -Home "home-profile"
+            -HomeValue "home-profile"
         Assert-True ($resolved -eq "user-profile") "USERPROFILE did not win"
         $resolved = Resolve-PsmuxProfileRoot `
             -UserProfile "" `
             -FolderProfile "folder-profile" `
             -HomeDrive $testRoot `
             -HomePath "${separator}combined-home" `
-            -Home "home-profile"
+            -HomeValue "home-profile"
         Assert-True (
             $resolved -eq "folder-profile"
         ) "GetFolderPath profile did not win"
@@ -174,7 +174,7 @@ function Invoke-RegistryHelperSelfTest {
             -FolderProfile "" `
             -HomeDrive $testRoot `
             -HomePath "${separator}combined-home" `
-            -Home "home-profile"
+            -HomeValue "home-profile"
         Assert-True (
             $resolved -eq $combinedHome
         ) "existing HOMEDRIVE and HOMEPATH profile did not win"
@@ -183,7 +183,7 @@ function Invoke-RegistryHelperSelfTest {
             -FolderProfile "" `
             -HomeDrive $testRoot `
             -HomePath "${separator}missing-home" `
-            -Home "home-profile"
+            -HomeValue "home-profile"
         Assert-True ($resolved -eq "home-profile") "HOME fallback did not win"
 
         Assert-True (
