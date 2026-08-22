@@ -12,6 +12,8 @@
 #include <string>
 #include <string_view>
 
+#include <poll.h>
+
 #include <libtmux/libtmux.hpp>
 
 #include "scratch_server.hpp"
@@ -103,6 +105,38 @@ int main() {
   if (!saw_window || !saw_output) {
     std::fprintf(stderr, "tmux never reported what it was asked to do\n");
     return 1;
+  }
+
+  // The same stream, from a program that owns its own event loop. `events`
+  // and `wait_for_notifications` block; this does not. The descriptor is
+  // readable exactly when a take would return something, so it sits in a
+  // `poll` beside a program's sockets and timers and costs nothing until tmux
+  // speaks.
+  libtmux::ControlRequest second;
+  second.group.push_back({{"new-window", "-d", "-n", "polled"}});
+  if (const auto again =
+          connection.execute(std::move(second), std::chrono::steady_clock::now() + 5s);
+      again.connection_error.has_value()) {
+    std::fprintf(stderr, "%s\n", again.connection_error->message.c_str());
+    return 1;
+  }
+
+  pollfd watching{.fd = connection.notification_fd(), .events = POLLIN, .revents = 0};
+  if (watching.fd < 0) {
+    std::fprintf(stderr, "this connection has no notification descriptor\n");
+    return 1;
+  }
+  // Do not read the descriptor: readability is the signal, and taking is what
+  // clears it. A take drains what has arrived; more may arrive straight after,
+  // which is why a loop waits again rather than assuming silence.
+  if (::poll(&watching, 1, 10'000) > 0) {
+    for (const libtmux::Notification& notification : connection.take_notifications()) {
+      const auto read = libtmux::parse(notification);
+      if (read.kind == libtmux::NotificationKind::window_add) {
+        std::printf("polled a window into view: %s\n",
+                    std::string{read.window}.c_str());
+      }
+    }
   }
 
   if (const auto closed = connection.shutdown(std::chrono::steady_clock::now() + 5s);

@@ -135,6 +135,9 @@ public:
   // per command hears nothing between them and answers with nothing, so a
   // caller that wants this opens one with `over_control`.
   //
+  // Taking drains: what comes back will not come back again, and an empty
+  // result means nothing has arrived yet rather than that none will.
+  //
   // The buffer is bounded; `dropped_notifications` says how many were
   // discarded, which distinguishes a quiet server from one that outran a
   // caller who was not collecting.

@@ -190,7 +190,7 @@ The Server supplies the socket and `session` supplies the session name; every ot
 ```cpp
 [[nodiscard]] std::vector<Notification> take_notifications() const;
 ```
-What tmux has said on its own initiative since the last call: a window renamed, a pane exited, a client attached. A Server that runs a process per command hears nothing between them and answers with nothing, so a caller that wants this opens one with `over_control`.  The buffer is bounded; `dropped_notifications` says how many were discarded, which distinguishes a quiet server from one that outran a caller who was not collecting.
+What tmux has said on its own initiative since the last call: a window renamed, a pane exited, a client attached. A Server that runs a process per command hears nothing between them and answers with nothing, so a caller that wants this opens one with `over_control`.  Taking drains: what comes back will not come back again, and an empty result means nothing has arrived yet rather than that none will.  The buffer is bounded; `dropped_notifications` says how many were discarded, which distinguishes a quiet server from one that outran a caller who was not collecting.
 
 <a id="libtmux-server-hpp-server-dropped-notifications"></a>
 #### `Server::dropped_notifications`
@@ -5001,7 +5001,7 @@ The exact flag-1 block count, including synchronous inserts; flag-0 blocks do no
 ```cpp
 [[nodiscard]] std::vector<Notification> take_notifications();
 ```
-Everything tmux has said since the last call, and how many were dropped to keep the buffer bounded.
+Everything tmux has said since the last call, returned at once.  Taking drains: what comes back will not come back again. It says nothing about what happens next, so an empty result does not mean the stream has gone quiet, and a later one is new traffic rather than a repeat. Wait for the next event with `wait_for_notifications` rather than polling for one.
 
 <a id="libtmux-control-hpp-connection-wait-for-notifications"></a>
 #### `Connection::wait_for_notifications`
@@ -5041,6 +5041,7 @@ Everything tmux says until the deadline, as one loop rather than two.  Borrows t
 ```cpp
 [[nodiscard]] std::size_t dropped_notifications() const noexcept;
 ```
+How many notifications were discarded to keep the buffer bounded, which is what distinguishes a quiet connection from one that outran its reader.
 
 <a id="libtmux-control-hpp-connection-native-child-pid"></a>
 #### `Connection::native_child_pid`

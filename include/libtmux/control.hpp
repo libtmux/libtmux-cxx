@@ -286,8 +286,12 @@ public:
   // this overload's precondition; custom aliases need their expanded count.
   ControlRequestResult execute(ControlRequest request, std::size_t expected_operations,
                                std::chrono::steady_clock::time_point deadline);
-  // Everything tmux has said since the last call, and how many were dropped
-  // to keep the buffer bounded.
+  // Everything tmux has said since the last call, returned at once.
+  //
+  // Taking drains: what comes back will not come back again. It says nothing
+  // about what happens next, so an empty result does not mean the stream has
+  // gone quiet, and a later one is new traffic rather than a repeat. Wait for
+  // the next event with `wait_for_notifications` rather than polling for one.
   [[nodiscard]] std::vector<Notification> take_notifications();
 
   // The same, but waits for something to arrive.
@@ -339,6 +343,8 @@ public:
   [[nodiscard]] NotificationRange
   events(std::chrono::steady_clock::time_point deadline);
 
+  // How many notifications were discarded to keep the buffer bounded, which
+  // is what distinguishes a quiet connection from one that outran its reader.
   [[nodiscard]] std::size_t dropped_notifications() const noexcept;
   [[nodiscard]] std::int64_t native_child_pid() const noexcept;
   expected<void, ProtocolError>
