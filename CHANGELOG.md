@@ -9,6 +9,33 @@ was recorded as it landed.
 
 ## Unreleased
 
+## 0.1.0-alpha.5 (2026-08-22)
+
+The library is unchanged from `0.1.0-alpha.4`: nothing outside comments moved
+in `include/`, `src/` or `apps/`. This release carries what the notification
+surface says about itself.
+
+### Control mode
+
+- Both `take_notifications` overloads state that taking drains: an empty result
+  means nothing has arrived yet rather than that nothing will, and a later batch
+  is new traffic rather than a repeat. A caller reacting to events is pointed at
+  `wait_for_notifications` instead of polling. (#8)
+- `Connection::dropped_notifications` carries documentation, which it did not
+  before; it reached the generated reference as a bare declaration. (#8)
+- [`docs/design/pane-output-streaming.md`](docs/design/pane-output-streaming.md)
+  records what each way of taking the stream costs, so the choice between them
+  is measured rather than guessed. Owning an event loop through
+  `notification_fd` costs the same wakeups as blocking in
+  `wait_for_notifications`; a sleep-and-take loop costs about a hundred times
+  as many. (#8)
+
+### Examples
+
+- `06-streaming` demonstrates `notification_fd` under `poll`, so the path a
+  program with its own event loop takes is compiled and run rather than only
+  described. (#8)
+
 ## 0.1.0-alpha.4 (2026-08-22)
 
 `0.1.0-alpha.3` was tagged but did not publish, so this is the release to take
