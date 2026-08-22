@@ -156,13 +156,18 @@ resolve_wait_target(const Server& server, std::string_view target,
                              deadline, context);
 }
 
+// A wait that expires before its target resolves has no pane to name, and the
+// output schema admits `pane_id` only as a real pane ID.
 [[nodiscard]] ToolOutput wait_output(WaitAnswer answer) {
-  return output({{"elapsed_ms", StructuredValue{answer.elapsed_ms}},
-                 {"matched", StructuredValue{answer.matched}},
-                 {"mode", StructuredValue{std::move(answer.mode)}},
-                 {"pane_id", StructuredValue{std::move(answer.pane_id)}},
-                 {"text", StructuredValue{std::move(answer.text)}},
-                 {"timed_out", StructuredValue{answer.timed_out}}});
+  StructuredValue::Object structured{{"elapsed_ms", StructuredValue{answer.elapsed_ms}},
+                                     {"matched", StructuredValue{answer.matched}},
+                                     {"mode", StructuredValue{std::move(answer.mode)}},
+                                     {"text", StructuredValue{std::move(answer.text)}},
+                                     {"timed_out", StructuredValue{answer.timed_out}}};
+  if (!answer.pane_id.empty()) {
+    structured.emplace("pane_id", StructuredValue{std::move(answer.pane_id)});
+  }
+  return output(std::move(structured));
 }
 
 void report_wait_progress(const CallContext& context, const WaitDeadline& deadline,

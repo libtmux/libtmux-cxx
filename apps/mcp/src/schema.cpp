@@ -129,7 +129,7 @@ template <class... Functions> struct Overloaded : Functions... {
          {"pane_id", {{"type", "string"}, {"pattern", R"(^%[0-9]+$)"}}},
          {"text", {{"type", "string"}}},
          {"timed_out", {{"type", "boolean"}}}},
-        {"elapsed_ms", "matched", "mode", "pane_id", "text", "timed_out"});
+        {"elapsed_ms", "matched", "mode", "text", "timed_out"});
   case OutputShape::matches:
     return closed_object(
         {{"matches",
