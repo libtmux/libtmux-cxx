@@ -11,6 +11,14 @@ vcpkg_check_features(
   OUT_FEATURE_OPTIONS FEATURE_OPTIONS
   FEATURES mcp LIBTMUX_BUILD_MCP_SERVER)
 
+# The private-server fixture needs POSIX process and socket APIs, so it cannot
+# follow the library onto Windows when the `supports` clause admits it.
+if(VCPKG_TARGET_IS_WINDOWS)
+  set(LIBTMUX_PORT_BUILD_TESTING_LIBRARY OFF)
+else()
+  set(LIBTMUX_PORT_BUILD_TESTING_LIBRARY ON)
+endif()
+
 vcpkg_cmake_configure(
   SOURCE_PATH "${SOURCE_PATH}"
   OPTIONS
@@ -25,7 +33,7 @@ vcpkg_cmake_configure(
     # on — a private tmux server per test — and it names no test framework and
     # links nothing beyond the library, so shipping it costs a consumer an
     # archive they never link unless they ask for the component.
-    -DLIBTMUX_BUILD_TESTING_LIBRARY=ON
+    -DLIBTMUX_BUILD_TESTING_LIBRARY=${LIBTMUX_PORT_BUILD_TESTING_LIBRARY}
     # Every dependency this port does not declare must fail the build rather
     # than reach the network for a pinned fallback.
     -DLIBTMUX_FETCH_DEPS=OFF

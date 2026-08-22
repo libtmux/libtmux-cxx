@@ -2,16 +2,14 @@
 
 // Parse and order tmux version strings.
 //
-// `tmux -V` prints `tmux 3.4`, `tmux 3.7a`, or a development build as
-// `tmux next-3.8` or `tmux master`. The letter suffix orders after the bare
-// release (3.7 < 3.7a < 3.7b), a `next-` build sorts before the release it
-// leads to, and `master` is unbounded — treating any of these as a plain
-// number silently mis-gates a capability check.
+// Suffixes follow bare releases; `next-` precedes its release and `master`
+// follows all. Psmux 3.3.7 occupies `revision=7`, equal to tmux 3.3g.
 
 #include "libtmux/abi.hpp"
 #include "libtmux/expected.hpp"
 #include <compare>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <string_view>
 
@@ -32,7 +30,8 @@ enum class VersionError { missing_prefix, malformed };
 struct Version {
   std::uint32_t major{};
   std::uint32_t minor{};
-  // 0 for a bare release, 1 for `a`, 2 for `b`, and so on.
+  // 0 for a bare release, 1 for `a`, 2 for `b`, and so on. Psmux's numeric
+  // third component occupies this existing slot as the corresponding number.
   std::uint32_t revision{};
   // A `next-` build precedes the release it leads to; `master` follows every
   // numbered release.
@@ -61,11 +60,12 @@ struct Version {
   [[nodiscard]] constexpr bool operator==(const Version&) const noexcept = default;
 };
 
-// Parse the output of `tmux -V`, with or without its trailing newline.
+// Parse the first line of `tmux -V`, with or without its trailing newline.
 [[nodiscard]] inline expected<Version, VersionError>
 parse_version(std::string_view output) {
-  while (!output.empty() && (output.back() == '\n' || output.back() == '\r')) {
-    output.remove_suffix(1);
+  if (const auto line_end = output.find_first_of("\r\n");
+      line_end != std::string_view::npos) {
+    output = output.substr(0, line_end);
   }
   constexpr std::string_view prefix = "tmux ";
   if (!output.starts_with(prefix)) {
@@ -96,7 +96,11 @@ parse_version(std::string_view output) {
       if (digit < '0' || digit > '9') {
         return false;
       }
-      out = out * 10 + static_cast<std::uint32_t>(digit - '0');
+      const auto value = static_cast<std::uint32_t>(digit - '0');
+      if (out > (std::numeric_limits<std::uint32_t>::max() - value) / 10U) {
+        return false;
+      }
+      out = out * 10U + value;
     }
     return true;
   };
@@ -113,6 +117,12 @@ parse_version(std::string_view output) {
   }
   const std::string_view suffix = rest.substr(end);
   if (suffix.empty()) {
+    return version;
+  }
+  if (suffix.starts_with('.')) {
+    if (!digits(suffix.substr(1), version.revision)) {
+      return unexpected(VersionError::malformed);
+    }
     return version;
   }
   if (suffix.size() != 1 || suffix[0] < 'a' || suffix[0] > 'z') {

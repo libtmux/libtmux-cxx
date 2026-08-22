@@ -1176,10 +1176,14 @@ Connection::set_pane_output(std::string_view pane, bool deliver,
   if (result.connection_error.has_value()) {
     return unexpected(*result.connection_error);
   }
-  if (result.operations.empty() || !result.operations.front().block.has_value()) {
+  if (result.operations.empty()) {
     return unexpected(ProtocolError{"tmux did not answer the refresh"});
   }
-  if (result.operations.front().block->terminal == ControlTerminal::error) {
+  const auto& block = result.operations.front().block;
+  if (!block.has_value()) {
+    return unexpected(ProtocolError{"tmux did not answer the refresh"});
+  }
+  if (block.value().terminal == ControlTerminal::error) {
     return unexpected(
         ProtocolError{"tmux refused to change output for " + std::string{pane}});
   }

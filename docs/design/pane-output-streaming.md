@@ -45,12 +45,21 @@ stream ending.
 signal that output was dropped, and it names the pane. Nothing else reports
 the gap.
 
-## Not built
+## Delivered surface
 
-Per-pane muting, and typed notifications. Both are additive: muting is a
-`refresh-client -A` away and needs no new decisions, and `%pause` arrives
-today as a notification body a caller can match on. Neither was measured, so
-neither is claimed.
+`Server::control_with_options(session, options)` opens the raw stream without
+making the caller rebuild the Server's socket route.
+`Server::over_control_with_options(session, options)` applies the same policy
+to the entity-oriented surface. In both
+forms the Server overrides `socket_path`, the argument overrides
+`session_name`, and the caller's executable, deadlines, limits,
+`pane_output`, and `pause_after` are preserved.
+
+`Connection::set_pane_output` mutes or resumes one pane, and
+`parse(Notification)` turns every known notification into typed borrowed
+fields while preserving unknown additions. `NotificationRange` drains those
+events to a deadline, and `notification_fd()` lets an external POSIX event loop
+wake without polling.
 
 ## Related
 

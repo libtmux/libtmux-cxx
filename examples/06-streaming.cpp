@@ -51,11 +51,7 @@ int main() {
   // decides it here: a control client that starts without output cannot be
   // asked for it afterwards. `docs/design/pane-output-streaming.md` measures
   // that, and what tmux does to a reader who falls behind.
-  auto connected = libtmux::Connection::connect({
-      .socket_path = scratch.socket_path(),
-      .session_name = "example",
-      .pane_output = true,
-  });
+  auto connected = server.control_with_options("example", {.pane_output = true});
   if (!connected.has_value()) {
     std::fprintf(stderr, "%s\n", connected.error().message.c_str());
     return 1;

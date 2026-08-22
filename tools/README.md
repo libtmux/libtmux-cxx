@@ -24,7 +24,7 @@ Both are run from the repository root.
 | [`parity/`](parity/) | `python3 -m tools.parity` | What of Python libtmux this port answers, and with what evidence |
 | [`mutate/`](mutate/) | `python3 -m tools.mutate` | Whether the tests can actually fail |
 | [`docs/`](docs/) | `python3 tools/docs/api_index.py` | Generates [`docs/api.md`](../docs/api.md) from the headers, so the reference cannot outrun them |
-| [`mcp/`](mcp/) | `python3 tools/mcp/mcp_swap.py` | Points every installed agent CLI at a chosen build of [the MCP server](../apps/mcp/README.md), and puts them back |
+| [`mcp/`](mcp/) | `./tools/mcp/mcp_swap.py` | Points POSIX agent CLI configs at a chosen build of [the MCP server](../apps/mcp/README.md), and puts them back |
 | [`vcpkg/`](vcpkg/) | `python3 -m tools.vcpkg check` | Whether [the registry](../docs/vcpkg-registry.md) still publishes the ports beside it |
 | [`coverage/`](coverage/) | — | How much of the shipped surface the tests reach |
 | [`differential/`](differential/) | — | The same question asked of this library and of Python libtmux, compared |
@@ -73,6 +73,13 @@ Three outcomes, and only the first is a pass:
   binary that was then tested. Nothing was learned, and saying so is the point:
   run by hand, that case prints nothing and reads exactly like a suite holding
   firm.
+
+Every entry binds both the executable and its CTest selector. A missing native
+binary, including a Windows `.exe`, or a selector matching no tests is `not a
+result`. The selected tests must pass before mutation and recover after it, so
+an existing failure or a broken restoration cannot be mistaken for a kill.
+Platform-specific entries run only with their declared preset; explicitly
+requesting one from an incompatible build is an error rather than a skip.
 
 > [!WARNING]
 > The runner edits sources in place and puts each back as it goes. Do not

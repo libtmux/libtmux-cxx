@@ -7,9 +7,12 @@
 // touching an installed header, and the exact argv every operation sends,
 // which a test against a live server can only observe indirectly.
 
+#include <chrono>
 #include <cstddef>
+#include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -18,6 +21,7 @@
 #include "libtmux/server.hpp"
 
 #include "backend.hpp"
+#include "control_backend.hpp"
 
 namespace {
 
@@ -140,6 +144,81 @@ TEST(BackendSeam, AFailingExecutorIsReportedNotSwallowed) {
   ASSERT_FALSE(sessions.has_value());
   EXPECT_EQ(sessions.error().kind, FailureKind::refused);
   EXPECT_EQ(sessions.error().diagnostic, "the script ran out");
+}
+
+TEST(BackendSeam, AnEmptySuccessfulListingIsNotAlive) {
+  auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{""});
+  const Server server = libtmux::detail::server_over(backend);
+
+  const auto alive = server.check_alive();
+  ASSERT_FALSE(alive.has_value());
+  EXPECT_EQ(alive.error().kind, FailureKind::refused);
+  EXPECT_TRUE(alive.error().dispatched);
+  EXPECT_EQ(backend->issued.front(),
+            (std::vector<std::string>{"list-sessions", "-F", "#{session_id}"}));
+}
+
+TEST(BackendSeam, AnUnknownCustomBackendFailsCapabilitiesClosed) {
+  auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{});
+  const Server server = libtmux::detail::server_over(std::move(backend));
+
+  const auto capabilities = server.capabilities();
+  EXPECT_EQ(capabilities.implementation, libtmux::ServerImplementation::unknown);
+  EXPECT_EQ(capabilities.backend, libtmux::BackendKind::custom);
+  for (const auto feature : {
+           libtmux::ServerFeature::exact_inspection,
+           libtmux::ServerFeature::server_cleanup,
+           libtmux::ServerFeature::control_mode,
+           libtmux::ServerFeature::receives_asynchronous_notifications,
+       }) {
+    EXPECT_FALSE(capabilities.supports(feature));
+  }
+}
+
+TEST(BackendSeam, SubprocessCapabilitiesAreLocal) {
+  std::size_t observed_commands = 0U;
+  const auto opened = Server::at_socket_name(
+      "libtmux-capabilities-only",
+      [&observed_commands](std::string_view, const CommandFailure*) {
+        ++observed_commands;
+      });
+  ASSERT_TRUE(opened.has_value());
+
+  const auto capabilities = opened->capabilities();
+  EXPECT_EQ(capabilities.implementation, libtmux::ServerImplementation::tmux);
+  EXPECT_EQ(capabilities.backend, libtmux::BackendKind::subprocess);
+  EXPECT_TRUE(capabilities.supports(libtmux::ServerFeature::exact_inspection));
+  EXPECT_TRUE(capabilities.supports(libtmux::ServerFeature::control_mode));
+  EXPECT_FALSE(capabilities.supports(
+      libtmux::ServerFeature::receives_asynchronous_notifications));
+  EXPECT_EQ(observed_commands, 0U);
+}
+
+TEST(BackendSeam, ServerRoutingPreservesControlPolicy) {
+  libtmux::ConnectionOptions requested{
+      .tmux_binary = "/opt/libtmux/custom-tmux",
+      .socket_path = "/caller/must-not-select-this",
+      .session_name = "caller-must-not-select-this",
+      .startup_timeout = std::chrono::milliseconds{311},
+      .shutdown_timeout = std::chrono::milliseconds{733},
+      .retained_reply_bytes = 12345U,
+      .line_bytes = 4321U,
+      .pane_output = true,
+      .pause_after = std::chrono::seconds{17},
+  };
+
+  const auto routed = libtmux::detail::routed_control_options(
+      std::move(requested), "/server/selected/socket", "selected-session");
+
+  EXPECT_EQ(routed.tmux_binary, std::filesystem::path{"/opt/libtmux/custom-tmux"});
+  EXPECT_EQ(routed.socket_path, std::filesystem::path{"/server/selected/socket"});
+  EXPECT_EQ(routed.session_name, "selected-session");
+  EXPECT_EQ(routed.startup_timeout, std::chrono::milliseconds{311});
+  EXPECT_EQ(routed.shutdown_timeout, std::chrono::milliseconds{733});
+  EXPECT_EQ(routed.retained_reply_bytes, 12345U);
+  EXPECT_EQ(routed.line_bytes, 4321U);
+  EXPECT_TRUE(routed.pane_output);
+  EXPECT_EQ(routed.pause_after, std::chrono::seconds{17});
 }
 
 } // namespace

@@ -5,10 +5,27 @@
 #include <string>
 #include <system_error>
 
+#if !defined(_WIN32)
 #include <unistd.h>
+#endif
 
 LIBTMUX_NAMESPACE_BEGIN
 namespace detail {
+
+#if defined(_WIN32)
+
+std::optional<std::string>
+resolved_socket_path(const std::vector<std::string>& selector) {
+  if (selector.empty()) {
+    return std::string{"psmux:default"};
+  }
+  if (selector.size() == 2U && selector.front() == "-L") {
+    return std::string{"psmux:-L:"} + selector.back();
+  }
+  return std::nullopt;
+}
+
+#else
 
 namespace {
 
@@ -63,6 +80,8 @@ resolved_socket_path(const std::vector<std::string>& selector) {
   }
   return (*directory / ("tmux-" + std::to_string(::getuid())) / label).string();
 }
+
+#endif
 
 } // namespace detail
 LIBTMUX_NAMESPACE_END

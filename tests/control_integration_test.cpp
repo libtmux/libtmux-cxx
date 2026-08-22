@@ -1,5 +1,6 @@
 #include "libtmux/control.hpp"
 #include "libtmux/expected.hpp"
+#include "libtmux/server.hpp"
 
 #include "libtmux/testing/capabilities.hpp"
 #include "libtmux/testing/scoped_server.hpp"
@@ -326,6 +327,44 @@ TEST(ControlModeConnection, WaitForNotificationsReturnsEmptyOnlyAtItsDeadline) {
 // client started with `no-output`, which is why this is an option rather than
 // a subscription. The measurements behind that are in
 // `docs/design/pane-output-streaming.md`.
+TEST(ControlModeConnection, ServerOwnsTheRouteAndPreservesStreamPolicy) {
+  auto fixture = start_server(unique_name("control-server-options"));
+  ASSERT_TRUE(fixture.has_value()) << (fixture.has_value() ? "" : fixture.error());
+
+  auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+
+  auto connected = server->control_with_options(
+      fixture->session_name(), {.tmux_binary = LIBTMUX_CONTROL_TMUX_PATH,
+                                .socket_path = "/caller-route-must-be-ignored",
+                                .session_name = "caller-session-must-be-ignored",
+                                .startup_timeout = 2s,
+                                .shutdown_timeout = 2s,
+                                .pane_output = true,
+                                .pause_after = 17s});
+  ASSERT_TRUE(connected.has_value())
+      << (connected.has_value() ? "" : connected.error().message);
+  auto connection = std::move(*connected);
+
+  const auto typed = connection.execute(
+      group({{"send-keys", "-t", std::string{fixture->session_name()},
+              "echo server-routed-stream", "Enter"}}),
+      std::chrono::steady_clock::now() + 2s);
+  ASSERT_FALSE(typed.connection_error.has_value())
+      << (typed.connection_error ? typed.connection_error->message : "");
+
+  bool saw_output = false;
+  const auto deadline = std::chrono::steady_clock::now() + 2s;
+  while (std::chrono::steady_clock::now() < deadline && !saw_output) {
+    for (const Notification& notification :
+         connection.wait_for_notifications(deadline)) {
+      saw_output = saw_output || text(notification.body).starts_with("%output ");
+    }
+  }
+  EXPECT_TRUE(saw_output);
+  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+}
+
 TEST(ControlModeConnection, DeliversPaneOutputOnlyWhenAskedAtConnectTime) {
   auto server = start_server(unique_name("control-output"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());

@@ -46,6 +46,21 @@ repository is invisible to it.
 entry there as a port and reports an error for anything else, which is why this
 file is here rather than in `ports/README.md`.
 
+## The port and the root manifest disagree about Windows on purpose
+
+[`ports/libtmux/vcpkg.json`](../ports/libtmux/vcpkg.json) excludes Windows;
+the repository-root [`vcpkg.json`](../vcpkg.json) does not. They are answering
+different questions.
+
+The port describes a *published release*, fetched by hash from a tag. The
+released archive predates the Windows backend, so the port stays
+Windows-disabled until a release exists that carries it — advancing the version
+and the `SHA512` together. The root manifest describes the *current checkout*,
+which does build natively on Windows.
+
+So the exclusion lifts on the first release cut after the backend lands, not
+when the backend lands.
+
 ## The versions database is generated
 
 `versions/` is never edited by hand. Commit the port first — the recorded

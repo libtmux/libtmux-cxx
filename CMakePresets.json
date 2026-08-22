@@ -93,6 +93,25 @@
         "CMAKE_BUILD_TYPE": "Debug",
         "LIBTMUX_ENABLE_COVERAGE": "ON"
       }
+    },
+    {
+      "name": "windows-psmux",
+      "displayName": "Windows psmux with MSVC",
+      "generator": "Visual Studio 17 2022",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "architecture": {
+        "value": "x64",
+        "strategy": "set"
+      },
+      "cacheVariables": {
+        "LIBTMUX_BUILD_TESTS": "ON",
+        "LIBTMUX_BUILD_EXAMPLES": "ON",
+        "LIBTMUX_BUILD_TESTING_LIBRARY": "OFF",
+        "LIBTMUX_BUILD_FUZZERS": "OFF",
+        "LIBTMUX_BUILD_MCP_SERVER": "ON",
+        "LIBTMUX_FETCH_DEPS": "ON",
+        "LIBTMUX_WARNINGS_AS_ERRORS": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -123,6 +142,11 @@
     {
       "name": "cxx-coverage",
       "configurePreset": "cxx-coverage"
+    },
+    {
+      "name": "windows-psmux",
+      "configurePreset": "windows-psmux",
+      "configuration": "Debug"
     }
   ],
   "testPresets": [
@@ -169,6 +193,14 @@
       },
       "environment": {
         "LLVM_PROFILE_FILE": "${sourceDir}/build/cxx-coverage/profiles/%p.profraw"
+      }
+    },
+    {
+      "name": "windows-psmux",
+      "configurePreset": "windows-psmux",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
       }
     }
   ]

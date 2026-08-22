@@ -37,7 +37,20 @@ def main(argv: t.Sequence[str] | None = None) -> int:
     parser.add_argument("--build-root", type=pathlib.Path)
     parsed = parser.parse_args(argv)
     chosen = set(parsed.chosen or ())
-    wanted = [m for m in CATALOGUE if not chosen or m.mutation_id in chosen]
+    known = {mutation.mutation_id for mutation in CATALOGUE}
+    unknown = sorted(chosen - known)
+    if unknown:
+        print(f"unknown mutation: {', '.join(unknown)}", file=sys.stderr)
+        return 2
+    selected = [m for m in CATALOGUE if not chosen or m.mutation_id in chosen]
+    incompatible = [m.mutation_id for m in selected if not m.applies_to(parsed.preset)]
+    if chosen and incompatible:
+        print(
+            f"mutation is not available for {parsed.preset}: {', '.join(incompatible)}",
+            file=sys.stderr,
+        )
+        return 2
+    wanted = [m for m in selected if m.applies_to(parsed.preset)]
     if not wanted:
         print("no mutation matched", file=sys.stderr)
         return 2
@@ -57,13 +70,20 @@ def main(argv: t.Sequence[str] | None = None) -> int:
     # The last mutation restored its source but left its binary in the tree,
     # so the next `ctest` would run code nobody has any more. Build once on
     # the way out and the tree is honest again.
-    subprocess.run(
+    restored = subprocess.run(
         ["cmake", "--build", "--preset", parsed.preset],
         cwd=parsed.build_root or parsed.repository,
         capture_output=True,
         check=False,
+        text=True,
     )
     print(report(outcomes))
+    if restored.returncode != 0:
+        diagnostic = restored.stderr.strip() or restored.stdout.strip()
+        print("the restored tree did not build", file=sys.stderr)
+        if diagnostic:
+            print(diagnostic, file=sys.stderr)
+        return 2
     return int(failed(outcomes))
 
 

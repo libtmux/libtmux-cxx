@@ -101,9 +101,7 @@ def main(argv: t.Sequence[str] | None = None) -> int:
     validator_for.check_schema(schema)
     validator = validator_for(schema)
 
-    lines = [
-        line for line in arguments.corpus.read_text().splitlines() if line.strip()
-    ]
+    lines = [line for line in arguments.corpus.read_text().splitlines() if line.strip()]
     if not lines:
         sys.stderr.write(f"{arguments.corpus} holds no documents\n")
         return 1

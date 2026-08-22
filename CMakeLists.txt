@@ -45,10 +45,9 @@ option(LIBTMUX_BUILD_EXAMPLES "Build and run the examples"
        ${PROJECT_IS_TOP_LEVEL})
 # `libtmux::testing` — the private-tmux-server fixture, installed alongside
 # the library so a consumer's own suite can use it instead of reinventing it.
-# On whenever the tests or the examples are, because both run on it; separately
-# switchable so an install can ship it without building either, or omit it from
-# a distribution package that has no business carrying test scaffolding.
-if(LIBTMUX_BUILD_TESTS OR LIBTMUX_BUILD_EXAMPLES)
+# On with tests or examples on POSIX; separately switchable so an install can
+# ship it without building either, or omit it from a distribution package.
+if(NOT WIN32 AND (LIBTMUX_BUILD_TESTS OR LIBTMUX_BUILD_EXAMPLES))
   set(LIBTMUX_TESTING_LIBRARY_DEFAULT ON)
 else()
   set(LIBTMUX_TESTING_LIBRARY_DEFAULT OFF)
@@ -70,6 +69,19 @@ option(LIBTMUX_ENABLE_COVERAGE "Instrument for coverage" OFF)
 set(LIBTMUX_CXX_STANDARD "23" CACHE STRING "C++ package standard: 20 or 23")
 set_property(CACHE LIBTMUX_CXX_STANDARD PROPERTY STRINGS 20 23)
 
+if(WIN32 AND LIBTMUX_BUILD_TESTING_LIBRARY)
+  message(FATAL_ERROR "libtmux::testing requires the POSIX tmux fixture")
+endif()
+if(WIN32 AND LIBTMUX_BUILD_FUZZERS)
+  message(FATAL_ERROR "LIBTMUX_BUILD_FUZZERS is not supported on Windows")
+endif()
+if(WIN32 AND (LIBTMUX_ENABLE_SANITIZERS OR LIBTMUX_ENABLE_THREAD_SANITIZER OR
+              LIBTMUX_ENABLE_COVERAGE))
+  message(
+    FATAL_ERROR
+      "LIBTMUX_ENABLE_SANITIZERS, LIBTMUX_ENABLE_THREAD_SANITIZER, and "
+      "LIBTMUX_ENABLE_COVERAGE are not supported on Windows")
+endif()
 if(LIBTMUX_ENABLE_SANITIZERS AND LIBTMUX_ENABLE_THREAD_SANITIZER)
   message(FATAL_ERROR "ASan/UBSan and TSan require separate build trees")
 endif()
@@ -89,11 +101,12 @@ add_subdirectory(src)
 
 # After `src`, which defines the library it links, and before `tests`, which
 # links it in turn.
-if(LIBTMUX_BUILD_TESTING_LIBRARY)
+if(NOT WIN32 AND LIBTMUX_BUILD_TESTING_LIBRARY)
   add_subdirectory(src/testing)
 endif()
 
-if((LIBTMUX_BUILD_TESTS OR LIBTMUX_BUILD_EXAMPLES) AND NOT TARGET libtmux::testing)
+if(NOT WIN32 AND (LIBTMUX_BUILD_TESTS OR LIBTMUX_BUILD_EXAMPLES) AND
+   NOT TARGET libtmux::testing)
   message(
     FATAL_ERROR
       "LIBTMUX_BUILD_TESTS and LIBTMUX_BUILD_EXAMPLES both need "
@@ -102,20 +115,28 @@ if((LIBTMUX_BUILD_TESTS OR LIBTMUX_BUILD_EXAMPLES) AND NOT TARGET libtmux::testi
 endif()
 
 if(LIBTMUX_BUILD_TESTS)
-  include(cmake/GoogleTest.cmake)
-  libtmux_resolve_googletest()
-  add_subdirectory(examples/workspace)
-  add_subdirectory(tests)
+  if(WIN32)
+    add_subdirectory(tests/windows)
+  else()
+    include(cmake/GoogleTest.cmake)
+    libtmux_resolve_googletest()
+    add_subdirectory(examples/workspace)
+    add_subdirectory(tests)
+  endif()
 endif()
 
-if(LIBTMUX_BUILD_TESTS OR LIBTMUX_BUILD_MCP_SERVER)
+if(LIBTMUX_BUILD_MCP_SERVER OR (NOT WIN32 AND LIBTMUX_BUILD_TESTS))
   add_subdirectory(apps/mcp)
 endif()
 
 if(LIBTMUX_BUILD_EXAMPLES)
-  add_subdirectory(examples)
+  if(WIN32)
+    add_subdirectory(examples/windows)
+  else()
+    add_subdirectory(examples)
+  endif()
 endif()
 
-if(LIBTMUX_BUILD_FUZZERS)
+if(NOT WIN32 AND LIBTMUX_BUILD_FUZZERS)
   add_subdirectory(tests/fuzz)
 endif()

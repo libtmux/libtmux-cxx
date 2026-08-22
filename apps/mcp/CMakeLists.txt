@@ -1,13 +1,19 @@
-add_library(mcp_tools INTERFACE)
+add_library(mcp_tools STATIC src/tool_catalog.cpp src/tool_model.cpp)
+if(NOT WIN32)
+  target_sources(mcp_tools PRIVATE src/wait_for_text.cpp)
+endif()
 target_include_directories(
-  mcp_tools INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/include")
-target_link_libraries(mcp_tools INTERFACE libtmux::libtmux)
+  mcp_tools PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(
+  mcp_tools PUBLIC libtmux::libtmux PRIVATE libtmux_build_options)
 
-if(LIBTMUX_BUILD_TESTS)
+if(LIBTMUX_BUILD_TESTS AND NOT WIN32)
   # `libtmux::testing` directly, not this repository's internal alias: the MCP
   # tool surface is here to be a consumer, and a consumer reaches the fixture
   # through the exported target.
   add_executable(mcp_tools_test tests/mcp_test.cpp)
+  target_include_directories(mcp_tools_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
   target_link_libraries(
     mcp_tools_test
     PRIVATE GTest::gtest_main libtmux_build_options mcp_tools
@@ -21,7 +27,7 @@ endif()
 
 # The server as a program, over JSON-RPC, against a real tmux. Needs the JSON
 # parser and the binary, so it follows the server rather than the tool surface.
-if(LIBTMUX_BUILD_TESTS AND LIBTMUX_BUILD_MCP_SERVER)
+if(LIBTMUX_BUILD_TESTS AND LIBTMUX_BUILD_MCP_SERVER AND NOT WIN32)
   add_executable(mcp_protocol_test tests/protocol_test.cpp)
   target_link_libraries(
     mcp_protocol_test
@@ -50,7 +56,7 @@ if(LIBTMUX_BUILD_MCP_SERVER)
   # would be checking the checker.
   find_package(Python3 COMPONENTS Interpreter QUIET)
 
-  if(LIBTMUX_BUILD_TESTS AND Python3_Interpreter_FOUND)
+  if(LIBTMUX_BUILD_TESTS AND NOT WIN32 AND Python3_Interpreter_FOUND)
     # The wire format for a lowered filter expression, and the corpus the
     # published schema is validated against. Two halves that only mean
     # something together: this writes documents a real validator then reads,
@@ -85,12 +91,46 @@ if(LIBTMUX_BUILD_MCP_SERVER)
   # The tool surface as a program: MCP over stdio, which is JSON-RPC. The JSON
   # lives here and nowhere else — the tool surface itself still takes named
   # strings and returns text.
-  add_executable(libtmux_mcp_server src/server.cpp)
+  add_executable(
+    libtmux_mcp_server
+    src/batch_response.cpp
+    src/cli.cpp
+    src/dispatcher.cpp
+    src/protocol.cpp
+    src/protocol_validation.cpp
+    src/schema.cpp
+    src/server.cpp
+    src/stdio_server.cpp)
   set_target_properties(libtmux_mcp_server PROPERTIES OUTPUT_NAME
                                                       libtmux-mcp-server)
+  target_include_directories(libtmux_mcp_server PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
   target_link_libraries(
     libtmux_mcp_server
     PRIVATE libtmux_build_options mcp_tools nlohmann_json::nlohmann_json)
+  include("${PROJECT_SOURCE_DIR}/cmake/MinGWRuntime.cmake")
+  libtmux_copy_mingw_runtime(libtmux_mcp_server)
+
+  if(WIN32 AND LIBTMUX_BUILD_TESTS)
+    find_program(
+      LIBTMUX_POWERSHELL_EXECUTABLE
+      NAMES powershell.exe pwsh.exe pwsh)
+    if(LIBTMUX_POWERSHELL_EXECUTABLE)
+      add_test(
+        NAME windows.mcp.psmux-smoke
+        COMMAND
+          "${LIBTMUX_POWERSHELL_EXECUTABLE}" -NoLogo -NoProfile -NonInteractive
+          -ExecutionPolicy Bypass -File
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/windows_psmux_smoke.ps1" -Server
+          "$<TARGET_FILE:libtmux_mcp_server>")
+      set_tests_properties(
+        windows.mcp.psmux-smoke
+        PROPERTIES LABELS "windows;psmux;real-tmux;mcp" TIMEOUT 120)
+    elseif(CMAKE_CROSSCOMPILING)
+      message(STATUS "PowerShell unavailable; skipping native Windows MCP smoke")
+    else()
+      message(FATAL_ERROR "PowerShell is required for the native Windows MCP smoke")
+    endif()
+  endif()
 
   if(LIBTMUX_INSTALL)
     # Included here rather than relied on from the library's directory: this

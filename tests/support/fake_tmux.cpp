@@ -13,7 +13,9 @@
 #include <thread>
 #include <vector>
 
+#include <fcntl.h>
 #include <poll.h>
+#include <sys/file.h>
 #if defined(__linux__)
 #include <sys/prctl.h>
 #endif
@@ -40,14 +42,36 @@ void append_trace(const std::vector<std::string>& fields) {
   if (!trace.has_value()) {
     return;
   }
-  std::ofstream output{*trace, std::ios::app};
+  std::string line;
   for (std::size_t index = 0; index < fields.size(); ++index) {
     if (index != 0U) {
-      output << '\t';
+      line.push_back('\t');
     }
-    output << fields[index];
+    line += fields[index];
   }
-  output << '\n';
+  line.push_back('\n');
+
+  const int output = ::open(trace->c_str(), O_WRONLY | O_CREAT | O_APPEND, 0600);
+  if (output < 0) {
+    return;
+  }
+  if (::flock(output, LOCK_EX) != 0) {
+    static_cast<void>(::close(output));
+    return;
+  }
+  std::size_t written = 0;
+  while (written < line.size()) {
+    const ssize_t count = ::write(output, line.data() + written, line.size() - written);
+    if (count > 0) {
+      written += static_cast<std::size_t>(count);
+    } else if (count < 0 && errno == EINTR) {
+      continue;
+    } else {
+      break;
+    }
+  }
+  static_cast<void>(::flock(output, LOCK_UN));
+  static_cast<void>(::close(output));
 }
 
 std::string shown_environment(const char* name) {

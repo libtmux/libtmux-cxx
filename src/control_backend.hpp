@@ -28,6 +28,11 @@
 LIBTMUX_NAMESPACE_BEGIN
 namespace detail {
 
+// A Server owns routing; the remaining connection policy stays caller-owned.
+[[nodiscard]] ConnectionOptions routed_control_options(ConnectionOptions options,
+                                                       std::string socket_path,
+                                                       std::string session);
+
 class ControlBackend final : public Backend {
 public:
   // `socket_path` is where the client is launched; `identity` is which server
@@ -37,7 +42,8 @@ public:
   // control connection would compare as two.
   [[nodiscard]] static expected<std::shared_ptr<const ControlBackend>, ProtocolError>
   open(std::vector<std::string> selector, std::string socket_path, std::string identity,
-       std::string session, CommandObserver observer, ExecutionPolicy policy = {});
+       std::string session, ConnectionOptions options, CommandObserver observer,
+       ExecutionPolicy policy = {});
 
   using Backend::run;
 
@@ -52,6 +58,11 @@ public:
 
   [[nodiscard]] std::string_view identity() const noexcept override {
     return identity_;
+  }
+
+  [[nodiscard]] ServerCapabilities capabilities() const noexcept override {
+    return {.implementation = ServerImplementation::tmux,
+            .backend = BackendKind::control_mode};
   }
 
   // `tmux -V` is a flag of the binary, not a command a connection can carry,

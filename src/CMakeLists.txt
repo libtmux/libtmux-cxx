@@ -2,10 +2,15 @@
 # empty string, which silently exports a package with no include directory.
 include(GNUInstallDirs)
 
-add_library(
-  libtmux STATIC version.cpp server.cpp backend.cpp control_backend.cpp
-  snapshot.cpp entities.cpp socket_identity.cpp
-  process.cpp control.cpp connection.cpp)
+set(LIBTMUX_SOURCES
+    version.cpp server.cpp backend.cpp control_backend.cpp snapshot.cpp
+    entities.cpp socket_identity.cpp control.cpp)
+if(WIN32)
+  list(APPEND LIBTMUX_SOURCES process_windows.cpp connection_windows.cpp)
+else()
+  list(APPEND LIBTMUX_SOURCES process.cpp connection.cpp)
+endif()
+add_library(libtmux STATIC ${LIBTMUX_SOURCES})
 add_library(libtmux::libtmux ALIAS libtmux)
 
 # Two threads per control connection. This links on a glibc that folded
@@ -24,7 +29,13 @@ target_compile_features(libtmux PUBLIC cxx_std_${LIBTMUX_CXX_STANDARD})
 # The shipped code is held to the same warnings as the tests, but privately:
 # a consumer's build should never inherit our -Werror and fail on a warning
 # their compiler happens to emit and ours does not.
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+if(MSVC)
+  target_compile_options(libtmux PUBLIC $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+  target_compile_options(libtmux PRIVATE /W4 /permissive-)
+  if(LIBTMUX_WARNINGS_AS_ERRORS)
+    target_compile_options(libtmux PRIVATE /WX)
+  endif()
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(
     libtmux
     PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion)

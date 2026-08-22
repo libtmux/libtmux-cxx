@@ -1,6 +1,7 @@
 {
   "name": "libtmux",
   "version-semver": "0.1.0-alpha.2",
+  "port-version": 1,
   "maintainers": "Tony Narlock <tony@git-pull.com>",
   "description": [
     "A typed C++ interface to the tmux terminal multiplexer.",
@@ -9,7 +10,7 @@
   "homepage": "https://github.com/libtmux/libtmux-cxx",
   "documentation": "https://github.com/libtmux/libtmux-cxx#readme",
   "license": "MIT",
-  "supports": "!windows",
+  "supports": "!windows & !mingw",
   "dependencies": [
     {
       "name": "vcpkg-cmake",

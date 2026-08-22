@@ -12,9 +12,8 @@
 // runs tmux, and a returned entity describes the moment that command ran:
 // entities do not update themselves, `refresh` takes a new snapshot.
 //
-// Each entity addresses itself by tmux id (`$0`, `@0`, `%0`) rather than by
-// name, so an operation cannot be redirected by a name that happens to contain
-// a target separator.
+// Psmux numbers windows and panes per session, so Windows snapshots retain
+// their owning session identity alongside tmux's `$0`, `@0`, and `%0` IDs.
 //
 // Every field below is a format token tmux 3.2a already registers, which is
 // the oldest version this library supports. That is a hard constraint rather
@@ -173,6 +172,19 @@ namespace detail {
   return std::chrono::sys_seconds{std::chrono::seconds{to_number(text)}};
 }
 
+[[nodiscard]] inline bool same_entity_id(std::string_view left_id,
+                                         std::string_view left_session_id,
+                                         std::string_view right_id,
+                                         std::string_view right_session_id) noexcept {
+#if defined(_WIN32)
+  return left_id == right_id && left_session_id == right_session_id;
+#else
+  static_cast<void>(left_session_id);
+  static_cast<void>(right_session_id);
+  return left_id == right_id;
+#endif
+}
+
 // The storage every entity has, in one place: the snapshot that owns the bytes
 // and which of its rows this entity is. Inherited privately — an entity is
 // implemented in terms of a row, it is not a kind of row.
@@ -184,6 +196,12 @@ public:
 protected:
   [[nodiscard]] std::string_view value(std::size_t index) const noexcept {
     return snapshot_->rows()[row_][index];
+  }
+
+  [[nodiscard]] std::string_view value(std::string_view field) const noexcept {
+    const std::size_t index = snapshot_->index_of(field);
+    const auto& row = snapshot_->rows()[row_];
+    return index < row.size() ? row[index] : std::string_view{};
   }
 
   [[nodiscard]] const std::shared_ptr<const Backend>& backend() const noexcept {
@@ -315,7 +333,12 @@ public:
   // command this library runs talks to it through pipes, so an attach it
   // performed itself could only ever fail. A caller that owns a terminal
   // execs this instead.
+  //
+  // Prefer `checked_attach_command()`; this source-compatible form returns an
+  // empty vector when psmux cannot bind an attach target without a stale race.
   [[nodiscard]] std::vector<std::string> attach_command() const;
+  [[nodiscard]] expected<std::vector<std::string>, CommandFailure>
+  checked_attach_command() const;
 
   // Send every client here away, leaving the session running.
   [[nodiscard]] expected<void, CommandFailure> detach_clients() const;
@@ -348,6 +371,7 @@ public:
 class Window : private detail::Row {
 public:
   static constexpr std::string_view kNoun{"window"};
+  static constexpr std::string_view kSessionNameField{"session_name"};
   static constexpr std::array kFields{std::string_view{"window_id"},
                                       std::string_view{"window_name"},
                                       std::string_view{"window_active"},
@@ -394,12 +418,18 @@ public:
   [[nodiscard]] long long linked_sessions() const noexcept {
     return detail::to_number(value(12));
   }
+  // The owning psmux route carried by Windows live snapshots. Empty on POSIX
+  // and in recordings made from the backward-compatible `kFields` schema.
+  [[nodiscard]] std::string_view session_name() const noexcept {
+    return value(kSessionNameField);
+  }
 
   // Two values are the same window when they name the same tmux object on the
   // same connection — not when they were listed at the same moment. A
   // window refreshed after a rename equals the one it was refreshed from.
   [[nodiscard]] bool operator==(const Window& other) const noexcept {
-    return same_connection(other) && id() == other.id();
+    return same_connection(other) &&
+           detail::same_entity_id(id(), session_id(), other.id(), other.session_id());
   }
 
   // How to address this window, and the reason a window id alone will not do.
@@ -409,7 +439,11 @@ public:
   // it names, and the link a move or a kill lands on then depend on a choice
   // the caller did not make. Qualifying by the session this window was listed
   // from names one link.
+  //
+  // Prefer `checked_target()`; this source-compatible form returns an empty
+  // string when psmux cannot bind a reusable target without a stale race.
   [[nodiscard]] std::string target() const;
+  [[nodiscard]] expected<std::string, CommandFailure> checked_target() const;
 
   [[nodiscard]] expected<Session, CommandFailure> session() const;
   [[nodiscard]] expected<std::vector<Pane>, CommandFailure> panes() const;
@@ -497,6 +531,7 @@ public:
 class Pane : private detail::Row {
 public:
   static constexpr std::string_view kNoun{"pane"};
+  static constexpr std::string_view kSessionNameField{"session_name"};
   static constexpr std::array kFields{
       std::string_view{"pane_id"},      std::string_view{"pane_current_command"},
       std::string_view{"pane_active"},  std::string_view{"window_id"},
@@ -543,12 +578,18 @@ public:
   [[nodiscard]] bool at_right() const noexcept { return detail::to_flag(value(17)); }
   // Whether this pane's output is currently being copied to a command.
   [[nodiscard]] bool piping() const noexcept { return detail::to_flag(value(18)); }
+  // The owning psmux route carried by Windows live snapshots. Empty on POSIX
+  // and in recordings made from the backward-compatible `kFields` schema.
+  [[nodiscard]] std::string_view session_name() const noexcept {
+    return value(kSessionNameField);
+  }
 
   // Two values are the same pane when they name the same tmux object on the
   // same connection — not when they were listed at the same moment. A
   // pane refreshed after a rename equals the one it was refreshed from.
   [[nodiscard]] bool operator==(const Pane& other) const noexcept {
-    return same_connection(other) && id() == other.id();
+    return same_connection(other) &&
+           detail::same_entity_id(id(), session_id(), other.id(), other.session_id());
   }
 
   [[nodiscard]] expected<Window, CommandFailure> window() const;
@@ -835,6 +876,8 @@ inline constexpr BoolFieldHandle<Window> active{
     {Window::kFields[2], [](const Window& row) { return row.active(); }}};
 inline constexpr StringFieldHandle<Window> session_id{
     {Window::kFields[3], [](const Window& row) { return row.session_id(); }}};
+inline constexpr StringFieldHandle<Window> session_name{
+    {Window::kSessionNameField, [](const Window& row) { return row.session_name(); }}};
 inline constexpr StringFieldHandle<Window> layout{
     {Window::kFields[8], [](const Window& row) { return row.layout(); }}};
 inline constexpr BoolFieldHandle<Window> zoomed{
@@ -866,6 +909,8 @@ inline constexpr StringFieldHandle<Pane> window_id{
     {Pane::kFields[3], [](const Pane& row) { return row.window_id(); }}};
 inline constexpr StringFieldHandle<Pane> session_id{
     {Pane::kFields[4], [](const Pane& row) { return row.session_id(); }}};
+inline constexpr StringFieldHandle<Pane> session_name{
+    {Pane::kSessionNameField, [](const Pane& row) { return row.session_name(); }}};
 inline constexpr StringFieldHandle<Pane> title{
     {Pane::kFields[6], [](const Pane& row) { return row.title(); }}};
 inline constexpr StringFieldHandle<Pane> tty{
@@ -910,10 +955,8 @@ inline constexpr NumberFieldHandle<Client> height{
 
 LIBTMUX_NAMESPACE_END
 
-// Hashing an entity hashes exactly what its equality compares: the connection
-// and the id. Two values that compare equal hash the same, whichever listing
-// each came from, so an entity keys an unordered container with no hand-written
-// hasher.
+// Hashing an entity uses exactly what its equality compares, so values from
+// separate listings key an unordered container consistently.
 template <> struct std::hash<libtmux::Session> {
   [[nodiscard]] std::size_t operator()(const libtmux::Session& value) const noexcept;
 };
