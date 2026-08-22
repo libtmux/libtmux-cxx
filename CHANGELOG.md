@@ -3,10 +3,13 @@
 What changed in each release, for someone deciding whether to take it. The
 conventions are in [`.github/WRITING.md`](.github/WRITING.md#changelog).
 
-Both entries below were written after their releases, from the commits each tag
-carries. Releases from `0.1.0-alpha.3` on are recorded as they land.
+The `0.1.0-alpha.1` and `0.1.0-alpha.2` entries were written after those
+releases, from the commits each tag carries. Everything from `0.1.0-alpha.3` on
+was recorded as it landed.
 
 ## Unreleased
+
+## 0.1.0-alpha.3 (2026-08-22)
 
 ### Breaking
 
@@ -60,10 +63,10 @@ carries. Releases from `0.1.0-alpha.3` on are recorded as they land.
 ### vcpkg
 
 - Release updates are monotonic, locked, recoverable and opt-in, and the exact
-  tagged port is gated across Linux, macOS, Windows and WSL. The immutable
-  `0.1.0-alpha.2` entry predates the Windows backend and stays Windows-disabled;
-  a later tagged release can enable the x64 desktop target once it passes the
-  pinned psmux and package gates. (#4)
+  tagged port is gated across Linux, macOS, Windows and WSL. Windows support in
+  the port is an opt-in transition a release's tagged gates must clear; the
+  immutable `0.1.0-alpha.2` entry stays POSIX-only whatever a later one does.
+  (#4)
 
 ## 0.1.0-alpha.2 (2026-08-17)
 

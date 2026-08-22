@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
   "name": "libtmux",
-  "version-semver": "0.1.0-alpha.2",
+  "version-semver": "0.1.0-alpha.3",
   "maintainers": "Tony Narlock <tony@git-pull.com>",
   "description": "A typed C++ interface to the tmux terminal multiplexer.",
   "homepage": "https://github.com/libtmux/libtmux-cxx",
