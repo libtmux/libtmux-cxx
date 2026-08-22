@@ -4,7 +4,7 @@ vcpkg_from_github(
   OUT_SOURCE_PATH SOURCE_PATH
   REPO libtmux/libtmux-cxx
   REF "v${VERSION}"
-  SHA512 32370f613dc2b523c1bad33df6c7a6f4ede97bbc1f69236be49b7830c7a567a224a935a8e879ca73d6be37f6c400c1f88a738e96e2c6b035e2e8b9e2cf7d325e
+  SHA512 959537051b5c8e2925cecc9045ee03888aaf73f6ed50987176920304f0a9bc75398d420289300dd8ddb6fdac1286ea3b0b2742d760ac2b63d1bf8c1abbfea012
   HEAD_REF master)
 
 vcpkg_check_features(
