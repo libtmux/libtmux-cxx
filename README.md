@@ -94,7 +94,7 @@ include(FetchContent)
 FetchContent_Declare(
   libtmux
   GIT_REPOSITORY https://github.com/libtmux/libtmux-cxx.git
-  GIT_TAG        v0.1.0-alpha.3  # or a commit; never a moving branch
+  GIT_TAG        v0.1.0-alpha.4  # or a commit; never a moving branch
 )
 FetchContent_MakeAvailable(libtmux)
 target_link_libraries(your_target PRIVATE libtmux::libtmux)
@@ -103,10 +103,10 @@ target_link_libraries(your_target PRIVATE libtmux::libtmux)
 Embedded this way the library builds alone: its tests, examples and the MCP
 server all default off when it is not the top-level project.
 
-`v0.1.0-alpha.3` is the first release whose source carries the bounded x64
-desktop Windows preview for Visual Studio 2022 and the audited psmux build.
-Whether a release's vcpkg port carries Windows is a separate transition its
-tagged gates must clear, so check the `supports` field of the version you pin.
+`v0.1.0-alpha.4` carries the bounded x64 desktop Windows preview for Visual
+Studio 2022 and the audited psmux build in its source. Whether a release's
+vcpkg port carries Windows is a separate transition its tagged gates must
+clear, so check the `supports` field of the version you pin.
 
 ### Build and install from source
 

@@ -9,6 +9,26 @@ was recorded as it landed.
 
 ## Unreleased
 
+## 0.1.0-alpha.4 (2026-08-22)
+
+`0.1.0-alpha.3` was tagged but did not publish, so this is the release to take
+for everything listed under it as well.
+
+### MCP server
+
+- A request that finished before stdin closed is answered rather than
+  discarded. Shutdown cancelled every request still in flight, and the reply a
+  worker had already produced went with it, so a client that wrote its
+  requests and closed the pipe lost answers for whatever was still running.
+  (#6)
+
+### Testing
+
+- `ScopedTmuxServer` no longer leaves an unreaped child when a start fails
+  past its deadline. The reap waited on the deadline whose expiry brought it
+  there, so it returned at once and handed a live process to the reaper
+  thread. (#6)
+
 ## 0.1.0-alpha.3 (2026-08-22)
 
 ### Breaking
