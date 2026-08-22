@@ -63,9 +63,16 @@ One golden path. The preset that works from a clean checkout goes first;
 FetchContent, submodules, vcpkg and build options come after it, in that
 order, and none of them interrupts the first thing a reader needs.
 
-Examples compile. `examples/` builds and runs as part of the suite, so a
-snippet in the README is copied from a program that a lane proved. Never write
-a signature that does not exist to make a point read better.
+Examples compile, and the README is not trusted to say so. Every `cpp` block
+in it is a named region of `examples/05-readme.cpp`, which builds and runs
+against real tmux in the same CTest run as everything else, and
+[`tools/docs/check_readme.py`](../tools/docs/check_readme.py) fails the build
+when a block and its region drift apart, or when a region nothing quotes goes
+stale. Never write a signature that does not exist to make a point read better.
+
+Say what the library is not for. "When you might not need this" is that
+section here, and it earns more trust than a feature list: a reader who bounces
+off it in ten seconds was never going to be a happy user.
 
 Two facts are fixed and identical across every libtmux port. Do not reword
 them, and do not let a port drift:
@@ -86,10 +93,25 @@ The alpha warning states these terms:
 A ledger, not a narrative. It is scanned, and the question a reader arrives
 with is whether an entry affects them, so one change gets one bullet.
 
-Group by the component affected — `Server`, `Session`, `Window`, `Pane`,
-control mode, the MCP server, vcpkg, the build — rather than by whether
-something is a feature or a fix. A reader knows which part they use and does
-not know which category you filed it under.
+A release that breaks something opens with `### Breaking`, ahead of every
+component section, because that is the entry deciding whether the reader takes
+the upgrade at all. Name the compatibility class, and give the way forward as
+code rather than as a description of code:
+
+```markdown
+### Breaking
+
+- `Pane::capture` returns `std::vector<std::string>` rather than one joined
+  `std::string`. Source-breaking; ABI-breaking.
+
+  Before: `auto text = *pane.capture();`
+  After:  `auto text = join(*pane.capture());`
+```
+
+Everything else groups by the component affected — `Server`, `Session`,
+`Window`, `Pane`, control mode, the MCP server, vcpkg, the build — rather than
+by whether something is a feature or a fix. A reader knows which part they use
+and does not know which category you filed it under.
 
 ```markdown
 ### Control mode
@@ -104,20 +126,27 @@ Lead with the identifier and a concrete verb — add, fix, remove, deprecate,
 require, `now`, `no longer`. Name identifiers literally: `Pane::send_key`,
 `LIBTMUX_USE_TL_EXPECTED`, `-l 25%`. One to three sentences.
 
-State a changed default explicitly, and an incompatibility more explicitly
-still, with the way forward in the same bullet and the compatibility class
-named:
+State a changed default explicitly, even where nothing breaks, with the way
+back in the same bullet:
 
 ```markdown
-- `Pane::capture` now returns `std::vector<std::string>` rather than one
-  joined `std::string`. Source-breaking; call `join` on the result to restore
-  the old shape.
+- `show_option` now reads at session scope when the target does not say.
+  Pass `scope: window` for the previous behaviour.
 ```
 
 Do not sell a fix: "no longer reports a truncated answer as a complete one",
 not "improves reliability". Do not describe effort. Give the old behaviour
 only where it explains a break, and mention mechanism only where a caller can
 observe it — a refactor nothing observable comes out of is not an entry.
+
+Link the pull request that carried the change, as a trailing `(#149)`. The
+changelog is the only place mapping a behaviour to the diff that caused it, and
+a reader chasing detail has nowhere else to start. This is the one surface
+where a tracker reference belongs — [Source comments](#source-comments) bans
+them in code, because a comment is read without a browser and rots when the
+tracker moves, while an entry here is written once and never revisited. A
+security entry carries its GHSA or CVE id instead: that is the identifier an
+auditor searches for.
 
 Entries land under `## Unreleased`. The maintainer assigns the version when
 cutting a release, so nothing written here predicts one.
@@ -181,6 +210,28 @@ One semantic change per commit. A rename that changes no behaviour is its own
 commit, and so is a reformat: a diff that mixes them with a behavioural change
 cannot be reviewed, and cannot be reverted without taking the rest with it.
 
+Every commit builds and passes on its own. `git bisect` is a thing this project
+ships rather than hopes for, and a commit that only compiles once the next one
+lands makes a bisect report a lie.
+
+Name the alternative you rejected, in a line or two, when there was one. It is
+the most valuable thing a commit message carries and the first thing lost: the
+next person to look at this code — or the next agent asked to tidy it — will
+reach for the same discarded approach, and the message is what stops them.
+
+```
+why: The tmpfile round trip existed because control-mode chunking was
+unreliable before tmux 3.3, which the supported range no longer includes.
+
+Rejected keeping it behind a runtime probe: two paths for one feature, to
+serve a release nothing in the matrix builds against.
+```
+
+Cite a standard or a defect by a stable link rather than by description —
+`wg21.link/p2900`, a GCC or LLVM bug number, a tmux issue. A reader who cannot
+follow the reference cannot check the reasoning, and a paraphrase decays into
+folklore.
+
 Release commit subjects are plain and short — `Tag v<version>` — with the
 detail in the body. Do not bury the lede under a scope prefix.
 
@@ -199,11 +250,61 @@ EOF
 )"
 ```
 
+## Command-line help
+
+Help text is read in a terminal by someone who is already stuck, so it answers
+in one screen and does not send them to the README.
+
+Each flag says what it does, what happens without it, and what it implies.
+A default is stated rather than left to be discovered:
+
+```text
+--prefix DIR    Install prefix to take a published server from; its bin/ and
+                tools/libtmux/ are searched, covering a cmake --install and a
+                vcpkg install. Implies --source published.
+```
+
+Name the real paths, the real environment variables and the real defaults.
+"the usual place" is not help.
+
+Document the exit codes wherever a program has more than success and failure.
+A caller writing a shell script around a tool needs them, and guessing from a
+run that happened to work is how a script acquires a bug that fires once a
+year.
+
+## Error messages
+
+An error says what happened, in a phrase that completes a sentence the caller
+is already writing. Lowercase, no trailing period, no blame:
+
+```cpp
+case FailureKind::validation:
+  return "the request was rejected before tmux ran";
+case FailureKind::timeout:
+  return "tmux did not answer in time";
+```
+
+Name the actor. "tmux refused the command" and "tmux could not be started"
+tell a caller which side of the boundary broke, which is the first thing they
+need and the thing a generic "operation failed" withholds.
+
+Where a diagnostic quotes what a program actually printed, quote it exactly.
+An error text is a search key, and a paraphrase is not findable.
+
+Do not apologise, do not suggest what the caller probably meant unless the
+answer is certain, and never end with an exclamation mark.
+
 ## API documentation
 
 The header is the manual. `include/libtmux/` is the contract, so the
 documentation lives on the declaration there — not in `src/`, and not
 duplicated in both.
+
+The type system documents first. A concept, `[[nodiscard]]`, `noexcept`,
+`explicit`, and a parameter type that cannot be passed the wrong thing state a
+contract the compiler enforces, which no comment can claim. Prose covers what
+is left over. C++26 contracts are out of reach at this floor, so a
+precondition the type cannot carry stays a sentence.
 
 Write plain `//` prose above the declaration. No Doxygen tags:
 `tools/docs/api_index.py` harvests the comment block above each declaration
@@ -373,6 +474,10 @@ A change is usually not one of these. "Source-breaking; ABI-compatible" and
 "no source change required, but callers must relink" are complete statements.
 "Breaking" on its own is not.
 
+This project carries no `SOVERSION`. The inline namespace pair is the whole
+ABI statement, so an ABI break is described by what it does to those namespaces
+and to a caller who must relink — not by a soname that does not exist.
+
 Name toolchains and versions exactly. clang, GCC, libc++, libstdc++ and Apple
 Clang are not interchangeable, and neither are tmux releases: `3.7a` is not
 `3.7`, and `master` is not a version. Write `clang 17+`, `tmux 3.2a`, `CMake
@@ -460,7 +565,9 @@ Treat AI slop as review-hostile noise, not as proof that the text or code is
 wrong. The goal is to maximise information density.
 
 - **AI signatures.** No "Generated by", no conversational filler, no
-  unexplained emoji, no tool metadata.
+  unexplained emoji, no tool metadata. No `Co-Authored-By` naming a tool and no
+  trailer recording that a model wrote something: git already records
+  authorship, and a commit is judged on what it says.
 - **Brittle references.** No hard-coded line numbers, fragile file counts,
   dated "as of" claims, bare SHAs, or local absolute paths — unless they are
   strict evidentiary artefacts such as a benchmark log.
