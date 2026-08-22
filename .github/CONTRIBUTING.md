@@ -15,8 +15,11 @@ messages, API documentation, and source comments — is set out separately in
 
 ## Building
 
-**Requirements:** a C++23 toolchain (clang 17+ or GCC 13+), CMake 3.25, tmux on
-`$PATH`. Nothing else — the library itself has no dependencies.
+**Requirements:** a C++23 toolchain (clang 17+, GCC 13+, or Visual Studio 2022
+17.3+), CMake 3.25, and tmux on `$PATH`. Nothing else — the library itself has
+no dependencies. On Windows that tmux is
+[psmux](../README.md#windows-through-psmux), and the preview it backs is
+narrower than the POSIX surface.
 
 ```console
 $ cmake --preset cxx-dev && cmake --build --preset cxx-dev
@@ -77,12 +80,25 @@ $ BASE=/tmp/$(printf 'm%.0s' $(seq 1 52)) && mkdir -p "$BASE" && TMPDIR="$BASE" 
 
 ## Checks that must pass
 
-Run what CI runs. The five build lanes disagree often enough to be worth the
+Run what CI runs. The six build lanes disagree often enough to be worth the
 time — clang with libc++, GCC with libstdc++, the C++20 build over
-`tl::expected`, and the sanitizers:
+`tl::expected`, and the sanitizers, including a C++20 sanitizer lane that
+repeats ASan and UBSan against libstdc++:
 
 ```console
-$ for p in cxx-dev cxx-sanitize cxx-tsan cxx-gcc cxx20; do cmake --preset $p && cmake --build --preset $p && ctest --preset $p --no-tests=error; done
+$ (set -e; for p in \
+    cxx-dev \
+    cxx-sanitize \
+    cxx-sanitize-cxx20 \
+    cxx-tsan \
+    cxx-gcc \
+    cxx20; do \
+    cmake --preset "$p"; \
+    cmake --build --preset "$p"; \
+    ctest \
+      --preset "$p" \
+      --no-tests=error; \
+  done)
 ```
 
 ```console
@@ -247,9 +263,18 @@ with a command the notes give them.
 ## Compatibility
 
 tmux 3.2a and newer, through `master`, matching the Python package. CI builds
-and tests against every supported release on every change, and the handful of
-capabilities that need a later tmux are covered by tests that skip below the
-release providing them — [the README](../README.md#compatibility) lists them.
+and tests pinned compatibility cells from 3.2a through 3.7b, plus `master`, on
+every pull request and every change to master; the handful of capabilities that
+need a later tmux are covered by tests that skip below the release providing
+them — [the README](../README.md#compatibility) lists them.
+
+Linux and macOS are the supported platforms. Windows is an experimental x64
+desktop preview built with Visual Studio 2022 against a pinned
+[psmux](../README.md#windows-through-psmux), and it is deliberately narrower:
+it serves exact read-only entity queries and refuses what it cannot do safely
+with `FailureKind::unsupported` rather than approximating it. A claim about
+this library now carries a platform — say which one it holds on, and check
+`Server::capabilities()` rather than assuming the POSIX surface.
 
 Two standards are supported: C++23 over `std::expected`, and C++20 over pinned
 `tl::expected` with `LIBTMUX_CXX_STANDARD=20`. They are not ABI-compatible, so

@@ -341,7 +341,10 @@ The subjects worth the space, roughly in the order they bite:
 - **Failure.** Failure is a value here, so say which `FailureKind` a caller
   should expect when it is not obvious from the call — `validation` before
   tmux ran, `refused` when tmux ran and said no, `timeout` when it never
-  answered, `truncated` when the answer did not fit.
+  answered, `truncated` when the answer did not fit, and `unsupported` when
+  the backend will not do it at all. `unsupported` is the one worth spelling
+  out: it is not a failure the caller can retry or fix, it is the surface
+  saying this backend does not carry that operation.
 - **Exceptions.** The library does not throw to report a tmux failure.
   Anything that can still throw — allocation, a caller's own observer — says
   so.
@@ -478,10 +481,15 @@ This project carries no `SOVERSION`. The inline namespace pair is the whole
 ABI statement, so an ABI break is described by what it does to those namespaces
 and to a caller who must relink — not by a soname that does not exist.
 
-Name toolchains and versions exactly. clang, GCC, libc++, libstdc++ and Apple
-Clang are not interchangeable, and neither are tmux releases: `3.7a` is not
-`3.7`, and `master` is not a version. Write `clang 17+`, `tmux 3.2a`, `CMake
-3.25` — never "a recent compiler".
+Name toolchains and versions exactly. clang, GCC, MSVC, libc++, libstdc++ and
+Apple Clang are not interchangeable, and neither are tmux releases: `3.7a` is
+not `3.7`, and `master` is not a version. Write `clang 17+`, `tmux 3.2a`,
+`CMake 3.25` — never "a recent compiler". tmux and psmux are different
+programs, and a sentence true of one is not automatically true of the other.
+
+Say which platform a claim holds on. Since the Windows preview landed, an
+unqualified "supported" reads as all of them, and most of this surface is
+POSIX-only.
 
 While the project is alpha, none of these are promised. Say that plainly where
 a reader would otherwise assume otherwise, rather than implying stability by

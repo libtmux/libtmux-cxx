@@ -8,6 +8,63 @@ carries. Releases from `0.1.0-alpha.3` on are recorded as they land.
 
 ## Unreleased
 
+### Breaking
+
+- `FailureKind` gains `unsupported`, reported when a backend will not provide
+  an operation rather than approximating it. Source-breaking for an exhaustive
+  switch built with `-Werror=switch`; add the case, or a `default`. (#4)
+
+  ```cpp
+  case libtmux::FailureKind::unsupported:
+    std::printf("this backend cannot provide the operation safely\n");
+    break;
+  ```
+
+- A raw command that synchronously inserts control reply blocks is now rejected
+  on a control connection unless the call declares its exact reply count.
+  Behaviourally breaking for a caller relying on the inferred count, which does
+  not inspect live aliases. Use the counting overload, a low-level `Connection`,
+  or a subprocess-backed `Server`. (#4)
+
+### Windows
+
+- Add an experimental x64 desktop preview, built with Visual Studio 2022 against
+  [psmux](README.md#windows-through-psmux) 3.3.7 at a pinned commit and archive
+  hash. It answers exact read-only entity queries and declines the rest with
+  `unsupported` rather than approximating it: typed option and hook access, pane
+  input and capture, and control mode are all refused. Ask
+  `Server::capabilities()` before choosing a workflow. (#4)
+- The MCP server advertises four read-only tools there — `inspect_tmux`,
+  `list_sessions`, `list_windows` and `list_session_panes` — and builds on MSVC
+  now that the protocol version is compared as text. (#4)
+
+### Control mode
+
+- Inserted control replies are attributed without stealing concurrent output.
+  `source_file` is declined, because a file can add an unknowable number of
+  reply blocks; `check_file` remains. (#4)
+- `Pane::break_out` works around raw tmux 3.7, which crashes on an unnamed
+  multi-pane `break-pane` and ignores an explicit name. It selects the safe form
+  inside one server command and repairs a requested name by stable window ID.
+  tmux 3.7a fixes both upstream. (#4)
+- Add `control_with_options` and `over_control_with_options`, so streaming
+  policy enters through either `Server` doorway without rebuilding the socket
+  route. (#4)
+
+### MCP server
+
+- A wait whose deadline expired during target lookup no longer publishes an
+  empty `pane_id`, which its own output schema refuses. The field is emitted
+  only once a target resolves, and is no longer required. (#4)
+
+### vcpkg
+
+- Release updates are monotonic, locked, recoverable and opt-in, and the exact
+  tagged port is gated across Linux, macOS, Windows and WSL. The immutable
+  `0.1.0-alpha.2` entry predates the Windows backend and stays Windows-disabled;
+  a later tagged release can enable the x64 desktop target once it passes the
+  pinned psmux and package gates. (#4)
+
 ## 0.1.0-alpha.2 (2026-08-17)
 
 The library is unchanged from `0.1.0-alpha.1`. This release is packaging: the
