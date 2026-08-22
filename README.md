@@ -926,10 +926,14 @@ at a time and reports any that nothing notices.
 
 ## Contributing
 
-[CONTRIBUTING.md](CONTRIBUTING.md) covers getting a build, what a change needs
-to carry, and the gate to run before opening a pull request. The short version:
-every capability needs a test against real tmux, failures are returned rather
-than thrown, and no test starts a tmux server the fixture did not make.
+[CONTRIBUTING.md](.github/CONTRIBUTING.md) covers getting a build, what a
+change needs to carry, and the gate to run before opening a pull request. The
+short version: every capability needs a test against real tmux, failures are
+returned rather than thrown, and no test starts a tmux server the fixture did
+not make.
+
+[WRITING.md](.github/WRITING.md) covers the prose — the README, the changelog,
+release notes, commit messages, and what a header comment owes a caller.
 
 ## License
 
