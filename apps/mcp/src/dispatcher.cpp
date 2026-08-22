@@ -1,6 +1,7 @@
 #include "dispatcher.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdio>
 #include <deque>
@@ -91,16 +92,26 @@ public:
     }
   }
 
+  // A request accepted before stdin closed is owed an answer, so shutdown
+  // drains first: a client that writes a batch and closes the pipe is the
+  // ordinary one-shot invocation. Only work still running past the grace is
+  // cancelled, which is what keeps a blocking wait_for_text from holding the
+  // process open for its whole timeout.
   void finish() {
     {
-      std::lock_guard lock{mutex_};
+      std::unique_lock lock{mutex_};
       if (workers_.empty()) {
         return;
       }
       closing_ = true;
-      for (const auto& [key, cancellation] : active_) {
-        static_cast<void>(key);
-        cancellation->store(true);
+      ready_.notify_all();
+      const bool drained = settled_.wait_for(
+          lock, kShutdownGrace, [this] { return queue_.empty() && in_flight_ == 0U; });
+      if (!drained) {
+        for (const auto& [key, cancellation] : active_) {
+          static_cast<void>(key);
+          cancellation->store(true);
+        }
       }
     }
     ready_.notify_all();
@@ -113,6 +124,20 @@ public:
   }
 
 private:
+  struct Settled {
+    explicit Settled(Impl& owner) : owner_{owner} {}
+    ~Settled() {
+      {
+        std::lock_guard lock{owner_.mutex_};
+        --owner_.in_flight_;
+      }
+      owner_.settled_.notify_all();
+    }
+    Settled(const Settled&) = delete;
+    Settled& operator=(const Settled&) = delete;
+    Impl& owner_;
+  };
+
   struct Job {
     CallRequest request;
     RequestTicket ticket;
@@ -133,7 +158,9 @@ private:
         }
         job = std::move(queue_.front());
         queue_.pop_front();
+        ++in_flight_;
       }
+      const Settled settled{*this};
 
       if (job->ticket.cancellation->load()) {
         job->completion(std::nullopt);
@@ -180,6 +207,9 @@ private:
     }
   }
 
+  // Long enough for any tool that answers promptly, short enough that the
+  // process still exits well inside a client's patience.
+  static constexpr std::chrono::milliseconds kShutdownGrace{500};
   static constexpr std::size_t kWorkerCount = 4U;
   static constexpr std::size_t kMaximumInFlight = 64U;
   ProtocolSession& session_;
@@ -189,7 +219,9 @@ private:
   std::deque<Job> queue_;
   std::unordered_map<std::string, std::shared_ptr<std::atomic_bool>> active_;
   std::unordered_set<std::string> seen_;
+  std::condition_variable settled_;
   std::vector<std::thread> workers_;
+  std::size_t in_flight_{0};
   bool closing_{false};
 };
 

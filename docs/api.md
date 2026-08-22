@@ -487,7 +487,7 @@ A hook set globally is not reported by the unscoped listing, so reading it back 
 <a id="libtmux-capabilities-hpp"></a>
 ## `libtmux/capabilities.hpp`
 
-What this Server can promise without probing tmux.  These describe the local backend contract, not the executable on PATH. Unknown custom backends report no features, so checks fail closed.
+What this Server can promise without probing tmux.  These describe the local backend contract, not the executable on PATH. An unrecognised backend reports no features, so every check says no.
 
 **Symbols:**
 

@@ -3,7 +3,7 @@
 // What this Server can promise without probing tmux.
 //
 // These describe the local backend contract, not the executable on PATH.
-// Unknown custom backends report no features, so checks fail closed.
+// An unrecognised backend reports no features, so every check says no.
 
 #include "libtmux/abi.hpp"
 #include <string_view>

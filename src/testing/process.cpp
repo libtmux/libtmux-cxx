@@ -65,6 +65,12 @@ inline constexpr bool kHasPidfd = true;
 inline constexpr bool kHasPidfd = false;
 #endif
 
+// How long a reap waits after SIGKILL, once the caller's own budget is gone.
+// An untraced child dies at once, so this only has to cover scheduling. It
+// stays small because a traced child cannot be reaped here at all and must
+// reach the handoff well inside the bound teardown promises.
+inline constexpr std::chrono::milliseconds kReapGrace{100};
+
 int open_pidfd(pid_t pid) noexcept {
 #if defined(__linux__) && defined(SYS_pidfd_open) &&                                   \
     !defined(LIBTMUX_FORCE_PORTABLE_SYSCALLS)
@@ -461,7 +467,7 @@ ChildProcess::spawn(ProcessOptions options) {
   ChildProcess child{child_pid, stdout_read, stderr_read, options.capture_limit,
                      std::move(*reap_ticket)};
   if (destroy_result != 0) {
-    child.terminate_and_reap(ProcessClock::now() + std::chrono::milliseconds{100});
+    child.terminate_and_reap(ProcessClock::now() + kReapGrace);
     return libtmux::unexpected(
         system_error("posix_spawn_file_actions_destroy", destroy_result));
   }
@@ -582,7 +588,11 @@ void ChildProcess::cleanup(ProcessClock::time_point deadline) noexcept {
   update_status();
   if (owns_child_) {
     static_cast<void>(send_signal(SIGKILL));
-    static_cast<void>(wait_until(deadline));
+    // Callers reach cleanup because their deadline expired, so waiting on it
+    // again reaps nothing and hands a live child to the reaper thread. SIGKILL
+    // cannot be caught: what remains is bounded by the kernel, not by whatever
+    // budget ran out.
+    static_cast<void>(wait_until(std::max(deadline, ProcessClock::now() + kReapGrace)));
   }
   if (owns_child_) {
     handoff_reap();

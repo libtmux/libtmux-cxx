@@ -21,6 +21,13 @@ tmux fixture installed alongside the library:
 $ python3 tools/docs/api_index.py --include include/libtmux/testing --output docs/api-testing.md --page testing
 ```
 
+## The MCP server
+
+**[`apps/mcp/README.md`](../apps/mcp/README.md)** — the twelve tools, the five
+protocol versions it negotiates, JSON-RPC batching, progress and cancellation,
+how a socket is selected, and what a client is told when a call fails. It is a
+separate program in its own package, and nothing links it.
+
 ## Packaging
 
 **[`vcpkg-registry.md`](vcpkg-registry.md)** — this repository is a vcpkg git
@@ -43,6 +50,7 @@ Why a thing is the way it is, written when the decision was made.
 | [`design/engine-ops-study.md`](design/engine-ops-study.md) | What the Python operations experiment taught this library, and what was declined |
 | [`design/parity-gaps.md`](design/parity-gaps.md) | What the Python surface has that this does not, yet |
 | [`design/workspace-corpus.md`](design/workspace-corpus.md) | What running real tmuxp documents through the surface found |
+| [`design/windows-psmux.md`](design/windows-psmux.md) | What the Windows preview serves, what it refuses, and why refusing beats a near-enough answer |
 | [`design/bakeoff-and-rewrite.md`](design/bakeoff-and-rewrite.md) | How the comparisons below were run |
 
 ## Bakeoffs
