@@ -426,10 +426,16 @@ TEST(ControlDispatch, TheStreamThatJustifiesTheOpenConnectionIsReadable) {
   EXPECT_TRUE(announced) << "nothing in the stream announced the new window";
   EXPECT_TRUE(emitted) << "the pause-aware pane-output stream stayed silent";
 
-  // Nothing was dropped at this volume, and what was taken is not handed out
-  // a second time.
+  // Nothing was dropped at this volume, and what was taken is not handed out a
+  // second time. The stream is still live — the pane keeps printing — so the
+  // check is that a drained event does not come back rather than that nothing
+  // else arrives. `%window-add` fires once for the window created above and
+  // nothing here creates another, so a second sighting would be a redelivery.
   EXPECT_EQ(streamed->dropped_notifications(), 0U);
-  EXPECT_TRUE(streamed->take_notifications().empty());
+  for (const libtmux::Notification& notification : streamed->take_notifications()) {
+    EXPECT_FALSE(text(notification).starts_with("%window-add"))
+        << "a notification already taken was handed out again";
+  }
 }
 
 TEST(ControlDispatch, AFailureCarriesWhatTmuxSaid) {
