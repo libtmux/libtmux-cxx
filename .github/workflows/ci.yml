@@ -66,7 +66,7 @@ jobs:
           cd ~/tmux-src/tmux-${{ matrix.tmux-version }}
           git checkout ${{ matrix.tmux-version }}
           sh autogen.sh
-          ./configure --prefix=$HOME/tmux-builds/tmux-${{ matrix.tmux-version }} && make && make install
+          ./configure --prefix="$HOME/tmux-builds/tmux-${{ matrix.tmux-version }}" && make && make install
 
       - name: Build and test against tmux ${{ matrix.tmux-version }}
         run: |
@@ -699,10 +699,25 @@ jobs:
             sudo update-alternatives --install /usr/bin/$tool $tool /usr/bin/$tool-18 100
           done
 
+      # release.yml triggers on tags alone, so no other lane parses it. An
+      # unsupported key there fails every release before a job can start.
+      - name: Check the workflows parse
+        env:
+          ACTIONLINT_VERSION: 1.7.7
+          ACTIONLINT_SHA256: 023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757
+        run: |
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL -o "$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}"
+          echo "${ACTIONLINT_SHA256}  ${archive}" | sha256sum --check --strict
+          tar xzf "$archive" actionlint
+          ./actionlint -color
+
       - name: Check formatting
         run: |
-          find include src tests apps examples -name '*.hpp' -o -name '*.cpp' \
-            | xargs clang-format --dry-run --Werror --style=file
+          find include src tests apps examples \
+            \( -name '*.hpp' -o -name '*.cpp' \) \
+            -exec clang-format --dry-run --Werror --style=file {} +
 
       - name: Check the API reference is current
         run: |

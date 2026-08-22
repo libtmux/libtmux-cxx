@@ -1,0 +1,5 @@
+# actionlint ships a fixed list of GitHub-hosted runner labels and rejects
+# anything outside it. macos-15-intel is real and predates this pin.
+self-hosted-runner:
+  labels:
+    - macos-15-intel
