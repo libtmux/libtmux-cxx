@@ -47,6 +47,16 @@ was recorded as it landed.
   the backend in use, and which features it will serve. Asking is how a caller
   learns what a route supports; the alternative is discovering it by failure.
   (#4)
+- Add `Snapshot::take_in_session`, which takes a listing scoped to one session
+  and optionally under a timeout. (#4)
+- Add `same_entity_id`, which compares entity identity. On Windows a psmux
+  session keeps its own server, so an id is only unique beside its session id;
+  on POSIX the id alone still decides. (#4)
+- `SocketError` gains `path_unsupported`, reported when a socket path is asked
+  of psmux, which addresses servers by name only. `kSocketPathLimit` states the
+  platform's limit, and is zero where paths do not apply. (#4)
+- `Version` parsing stops at the first line of `tmux -V` output and refuses a
+  number that would overflow, rather than wrapping it. (#4)
 
 ### Control mode
 
