@@ -904,6 +904,7 @@ at a time and reports any that nothing notices.
 
 **Reference:**
 [API](docs/api.md) ·
+[Changelog](CHANGELOG.md) ·
 [Examples](examples/README.md) ·
 [MCP server](apps/mcp/README.md) ·
 [Tests](tests/README.md) ·
