@@ -24,7 +24,9 @@ class ProbeTest(unittest.TestCase):
         """Create isolated registry, vcpkg, and consumer fixtures."""
         self.temporary = tempfile.TemporaryDirectory(prefix="vcpkg-probe-test-")
         self.addCleanup(self.temporary.cleanup)
-        temporary = pathlib.Path(self.temporary.name)
+        # Resolved because the probe resolves --keep: Windows hands out an 8.3
+        # short path here, and comparing it to the long form fails.
+        temporary = pathlib.Path(self.temporary.name).resolve()
         self.root = temporary / "registry"
         self.vcpkg_root = temporary / "vcpkg"
         self.work = temporary / "work"
