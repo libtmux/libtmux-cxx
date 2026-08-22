@@ -46,20 +46,23 @@ repository is invisible to it.
 entry there as a port and reports an error for anything else, which is why this
 file is here rather than in `ports/README.md`.
 
-## The port and the root manifest disagree about Windows on purpose
+## Why the alpha.2 port excludes Windows
 
-[`ports/libtmux/vcpkg.json`](../ports/libtmux/vcpkg.json) excludes Windows;
-the repository-root [`vcpkg.json`](../vcpkg.json) does not. They are answering
-different questions.
+The immutable `0.1.0-alpha.2` registry entry excludes Windows. The
+repository-root [`vcpkg.json`](../vcpkg.json) describes the current checkout:
+it names the verified Linux, macOS, and standard x64 Windows desktop targets
+with `(linux | osx) | (windows & x64 & !uwp & !xbox & !mingw)`. In vcpkg,
+`windows` also includes UWP and MinGW, so those exclusions are load-bearing.
 
-The port describes a *published release*, fetched by hash from a tag. The
-released archive predates the Windows backend, so the port stays
-Windows-disabled until a release exists that carries it — advancing the version
-and the `SHA512` together. The root manifest describes the *current checkout*,
-which does build natively on Windows.
+Each registry port describes a *published release*, fetched by hash from a
+tag. Alpha.2 predates the Windows backend, so its exclusion never changes.
+The current checkout's native, package, and psmux gates use Visual Studio 2022.
+MinGW-specific CMake accommodations are not vcpkg package support evidence.
 
-So the exclusion lifts on the first release cut after the backend lands, not
-when the backend lands.
+The exclusion lifts only when a new tagged release passes the pinned Windows
+gates. That transition advances the version and `SHA512`, removes the old
+`port-version`, and changes the support expression explicitly; landing the
+backend alone does none of those things.
 
 ## The versions database is generated
 
@@ -87,12 +90,19 @@ locally — same contents, different gzip. So the order is fixed:
 
 1. `VERSION` is bumped and committed.
 2. The tag is pushed. [`release.yml`](../.github/workflows/release.yml) refuses
-   a tag that disagrees with `VERSION`.
+   a tag that disagrees with `VERSION`, is not merged into `master`, lacks a
+   successful exact-commit CI run, or moves while publication is in flight.
 3. GitHub generates the tarball; only now does its hash exist.
-4. The port's `version-semver` and `SHA512` are updated, and `x-add-version`
-   records the new git-tree.
+4. The tagged source passes the native Windows, pinned psmux, and all four
+   built-in x64 desktop linkage/CRT package gates.
+5. The port's `version-semver` and `SHA512` are updated, a previous
+   `port-version` is reset, the audited Windows policy is enabled explicitly,
+   and `x-add-version` records the new git-tree.
+6. Linux resolves the exact local and pushed registry baseline; fresh macOS
+   and Windows consumers then resolve that pushed baseline before the draft
+   release is created.
 
-Step 4 therefore lands on a commit *after* the tag it describes. That is
+Step 5 therefore lands on a commit *after* the tag it describes. That is
 expected, and it is why a consumer's baseline is not the release tag's commit:
 it is the registry commit that follows it. The release notes name the one to
 use.
@@ -127,8 +137,12 @@ $ python3 -m tools.vcpkg probe \
 
 That is the only check that exercises resolution: the baseline commit, the
 git-tree behind it, and the package config arriving somewhere `find_package`
-looks. With `--feature mcp` it also runs the installed server over stdio and
-requires it to answer with its tools.
+looks. With `--feature mcp` it also runs the installed server over persistent
+stdio, requires each lifecycle reply before advancing, checks the exact package
+version and versioned platform tool catalog, and validates every schema and
+discovery field that release provides. The probe refuses dirty port or versions
+data. Its optional `--keep` path must be new and outside both the project and
+vcpkg checkouts.
 
 ## Related
 

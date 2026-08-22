@@ -2,14 +2,18 @@
   "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
   "name": "libtmux",
   "version-semver": "0.1.0-alpha.2",
+  "maintainers": "Tony Narlock <tony@git-pull.com>",
   "description": "A typed C++ interface to the tmux terminal multiplexer.",
-  "maintainers": [
-    "Tony Narlock <tony@git-pull.com>"
-  ],
   "homepage": "https://github.com/libtmux/libtmux-cxx",
   "license": "MIT",
-  "dependencies": [],
+  "supports": "(linux | osx) | (windows & x64 & !uwp & !xbox & !mingw)",
   "features": {
+    "mcp": {
+      "description": "Build the MCP server (Windows exposes the psmux-safe subset)",
+      "dependencies": [
+        "nlohmann-json"
+      ]
+    },
     "tests": {
       "description": "Build the test suites",
       "dependencies": [
@@ -21,12 +25,6 @@
           "name": "yaml-cpp",
           "platform": "!windows & !mingw"
         }
-      ]
-    },
-    "mcp": {
-      "description": "Build the MCP server (Windows exposes the psmux-safe subset)",
-      "dependencies": [
-        "nlohmann-json"
       ]
     }
   }

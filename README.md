@@ -78,7 +78,7 @@ failure by throwing.)
 | **tmux** | 3.2a or newer, through `master` — [with these exceptions](#compatibility) |
 | **C++** | C++23 (clang 17+, GCC 13+, Visual Studio 2022 17.3+), or C++20 with `LIBTMUX_CXX_STANDARD=20` |
 | **CMake** | 3.25 |
-| **Platforms** | Linux, macOS; experimental Windows x64 support through [psmux] |
+| **Platforms** | Linux, macOS; experimental x64 desktop Windows support with Visual Studio 2022 through [psmux] |
 | **Dependencies** | None for the library |
 
 ## Installation
@@ -104,9 +104,10 @@ target_link_libraries(your_target PRIVATE libtmux::libtmux)
 Embedded this way the library builds alone: its tests, examples and the MCP
 server all default off when it is not the top-level project.
 
-The published alpha above is POSIX-only. Experimental Windows support is in
-this checkout; pin a commit containing it, or build the checkout directly,
-until a later tagged release includes the Windows backend.
+The `v0.1.0-alpha.2` release above is POSIX-only. This checkout adds the
+bounded x64 desktop Windows preview for Visual Studio 2022 and the audited
+psmux build; pin a commit containing it, or build the checkout directly,
+until a later tagged release passes the Windows publication gate.
 
 ### Build and install from source
 
@@ -206,12 +207,22 @@ because it ships from this same source. Ask for it by name:
 }
 ```
 
-It installs as a program, at
-`installed/<triplet>/tools/libtmux/libtmux-mcp-server` — nothing links it.
+It installs as a program at
+`<installed-root>/<triplet>/tools/libtmux/libtmux-mcp-server[.exe]`; manifest
+mode normally uses `vcpkg_installed` as the root, classic mode uses
+`<vcpkg-root>/installed`, and `--x-install-root` overrides both. Nothing links
+the executable. The current checkout accepts `--socket-name` or `--socket-path`
+and retains one positional path on POSIX; without a selector, only a valid
+inherited `TMUX` route is accepted. Alpha.2's legacy POSIX server instead takes
+one socket path as its sole argument. Always supply that release's exact route
+because omitting it falls back to inherited or default tmux.
 
-The published alpha predates the Windows backend, so the port stays
-Windows-disabled. Build this checkout directly on Windows until a release
-advances the port's version and archive hash together.
+The immutable `0.1.0-alpha.2` registry entry predates the Windows backend and
+remains Windows-disabled. A later tagged release can enable the standard x64
+desktop target only after passing the pinned native psmux and package gates,
+advancing its `version-semver` and archive hash, and resetting its packaging
+revision. MinGW, UWP, Xbox, and non-x64 Windows triplets remain excluded from
+the vcpkg package; the other packaged targets are Linux and macOS.
 
 ### Build options
 

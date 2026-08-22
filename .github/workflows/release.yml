@@ -5,11 +5,12 @@ on:
     tags: ['v*']
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
+  group: release-registry
+  queue: max
 
 defaults:
   run:
@@ -29,6 +30,53 @@ jobs:
       version: ${{ steps.archive.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: The tag is merged, fixed, and CI-proven
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --no-tags origin master
+          event_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          tag_commit="$(git rev-parse "refs/tags/${GITHUB_REF_NAME}^{commit}")"
+          remote_tag="$(git ls-remote --tags origin "refs/tags/${GITHUB_REF_NAME}^{}" | cut -f1)"
+          if [ -z "$remote_tag" ]; then
+            remote_tag="$(git ls-remote --tags origin "refs/tags/${GITHUB_REF_NAME}" | cut -f1)"
+          fi
+          if [ "$event_commit" != "$tag_commit" ] || [ "$event_commit" != "$remote_tag" ]; then
+            echo "tag ${GITHUB_REF_NAME} moved away from event commit ${event_commit}" >&2
+            exit 1
+          fi
+          git merge-base --is-ancestor "$event_commit" origin/master || {
+            echo "tag commit ${event_commit} is not merged into master" >&2
+            exit 1
+          }
+          export EVENT_COMMIT="$event_commit"
+
+          gh api \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${event_commit}&status=success&per_page=100" \
+            > ci-runs.json
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import sys
+
+          sha = os.environ["EVENT_COMMIT"]
+          runs = json.loads(pathlib.Path("ci-runs.json").read_text())["workflow_runs"]
+          proven = [
+              run for run in runs
+              if run.get("head_sha") == sha
+              and run.get("conclusion") == "success"
+              and run.get("event") in {"push", "workflow_dispatch"}
+          ]
+          if not proven:
+              sys.exit(f"no successful ci workflow run attests exact commit {sha}")
+          print("CI run:", proven[0]["html_url"])
+          PY
 
       # The tag names the release; `VERSION` is what the library reports about
       # itself and what CMake writes into the package config. Nothing kept the
@@ -54,7 +102,7 @@ jobs:
           # exactly what is committed at the tag, reproducibly, with no build
           # output or local scratch in it.
           git archive --format=tar.gz --prefix="libtmux-cxx-${version}/" \
-            -o "libtmux-cxx-${version}.tar.gz" "${GITHUB_REF_NAME}"
+            -o "libtmux-cxx-${version}.tar.gz" "${GITHUB_SHA}^{commit}"
           sha512="$(sha512sum "libtmux-cxx-${version}.tar.gz" | cut -d' ' -f1)"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "sha512=${sha512}" >> "$GITHUB_OUTPUT"
@@ -79,6 +127,13 @@ jobs:
             sleep 10
           done
           test -s generated.tar.gz
+          mkdir event-tree generated-tree
+          git archive "${GITHUB_SHA}^{commit}" | tar -xf - -C event-tree
+          tar -xzf generated.tar.gz --strip-components=1 -C generated-tree
+          diff --recursive --brief --no-dereference event-tree generated-tree
+          (cd event-tree && find . -printf '%P %y %m %l\n' | sort) > event-tree.txt
+          (cd generated-tree && find . -printf '%P %y %m %l\n' | sort) > generated-tree.txt
+          diff --unified event-tree.txt generated-tree.txt
           sha512="$(sha512sum generated.tar.gz | cut -d" " -f1)"
           echo "sha512=${sha512}" >> "$GITHUB_OUTPUT"
           echo "SHA512 for ports/libtmux/portfile.cmake: ${sha512}"
@@ -186,54 +241,279 @@ jobs:
           if-no-files-found: error
 
   server-windows:
+    needs: [source]
     runs-on: windows-2022
-    timeout-minutes: 30
+    timeout-minutes: 150
+    outputs:
+      base_port_tree: ${{ steps.validated-port.outputs.base_tree }}
+      port_patch_sha256: ${{ steps.validated-port.outputs.sha256 }}
+      validated_port_tree: ${{ steps.validated-port.outputs.validated_tree }}
     defaults:
       run:
         shell: pwsh
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Build the Windows server
+      - name: Check Windows registry tooling
+        run: python -m unittest tools.vcpkg.test_probe tools.vcpkg.test_release
+
+      - name: Install the pinned psmux release
         run: |
+          $url = "https://github.com/psmux/psmux/releases/download/v3.3.7/psmux-v3.3.7-windows-x64.zip"
+          $expected = "60ff7b236f64184921cef3c1ff2611aa5a36fcc7ed8e2a58e968b8ded57f6028"
+          $archive = Join-Path $env:RUNNER_TEMP "psmux-v3.3.7-windows-x64.zip"
+          $destination = Join-Path $env:RUNNER_TEMP "psmux-v3.3.7"
+
+          curl.exe --fail --location --retry 3 --output $archive $url
+          if ($LASTEXITCODE -ne 0) {
+            throw "failed to download psmux v3.3.7"
+          }
+          $actual = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) {
+            throw "psmux archive SHA-256 mismatch: expected $expected, got $actual"
+          }
+
+          Expand-Archive -Path $archive -DestinationPath $destination
+          $binary = Join-Path $destination "tmux.exe"
+          $expectedBinary = "f3a4ad033f0332972bc79b8d695387adb4fcd1d268074e113c1c84e5381051a6"
+          $actualBinary = (Get-FileHash -Algorithm SHA256 $binary).Hash.ToLowerInvariant()
+          if ($actualBinary -ne $expectedBinary) {
+            throw "psmux executable SHA-256 mismatch: expected $expectedBinary, got $actualBinary"
+          }
+          $reported = @(& $binary -V 2>&1)
+          if ($LASTEXITCODE -ne 0 -or $reported[0] -ne "tmux 3.3.7") {
+            throw "unexpected psmux version: $($reported -join '; ')"
+          }
+          $reported
+          $destination | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "LIBTMUX_PSMUX_EXE=$binary" | Out-File `
+            -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build the tagged Windows gates
+        run: |
+          $expectedPsmux = Join-Path $env:RUNNER_TEMP "psmux-v3.3.7\tmux.exe"
+          $resolvedPsmux = (Get-Command tmux.exe -ErrorAction Stop).Source
+          if ((Resolve-Path $resolvedPsmux).Path -ne (Resolve-Path $expectedPsmux).Path) {
+            throw "psmux route changed: expected $expectedPsmux, got $resolvedPsmux"
+          }
           cmake -S . -B build/rel -G "Visual Studio 17 2022" -A x64 `
             -DLIBTMUX_BUILD_MCP_SERVER=ON -DLIBTMUX_FETCH_DEPS=ON `
-            -DLIBTMUX_BUILD_TESTS=OFF -DLIBTMUX_BUILD_EXAMPLES=OFF `
+            -DLIBTMUX_BUILD_TESTS=ON -DLIBTMUX_BUILD_EXAMPLES=ON `
+            -DLIBTMUX_BUILD_TESTING_LIBRARY=OFF `
+            -DLIBTMUX_BUILD_FUZZERS=OFF `
+            -DLIBTMUX_WARNINGS_AS_ERRORS=ON `
+            -DLIBTMUX_CXX_STANDARD=23 `
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
-          cmake --build build/rel --config Release --target libtmux_mcp_server
+          cmake --build build/rel --config Release
 
-      - name: It answers before it is published
+      - name: Run the tagged Windows gates
         run: |
-          $binary = Join-Path $PWD "build\rel\apps\mcp\Release\libtmux-mcp-server.exe"
-          if (-not (Test-Path $binary)) {
-            throw "MCP server is missing: $binary"
+          $resolvedPsmux = (Get-Command tmux.exe -ErrorAction Stop).Source
+          if ((Resolve-Path $resolvedPsmux).Path -ne (Resolve-Path $env:LIBTMUX_PSMUX_EXE).Path) {
+            throw "psmux route changed before CTest: $resolvedPsmux"
           }
-          $requests = @(
-            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"release","version":"1"}}}'
-            '{"jsonrpc":"2.0","method":"notifications/initialized"}'
-            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
-          )
-          $socketName = "libtmux-cxx-release-$($env:GITHUB_RUN_ID)-$($env:GITHUB_RUN_ATTEMPT)-windows"
-          $lines = @($requests | & $binary --socket-name $socketName)
+          ctest --test-dir build/rel -C Release `
+            --no-tests=error --output-on-failure
+
+      - name: Install and consume the tagged package
+        run: |
+          $prefix = Join-Path $PWD "build\release-prefix"
+          cmake --install build/rel --config Release --prefix $prefix
+          cmake -S examples/consume -B build/release-consume `
+            -G "Visual Studio 17 2022" -A x64 `
+            "-DCMAKE_PREFIX_PATH=$prefix" `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+          cmake --build build/release-consume --config Release
+          & ".\build\release-consume\Release\consume.exe"
           if ($LASTEXITCODE -ne 0) {
-            throw "MCP server exited with $LASTEXITCODE"
+            throw "the installed tagged package consumer failed"
           }
-          $replies = @($lines | ForEach-Object { $_ | ConvertFrom-Json })
-          $catalog = @($replies | Where-Object { $_.id -eq 2 })
-          if ($catalog.Count -ne 1) {
-            throw "expected one tools/list reply, got $($catalog.Count)"
+
+      - name: Build the transitioned vcpkg port
+        env:
+          VERSION: ${{ needs.source.outputs.version }}
+          PORT_SHA512: ${{ needs.source.outputs.port_sha512 }}
+        run: |
+          python -m tools.vcpkg release `
+            --version $env:VERSION --sha512 $env:PORT_SHA512 --enable-windows
+          if ($LASTEXITCODE -ne 0) {
+            throw "the vcpkg release transition failed"
           }
-          $actual = @($catalog[0].result.tools.name | Sort-Object)
-          $expected = @(
-            "inspect_tmux"
-            "list_session_panes"
-            "list_sessions"
-            "list_windows"
+
+          $vcpkgCommit = "94a541197763a4f449a1b91478df48c0584a6256"
+          $vcpkgRoot = Join-Path $env:RUNNER_TEMP "vcpkg"
+          git clone --filter=blob:none https://github.com/microsoft/vcpkg.git $vcpkgRoot
+          if ($LASTEXITCODE -ne 0) {
+            throw "failed to clone vcpkg"
+          }
+          git -C $vcpkgRoot checkout --detach $vcpkgCommit
+          if ($LASTEXITCODE -ne 0) {
+            throw "failed to check out pinned vcpkg $vcpkgCommit"
+          }
+          & (Join-Path $vcpkgRoot "bootstrap-vcpkg.bat") -disableMetrics
+          if ($LASTEXITCODE -ne 0) {
+            throw "failed to bootstrap vcpkg"
+          }
+
+          $vcpkg = Join-Path $vcpkgRoot "vcpkg.exe"
+          $overlay = Join-Path $PWD "ports"
+          $unsupported = @(
+            "arm64-android-release"
+            "arm64-ios"
+            "x86-windows"
+            "arm64-windows"
+            "x64-freebsd"
+            "x64-uwp"
+            "x64-mingw-dynamic"
+            "x64-xbox-scarlett"
           )
-          $difference = @(Compare-Object -ReferenceObject $expected -DifferenceObject $actual)
-          if ($difference.Count -ne 0) {
-            throw "unexpected Windows MCP tools: $($actual -join ', ')"
+          foreach ($triplet in $unsupported) {
+            $savedNativePreference = $PSNativeCommandUseErrorActionPreference
+            $PSNativeCommandUseErrorActionPreference = $false
+            try {
+              $output = @(& $vcpkg install --classic --dry-run `
+                "libtmux:$triplet" "--overlay-ports=$overlay" 2>&1)
+              $status = $LASTEXITCODE
+            } finally {
+              $PSNativeCommandUseErrorActionPreference = $savedNativePreference
+            }
+            $reported = $output -join "`n"
+            if ($status -eq 0 -or -not $reported.Contains("is only supported on")) {
+              throw "the transitioned port admitted $triplet`n$reported"
+            }
+            $global:LASTEXITCODE = 0
           }
+
+          foreach ($triplet in @(
+            "x64-windows"
+            "x64-windows-release"
+            "x64-windows-static"
+            "x64-windows-static-md"
+          )) {
+            $installed = Join-Path $PWD "build\vcpkg-$triplet"
+            & $vcpkg install --classic "libtmux[mcp]:$triplet" `
+              "--overlay-ports=$overlay" "--x-install-root=$installed"
+            if ($LASTEXITCODE -ne 0) {
+              throw "the transitioned port failed for $triplet"
+            }
+
+            $server = Join-Path $installed "$triplet\tools\libtmux\libtmux-mcp-server.exe"
+            if (-not (Test-Path $server)) {
+              throw "the $triplet port installed no MCP server: $server"
+            }
+            $resolvedPsmux = (Get-Command tmux.exe -ErrorAction Stop).Source
+            if ((Resolve-Path $resolvedPsmux).Path -ne (Resolve-Path $env:LIBTMUX_PSMUX_EXE).Path) {
+              throw "psmux route changed before the $triplet smoke: $resolvedPsmux"
+            }
+            & powershell.exe -NoLogo -NoProfile -NonInteractive `
+              -ExecutionPolicy Bypass -File `
+              ".\apps\mcp\tests\windows_psmux_smoke.ps1" -Server $server
+            if ($LASTEXITCODE -ne 0) {
+              throw "the installed $triplet MCP server failed its psmux smoke"
+            }
+
+            $consumerBuild = Join-Path $PWD "build\consume-$triplet"
+            $prefix = Join-Path $installed $triplet
+            $runtime = if ($triplet -eq "x64-windows-static") {
+              "MultiThreaded"
+            } else {
+              "MultiThreadedDLL"
+            }
+
+            $negativeSource = Join-Path $PWD "build\testing-source-$triplet"
+            $negativeBuild = Join-Path $PWD "build\testing-build-$triplet"
+            New-Item -ItemType Directory -Force -Path $negativeSource | Out-Null
+            @(
+              'cmake_minimum_required(VERSION 3.25)'
+              'project(libtmux_windows_testing_consumer LANGUAGES CXX)'
+              'find_package(libtmux REQUIRED COMPONENTS testing)'
+            ) | Set-Content `
+              -Path (Join-Path $negativeSource "CMakeLists.txt") -Encoding ascii
+            $savedNativePreference = $PSNativeCommandUseErrorActionPreference
+            $PSNativeCommandUseErrorActionPreference = $false
+            try {
+              $negativeOutput = @(& cmake -S $negativeSource -B $negativeBuild `
+                -G "Visual Studio 17 2022" -A x64 `
+                "-DCMAKE_TOOLCHAIN_FILE=$(Join-Path $vcpkgRoot 'scripts\buildsystems\vcpkg.cmake')" `
+                "-DVCPKG_TARGET_TRIPLET=$triplet" `
+                "-DVCPKG_INSTALLED_DIR=$installed" `
+                -DVCPKG_MANIFEST_MODE=OFF `
+                "-DCMAKE_MSVC_RUNTIME_LIBRARY=$runtime" 2>&1)
+              $negativeStatus = $LASTEXITCODE
+            } finally {
+              $PSNativeCommandUseErrorActionPreference = $savedNativePreference
+            }
+            $negativeReported = $negativeOutput -join "`n"
+            $negativeNormalized = $negativeReported -replace '\s+', ' '
+            $negativeExpected = "the libtmux::testing component is POSIX-only and is unavailable in Windows packages"
+            if ($negativeStatus -eq 0 -or -not $negativeNormalized.Contains($negativeExpected)) {
+              throw "the $triplet testing-component rejection was not truthful`n$negativeReported"
+            }
+            $global:LASTEXITCODE = 0
+
+            cmake -S examples/consume -B $consumerBuild `
+              -G "Visual Studio 17 2022" -A x64 `
+              "-DCMAKE_TOOLCHAIN_FILE=$(Join-Path $vcpkgRoot 'scripts\buildsystems\vcpkg.cmake')" `
+              "-DVCPKG_TARGET_TRIPLET=$triplet" `
+              "-DVCPKG_INSTALLED_DIR=$installed" `
+              -DVCPKG_MANIFEST_MODE=OFF `
+              "-DCMAKE_MSVC_RUNTIME_LIBRARY=$runtime"
+            if ($LASTEXITCODE -ne 0) {
+              throw "the $triplet package consumer did not configure"
+            }
+            cmake --build $consumerBuild --config Release
+            if ($LASTEXITCODE -ne 0) {
+              throw "the $triplet package consumer did not build"
+            }
+            $env:PATH = "$(Join-Path $prefix 'bin');$env:PATH"
+            & (Join-Path $consumerBuild "Release\consume.exe")
+            if ($LASTEXITCODE -ne 0) {
+              throw "the $triplet package consumer failed"
+            }
+          }
+
+      - name: Seal the validated port transition
+        id: validated-port
+        run: |
+          $changed = @(git diff --name-only -- ports/libtmux | Sort-Object)
+          $expected = @(
+            "ports/libtmux/portfile.cmake"
+            "ports/libtmux/vcpkg.json"
+          )
+          $difference = @(
+            Compare-Object -ReferenceObject $expected -DifferenceObject $changed
+          )
+          if ($difference.Count -ne 0) {
+            throw "unexpected release transition files: $($changed -join ', ')"
+          }
+
+          New-Item -ItemType Directory -Force -Path build | Out-Null
+          cmd.exe /d /s /c `
+            "git diff --binary --full-index --no-ext-diff -- ports/libtmux > build\validated-port.patch"
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path build\validated-port.patch)) {
+            throw "could not capture the validated port transition"
+          }
+          $patchHash = (Get-FileHash `
+            -Algorithm SHA256 build\validated-port.patch).Hash.ToLowerInvariant()
+          $baseTree = (git rev-parse HEAD:ports/libtmux).Trim()
+          git add ports/libtmux
+          $rootTree = (git write-tree).Trim()
+          $validatedTree = (git rev-parse "${rootTree}:ports/libtmux").Trim()
+          if ($LASTEXITCODE -ne 0) {
+            throw "could not identify the validated port tree"
+          }
+          "base_tree=$baseTree" | Out-File `
+            -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "sha256=$patchHash" | Out-File `
+            -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "validated_tree=$validatedTree" | Out-File `
+            -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: validated-windows-port
+          path: build/validated-port.patch
+          if-no-files-found: error
 
       - name: Name it for Windows
         run: |
@@ -251,8 +531,26 @@ jobs:
             libtmux-mcp-server-*
           if-no-files-found: error
 
+      - name: Check private psmux cleanup
+        if: always()
+        run: |
+          $state = Join-Path $HOME ".psmux"
+          if (Test-Path $state) {
+            $leaks = @(Get-ChildItem -Path $state -Recurse -File |
+              Where-Object { $_.Name -like "libtmux-cxx-*" })
+            if ($leaks.Count -ne 0) {
+              throw "private psmux state leaked:`n$($leaks.FullName -join "`n")"
+            }
+          }
+
   publish:
-    needs: [source, server, server-windows]
+    needs:
+      - source
+      - server
+      - server-windows
+      - registry
+      - registry-macos
+      - registry-windows
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -263,9 +561,31 @@ jobs:
       attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: The immutable tag and registry baseline still agree
+        env:
+          BASELINE: ${{ needs.registry.outputs.baseline }}
+        run: |
+          event_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          remote_tag="$(git ls-remote --tags origin "refs/tags/${GITHUB_REF_NAME}^{}" | cut -f1)"
+          if [ -z "$remote_tag" ]; then
+            remote_tag="$(git ls-remote --tags origin "refs/tags/${GITHUB_REF_NAME}" | cut -f1)"
+          fi
+          test "$event_commit" = "$remote_tag"
+          git fetch --no-tags origin master
+          test "$(git rev-parse origin/master)" = "$BASELINE"
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
+          name: source
+          path: artifacts
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: server-*
           path: artifacts
           merge-multiple: true
 
@@ -311,7 +631,8 @@ jobs:
             $ vcpkg x-update-baseline --add-initial-baseline
             ```
 
-            Then add `vcpkg-configuration.json`, leaving `baseline` empty:
+            Then add `vcpkg-configuration.json` with this release's exact
+            registry baseline:
 
             ```json
             {
@@ -319,25 +640,24 @@ jobs:
                 {
                   "kind": "git",
                   "repository": "https://github.com/${{ github.repository }}",
-                  "baseline": "",
+                  "baseline": "${{ needs.registry.outputs.baseline }}",
                   "packages": ["libtmux"]
                 }
               ]
             }
             ```
 
-            This fills it in, and moves an existing pin forward to this
-            release:
-
-            ```console
-            $ vcpkg x-update-baseline
-            ```
-
             The `libtmux-mcp-server-*` binaries below are the exception —
             that is a program, not a library. Verify one with
             `gh attestation verify <file> --repo ${{ github.repository }}`.
 
-            [registry]: https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/vcpkg-registry.md
+            Windows is a bounded x64 desktop preview through the pinned psmux
+            build. MinGW, UWP, Xbox, non-x64 targets, persistent control mode,
+            and unsafe typed mutations remain unsupported; see the
+            [Windows boundary][windows] before adopting it.
+
+            [registry]: https://github.com/${{ github.repository }}/blob/${{ needs.registry.outputs.baseline }}/docs/vcpkg-registry.md
+            [windows]: https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/README.md#windows-through-psmux
 
             ## Checksums
 
@@ -361,9 +681,11 @@ jobs:
     # not byte-identical to `git archive`'s. So the port is pointed at a
     # release only after that release is tagged, which is why this commit lands
     # on master rather than inside the tag it describes.
-    needs: [source]
+    needs: [source, server, server-windows]
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      baseline: ${{ steps.publish.outputs.baseline }}
     permissions:
       contents: write
     steps:
@@ -371,54 +693,210 @@ jobs:
         with:
           ref: master
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Point the port at this release
-        env:
-          VERSION: ${{ needs.source.outputs.version }}
-          PORT_SHA512: ${{ needs.source.outputs.port_sha512 }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: validated-windows-port
+          path: build/validated-port
+
+      - name: The release commit and tag still belong to master
         run: |
-          python3 -m tools.vcpkg release \
-            --version "$VERSION" --sha512 "$PORT_SHA512"
+          event_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          remote_tag="$(git ls-remote --tags origin "refs/tags/${GITHUB_REF_NAME}^{}" | cut -f1)"
+          if [ -z "$remote_tag" ]; then
+            remote_tag="$(git ls-remote --tags origin "refs/tags/${GITHUB_REF_NAME}" | cut -f1)"
+          fi
+          if [ "$event_commit" != "$remote_tag" ]; then
+            echo "tag ${GITHUB_REF_NAME} moved during the release" >&2
+            exit 1
+          fi
+          git merge-base --is-ancestor "$event_commit" HEAD || {
+            echo "tag commit ${event_commit} is not an ancestor of master" >&2
+            exit 1
+          }
 
-      - name: Publish it in the versions database
+      - name: Apply the exact validated port transition
+        id: port
+        env:
+          BASE_PORT_TREE: ${{ needs.server-windows.outputs.base_port_tree }}
+          PORT_PATCH_SHA256: ${{ needs.server-windows.outputs.port_patch_sha256 }}
+          VALIDATED_PORT_TREE: ${{ needs.server-windows.outputs.validated_port_tree }}
+        run: |
+          patch=build/validated-port/validated-port.patch
+          echo "${PORT_PATCH_SHA256}  ${patch}" | sha256sum -c -
+
+          current="$(git rev-parse HEAD:ports/libtmux)"
+          if [ "$current" = "$VALIDATED_PORT_TREE" ]; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$current" != "$BASE_PORT_TREE" ]; then
+            echo "master port tree $current is neither tagged base" \
+              "$BASE_PORT_TREE nor validated result $VALIDATED_PORT_TREE" >&2
+            exit 1
+          fi
+
+          git apply --index "$patch"
+          root_tree="$(git write-tree)"
+          actual="$(git rev-parse "${root_tree}:ports/libtmux")"
+          if [ "$actual" != "$VALIDATED_PORT_TREE" ]; then
+            echo "validated port tree mismatch: expected $VALIDATED_PORT_TREE, got $actual" >&2
+            exit 1
+          fi
+          echo "already=false" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare and prove the versions database
+        id: prepare
         env:
           VERSION: ${{ needs.source.outputs.version }}
+          ALREADY_PUBLISHED: ${{ steps.port.outputs.already }}
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email \
             '41898282+github-actions[bot]@users.noreply.github.com'
 
+          git clone --filter=blob:none \
+            https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP/vcpkg"
+          git -C "$RUNNER_TEMP/vcpkg" checkout --detach \
+            94a541197763a4f449a1b91478df48c0584a6256
+          "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+
           # `x-add-version` records the git-tree of what is committed, so the
           # port goes in first. Folding `versions/` into the same commit with
           # --amend afterwards leaves the `ports/` subtree hash untouched, so
           # the tree it recorded still describes the commit carrying it.
-          git add ports
-          if git diff --cached --quiet; then
-            echo "the port already describes ${VERSION}"
-            exit 0
-          fi
-          git commit -m "vcpkg(feat[registry]): Serve ${VERSION}" \
-            -m "why: The tag exists, so the archive it names exists, so the port can finally be pointed at it." \
-            -m "what:
-          - Set the port's version and source hash to ${VERSION}
-          - Record the git-tree it publishes from"
+          if [ "$ALREADY_PUBLISHED" != true ]; then
+            git commit -m "$(cat <<EOF
+          vcpkg(feat[registry]): Serve ${VERSION}
 
+          why: The tagged source passed every platform and package gate.
+
+          what:
+          - Publish the exact Windows-validated port transition
+          - Record the git-tree served by the registry baseline
+          EOF
+          )"
+
+            "$RUNNER_TEMP/vcpkg/vcpkg" \
+              --x-builtin-ports-root=./ports \
+              --x-builtin-registry-versions-dir=./versions \
+              x-add-version --all --verbose
+
+            git add versions
+            if git diff --cached --quiet; then
+              echo "x-add-version recorded no versions for ${VERSION}" >&2
+              exit 1
+            fi
+            git commit --amend --no-edit
+          fi
+
+          python3 -m tools.vcpkg check
+          python3 -m tools.vcpkg probe \
+            --vcpkg "$RUNNER_TEMP/vcpkg" \
+            --triplet x64-linux \
+            --feature mcp
+
+          event_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          remote_tag="$(git ls-remote --tags origin "refs/tags/${GITHUB_REF_NAME}^{}" | cut -f1)"
+          if [ -z "$remote_tag" ]; then
+            remote_tag="$(git ls-remote --tags origin "refs/tags/${GITHUB_REF_NAME}" | cut -f1)"
+          fi
+          test "$event_commit" = "$remote_tag"
+
+          echo "baseline=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Push the exact prepared baseline
+        if: steps.port.outputs.already != 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          askpass="$(mktemp)"
+          trap 'rm -f "$askpass"' EXIT
+          cat > "$askpass" <<'SH'
+          #!/bin/sh
+          case "$1" in
+            *Username*) printf '%s\n' x-access-token ;;
+            *) printf '%s\n' "$GITHUB_TOKEN" ;;
+          esac
+          SH
+          chmod 700 "$askpass"
+          GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0 \
+            git push "https://github.com/${GITHUB_REPOSITORY}.git" HEAD:master
+
+      - name: Resolve the public baseline
+        id: publish
+        env:
+          BASELINE: ${{ steps.prepare.outputs.baseline }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$BASELINE"
+          python3 -m tools.vcpkg probe \
+            --vcpkg "$RUNNER_TEMP/vcpkg" \
+            --triplet x64-linux \
+            --feature mcp \
+            --repository "https://github.com/${GITHUB_REPOSITORY}"
+          echo "baseline=${BASELINE}" >> "$GITHUB_OUTPUT"
+
+  registry-windows:
+    needs: [registry]
+    runs-on: windows-2022
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.registry.outputs.baseline }}
+
+      - name: Bootstrap the pinned vcpkg client
+        run: |
+          $vcpkgCommit = "94a541197763a4f449a1b91478df48c0584a6256"
+          $vcpkgRoot = Join-Path $env:RUNNER_TEMP "vcpkg"
+          git clone --filter=blob:none https://github.com/microsoft/vcpkg.git $vcpkgRoot
+          if ($LASTEXITCODE -ne 0) {
+            throw "failed to clone vcpkg"
+          }
+          git -C $vcpkgRoot checkout --detach $vcpkgCommit
+          if ($LASTEXITCODE -ne 0) {
+            throw "failed to check out pinned vcpkg $vcpkgCommit"
+          }
+          & (Join-Path $vcpkgRoot "bootstrap-vcpkg.bat") -disableMetrics
+          if ($LASTEXITCODE -ne 0) {
+            throw "failed to bootstrap vcpkg"
+          }
+          "LIBTMUX_VCPKG_ROOT=$vcpkgRoot" | Out-File `
+            -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Resolve and consume the published Windows baseline
+        run: |
+          python -m tools.vcpkg probe `
+            --vcpkg $env:LIBTMUX_VCPKG_ROOT `
+            --triplet x64-windows `
+            --feature mcp `
+            --repository "https://github.com/$env:GITHUB_REPOSITORY"
+          if ($LASTEXITCODE -ne 0) {
+            throw "the published Windows registry baseline did not resolve"
+          }
+
+  registry-macos:
+    needs: [registry]
+    runs-on: macos-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.registry.outputs.baseline }}
+
+      - name: Resolve and consume the published macOS baseline
+        run: |
           git clone --filter=blob:none \
             https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP/vcpkg"
+          git -C "$RUNNER_TEMP/vcpkg" checkout --detach \
+            94a541197763a4f449a1b91478df48c0584a6256
           "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
-          "$RUNNER_TEMP/vcpkg/vcpkg" \
-            --x-builtin-ports-root=./ports \
-            --x-builtin-registry-versions-dir=./versions \
-            x-add-version --all --verbose
-
-          git add versions
-          git commit --amend --no-edit
-          python3 -m tools.vcpkg check
-
-          # Another commit may have landed while the release ran. Rebasing can
-          # move the port's tree, so the check runs again before the retry.
-          if ! git push origin HEAD:master; then
-            git pull --rebase origin master
-            python3 -m tools.vcpkg check
-            git push origin HEAD:master
-          fi
+          python3 -m tools.vcpkg probe \
+            --vcpkg "$RUNNER_TEMP/vcpkg" \
+            --triplet arm64-osx \
+            --feature mcp \
+            --repository "https://github.com/${GITHUB_REPOSITORY}"
