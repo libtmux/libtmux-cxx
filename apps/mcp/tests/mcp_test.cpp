@@ -108,7 +108,7 @@ const std::string& string_field(const ToolOutput& output, std::string_view name)
   return std::get<std::string>(output.structured.at(std::string{name}).value);
 }
 
-TEST(McpTools, ListsTheSessionsOfARealServer) {
+TEST(McpToolsTmux, ListsTheSessionsOfARealServer) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const auto result = default_tools().call(connect(*fixture), "list_sessions", {});
@@ -120,7 +120,7 @@ TEST(McpTools, ListsTheSessionsOfARealServer) {
   EXPECT_EQ(std::get<std::string>(session.at("name").value), fixture->session_name());
 }
 
-TEST(McpTools, SeparatesACallerMistakeFromATmuxRefusal) {
+TEST(McpToolsTmux, SeparatesACallerMistakeFromATmuxRefusal) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
@@ -140,7 +140,7 @@ TEST(McpTools, SeparatesACallerMistakeFromATmuxRefusal) {
   EXPECT_FALSE(refused.error().caller_error);
 }
 
-TEST(McpTools, CapturesAPaneThroughTheLibrary) {
+TEST(McpToolsTmux, CapturesAPaneThroughTheLibrary) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
@@ -150,7 +150,7 @@ TEST(McpTools, CapturesAPaneThroughTheLibrary) {
   ASSERT_TRUE(captured.has_value()) << captured.error().message;
 }
 
-TEST(McpTools, CreatesAWindowAndTypesIntoItsPane) {
+TEST(McpToolsTmux, CreatesAWindowAndTypesIntoItsPane) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
@@ -281,7 +281,7 @@ TEST(McpTools, ObservesCancellationBetweenBoundedWaitCommands) {
   EXPECT_LT(elapsed, 100ms);
 }
 
-TEST(McpTools, ReportsAPaneThatDisappearsDuringSearch) {
+TEST(McpToolsTmux, ReportsAPaneThatDisappearsDuringSearch) {
   auto started = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(started.has_value()) << started.error();
   auto fixture = std::make_unique<libtmux::test::ScopedTmuxServer>(*std::move(started));

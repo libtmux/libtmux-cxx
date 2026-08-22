@@ -7,6 +7,8 @@
 // touching an installed header, and the exact argv every operation sends,
 // which a test against a live server can only observe indirectly.
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
@@ -20,8 +22,10 @@
 #include "libtmux/entities.hpp"
 #include "libtmux/server.hpp"
 
+#include "acquire.hpp"
 #include "backend.hpp"
 #include "control_backend.hpp"
+#include "notification_buffer.hpp"
 
 namespace {
 
@@ -219,6 +223,115 @@ TEST(BackendSeam, ServerRoutingPreservesControlPolicy) {
   EXPECT_EQ(routed.line_bytes, 4321U);
   EXPECT_TRUE(routed.pane_output);
   EXPECT_EQ(routed.pause_after, std::chrono::seconds{17});
+}
+
+TEST(BackendSeam, ExpansionRejectsAReplyFromAnotherTarget) {
+  const std::string separator{libtmux::kFormatSeparator};
+  auto backend = std::make_shared<ScriptedBackend>(
+      std::vector<std::string>{"%8" + separator + "wrong\n"});
+
+  const auto expanded =
+      libtmux::detail::expand_format(backend, "%7", "pane_id", "pane", "#{pane_title}");
+
+  ASSERT_FALSE(expanded.has_value());
+  EXPECT_EQ(expanded.error().kind, FailureKind::missing);
+  EXPECT_TRUE(expanded.error().dispatched);
+}
+
+TEST(BackendSeam, ExpansionRemovesOnlyTheNewlineTmuxAdds) {
+  const std::string separator{libtmux::kFormatSeparator};
+  auto backend = std::make_shared<ScriptedBackend>(
+      std::vector<std::string>{"%7" + separator + "kept\n\n"});
+
+  const auto expanded =
+      libtmux::detail::expand_format(backend, "%7", "pane_id", "pane", "#{pane_title}");
+
+  ASSERT_TRUE(expanded.has_value()) << expanded.error().diagnostic;
+  EXPECT_EQ(*expanded, "kept\n");
+}
+
+TEST(BackendSeam, SnapshotFormattingPrecedesTheCommandTerminator) {
+  constexpr std::array<std::string_view, 1> fields{"session_id"};
+  auto backend = std::make_shared<ScriptedBackend>(
+      std::vector<std::string>{"$0" + std::string{libtmux::kFormatSeparator} + "\n"});
+
+  const auto snapshot =
+      libtmux::Snapshot::take(backend, fields, {"new-session", "-d", "--", "command"},
+                              libtmux::FormatArgument::flag);
+
+  ASSERT_TRUE(snapshot.has_value()) << snapshot.error().diagnostic;
+  const auto& command = backend->issued.front();
+  const auto format = std::ranges::find(command, "-F");
+  const auto terminator = std::ranges::find(command, "--");
+  ASSERT_NE(format, command.end());
+  ASSERT_NE(terminator, command.end());
+  EXPECT_EQ(std::distance(format, terminator), 2);
+}
+
+TEST(BackendSeam, InvalidEnvironmentNamesFailBeforeDispatch) {
+  for (const std::string& name : {std::string{}, std::string{"BAD=NAME"}}) {
+    std::vector<std::string> command{"new-session"};
+    const auto appended =
+        libtmux::detail::append_environment(command, {{name, "value"}});
+    ASSERT_FALSE(appended.has_value());
+    EXPECT_FALSE(appended.error().dispatched);
+    EXPECT_EQ(command, (std::vector<std::string>{"new-session"}));
+  }
+}
+
+TEST(BackendSeam, UnreadableKeyTablesFailBeforeDispatch) {
+  auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{});
+  const Server server = libtmux::detail::server_over(backend);
+
+  const auto bound = server.bind_key("bad table", "x", {"display-message"});
+
+  ASSERT_FALSE(bound.has_value());
+  EXPECT_FALSE(bound.error().dispatched);
+  EXPECT_TRUE(backend->issued.empty());
+}
+
+TEST(BackendSeam, BufferLoadingNamesTheDestination) {
+  auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{""});
+  const Server server = libtmux::detail::server_over(backend);
+
+  const auto loaded = server.load_buffer("named", "/tmp/libtmux-buffer");
+
+  ASSERT_TRUE(loaded.has_value()) << loaded.error().diagnostic;
+  ASSERT_EQ(backend->issued.size(), 1U);
+  EXPECT_EQ(backend->issued.front(),
+            (std::vector<std::string>{"load-buffer", "-b", "named", "--",
+                                      "/tmp/libtmux-buffer"}));
+}
+
+TEST(BackendSeam, AControlBatchKeepsOneOperationPerCommand) {
+  libtmux::CommandBatch batch;
+  ASSERT_TRUE(batch.add({"display-message", "one"}));
+  ASSERT_TRUE(batch.add({"display-message", "two"}));
+
+  const libtmux::ControlRequest request = libtmux::detail::batch_request(batch);
+
+  ASSERT_EQ(request.group.size(), 2U);
+  EXPECT_EQ(request.group[0].argv,
+            (std::vector<std::string>{"display-message", "one"}));
+  EXPECT_EQ(request.group[1].argv,
+            (std::vector<std::string>{"display-message", "two"}));
+}
+
+TEST(BackendSeam, NotificationRetentionDropsTheOldestAtItsBound) {
+  constexpr std::size_t expected_bound = 4096U;
+  std::vector<libtmux::Notification> notifications;
+  std::size_t dropped = 0U;
+  for (std::size_t index = 0U; index <= expected_bound; ++index) {
+    libtmux::Notification notification;
+    notification.body.push_back(static_cast<std::byte>(index & 0xffU));
+    libtmux::detail::retain_notification(notifications, dropped,
+                                         std::move(notification));
+  }
+
+  ASSERT_EQ(notifications.size(), expected_bound);
+  EXPECT_EQ(dropped, 1U);
+  ASSERT_FALSE(notifications.front().body.empty());
+  EXPECT_EQ(notifications.front().body.front(), std::byte{1});
 }
 
 } // namespace

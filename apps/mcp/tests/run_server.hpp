@@ -81,6 +81,25 @@ read_line(int descriptor, std::string& pending,
   }
 }
 
+inline libtmux::expected<void, std::string>
+wait_readable(int descriptor, std::chrono::steady_clock::time_point deadline) {
+  for (;;) {
+    const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+        deadline - std::chrono::steady_clock::now());
+    if (remaining <= std::chrono::milliseconds::zero()) {
+      return libtmux::unexpected(std::string{"timed out waiting for server output"});
+    }
+    pollfd waiting{.fd = descriptor, .events = POLLIN, .revents = 0};
+    const int ready = ::poll(&waiting, 1, static_cast<int>(remaining.count()));
+    if (ready > 0) {
+      return {};
+    }
+    if (ready < 0 && errno != EINTR) {
+      return libtmux::unexpected(std::string{"poll: "} + std::strerror(errno));
+    }
+  }
+}
+
 } // namespace detail
 
 struct InputStep {
@@ -147,11 +166,15 @@ inline libtmux::expected<std::vector<std::string>, std::string> run_backpressure
       !written.has_value()) {
     return abort(written.error());
   }
-  std::this_thread::sleep_for(std::chrono::milliseconds{250});
+  if (auto readable = detail::wait_readable(from_child[0], deadline);
+      !readable.has_value()) {
+    return abort(readable.error());
+  }
   if (auto written = detail::write_all(to_child[1], duplicate_request);
       !written.has_value()) {
     return abort(written.error());
   }
+  std::this_thread::sleep_for(std::chrono::milliseconds{250});
 
   auto first_reply = detail::read_line(from_child[0], pending, deadline);
   if (!first_reply.has_value()) {

@@ -244,15 +244,15 @@ int serve_stdio(libtmux::Server server) {
     if (line.text.empty()) {
       continue;
     }
-    try {
-      const json request = json::parse(line.text);
-      if (request.is_array()) {
-        route_batch(request, session, dispatcher, writer);
-      } else {
-        route_single(request, session, dispatcher, writer);
-      }
-    } catch (const json::exception& error) {
-      writer.send(failure(nullptr, kParseError, error.what()));
+    if (!json::accept(line.text)) {
+      writer.send(failure(nullptr, kParseError, "Parse error"));
+      continue;
+    }
+    const json request = json::parse(line.text);
+    if (request.is_array()) {
+      route_batch(request, session, dispatcher, writer);
+    } else {
+      route_single(request, session, dispatcher, writer);
     }
   }
   dispatcher.finish();

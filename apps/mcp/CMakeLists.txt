@@ -20,9 +20,16 @@ if(LIBTMUX_BUILD_TESTS AND NOT WIN32)
             libtmux::testing)
   target_compile_options(mcp_tools_test PRIVATE -fno-sanitize-recover=undefined)
 
-  add_test(NAME consumer.mcp COMMAND mcp_tools_test)
+  add_test(
+    NAME consumer.mcp
+    COMMAND mcp_tools_test "--gtest_filter=McpTools.*")
   set_tests_properties(
-    consumer.mcp PROPERTIES LABELS "consumer;real-tmux" TIMEOUT 30)
+    consumer.mcp PROPERTIES LABELS "consumer;contract" TIMEOUT 30)
+  add_test(
+    NAME consumer.mcp.real-tmux
+    COMMAND mcp_tools_test "--gtest_filter=McpToolsTmux.*")
+  set_tests_properties(
+    consumer.mcp.real-tmux PROPERTIES LABELS "consumer;real-tmux" TIMEOUT 30)
 endif()
 
 # The server as a program, over JSON-RPC, against a real tmux. Needs the JSON
@@ -39,9 +46,24 @@ if(LIBTMUX_BUILD_TESTS AND LIBTMUX_BUILD_MCP_SERVER AND NOT WIN32)
   target_compile_options(mcp_protocol_test PRIVATE -fno-sanitize-recover=undefined)
   add_dependencies(mcp_protocol_test libtmux_mcp_server)
 
-  add_test(NAME consumer.mcp.protocol COMMAND mcp_protocol_test)
+  add_test(
+    NAME consumer.mcp.protocol
+    COMMAND mcp_protocol_test "--gtest_filter=McpProtocolCli.*")
   set_tests_properties(
-    consumer.mcp.protocol PROPERTIES LABELS "consumer;real-tmux" TIMEOUT 120)
+    consumer.mcp.protocol PROPERTIES LABELS "consumer;contract" TIMEOUT 120)
+  add_test(
+    NAME consumer.mcp.protocol.real-tmux
+    COMMAND mcp_protocol_test
+            "--gtest_filter=McpProtocol.*:McpProtocolTmux.*")
+  set_tests_properties(
+    consumer.mcp.protocol.real-tmux
+    PROPERTIES LABELS "consumer;real-tmux" TIMEOUT 120)
+  # Ubuntu's libc++ allocates exception text with new while libc++abi frees it;
+  # malformed JSON triggers ASan's cross-runtime mismatch before recovery.
+  if(LIBTMUX_ENABLE_SANITIZERS AND CMAKE_CXX_FLAGS MATCHES "-stdlib=libc\\+\\+")
+    target_compile_definitions(
+      mcp_protocol_test PRIVATE LIBTMUX_MCP_LIBCXX_EXCEPTION_WORKAROUND=1)
+  endif()
 endif()
 
 if(LIBTMUX_BUILD_MCP_SERVER)
@@ -110,11 +132,34 @@ if(LIBTMUX_BUILD_MCP_SERVER)
   include("${PROJECT_SOURCE_DIR}/cmake/MinGWRuntime.cmake")
   libtmux_copy_mingw_runtime(libtmux_mcp_server)
 
+  if(LIBTMUX_BUILD_TESTS AND NOT WIN32)
+    add_executable(mcp_schema_test tests/schema_test.cpp src/schema.cpp)
+    target_include_directories(mcp_schema_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(
+      mcp_schema_test
+      PRIVATE GTest::gtest_main libtmux_build_options mcp_tools
+              nlohmann_json::nlohmann_json)
+    target_compile_options(mcp_schema_test PRIVATE -fno-sanitize-recover=undefined)
+    add_test(NAME consumer.mcp.schema COMMAND mcp_schema_test)
+    set_tests_properties(
+      consumer.mcp.schema PROPERTIES LABELS "consumer;contract" TIMEOUT 30)
+  endif()
+
   if(WIN32 AND LIBTMUX_BUILD_TESTS)
     find_program(
       LIBTMUX_POWERSHELL_EXECUTABLE
       NAMES powershell.exe pwsh.exe pwsh)
     if(LIBTMUX_POWERSHELL_EXECUTABLE)
+      add_test(
+        NAME windows.mcp.registry-helper
+        COMMAND
+          "${LIBTMUX_POWERSHELL_EXECUTABLE}" -NoLogo -NoProfile -NonInteractive
+          -ExecutionPolicy Bypass -File
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/windows_psmux_smoke.ps1"
+          -RegistryHelperSelfTest)
+      set_tests_properties(
+        windows.mcp.registry-helper
+        PROPERTIES LABELS "windows;contract;mcp" TIMEOUT 30)
       add_test(
         NAME windows.mcp.psmux-smoke
         COMMAND

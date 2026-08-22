@@ -21,8 +21,8 @@ CATALOGUE: t.Final = (
         path="src/acquire.hpp",
         find="  if (!answer.starts_with(opening)) {",
         replace="  if (answer.size() == 987654321U) {",
-        target="libtmux_expand_test",
-        test_regex=r"^libtmux[.]expand[.]",
+        target="libtmux_backend_seam_test",
+        test_regex=r"^libtmux[.]backend_seam$",
         guards="a format expanded against a target tmux cannot resolve is "
         "reported rather than answered with a blank",
     ),
@@ -31,8 +31,8 @@ CATALOGUE: t.Final = (
         path="src/acquire.hpp",
         find="  if (!text.empty() && text.back() == '\\n') {",
         replace="  while (!text.empty() && text.back() == '\\n') {",
-        target="libtmux_expand_test",
-        test_regex=r"^libtmux[.]expand[.]",
+        target="libtmux_backend_seam_test",
+        test_regex=r"^libtmux[.]backend_seam$",
         guards="exactly one newline is removed, so a format that ends in one keeps it",
     ),
     Mutation(
@@ -42,8 +42,8 @@ CATALOGUE: t.Final = (
         '    request.insert(terminator, {"-F", format_request(fields)});',
         replace='    request.emplace_back("-F");\n'
         "    request.push_back(format_request(fields));",
-        target="libtmux_environment_test",
-        test_regex=r"^libtmux[.]environment[.]",
+        target="libtmux_backend_seam_test",
+        test_regex=r"^libtmux[.]backend_seam$",
         guards="a creation call carrying a shell command still answers with a "
         "readable entity",
     ),
@@ -52,8 +52,8 @@ CATALOGUE: t.Final = (
         path="src/acquire.hpp",
         find="    if (name.empty() || name.find('=') != std::string::npos) {",
         replace="    if (name.size() == 987654321U) {",
-        target="libtmux_environment_test",
-        test_regex=r"^libtmux[.]environment[.]",
+        target="libtmux_backend_seam_test",
+        test_regex=r"^libtmux[.]backend_seam$",
         guards="a variable name tmux would take and silently ignore is refused",
     ),
     Mutation(
@@ -63,8 +63,8 @@ CATALOGUE: t.Final = (
         '" \\t\\n\\r\\f\\v"'
         ") != std::string_view::npos) {",
         replace="  if (table.size() == 987654321U) {",
-        target="libtmux_key_binding_test",
-        test_regex=r"^libtmux[.]keys[.]",
+        target="libtmux_backend_seam_test",
+        test_regex=r"^libtmux[.]backend_seam$",
         guards="a key table name that would make tmux's own listing ambiguous "
         "is refused",
     ),
@@ -75,8 +75,8 @@ CATALOGUE: t.Final = (
         "    request.group.push_back(ControlCommand{command});\n"
         "  }",
         replace="  request.group.push_back(ControlCommand{batch.argv()});",
-        target="libtmux_control_dispatch_test",
-        test_regex=r"^libtmux[.]control_dispatch$",
+        target="libtmux_backend_seam_test",
+        test_regex=r"^libtmux[.]backend_seam$",
         guards="every command in a batch runs over a control connection, "
         "rather than the separator arriving escaped and the rest read as "
         "arguments to the first",
@@ -105,11 +105,11 @@ CATALOGUE: t.Final = (
     ),
     Mutation(
         mutation_id="notification-bound",
-        path="src/connection.cpp",
-        find="constexpr std::size_t maximum_notifications = 4096U;",
-        replace="constexpr std::size_t maximum_notifications = 100000000U;",
-        target="libtmux_control_dispatch_test",
-        test_regex=r"^libtmux[.]control_dispatch$",
+        path="src/notification_buffer.hpp",
+        find="inline constexpr std::size_t kMaximumNotifications = 4096U;",
+        replace="inline constexpr std::size_t kMaximumNotifications = 100000000U;",
+        target="libtmux_backend_seam_test",
+        test_regex=r"^libtmux[.]backend_seam$",
         guards="a caller that never drains gets a bounded buffer and a count "
         "of what was dropped",
     ),
@@ -131,6 +131,7 @@ CATALOGUE: t.Final = (
         find="      if (occurrences.at(key) > 1U) {",
         replace="      if (occurrences.at(key) > requests.size()) {",
         target="mcp_protocol_test",
+        executable="libtmux-mcp-server",
         test_regex=r"^consumer[.]mcp[.]protocol$",
         guards="a duplicate request ID rejects the whole legacy batch before any "
         "member can run",
@@ -147,6 +148,7 @@ CATALOGUE: t.Final = (
         "        writer.send(*response);\n"
         "      }",
         target="mcp_protocol_test",
+        executable="libtmux-mcp-server",
         test_regex=r"^consumer[.]mcp[.]protocol$",
         guards="a request ID stays reserved until its response is delivered",
     ),
@@ -166,8 +168,8 @@ CATALOGUE: t.Final = (
         path="src/server.cpp",
         find='"load-buffer", "-b", std::string{name}, "--",',
         replace='"load-buffer", "--",',
-        target="libtmux_buffer_test",
-        test_regex=r"^libtmux[.]buffer[.]",
+        target="libtmux_backend_seam_test",
+        test_regex=r"^libtmux[.]backend_seam$",
         guards="a file is loaded into the buffer the caller named",
     ),
     Mutation(

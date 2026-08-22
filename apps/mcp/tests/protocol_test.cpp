@@ -813,9 +813,28 @@ TEST(McpProtocolCli, RejectsFractionalRequestIds) {
 TEST(McpProtocolCli, RecoversAfterMalformedJson) {
   const std::string input =
       "{not-json}\n" + modern_request("tools/list", 1).dump() + '\n';
-  const auto messages = converse_raw("libtmux-cxx-mcp-parse-no-dispatch", input);
+  auto environment = libtmux::test::current_environment();
+#if defined(LIBTMUX_MCP_LIBCXX_EXCEPTION_WORKAROUND)
+  bool found_asan_options = false;
+  for (std::string& entry : environment) {
+    if (entry.starts_with("ASAN_OPTIONS=")) {
+      entry += ":alloc_dealloc_mismatch=0";
+      found_asan_options = true;
+      break;
+    }
+  }
+  if (!found_asan_options) {
+    environment.emplace_back("ASAN_OPTIONS=alloc_dealloc_mismatch=0");
+  }
+#endif
+  const auto finished = libtmux::mcp::test::run_server(
+      LIBTMUX_MCP_SERVER_PATH, {"--socket-name", "libtmux-cxx-mcp-parse-no-dispatch"},
+      std::move(environment), input, std::chrono::seconds{60},
+      std::chrono::milliseconds{250});
+  const auto messages = decode_messages(finished);
   ASSERT_EQ(messages.size(), 2U);
   EXPECT_EQ(messages[0]["error"]["code"], -32700);
+  EXPECT_EQ(messages[0]["error"]["message"], "Parse error");
   const json* recovered = response(messages, 1);
   ASSERT_NE(recovered, nullptr);
   EXPECT_EQ((*recovered)["result"]["resultType"], "complete");
@@ -1090,7 +1109,27 @@ TEST(McpProtocolCli, ValidatesLegacyMetadataContainers) {
   EXPECT_EQ((*rejected_ping)["error"]["code"], -32602);
 }
 
-TEST(McpProtocolCli, SelectsAnIsolatedServerBySocketName) {
+TEST(McpProtocolCli, AcceptsLegacyToolMetadataAndRetainsArguments) {
+  json compatible = call("capture_pane", {{"target", 99}}, 1, "client-progress");
+  compatible["params"]["_meta"]["claudeCode"] = {{"version", "2.1.234"}};
+  json invalid_key = compatible;
+  invalid_key["id"] = 2;
+  invalid_key["params"]["_meta"]["not a metadata key"] = true;
+  const auto messages = converse_with(
+      {"--socket-name", "libtmux-cxx-mcp-legacy-call-meta-no-dispatch"},
+      libtmux::test::current_environment(),
+      {initialize_request(), initialized_notification(), compatible, invalid_key});
+  const json* accepted = response(messages, 1);
+  const json* rejected = response(messages, 2);
+  ASSERT_NE(accepted, nullptr);
+  ASSERT_NE(rejected, nullptr);
+  EXPECT_EQ((*accepted)["error"]["code"], -32602);
+  EXPECT_EQ((*accepted)["error"]["message"], "argument target must be a string");
+  EXPECT_EQ((*rejected)["error"]["code"], -32602);
+  EXPECT_EQ((*rejected)["error"]["message"], "tools/call _meta is invalid");
+}
+
+TEST(McpProtocolTmux, SelectsAnIsolatedServerBySocketName) {
   auto started = ScopedTmuxServer::start(ScopedTmuxServerOptions{
       .mode = SocketMode::Name,
       .session_name = "mcp-name",
@@ -1108,7 +1147,7 @@ TEST(McpProtocolCli, SelectsAnIsolatedServerBySocketName) {
             "mcp-name");
 }
 
-TEST(McpProtocolCli, UsesAnExactInheritedRoute) {
+TEST(McpProtocolTmux, UsesAnExactInheritedRoute) {
   auto started = ScopedTmuxServer::start(ScopedTmuxServerOptions{
       .session_name = "mcp-env",
       .socket_namespace = SocketNamespace::consumer("mcp-env")});
@@ -1160,13 +1199,18 @@ TEST(McpProtocolCli, KeepsAnIdReservedUntilItsReplyIsWritten) {
   ASSERT_TRUE(replies.has_value()) << replies.error();
   ASSERT_EQ(replies->size(), 3U);
 
-  const json first_reply = json::parse((*replies)[1]);
-  const json duplicate_reply = json::parse((*replies)[2]);
+  const json reply_a = json::parse((*replies)[1]);
+  const json reply_b = json::parse((*replies)[2]);
+  const auto is_duplicate = [](const json& reply) {
+    return reply["error"]["message"] == "request id is already in flight";
+  };
+  const json& first_reply = is_duplicate(reply_a) ? reply_b : reply_a;
+  const json& duplicate_reply = is_duplicate(reply_a) ? reply_a : reply_b;
   EXPECT_EQ(first_reply["id"], 7);
   EXPECT_EQ(duplicate_reply["id"], 7);
   EXPECT_TRUE(
       first_reply["error"]["message"].get<std::string>().starts_with("unknown tool: "));
-  EXPECT_EQ(duplicate_reply["error"]["message"], "request id is already in flight");
+  EXPECT_TRUE(is_duplicate(duplicate_reply));
 }
 
 TEST(McpProtocolCli, KeepsBatchIdsReservedThroughAggregateBackpressure) {
@@ -1185,8 +1229,10 @@ TEST(McpProtocolCli, KeepsBatchIdsReservedThroughAggregateBackpressure) {
   ASSERT_TRUE(replies.has_value()) << replies.error();
   ASSERT_EQ(replies->size(), 3U);
 
-  const json aggregate = json::parse((*replies)[1]);
-  const json duplicate_reply = json::parse((*replies)[2]);
+  const json reply_a = json::parse((*replies)[1]);
+  const json reply_b = json::parse((*replies)[2]);
+  const json& aggregate = reply_a.is_array() ? reply_a : reply_b;
+  const json& duplicate_reply = reply_a.is_array() ? reply_b : reply_a;
   ASSERT_TRUE(aggregate.is_array());
   ASSERT_EQ(aggregate.size(), 1U);
   EXPECT_EQ(aggregate[0]["id"], 9);

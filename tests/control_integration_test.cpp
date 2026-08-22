@@ -358,7 +358,9 @@ TEST(ControlModeConnection, ServerOwnsTheRouteAndPreservesStreamPolicy) {
   while (std::chrono::steady_clock::now() < deadline && !saw_output) {
     for (const Notification& notification :
          connection.wait_for_notifications(deadline)) {
-      saw_output = saw_output || text(notification.body).starts_with("%output ");
+      // `pause-after` makes tmux report pane bytes as `%extended-output`.
+      saw_output = saw_output || libtmux::parse(notification).kind ==
+                                     libtmux::NotificationKind::extended_output;
     }
   }
   EXPECT_TRUE(saw_output);

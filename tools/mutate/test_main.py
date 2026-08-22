@@ -100,6 +100,21 @@ class MutationMainTest(unittest.TestCase):
         run_mutation.assert_not_called()
         rebuild.assert_not_called()
 
+    def test_mcp_mutations_build_the_protocol_test(self) -> None:
+        """Build the CTest executable as well as its separately named server."""
+        mutations = {
+            mutation.mutation_id: mutation
+            for mutation in mutation_main.CATALOGUE
+            if mutation.mutation_id
+            in {"mcp-batch-duplicate-preflight", "mcp-id-held-through-write"}
+        }
+
+        self.assertEqual(len(mutations), 2)
+        for mutation in mutations.values():
+            self.assertEqual(mutation.target, "mcp_protocol_test")
+            self.assertEqual(mutation.executable, "libtmux-mcp-server")
+            self.assertEqual(mutation.test_regex, r"^consumer[.]mcp[.]protocol$")
+
 
 if __name__ == "__main__":
     unittest.main()

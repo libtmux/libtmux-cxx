@@ -77,11 +77,23 @@ release lives.
 
 ## Before committing
 
-Five build lanes, the format and reference checks, the parity ledger, and
+Six build lanes, the format and reference checks, the parity ledger, and
 the mutation catalogue:
 
 ```console
-$ for p in cxx-dev cxx-sanitize cxx-tsan cxx-gcc cxx20; do cmake --preset $p && cmake --build --preset $p && ctest --preset $p --no-tests=error; done
+$ (set -e; for p in \
+    cxx-dev \
+    cxx-sanitize \
+    cxx-sanitize-cxx20 \
+    cxx-tsan \
+    cxx-gcc \
+    cxx20; do \
+    cmake --preset "$p"; \
+    cmake --build --preset "$p"; \
+    ctest \
+      --preset "$p" \
+      --no-tests=error; \
+  done)
 ```
 
 ```console
