@@ -189,8 +189,9 @@ std::string session_target(const Session& session) {
 #if defined(_WIN32)
   static_cast<void>(session);
   return ":";
-#endif
+#else
   return std::string{session.id()};
+#endif
 }
 
 detail::SessionRoute session_route(const Session& session) {

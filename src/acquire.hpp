@@ -71,9 +71,12 @@ template <typename Entity>
       return result;
     }();
     return fields;
+  } else {
+    return Entity::kFields;
   }
-#endif
+#else
   return Entity::kFields;
+#endif
 }
 
 inline void append_display_message_text(std::vector<std::string>& command,
