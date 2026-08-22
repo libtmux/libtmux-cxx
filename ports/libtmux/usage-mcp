@@ -1,5 +1,22 @@
 
 The mcp feature installs an MCP server over stdio, which is run rather than
-linked:
+linked. Its location is:
 
-    ${VCPKG_ROOT}/installed/${VCPKG_TARGET_TRIPLET}/tools/libtmux/libtmux-mcp-server
+    <installed-root>/<triplet>/tools/libtmux/libtmux-mcp-server[.exe]
+
+For manifest mode, <installed-root> defaults to the manifest's vcpkg_installed
+directory. Classic mode defaults to <vcpkg-root>/installed; --x-install-root
+overrides both.
+
+The immutable 0.1.0-alpha.2 server takes one POSIX tmux socket path as its only
+argument. Always pass it; omitting it falls back to inherited or default tmux:
+
+    /tmp/tmux-1000/private
+
+Later servers accept --socket-name or --socket-path and retain one positional
+path on POSIX. Without a selector, they require a valid inherited TMUX route
+and never fall back to the default server. Run --help before registering them.
+
+Windows-enabled later releases expose only the four read-only psmux discovery
+tools. See https://github.com/libtmux/libtmux-cxx#windows-through-psmux before
+use.

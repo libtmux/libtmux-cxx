@@ -138,6 +138,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Check Windows registry tooling
+        run: python -m unittest tools.vcpkg.test_probe tools.vcpkg.test_release
+
       - name: Install the pinned psmux release
         run: |
           $url = "https://github.com/psmux/psmux/releases/download/v3.3.7/psmux-v3.3.7-windows-x64.zip"
@@ -168,9 +171,21 @@ jobs:
           }
           $reported
           $destination | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "LIBTMUX_PSMUX_EXE=$binary" | Out-File `
+            -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Build and run the native Windows smoke
         run: |
+          $resolved = (Get-Command tmux.exe -ErrorAction Stop).Source
+          $expectedPath = (Resolve-Path $env:LIBTMUX_PSMUX_EXE).Path
+          if ((Resolve-Path $resolved).Path -ne $expectedPath) {
+            throw "psmux route changed: expected $expectedPath, got $resolved"
+          }
+          $expectedHash = "f3a4ad033f0332972bc79b8d695387adb4fcd1d268074e113c1c84e5381051a6"
+          $actualHash = (Get-FileHash -Algorithm SHA256 $resolved).Hash.ToLowerInvariant()
+          if ($actualHash -ne $expectedHash) {
+            throw "resolved psmux SHA-256 mismatch: expected $expectedHash, got $actualHash"
+          }
           cmake --preset windows-psmux "-DLIBTMUX_CXX_STANDARD=${{ matrix.standard }}"
           cmake --build --preset windows-psmux
           ctest --preset windows-psmux --no-tests=error
@@ -215,11 +230,52 @@ jobs:
 
             $workspace = (Resolve-Path $PWD).Path
             $testDir = Join-Path $workspace "build\windows-psmux"
-            & wsl.exe -d $name -- env PATHEXT=.CPL ctest.exe `
-              --test-dir $testDir `
-              -C Debug -L windows --no-tests=error --output-on-failure
+            $proof = Join-Path $workspace "build\verify-psmux-route.ps1"
+            @(
+              'param('
+              '  [Parameter(Mandatory = $true)][string]$ExpectedPsmux,'
+              '  [Parameter(Mandatory = $true)][string]$CTest,'
+              '  [Parameter(Mandatory = $true)][string]$TestDir'
+              ')'
+              '$ErrorActionPreference = "Stop"'
+              '$expected = (Resolve-Path $ExpectedPsmux).Path'
+              '$env:PATH = "$(Split-Path $expected);$env:PATH"'
+              '$env:PATHEXT = ".CPL"'
+              'if ($env:PATHEXT -ne ".CPL") { throw "could not poison PATHEXT" }'
+              '$resolved = (Get-Command tmux.exe -ErrorAction Stop).Source'
+              'if ((Resolve-Path $resolved).Path -ne $expected) {'
+              '  throw "WSL psmux route changed: expected $expected, got $resolved"'
+              '}'
+              '$expectedHash = "f3a4ad033f0332972bc79b8d695387adb4fcd1d268074e113c1c84e5381051a6"'
+              '$actualHash = (Get-FileHash -Algorithm SHA256 $resolved).Hash.ToLowerInvariant()'
+              'if ($actualHash -ne $expectedHash) {'
+              '  throw "WSL psmux SHA-256 mismatch: expected $expectedHash, got $actualHash"'
+              '}'
+              '& $CTest --test-dir $TestDir -C Debug -L windows --no-tests=error --output-on-failure'
+              'if ($LASTEXITCODE -ne 0) {'
+              '  throw "the WSL-to-Windows psmux gates failed"'
+              '}'
+            ) | Set-Content -Path $proof -Encoding ascii
+
+            $ctestWindows = (Get-Command ctest.exe -ErrorAction Stop).Source
+            $powershellWindows = (Get-Command powershell.exe -ErrorAction Stop).Source
+            if ($powershellWindows -notmatch '^([A-Za-z]):\\(.+)$') {
+              throw "cannot map Windows PowerShell into WSL: $powershellWindows"
+            }
+            $drive = $Matches[1].ToLowerInvariant()
+            $tail = $Matches[2] -replace '\\', '/'
+            $powershellWsl = "/mnt/$drive/$tail"
+            & wsl.exe -d $name -- test -x $powershellWsl
             if ($LASTEXITCODE -ne 0) {
-              throw "the WSL-to-Windows psmux gates failed"
+              throw "Windows PowerShell is not executable inside WSL: $powershellWsl"
+            }
+            & wsl.exe -d $name -- $powershellWsl `
+              -NoLogo -NoProfile -NonInteractive `
+              -ExecutionPolicy Bypass -File $proof `
+              -ExpectedPsmux $env:LIBTMUX_PSMUX_EXE `
+              -CTest $ctestWindows -TestDir $testDir
+            if ($LASTEXITCODE -ne 0) {
+              throw "the WSL psmux route and runtime gates failed"
             }
           } finally {
             $savedNativePreference = $PSNativeCommandUseErrorActionPreference
@@ -662,7 +718,8 @@ jobs:
           uvx --from ruff==0.16.1 ruff check .
           uv run --no-project python -m unittest \
             tools.docs.test_api_index tools.mutate.test_main \
-            tools.mutate.test_runner
+            tools.mutate.test_runner tools.vcpkg.test_probe \
+            tools.vcpkg.test_release
           uv run --no-project --with tomlkit==0.15.1 \
             python -m unittest tools.mcp.test_mcp_swap
 
@@ -843,6 +900,8 @@ jobs:
         run: |
           git clone --filter=blob:none \
             https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP/vcpkg"
+          git -C "$RUNNER_TEMP/vcpkg" checkout --detach \
+            94a541197763a4f449a1b91478df48c0584a6256
           "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
 
       # The whole chain a consumer walks: baseline commit, git-tree, release

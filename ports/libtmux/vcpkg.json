@@ -1,7 +1,7 @@
 {
   "name": "libtmux",
   "version-semver": "0.1.0-alpha.2",
-  "port-version": 1,
+  "port-version": 2,
   "maintainers": "Tony Narlock <tony@git-pull.com>",
   "description": [
     "A typed C++ interface to the tmux terminal multiplexer.",
@@ -23,7 +23,7 @@
   ],
   "features": {
     "mcp": {
-      "description": "Build libtmux-mcp-server, the MCP tool server over stdio",
+      "description": "Build the MCP server (Windows-enabled releases expose four read-only psmux discovery tools)",
       "dependencies": [
         "nlohmann-json"
       ]

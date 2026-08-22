@@ -25,7 +25,7 @@ def _run_release(args: argparse.Namespace) -> int:
         args.root.resolve(),
         version=args.version,
         sha512=args.sha512,
-        port=args.port,
+        enable_windows=args.enable_windows,
     )
 
 
@@ -33,7 +33,6 @@ def _run_probe(args: argparse.Namespace) -> int:
     return probe.run(
         args.root.resolve(),
         args.vcpkg.resolve(),
-        port=args.port,
         triplet=args.triplet,
         features=args.feature,
         keep=args.keep,
@@ -73,7 +72,6 @@ def main() -> int:
         required=True,
         help="a bootstrapped vcpkg checkout",
     )
-    install.add_argument("--port", default="libtmux", help="port to resolve")
     install.add_argument("--triplet", default=None, help="vcpkg target triplet")
     install.add_argument(
         "--feature",
@@ -85,7 +83,7 @@ def main() -> int:
         "--keep",
         type=pathlib.Path,
         default=None,
-        help="write the throwaway consumer here and leave it behind",
+        help="use a new path outside both checkouts and leave it behind",
     )
     install.add_argument(
         "--repository",
@@ -108,7 +106,11 @@ def main() -> int:
         required=True,
         help="SHA512 of the archive GitHub generates for that tag",
     )
-    cut.add_argument("--port", default="libtmux", help="port to update")
+    cut.add_argument(
+        "--enable-windows",
+        action="store_true",
+        help="attest the audited x64 MSVC desktop target for a new version",
+    )
     cut.set_defaults(handler=_run_release)
 
     args = parser.parse_args()
