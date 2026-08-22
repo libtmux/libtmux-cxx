@@ -10,6 +10,7 @@
 #include "process.hpp"
 
 #include <cctype>
+#include <charconv>
 #include <chrono>
 #include <cstddef>
 #include <cstdlib>
@@ -76,11 +77,11 @@ struct RawReply {
 }
 
 [[nodiscard]] std::optional<RawReply>
-raw_tmux(const std::vector<std::string>& command) {
-  using namespace std::chrono_literals;
+raw_tmux(const std::vector<std::string>& command,
+         std::optional<std::chrono::milliseconds> timeout = std::chrono::seconds{20}) {
   ProcessRequest request;
   request.executable = "tmux";
-  request.timeout = 20s;
+  request.timeout = timeout;
   request.environment = {{"PATHEXT", ".COM;.EXE;.BAT;.CMD"},
                          {"PSMUX_NO_WARM", "1"},
                          {"TMUX", std::nullopt},
@@ -106,10 +107,11 @@ raw_tmux(const std::vector<std::string>& command) {
 }
 
 [[nodiscard]] std::optional<RawReply>
-raw_psmux(std::string_view socket_name, const std::vector<std::string>& command) {
+raw_psmux(std::string_view socket_name, const std::vector<std::string>& command,
+          std::optional<std::chrono::milliseconds> timeout = std::chrono::seconds{20}) {
   std::vector<std::string> namespaced{"-L", std::string{socket_name}};
   namespaced.insert(namespaced.end(), command.begin(), command.end());
-  return raw_tmux(namespaced);
+  return raw_tmux(namespaced, timeout);
 }
 
 [[nodiscard]] bool cleanup_registry_files(std::string_view socket_name, bool report);
@@ -402,6 +404,163 @@ void report_command(std::string_view message, const CommandFailure& failure) {
   return std::nullopt;
 }
 
+[[nodiscard]] std::optional<std::filesystem::path> ensure_psmux_data_directory() {
+  const auto directory = psmux_data_directory();
+  if (!directory.has_value()) {
+    return std::nullopt;
+  }
+
+  std::error_code inspected;
+  auto status = std::filesystem::symlink_status(*directory, inspected);
+  if (status.type() == std::filesystem::file_type::not_found) {
+    inspected.clear();
+    static_cast<void>(std::filesystem::create_directory(*directory, inspected));
+    if (!inspected) {
+      status = std::filesystem::symlink_status(*directory, inspected);
+    }
+  }
+  if (inspected || !std::filesystem::is_directory(status)) {
+    return std::nullopt;
+  }
+  return directory;
+}
+
+[[nodiscard]] std::optional<std::size_t>
+decimal_regular_file(const std::filesystem::path& path) {
+  std::error_code inspected;
+  const auto status = std::filesystem::symlink_status(path, inspected);
+  if (inspected || !std::filesystem::is_regular_file(status)) {
+    return std::nullopt;
+  }
+  std::ifstream input{path};
+  std::string value;
+  std::string extra;
+  if (!(input >> value) || (input >> extra)) {
+    return std::nullopt;
+  }
+  std::size_t parsed = 0U;
+  const auto [end, error] =
+      std::from_chars(value.data(), value.data() + value.size(), parsed);
+  if (error != std::errc{} || end != value.data() + value.size()) {
+    return std::nullopt;
+  }
+  return parsed;
+}
+
+struct DurableSessionIdentity {
+  std::size_t id;
+  std::size_t next_id;
+};
+
+[[nodiscard]] std::optional<DurableSessionIdentity>
+wait_for_durable_session(std::string_view socket_name, std::string_view session_name,
+                         std::chrono::milliseconds timeout) {
+  const auto directory = psmux_data_directory();
+  if (!directory.has_value()) {
+    return std::nullopt;
+  }
+  const std::filesystem::path base =
+      *directory / (std::string{socket_name} + "__" + std::string{session_name});
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  do {
+    bool complete = true;
+    for (const std::string_view extension : {".port", ".key", ".pid", ".sid"}) {
+      std::error_code inspected;
+      const auto status = std::filesystem::symlink_status(
+          std::filesystem::path{base.string() + std::string{extension}}, inspected);
+      complete = complete && !inspected && std::filesystem::is_regular_file(status);
+    }
+    const auto id = decimal_regular_file(base.string() + ".sid");
+    const auto next_id = decimal_regular_file(*directory / "next_session_id");
+    if (complete && id.has_value() && next_id.has_value() && *next_id > *id) {
+      const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+          deadline - std::chrono::steady_clock::now());
+      auto routed = raw_psmux(socket_name,
+                              {"display-message", "-p", "-t", std::string{session_name},
+                               "#{session_id}|#{session_name}"},
+                              remaining);
+      if (routed.has_value() && routed->exit_code == 0) {
+        while (!routed->output.empty() &&
+               (routed->output.back() == '\n' || routed->output.back() == '\r')) {
+          routed->output.pop_back();
+        }
+        const std::string expected =
+            "$" + std::to_string(*id) + '|' + std::string{session_name};
+        if (routed->output == expected) {
+          return DurableSessionIdentity{.id = *id, .next_id = *next_id};
+        }
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds{20});
+  } while (std::chrono::steady_clock::now() < deadline);
+  return std::nullopt;
+}
+
+[[nodiscard]] bool wait_for_exact_rename(std::string_view socket_name,
+                                         std::string_view old_name,
+                                         std::string_view new_name,
+                                         std::chrono::milliseconds timeout) {
+  const auto directory = psmux_data_directory();
+  if (!directory.has_value()) {
+    return false;
+  }
+  const std::filesystem::path old_base =
+      *directory / (std::string{socket_name} + "__" + std::string{old_name});
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+        deadline - std::chrono::steady_clock::now());
+    auto identity = raw_psmux(
+        socket_name,
+        {"display-message", "-p", "-t", std::string{new_name}, "#{session_name}"},
+        remaining);
+    bool old_absent = true;
+    for (const std::string_view extension : {".port", ".key", ".pid", ".sid"}) {
+      std::error_code inspected;
+      const bool exists = std::filesystem::exists(
+          old_base.string() + std::string{extension}, inspected);
+      old_absent = old_absent && !inspected && !exists;
+    }
+    if (identity.has_value() && identity->exit_code == 0) {
+      while (!identity->output.empty() &&
+             (identity->output.back() == '\n' || identity->output.back() == '\r')) {
+        identity->output.pop_back();
+      }
+      if (identity->output == new_name && old_absent) {
+        return true;
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds{20});
+  }
+  return false;
+}
+
+[[nodiscard]] bool wait_for_registry_absence(std::string_view socket_name,
+                                             std::string_view session_name,
+                                             std::chrono::milliseconds timeout) {
+  const auto directory = psmux_data_directory();
+  if (!directory.has_value()) {
+    return false;
+  }
+  const std::filesystem::path base =
+      *directory / (std::string{socket_name} + "__" + std::string{session_name});
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  do {
+    bool absent = true;
+    for (const std::string_view extension : {".port", ".key", ".pid", ".sid"}) {
+      std::error_code inspected;
+      const bool exists =
+          std::filesystem::exists(base.string() + std::string{extension}, inspected);
+      absent = absent && !inspected && !exists;
+    }
+    if (absent) {
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds{20});
+  } while (std::chrono::steady_clock::now() < deadline);
+  return false;
+}
+
 [[nodiscard]] bool exact_registry_file(const std::filesystem::path& path,
                                        std::string_view socket_name) {
   const std::wstring namespace_prefix{socket_name.begin(), socket_name.end()};
@@ -572,7 +731,7 @@ public:
     return "@1" + separator + "replacement" + separator + "1" + separator + "$2" +
            separator + "0" + separator + "1" + separator + "80" + separator + "24" +
            separator + "layout" + separator + "0" + separator + "0" + separator + "0" +
-           separator + "1" + separator + "replacement" + separator + "\n";
+           separator + "1" + separator + "\n";
   }
 
   const std::vector<std::string>& connection() const noexcept override {
@@ -623,6 +782,11 @@ int main() {
   empty_config.close();
   ScopedRecoveryConfig config_cleanup{config};
   if (!configure_environment(config)) {
+    return EXIT_FAILURE;
+  }
+  const auto psmux_directory = ensure_psmux_data_directory();
+  if (!require(psmux_directory.has_value(),
+               "could not create and verify the isolated psmux data directory")) {
     return EXIT_FAILURE;
   }
   const auto child_environment = libtmux_env::psmux_child_environment();
@@ -750,11 +914,25 @@ int main() {
   config_cleanup.note_session_may_exist(socket_name, "alpha");
   const auto alpha_created =
       server.run({"new-session", "-d", "-s", "alpha", "-n", "alpha-main", "--", "cmd"});
+  if (!require(alpha_created.has_value(), "could not create isolated alpha fixture")) {
+    return EXIT_FAILURE;
+  }
+  const auto alpha_identity = wait_for_durable_session(socket_name, "alpha", 2s);
+  if (!require(alpha_identity.has_value(),
+               "alpha identity did not become durable before its deadline")) {
+    return EXIT_FAILURE;
+  }
   config_cleanup.note_session_may_exist(socket_name, "beta");
   const auto beta_created = raw_psmux(
       socket_name, {"new-session", "-d", "-s", "beta", "-x", "117", "-y", "31"});
-  if (!require(alpha_created && beta_created && beta_created->exit_code == 0,
-               "could not create isolated psmux fixtures through both launch paths")) {
+  if (!require(beta_created && beta_created->exit_code == 0,
+               "could not create isolated beta fixture")) {
+    return EXIT_FAILURE;
+  }
+  const auto beta_identity = wait_for_durable_session(socket_name, "beta", 2s);
+  if (!require(beta_identity.has_value() && beta_identity->id > alpha_identity->id &&
+                   beta_identity->next_id > beta_identity->id,
+               "beta identity was not durable and distinct from alpha")) {
     return EXIT_FAILURE;
   }
   auto first_session = server.session("alpha");
@@ -765,6 +943,11 @@ int main() {
   auto second_session = server.session("beta");
   if (!second_session) {
     report_command("could not acquire session beta", second_session.error());
+    return EXIT_FAILURE;
+  }
+  if (!require(first_session->id() == "$" + std::to_string(alpha_identity->id) &&
+                   second_session->id() == "$" + std::to_string(beta_identity->id),
+               "typed psmux sessions did not retain their durable registry IDs")) {
     return EXIT_FAILURE;
   }
 
@@ -1363,6 +1546,21 @@ int main() {
                "could not simulate an external psmux session rename")) {
     return EXIT_FAILURE;
   }
+  if (!require(wait_for_exact_rename(socket_name, "alpha", "gamma", 2s),
+               "external psmux rename did not settle before its deadline")) {
+    return EXIT_FAILURE;
+  }
+  const auto renamed_gamma = server.session("gamma");
+  if (!require(renamed_gamma && renamed_gamma->id() == first_session->id(),
+               "the exact renamed psmux session must retain its identity")) {
+    return EXIT_FAILURE;
+  }
+  const auto gamma_killed = raw_psmux(socket_name, {"kill-session", "-t", "gamma"});
+  if (!require(gamma_killed && gamma_killed->exit_code == 0 &&
+                   wait_for_registry_absence(socket_name, "gamma", 2s),
+               "could not remove the renamed fixture before reusing its old name")) {
+    return EXIT_FAILURE;
+  }
   config_cleanup.note_session_may_exist(socket_name, "alpha");
   const auto replacement_created =
       raw_psmux(socket_name, {"new-session", "-d", "-s", "alpha"});
@@ -1399,14 +1597,11 @@ int main() {
           "stale psmux handles must not follow a replacement session")) {
     return EXIT_FAILURE;
   }
-  const auto found_gamma = server.session("gamma");
+  const auto missing_gamma = server.session("gamma");
   const auto found_alpha = server.session("alpha");
-  if (!found_gamma) {
-    report_command("Server::session could not find renamed gamma", found_gamma.error());
-    return EXIT_FAILURE;
-  }
-  if (!require(found_gamma->id() == first_session->id() && found_alpha &&
-                   found_alpha->id() == replacement_alpha->id(),
+  if (!require(!missing_gamma &&
+                   missing_gamma.error().kind == libtmux::FailureKind::missing &&
+                   found_alpha && found_alpha->id() == replacement_alpha->id(),
                "Server::session must use the exact filtered psmux listing")) {
     return EXIT_FAILURE;
   }
