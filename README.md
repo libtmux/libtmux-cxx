@@ -10,11 +10,9 @@
 </div>
 
 > [!WARNING]
-> **Alpha prerelease — `0.1.0-alpha.2`.** The API is not stable. Names,
-> signatures and behaviour may change between alphas with no deprecation
-> period, and there is no upgrade path promised until `0.1.0`. It is tested
-> hard — against real tmux, across compilers and tmux versions — but "tested"
-> and "settled" are different claims, and only the first one is being made.
+> **Alpha.** Releases carry an `-alpha` prerelease tag. The API is not
+> settled, and any release may change or remove exported identifiers without a
+> deprecation period. Pin an exact version. Not recommended for production.
 
 ## What is libtmux?
 
