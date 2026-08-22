@@ -90,6 +90,13 @@ lifecycles on stdio:
   negotiated to `2025-11-25`, the newest initialize-based version this server
   supports, and the client may disconnect if it cannot use that selection.
 
+Tools are the only primitive this server offers. It advertises
+`{"tools": {}}` and nothing else — no resources, no prompts, no `listChanged` —
+and `resources/list` and `prompts/list` answer `-32601 no such method` rather
+than an empty list, so a client learns the boundary instead of inferring it
+from silence. The Python
+[libtmux-mcp](https://github.com/tmux-python/libtmux-mcp) serves all three.
+
 `server/discover` reports `2026-07-28`, the one supported per-request-metadata
 version, plus the tools capability, server identity, instructions, and a public
 one-hour cache lifetime. Current
