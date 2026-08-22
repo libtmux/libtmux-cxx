@@ -57,6 +57,38 @@ If you read one, read [`04-errors.cpp`](04-errors.cpp) second. The error model
 is the part of this library least like the Python one, and it is easier to see
 in a program than in prose.
 
+### Quoting code in the README
+
+Every `cpp` block in the top-level README is a region of
+[`05-readme.cpp`](05-readme.cpp), quoted verbatim. A region is a span between
+two markers carrying the same name, unique in the file. It is dedented before
+comparing, so a region nested inside `main` matches the block the README shows
+at column zero:
+
+```cpp
+  // #region chain
+  // A chain refuses a target it cannot address before reaching tmux at all,
+  // so a malformed batch costs nothing.
+  libtmux::Chain chain;
+  chain.new_window("a:b", "unreachable");
+  std::printf("chain valid: %s\n", chain.valid() ? "yes" : "no"); // no
+  // #endregion chain
+```
+
+[`check_readme.py`](../tools/docs/check_readme.py) fails the build when a block
+matches no region, and equally when a region nothing quotes goes stale — code
+that compiles but that no reader ever sees is the other way a sample rots.
+
+The loop runs one way. Edit the example, run it, then bring the quote across:
+
+```console
+$ python3 tools/docs/check_readme.py --fix
+```
+
+`--fix` matches a block to a region by its first line, so a block that has
+drifted past recognition is left alone and reported rather than quietly
+replaced with the wrong region.
+
 ## Consuming the package from outside
 
 [`consume/`](consume/README.md) is a complete project that finds the installed package

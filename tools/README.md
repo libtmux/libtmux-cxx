@@ -24,6 +24,7 @@ Both are run from the repository root.
 | [`parity/`](parity/) | `python3 -m tools.parity` | What of Python libtmux this port answers, and with what evidence |
 | [`mutate/`](mutate/) | `python3 -m tools.mutate` | Whether the tests can actually fail |
 | [`docs/`](docs/) | `python3 tools/docs/api_index.py` | Generates [`docs/api.md`](../docs/api.md) from the headers, so the reference cannot outrun them |
+| [`docs/`](docs/) | `python3 tools/docs/check_readme.py` | Whether the README's C++ still matches the example it is quoted from |
 | [`mcp/`](mcp/) | `./tools/mcp/mcp_swap.py` | Points POSIX agent CLI configs at a chosen build of [the MCP server](../apps/mcp/README.md), and puts them back |
 | [`vcpkg/`](vcpkg/) | `python3 -m tools.vcpkg check` | Whether [the registry](../docs/vcpkg-registry.md) still publishes the ports beside it |
 | [`coverage/`](coverage/) | — | How much of the shipped surface the tests reach |
