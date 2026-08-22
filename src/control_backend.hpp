@@ -33,6 +33,9 @@ namespace detail {
                                                        std::string socket_path,
                                                        std::string session);
 [[nodiscard]] ControlRequest batch_request(const CommandBatch& batch);
+[[nodiscard]] expected<std::string, CommandFailure>
+inserted_command_reply(const ControlRequestResult& result,
+                       std::optional<std::size_t> output_limit);
 
 class ControlBackend final : public Backend {
 public:
@@ -84,6 +87,11 @@ public:
                  ExecutionPolicy policy);
 
 private:
+  [[nodiscard]] expected<std::string, CommandFailure>
+  run_inserted(const std::vector<std::string>& command,
+               std::optional<std::chrono::milliseconds> timeout,
+               std::optional<std::size_t> output_limit) const override;
+
   mutable std::mutex mutex_;
   mutable Connection connection_;
   std::vector<std::string> selector_;

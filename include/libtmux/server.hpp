@@ -81,7 +81,7 @@ public:
   at_default(CommandObserver observer = {}, ExecutionPolicy policy = {});
 
   // The local backend contract; no command runs. `tmux_version()` separately
-  // probes the executable on PATH.
+  // queries the executable or the connected control server.
   [[nodiscard]] ServerCapabilities capabilities() const noexcept;
 
   // Run one command and return its standard output.
@@ -147,6 +147,8 @@ public:
   //
   // A connection carries one conversation, so commands over it are
   // serialized. Two Servers over the same socket are two conversations.
+  // Live aliases must preserve the expected flag-1 reply-block count for every
+  // command; otherwise use Connection's exact-count overload or subprocess.
   [[nodiscard]] expected<Server, CommandFailure>
   over_control(std::string_view session) const;
   // As above, with the connection's timeouts, limits, executable, and output
@@ -154,8 +156,8 @@ public:
   [[nodiscard]] expected<Server, CommandFailure>
   over_control_with_options(std::string_view session, ConnectionOptions options) const;
 
-  // Which tmux is behind this connection. `tmux -V` answers without touching
-  // the server, so this reports a version even when nothing is running.
+  // The subprocess backend asks `tmux -V` without touching a server; a control
+  // backend asks its connected server. Both use this Server's execution policy.
   [[nodiscard]] expected<Version, CommandFailure> tmux_version() const;
 
   // Whether a server is answering on this socket. False covers every reason —
@@ -273,6 +275,8 @@ public:
   //
   // The server reads the file, so the path is the server's to resolve. A
   // file it cannot read is reported rather than passed over.
+  // A control-backed Server rejects execution because the file can add an
+  // unknowable number of reply blocks; `check_file` remains available there.
   [[nodiscard]] expected<void, CommandFailure>
   source_file(const std::filesystem::path& file) const;
 

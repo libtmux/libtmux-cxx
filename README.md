@@ -65,8 +65,9 @@ failure by throwing.)
 - **Two standards.** C++23 over `std::expected`, or C++20 over pinned
   `tl::expected`, each in its own ABI namespace so they cannot be mixed by
   accident.
-- **A faster transport, same calls.** [Control mode](#batches-chains-and-control-mode)
-  keeps one connection open — about 4.6× faster per listing.
+- **A faster transport for typed entities.**
+  [Control mode](#batches-chains-and-control-mode) keeps one connection open —
+  about 4.6× faster per listing.
 - **An [MCP server](#the-mcp-server)** so an agent can drive tmux directly.
 - **Compile-time refusals.** `pane::active.starts_with("x")` is a build error,
   and [a test proves it stays one](tests/README.md#the-compile-tests-are-the-interesting-ones).
@@ -514,8 +515,16 @@ Three ways to send work, and the difference matters:
 | **Control** | One connection held open | Every command gets its own reply block |
 
 `Server::over_control(session)` returns a `Server` that dispatches every entity
-operation over a held-open connection — the same calls, without a process
-each, about 4.6× faster per listing. See
+operation over a held-open connection — the same entity calls, without a
+process each, about 4.6× faster per listing. `source_file` is deliberately
+unsupported there because a file can add an unknowable number of control reply
+blocks; `check_file` remains available. Direct raw commands that synchronously
+insert reply blocks are rejected unless the low-level connection is given their
+exact reply count. The inferred-count path does not inspect live aliases, so an
+alias that changes the count must use that overload. A control-backed `Server`
+has no count override and requires aliases to preserve that count for every
+command it dispatches; otherwise use a low-level `Connection` or a
+subprocess-backed `Server`. See
 [`docs/design/control-transport.md`](docs/design/control-transport.md).
 
 Streaming policy can enter through either Server doorway without rebuilding
@@ -619,8 +628,8 @@ It links no test framework, so GoogleTest, Catch2 and doctest all work.
 
 tmux 3.2a and newer, matching the Python package. `Version` orders releases
 correctly: `3.7 < 3.7a < 3.7b`, `next-3.8` precedes `3.8`, and `master` sorts
-above every numbered release. CI builds and tests against every supported
-version, on every change.
+above every numbered release. CI builds and tests pinned compatibility cells
+from 3.2a through 3.7b, plus `master`, on every pull request and master change.
 
 Across that range tmux does not answer identically, and where it cannot the
 library cannot either. These are the exceptions, each covered by a test that
@@ -632,6 +641,7 @@ skips below the release that provides it and runs everywhere above:
 | tmux 3.3 | `-x` and `-y` honoured on a detached `new-session` |
 | tmux 3.4 | `%message` delivered to an attached control client |
 | tmux 3.4 | notification-shaped command output kept in the block body |
+| tmux 3.6 | The created-window report when breaking a window's only pane |
 
 Two are defects rather than missing features — tmux answered wrongly and a
 later release fixed it, so the affected window is closed at both ends:
@@ -640,6 +650,11 @@ later release fixed it, so the affected window is closed at both ends:
 |---|---|
 | tmux 3.4 – 3.5 | Echoes a non-UTF-8 byte back as its octal escape rather than the byte |
 | tmux 3.4 | Adds a backslash before `$` when an option value it printed is set again |
+
+Raw tmux 3.7 also crashes an unnamed multi-pane `break-pane` and ignores an
+explicit name there. `Pane::break_out` selects the safe unnamed form inside
+one server command and repairs a requested name by stable window ID; tmux
+3.7a fixes both defects upstream.
 
 Everything else holds across the whole range. A `split` carrying a percentage
 is spelled `-l 25%` rather than the `-p 25` that tmux 3.4 removed, so it works
@@ -727,6 +742,12 @@ session rename. Reacquire the session from `Server::session()` before
 continuing; an old handle will not follow an ordinary renamed or same-name
 replacement session. Corrupting psmux's global session-ID counter or registry
 falls outside this preview's identity guarantee.
+
+In pinned psmux 3.3.7, a renamed server retains its startup-name guard until
+it exits, so that old name cannot be reused while the renamed server lives.
+Upstream commit
+[`b3d55f88`](https://github.com/psmux/psmux/commit/b3d55f88e5066cc7f87536fe9acae8570f145a39)
+fixes that limitation after 3.3.7.
 
 `Server::run`, batches, and chains remain raw escape hatches. They use psmux's
 mutable most-recent session when the command has no exact target. Psmux 3.3.7
@@ -852,12 +873,12 @@ sends is pinned.
 
 ## How it is checked
 
-Every change runs against real tmux under clang with libc++, GCC with
-libstdc++, the C++20 build over `tl::expected`, address and
+Pull requests and master changes run against real tmux under clang with
+libc++, GCC with libstdc++, the C++20 build over `tl::expected`, address and
 undefined-behaviour sanitizers, the thread sanitizer, a locale that is not
-UTF-8, and macOS with Apple Clang. The tmux matrix covers every supported
-release from 3.2a to `master`. The examples run as tests, and so do the
-programs that must fail to compile.
+UTF-8, and macOS with Apple Clang. The tmux matrix spans pinned compatibility
+cells from 3.2a through 3.7b, plus `master`. The examples run as tests, and so
+do the programs that must fail to compile.
 
 The four core parsers for tmux-controlled text — rows, options, version output,
 and control-mode frames — each have a fuzz harness and checked-in corpus. The

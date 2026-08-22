@@ -308,7 +308,7 @@ SubprocessBackend::run_scoped(const std::vector<std::string>& command,
 }
 
 expected<Version, CommandFailure> SubprocessBackend::version() const {
-  auto output = run({"-V"});
+  auto output = run({"-V"}, policy().timeout, policy().output_limit);
   if (!output.has_value()) {
     return unexpected(output.error());
   }

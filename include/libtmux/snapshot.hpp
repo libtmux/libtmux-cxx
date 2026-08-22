@@ -30,6 +30,7 @@ namespace detail {
 // Which tmux server to talk to, and how to run a command against it. Opaque
 // here on purpose: no transport type appears in an installed header.
 class Backend;
+class SnapshotFactory;
 } // namespace detail
 
 // tmux joins requested formats with a separator that cannot appear in a format
@@ -196,6 +197,8 @@ public:
   }
 
 private:
+  friend class detail::SnapshotFactory;
+
   Snapshot(std::shared_ptr<const detail::Backend> backend,
            std::vector<std::string> fields, std::string output);
 

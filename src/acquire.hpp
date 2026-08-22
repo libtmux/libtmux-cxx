@@ -30,6 +30,33 @@ struct SessionRoute {
   std::string_view name;
 };
 
+class SnapshotFactory final {
+public:
+  [[nodiscard]] static expected<std::shared_ptr<const Snapshot>, CommandFailure>
+  from_output(std::shared_ptr<const Backend> backend,
+              std::span<const std::string_view> fields, std::string output) {
+    return parsed(std::move(backend),
+                  std::vector<std::string>{fields.begin(), fields.end()},
+                  std::move(output));
+  }
+
+private:
+  [[nodiscard]] static expected<std::shared_ptr<const Snapshot>, CommandFailure>
+  parsed(std::shared_ptr<const Backend> backend, std::vector<std::string> fields,
+         std::string output) {
+    std::shared_ptr<Snapshot> snapshot{
+        new Snapshot{std::move(backend), std::move(fields), std::move(output)}};
+    if (!snapshot->parse()) {
+      return unexpected(CommandFailure{
+          .kind = FailureKind::refused,
+          .dispatched = true,
+          .exit_code = 0,
+          .diagnostic = "tmux output did not match the fields asked for"});
+    }
+    return std::shared_ptr<const Snapshot>{std::move(snapshot)};
+  }
+};
+
 template <typename Entity>
 [[nodiscard]] std::span<const std::string_view> entity_fields() {
 #if defined(_WIN32)

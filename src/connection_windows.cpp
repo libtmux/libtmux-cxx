@@ -40,9 +40,17 @@ expected<Connection, ProtocolError> Connection::connect(ConnectionOptions option
 ControlRequestResult
 Connection::execute(ControlRequest request,
                     std::chrono::steady_clock::time_point deadline) {
+  const std::size_t expected_operations = request.group.size();
+  return execute(std::move(request), expected_operations, deadline);
+}
+
+ControlRequestResult
+Connection::execute(ControlRequest request, std::size_t expected_operations,
+                    std::chrono::steady_clock::time_point deadline) {
+  static_cast<void>(request);
   static_cast<void>(deadline);
   ControlRequestResult result;
-  result.operations.resize(request.group.size());
+  result.operations.resize(expected_operations);
   result.connection_error = control_unavailable();
   return result;
 }

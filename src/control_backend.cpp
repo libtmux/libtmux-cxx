@@ -1,5 +1,7 @@
 #include "control_backend.hpp"
 
+#include "control_request.hpp"
+
 #include <cstddef>
 #include <utility>
 
@@ -43,6 +45,66 @@ ControlRequest batch_request(const CommandBatch& batch) {
   return request;
 }
 
+expected<std::string, CommandFailure>
+inserted_command_reply(const ControlRequestResult& result,
+                       std::optional<std::size_t> output_limit) {
+  if (result.connection_error.has_value()) {
+    return unexpected(
+        carried(FailureKind::pipe, true, result.connection_error->message));
+  }
+  if (result.operations.size() != 2U) {
+    return unexpected(
+        carried(FailureKind::pipe, true,
+                "tmux returned " + std::to_string(result.operations.size()) +
+                    " reply blocks for a command and its inserted operation"));
+  }
+
+  const auto exact_block =
+      [](const ControlOperationResult& operation,
+         std::string_view label) -> expected<const ControlBlock*, CommandFailure> {
+    if (operation.attribution != Attribution::exact || !operation.block.has_value()) {
+      return unexpected(carried(FailureKind::timeout, true,
+                                "the " + std::string{label} +
+                                    " reply could not be matched to this command"));
+    }
+    if (operation.block->body_truncated) {
+      return unexpected(carried(FailureKind::truncated, true,
+                                std::string{label} + " produced " +
+                                    std::to_string(operation.block->body_bytes) +
+                                    " bytes, more than this connection retains"));
+    }
+    return &*operation.block;
+  };
+
+  auto wrapper = exact_block(result.operations[0], "if-shell");
+  if (!wrapper.has_value()) {
+    return unexpected(wrapper.error());
+  }
+  if ((*wrapper)->terminal == ControlTerminal::error) {
+    return unexpected(carried(FailureKind::refused, true, text((*wrapper)->body)));
+  }
+  if (!(*wrapper)->body.empty() || (*wrapper)->body_bytes != 0U) {
+    return unexpected(carried(FailureKind::pipe, true,
+                              "if-shell returned output before its inserted command"));
+  }
+
+  auto inserted = exact_block(result.operations[1], "inserted command");
+  if (!inserted.has_value()) {
+    return unexpected(inserted.error());
+  }
+  if (output_limit.has_value() && (*inserted)->body.size() > *output_limit) {
+    return unexpected(carried(FailureKind::truncated, true,
+                              "tmux produced more output than the " +
+                                  std::to_string(*output_limit) +
+                                  " byte limit this call allowed for"));
+  }
+  std::string body = text((*inserted)->body);
+  if ((*inserted)->terminal == ControlTerminal::error) {
+    return unexpected(carried(FailureKind::refused, true, std::move(body)));
+  }
+  return body;
+}
+
 ControlBackend::ControlBackend(Connection connection, std::vector<std::string> selector,
                                std::string identity, CommandObserver observer,
                                ExecutionPolicy policy)
@@ -71,6 +133,14 @@ ControlBackend::run(const std::vector<std::string>& command,
   ControlRequest request;
   request.group.push_back(ControlCommand{command});
 
+  const auto reported = [this, &command](CommandFailure failure) {
+    observe(command, &failure);
+    return unexpected(std::move(failure));
+  };
+  if (auto unsafe = control_request::unsafe(request); unsafe.has_value()) {
+    return reported(carried(FailureKind::validation, false, std::move(*unsafe)));
+  }
+
   // No timeout means no deadline. The furthest representable point is what
   // "wait as long as it takes" is, on a clock that only ever moves forward.
   const auto deadline = timeout.has_value()
@@ -86,11 +156,6 @@ ControlBackend::run(const std::vector<std::string>& command,
     const std::lock_guard<std::mutex> held{mutex_};
     result = connection_.execute(std::move(request), deadline);
   }
-
-  const auto reported = [this, &command](CommandFailure failure) {
-    observe(command, &failure);
-    return unexpected(std::move(failure));
-  };
 
   if (result.connection_error.has_value()) {
     // The connection is what failed, so whether tmux acted is unknowable from
@@ -142,11 +207,45 @@ ControlBackend::run(const std::vector<std::string>& command,
 }
 
 expected<std::string, CommandFailure>
+ControlBackend::run_inserted(const std::vector<std::string>& command,
+                             std::optional<std::chrono::milliseconds> timeout,
+                             std::optional<std::size_t> output_limit) const {
+  ControlRequest request;
+  request.group.push_back(ControlCommand{command});
+  const auto deadline = timeout.has_value()
+                            ? std::chrono::steady_clock::now() + *timeout
+                            : std::chrono::steady_clock::time_point::max();
+
+  ControlRequestResult result;
+  {
+    const std::lock_guard<std::mutex> held{mutex_};
+    result = connection_.execute(std::move(request), 2U, deadline);
+  }
+
+  auto reply = inserted_command_reply(result, output_limit);
+  if (!reply.has_value()) {
+    CommandFailure failure = reply.error();
+    observe(command, &failure);
+    return unexpected(std::move(failure));
+  }
+  observe(command, nullptr);
+  return reply;
+}
+
+expected<std::string, CommandFailure>
 ControlBackend::run_batch(const CommandBatch& batch,
                           std::optional<std::chrono::milliseconds> timeout,
                           std::optional<std::size_t> output_limit) const {
   ControlRequest request = batch_request(batch);
   const std::vector<std::string> observed = batch.argv();
+
+  const auto reported = [this, &observed](CommandFailure failure) {
+    observe(observed, &failure);
+    return unexpected(std::move(failure));
+  };
+  if (auto unsafe = control_request::unsafe(request); unsafe.has_value()) {
+    return reported(carried(FailureKind::validation, false, std::move(*unsafe)));
+  }
 
   const auto deadline = timeout.has_value()
                             ? std::chrono::steady_clock::now() + *timeout
@@ -158,11 +257,6 @@ ControlBackend::run_batch(const CommandBatch& batch,
     const std::lock_guard<std::mutex> held{mutex_};
     result = connection_.execute(std::move(request), deadline);
   }
-
-  const auto reported = [this, &observed](CommandFailure failure) {
-    observe(observed, &failure);
-    return unexpected(std::move(failure));
-  };
 
   if (result.connection_error.has_value()) {
     return reported(carried(FailureKind::pipe, true, result.connection_error->message));
@@ -217,8 +311,8 @@ ControlBackend::run_batch(const CommandBatch& batch,
 }
 
 expected<Version, CommandFailure> ControlBackend::version() const {
-  auto reported =
-      run({"display-message", "-p", "#{version}"}, std::nullopt, std::nullopt);
+  auto reported = run({"display-message", "-p", "#{version}"}, policy().timeout,
+                      policy().output_limit);
   if (!reported.has_value()) {
     return unexpected(reported.error());
   }
