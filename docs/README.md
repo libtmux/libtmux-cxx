@@ -21,6 +21,13 @@ tmux fixture installed alongside the library:
 $ python3 tools/docs/api_index.py --include include/libtmux/testing --output docs/api-testing.md --page testing
 ```
 
+## The MCP server
+
+**[`apps/mcp/README.md`](../apps/mcp/README.md)** — the twelve tools, the five
+protocol versions it negotiates, JSON-RPC batching, progress and cancellation,
+how a socket is selected, and what a client is told when a call fails. It is a
+separate program in its own package, and nothing links it.
+
 ## Packaging
 
 **[`vcpkg-registry.md`](vcpkg-registry.md)** — this repository is a vcpkg git

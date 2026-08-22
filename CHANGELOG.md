@@ -41,6 +41,13 @@ was recorded as it landed.
   `list_sessions`, `list_windows` and `list_session_panes` — and builds on MSVC
   now that the protocol version is compared as text. (#4)
 
+### Library
+
+- Add `Server::capabilities()`, reporting the implementation behind a server,
+  the backend in use, and which features it will serve. Asking is how a caller
+  learns what a route supports; the alternative is discovering it by failure.
+  (#4)
+
 ### Control mode
 
 - Inserted control replies are attributed without stealing concurrent output.
@@ -56,6 +63,26 @@ was recorded as it landed.
 
 ### MCP server
 
+- The tool catalog grows from five tools to twelve. `inspect_tmux`,
+  `list_windows`, `list_session_panes`, `create_session`, `send_keys`,
+  `wait_for_text` and `search_panes` join the original five, which are
+  unchanged. (#4)
+- Tools publish an `outputSchema` and answer with `structuredContent`, so a
+  client validates a reply instead of parsing prose out of it. (#4)
+- Accept JSON-RPC batches under the protocol versions that allow them, and
+  answer in input order. A member that is a notification, or not a request at
+  all, contributes no reply. (#4)
+- Negotiate five protocol versions: `2026-07-28`, and the legacy
+  `2025-11-25`, `2025-06-18`, `2025-03-26` and `2024-11-05`. (#4)
+- Add `server/discover`, which answers the modern discovery request with the
+  catalog and its cache policy. (#4)
+- Run calls on a worker pool with a bounded number in flight. Past the bound
+  the server answers `-32003` rather than queueing without limit. (#4)
+- Emit `notifications/progress` for a call carrying a `progressToken`, and
+  honour `notifications/cancelled` for one already running. (#4)
+- Take `--socket-name` or `--socket-path`. Without a selector only a valid
+  inherited `TMUX` route is accepted, so the server never silently drives a
+  tmux the caller did not name. (#4)
 - A wait whose deadline expired during target lookup no longer publishes an
   empty `pane_id`, which its own output schema refuses. The field is emitted
   only once a target resolves, and is no longer required. (#4)
