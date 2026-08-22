@@ -118,6 +118,20 @@ $ python3 tools/docs/api_index.py \
     --output docs/api.md
 ```
 
+The README's C++ is quoted from `examples/05-readme.cpp`, which is compiled and
+run against real tmux. This checks the quoting; the example lane checks that the
+code still works:
+
+```console
+$ python3 tools/docs/check_readme.py
+```
+
+Edit the example, never the block in the README, then bring the quote across:
+
+```console
+$ python3 tools/docs/check_readme.py --fix
+```
+
 This repository is also a vcpkg registry, and the versions database can drift
 from the ports beside it:
 
