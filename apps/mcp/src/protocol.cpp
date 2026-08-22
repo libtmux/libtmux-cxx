@@ -263,7 +263,9 @@ Route ProtocolSession::initialize(const json& id, const json& params,
     return Route::answering(
         failure(id, kInvalidParams, "initialize needs protocolVersion"));
   }
-  if (*protocol == kModernProtocolVersion) {
+  // Extracted rather than compared as JSON: MSVC finds json's operator==
+  // overloads ambiguous against a string_view.
+  if (protocol->get<std::string>() == kModernProtocolVersion) {
     return Route::answering(
         failure(id, kInvalidRequest,
                 "2026-07-28 uses server/discover and per-request metadata"));
