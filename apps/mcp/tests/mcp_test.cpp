@@ -282,7 +282,9 @@ TEST(McpTools, ObservesCancellationBetweenBoundedWaitCommands) {
   ASSERT_FALSE(waited.has_value());
   EXPECT_FALSE(waited.error().caller_error);
   EXPECT_EQ(waited.error().message, "request cancelled");
-  EXPECT_LT(elapsed, 100ms);
+  // Well inside the 1000ms budget is the claim: cancellation ended the wait
+  // rather than the deadline. A tighter bound measures the machine instead.
+  EXPECT_LT(elapsed, 500ms);
 }
 
 TEST(McpToolsTmux, ReportsAPaneThatDisappearsDuringSearch) {
