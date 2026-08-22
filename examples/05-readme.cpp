@@ -211,6 +211,9 @@ int main() {
     case libtmux::FailureKind::validation:
       std::printf("the request was malformed before it was sent\n");
       break;
+    case libtmux::FailureKind::unsupported:
+      std::printf("this backend cannot provide the operation safely\n");
+      break;
     case libtmux::FailureKind::refused:
       std::printf("tmux refused it: %s\n", gone.error().diagnostic.c_str());
       break;
@@ -240,8 +243,7 @@ int main() {
   // #endregion escape
 
   // #region options
-  // Options are read and written where tmux scopes them, and a value survives
-  // the round trip whatever is in it.
+  // Options are read and written where tmux scopes them.
   (void)session.set_option("@project", "libtmux");
 
   const auto project = session.option("@project");

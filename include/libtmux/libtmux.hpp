@@ -9,6 +9,7 @@
 
 #include "libtmux/abi.hpp"
 #include "libtmux/batch.hpp"
+#include "libtmux/capabilities.hpp"
 #include "libtmux/capture.hpp"
 #include "libtmux/cardinality.hpp"
 #include "libtmux/chain.hpp"

@@ -26,6 +26,13 @@ CommandFailure carried(FailureKind kind, bool dispatched, std::string diagnostic
 
 } // namespace
 
+ConnectionOptions routed_control_options(ConnectionOptions options,
+                                         std::string socket_path, std::string session) {
+  options.socket_path = std::move(socket_path);
+  options.session_name = std::move(session);
+  return options;
+}
+
 ControlBackend::ControlBackend(Connection connection, std::vector<std::string> selector,
                                std::string identity, CommandObserver observer,
                                ExecutionPolicy policy)
@@ -35,11 +42,10 @@ ControlBackend::ControlBackend(Connection connection, std::vector<std::string> s
 expected<std::shared_ptr<const ControlBackend>, ProtocolError>
 ControlBackend::open(std::vector<std::string> selector, std::string socket_path,
                      std::string identity, std::string session,
-                     CommandObserver observer, ExecutionPolicy policy) {
-  ConnectionOptions options;
-  options.socket_path = std::move(socket_path);
-  options.session_name = std::move(session);
-  auto connection = Connection::connect(std::move(options));
+                     ConnectionOptions options, CommandObserver observer,
+                     ExecutionPolicy policy) {
+  auto connection = Connection::connect(routed_control_options(
+      std::move(options), std::move(socket_path), std::move(session)));
   if (!connection.has_value()) {
     return unexpected(connection.error());
   }

@@ -35,8 +35,10 @@ function(libtmux_resolve_tl_expected out_include_dir out_install_dir)
     tl_expected
     URL https://github.com/TartanLlama/expected/archive/refs/tags/v1.1.0.tar.gz
     URL_HASH
-      SHA256=1db357f46dd2b24447156aaf970c4c40a793ef12a8a9c2ad9e096d9801368df6)
-  set(EXPECTED_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+      SHA256=1db357f46dd2b24447156aaf970c4c40a793ef12a8a9c2ad9e096d9801368df6
+    SOURCE_SUBDIR _libtmux_header_only)
+  # A nonexistent source subdirectory populates the headers without importing
+  # the dependency's unconditional package-install rules.
   FetchContent_MakeAvailable(tl_expected)
   set(${out_include_dir} "${tl_expected_SOURCE_DIR}/include" PARENT_SCOPE)
   set(${out_install_dir} "${tl_expected_SOURCE_DIR}/include/tl" PARENT_SCOPE)

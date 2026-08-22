@@ -8,18 +8,23 @@
   ],
   "homepage": "https://github.com/libtmux/libtmux-cxx",
   "license": "MIT",
-  "supports": "!windows",
   "dependencies": [],
   "features": {
     "tests": {
       "description": "Build the test suites",
       "dependencies": [
-        "gtest",
-        "yaml-cpp"
+        {
+          "name": "gtest",
+          "platform": "!windows & !mingw"
+        },
+        {
+          "name": "yaml-cpp",
+          "platform": "!windows & !mingw"
+        }
       ]
     },
     "mcp": {
-      "description": "Build the MCP server",
+      "description": "Build the MCP server (Windows exposes the psmux-safe subset)",
       "dependencies": [
         "nlohmann-json"
       ]

@@ -12,6 +12,7 @@
 #include "libtmux/server.hpp"
 
 #include "acquire.hpp"
+#include "psmux.hpp"
 
 LIBTMUX_NAMESPACE_BEGIN
 
@@ -25,6 +26,25 @@ detail::Row::run(const std::vector<std::string>& command,
   // deadline at all: `window.rename(...)` against a tmux that stopped
   // answering held the calling thread for the life of the process.
   const ExecutionPolicy& policy = backend()->policy();
+#if defined(_WIN32)
+  const std::size_t session_id = snapshot_->index_of("session_id");
+  const std::size_t session_name = snapshot_->index_of("session_name");
+  if (session_id < snapshot_->rows()[row_].size()) {
+    if (snapshot_->rows()[row_][session_id].empty()) {
+      return unexpected(
+          CommandFailure{.kind = FailureKind::validation,
+                         .dispatched = false,
+                         .exit_code = 0,
+                         .diagnostic = "psmux entity has no stable session id"});
+    }
+    const std::string_view name = session_name < snapshot_->rows()[row_].size()
+                                      ? snapshot_->rows()[row_][session_name]
+                                      : std::string_view{};
+    return backend()->run_in_session(
+        command, snapshot_->rows()[row_][session_id], name, policy.timeout,
+        output_limit.has_value() ? output_limit : policy.output_limit);
+  }
+#endif
   return backend()->run(command, policy.timeout,
                         output_limit.has_value() ? output_limit : policy.output_limit);
 }
@@ -77,6 +97,7 @@ expected<Server, CommandFailure> detail::Row::server() const {
 
 namespace {
 
+#if !defined(_WIN32)
 // A command run for its effect. The output of `kill-window` is not a result.
 expected<void, CommandFailure> effect(expected<std::string, CommandFailure> reply) {
   if (!reply.has_value()) {
@@ -84,6 +105,7 @@ expected<void, CommandFailure> effect(expected<std::string, CommandFailure> repl
   }
   return {};
 }
+#endif
 
 CommandFailure rejected(std::string diagnostic) {
   return CommandFailure{.kind = FailureKind::validation,
@@ -92,6 +114,16 @@ CommandFailure rejected(std::string diagnostic) {
                         .diagnostic = std::move(diagnostic)};
 }
 
+#if defined(_WIN32)
+CommandFailure unsupported(std::string diagnostic) {
+  return CommandFailure{.kind = FailureKind::unsupported,
+                        .dispatched = false,
+                        .exit_code = 0,
+                        .diagnostic = std::move(diagnostic)};
+}
+#endif
+
+#if !defined(_WIN32)
 // tmux prints options one per line in the same shape at every scope, so the
 // only thing that differs between the four is the flag that selects it.
 expected<std::vector<OptionEntry>, CommandFailure>
@@ -146,27 +178,51 @@ std::vector<std::string> scoped(std::string_view verb, std::string_view scope,
   }
   return command;
 }
+#endif
+
+std::string session_target(const Session& session) {
+#if defined(_WIN32)
+  static_cast<void>(session);
+  return ":";
+#endif
+  return std::string{session.id()};
+}
+
+detail::SessionRoute session_route(const Session& session) {
+  return {.id = session.id(), .name = session.name()};
+}
+
+detail::SessionRoute session_route(const Window& window) {
+  return {.id = window.session_id(), .name = window.session_name()};
+}
+
+detail::SessionRoute session_route(const Pane& pane) {
+  return {.id = pane.session_id(), .name = pane.session_name()};
+}
 
 } // namespace
 
 // --- Session ---------------------------------------------------------------
 
 expected<std::vector<Window>, CommandFailure> Session::windows() const {
-  return detail::list_entities<Window>(backend(),
-                                       {"list-windows", "-t", std::string{id()}});
+  return detail::list_entities<Window>(
+      backend(), {"list-windows", "-t", session_target(*this)}, session_route(*this));
 }
 
 expected<std::vector<Pane>, CommandFailure> Session::panes() const {
   return detail::list_entities<Pane>(backend(),
-                                     {"list-panes", "-s", "-t", std::string{id()}});
+                                     {"list-panes", "-s", "-t", session_target(*this)},
+                                     session_route(*this));
 }
 
 expected<Window, CommandFailure> Session::active_window() const {
-  return detail::describe<Window>(backend(), id());
+  return detail::describe<Window>(backend(), session_target(*this), {},
+                                  session_route(*this));
 }
 
 expected<Pane, CommandFailure> Session::active_pane() const {
-  return detail::describe<Pane>(backend(), id());
+  return detail::describe<Pane>(backend(), session_target(*this), {},
+                                session_route(*this));
 }
 
 namespace {
@@ -174,6 +230,7 @@ namespace {
 // Each of these selects, then reports where the selection ended up. The
 // second call is what makes the result useful; tmux's own commands print
 // nothing.
+#if !defined(_WIN32)
 expected<Window, CommandFailure> moved(const Session& session,
                                        expected<std::string, CommandFailure> ran) {
   if (!ran.has_value()) {
@@ -181,19 +238,32 @@ expected<Window, CommandFailure> moved(const Session& session,
   }
   return session.active_window();
 }
+#endif
 
 } // namespace
 
 expected<Window, CommandFailure> Session::select_next_window() const {
-  return moved(*this, run({"next-window", "-t", std::string{id()}}));
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux cannot atomically target session navigation"));
+#else
+  return moved(*this, run({"next-window", "-t", session_target(*this)}));
+#endif
 }
 
 expected<Window, CommandFailure> Session::select_previous_window() const {
-  return moved(*this, run({"previous-window", "-t", std::string{id()}}));
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux cannot atomically target session navigation"));
+#else
+  return moved(*this, run({"previous-window", "-t", session_target(*this)}));
+#endif
 }
 
 expected<Window, CommandFailure> Session::select_last_window() const {
-  return moved(*this, run({"last-window", "-t", std::string{id()}}));
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux cannot atomically target session navigation"));
+#else
+  return moved(*this, run({"last-window", "-t", session_target(*this)}));
+#endif
 }
 
 expected<Window, CommandFailure> Session::new_window(std::string_view name) const {
@@ -204,7 +274,12 @@ expected<Window, CommandFailure> Session::new_window(NewWindowOptions options) c
   if (options.name.empty()) {
     return unexpected(rejected("window name is empty"));
   }
-  std::string target{id()};
+#if defined(_WIN32)
+  static_cast<void>(options);
+  return unexpected(
+      unsupported("psmux can report a failed new-window as an existing window"));
+#else
+  std::string target = session_target(*this);
   if (options.index.has_value()) {
     target += ":" + std::to_string(*options.index);
   }
@@ -231,54 +306,106 @@ expected<Window, CommandFailure> Session::new_window(NewWindowOptions options) c
     command.push_back(std::move(options.shell_command));
   }
   return detail::one_entity<Window>(backend(), std::move(command), FormatArgument::flag,
-                                    options.name);
+                                    options.name, {}, session_route(*this));
+#endif
 }
 
 expected<void, CommandFailure> Session::rename(std::string_view name) const {
   if (name.empty()) {
     return unexpected(rejected("session name is empty"));
   }
-  // `--` because a name is data: without it tmux reads a leading dash as a
-  // flag and refuses the rename.
-  return effect(
-      run({"rename-session", "-t", std::string{id()}, "--", std::string{name}}));
+#if defined(_WIN32)
+  if (auto invalid = libtmux_psmux::invalid_session_name(name); invalid.has_value()) {
+    return unexpected(rejected(std::move(*invalid)));
+  }
+  return unexpected(unsupported(
+      "psmux cannot atomically prevent rename-session from replacing a session"));
+#else
+  std::vector<std::string> command{"rename-session", "-t", session_target(*this)};
+  command.emplace_back("--");
+  command.emplace_back(name);
+  return effect(run(command));
+#endif
 }
 
 expected<void, CommandFailure> Session::kill() const {
-  return effect(run({"kill-session", "-t", std::string{id()}}));
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux cannot atomically kill a captured session"));
+#else
+  return effect(run({"kill-session", "-t", session_target(*this)}));
+#endif
 }
 
 expected<Session, CommandFailure> Session::refresh() const {
-  return detail::describe<Session>(backend(), id(), id());
+  return detail::describe<Session>(backend(), session_target(*this), id(),
+                                   session_route(*this));
 }
 
 expected<std::vector<OptionEntry>, CommandFailure> Session::options() const {
-  return listed(run(scoped("show-options", {}, id(), {"-A"})));
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux cannot atomically read session options"));
+#else
+  return listed(run(scoped("show-options", {}, session_target(*this), {"-A"})));
+#endif
 }
 
 expected<OptionEntry, CommandFailure> Session::option(std::string_view name) const {
-  return named(run(scoped("show-options", {}, id(), {"-A", name})), name);
+#if defined(_WIN32)
+  static_cast<void>(name);
+  return unexpected(unsupported("psmux cannot atomically read a session option"));
+#else
+  return named(run(scoped("show-options", {}, session_target(*this), {"-A", name})),
+               name);
+#endif
 }
 
 expected<void, CommandFailure> Session::set_option(std::string_view name,
                                                    std::string_view value) const {
-  return effect(run(scoped("set-option", {}, id(), {name, value})));
+#if defined(_WIN32)
+  static_cast<void>(name);
+  static_cast<void>(value);
+  return unexpected(unsupported("psmux cannot atomically set a session option"));
+#else
+  return effect(run(scoped("set-option", {}, session_target(*this), {name, value})));
+#endif
 }
 
 expected<void, CommandFailure> Session::unset_option(std::string_view name) const {
-  return effect(run(scoped("set-option", {}, id(), {"-u", name})));
+#if defined(_WIN32)
+  static_cast<void>(name);
+  return unexpected(unsupported("psmux cannot atomically unset a session option"));
+#else
+  return effect(run(scoped("set-option", {}, session_target(*this), {"-u", name})));
+#endif
 }
 
 expected<std::string, CommandFailure> Session::expand(std::string_view format) const {
-  return detail::expand_format<Session>(backend(), id(), format);
+  return detail::expand_format<Session>(backend(), session_target(*this), format, id(),
+                                        session_route(*this));
 }
 
 expected<void, CommandFailure> Session::show_message(std::string_view text) const {
-  return effect(
-      run({"display-message", "-t", std::string{id()}, "--", std::string{text}}));
+#if defined(_WIN32)
+  static_cast<void>(text);
+  return unexpected(unsupported("psmux cannot safely preserve a session message"));
+#else
+  std::vector<std::string> command{"display-message", "-t", session_target(*this)};
+  detail::append_display_message_text(command, std::string{text});
+  return effect(run(command));
+#endif
 }
 
 std::vector<std::string> Session::attach_command() const {
+  auto command = checked_attach_command();
+  return command.has_value() ? *std::move(command) : std::vector<std::string>{};
+}
+
+expected<std::vector<std::string>, CommandFailure>
+Session::checked_attach_command() const {
+#if defined(_WIN32)
+  return unexpected(
+      unsupported("psmux cannot bind an attach command to a captured session safely"));
+#else
   std::vector<std::string> command{"tmux"};
   if (backend() != nullptr) {
     const std::vector<std::string>& connection = backend()->connection();
@@ -288,43 +415,133 @@ std::vector<std::string> Session::attach_command() const {
   command.emplace_back("-t");
   command.emplace_back(id());
   return command;
+#endif
 }
 
 expected<void, CommandFailure> Session::detach_clients() const {
-  return effect(run({"detach-client", "-s", std::string{id()}}));
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux cannot safely route detach-client"));
+#else
+  return effect(run({"detach-client", "-s", session_target(*this)}));
+#endif
 }
 
 expected<std::vector<OptionEntry>, CommandFailure> Session::hooks() const {
-  return listed(run({"show-hooks", "-t", std::string{id()}}));
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux cannot atomically read session hooks"));
+#else
+  auto hooks = listed(run({"show-hooks", "-t", session_target(*this)}));
+  return hooks;
+#endif
 }
 
 expected<void, CommandFailure> Session::set_hook(std::string_view name,
                                                  std::string_view command) const {
-  return effect(run(
-      {"set-hook", "-t", std::string{id()}, std::string{name}, std::string{command}}));
+#if defined(_WIN32)
+  static_cast<void>(name);
+  static_cast<void>(command);
+  return unexpected(unsupported("psmux cannot atomically set a session hook"));
+#else
+  return effect(run({"set-hook", "-t", session_target(*this), std::string{name},
+                     std::string{command}}));
+#endif
 }
 
 // --- Window ----------------------------------------------------------------
 
 std::string Window::target() const {
+  auto result = checked_target();
+  return result.has_value() ? *std::move(result) : std::string{};
+}
+
+expected<std::string, CommandFailure> Window::checked_target() const {
+#if defined(_WIN32)
+  return unexpected(
+      unsupported("psmux cannot bind a reusable target to a captured window safely"));
+#else
   // A window read out of a recording may carry no session; a bare id is then
   // the only thing there is to say.
   if (session_id().empty()) {
     return std::string{id()};
   }
   return std::string{session_id()} + ":" + std::string{id()};
+#endif
 }
 
+namespace {
+
+std::string window_command_target(const Window& window) {
+#if defined(_WIN32)
+  return std::string{window.id()};
+#else
+  return window.target();
+#endif
+}
+
+} // namespace
+
 expected<Session, CommandFailure> Window::session() const {
-  return detail::describe<Session>(backend(), target());
+#if defined(_WIN32)
+  auto current = refresh();
+  if (!current.has_value()) {
+    return unexpected(current.error());
+  }
+  return detail::describe<Session>(current->backend(), ":", current->session_id(),
+                                   session_route(*current));
+#else
+  return detail::describe<Session>(backend(), window_command_target(*this), {},
+                                   session_route(*this));
+#endif
 }
 
 expected<std::vector<Pane>, CommandFailure> Window::panes() const {
-  return detail::list_entities<Pane>(backend(), {"list-panes", "-t", target()});
+#if defined(_WIN32)
+  auto all = detail::list_entities<Pane>(backend(), {"list-panes", "-s", "-t", ":"},
+                                         session_route(*this));
+  if (!all.has_value()) {
+    return unexpected(all.error());
+  }
+  std::vector<Pane> owned;
+  for (Pane& pane : *all) {
+    if (pane.window_id() == id()) {
+      owned.push_back(std::move(pane));
+    }
+  }
+  if (owned.empty()) {
+    return unexpected(
+        CommandFailure{.kind = FailureKind::missing,
+                       .dispatched = true,
+                       .exit_code = 0,
+                       .diagnostic = "tmux has no window " + std::string{id()}});
+  }
+  return owned;
+#else
+  return detail::list_entities<Pane>(backend(),
+                                     {"list-panes", "-t", window_command_target(*this)},
+                                     session_route(*this));
+#endif
 }
 
 expected<Pane, CommandFailure> Window::active_pane() const {
-  return detail::describe<Pane>(backend(), target());
+#if defined(_WIN32)
+  auto owned = panes();
+  if (!owned.has_value()) {
+    return unexpected(owned.error());
+  }
+  for (Pane& pane : *owned) {
+    if (pane.active()) {
+      return std::move(pane);
+    }
+  }
+  return unexpected(
+      CommandFailure{.kind = FailureKind::missing,
+                     .dispatched = true,
+                     .exit_code = 0,
+                     .diagnostic = "tmux has no active pane in " + std::string{id()}});
+#else
+  return detail::describe<Pane>(backend(), window_command_target(*this), {},
+                                session_route(*this));
+#endif
 }
 
 expected<Pane, CommandFailure> Window::split() const { return split(SplitOptions{}); }
@@ -334,7 +551,11 @@ expected<Pane, CommandFailure> Window::split(SplitOptions options) const {
       (*options.percentage < 1 || *options.percentage > 100)) {
     return unexpected(rejected("a percentage of the window is between 1 and 100"));
   }
-  std::vector<std::string> command{"split-window", "-t", target(), "-P"};
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux cannot safely target split-window"));
+#else
+  std::vector<std::string> command{"split-window", "-t", window_command_target(*this),
+                                   "-P"};
   if (!options.focus) {
     command.emplace_back("-d");
   }
@@ -367,18 +588,30 @@ expected<Pane, CommandFailure> Window::split(SplitOptions options) const {
     command.push_back(std::move(options.shell_command));
   }
   return detail::one_entity<Pane>(backend(), std::move(command), FormatArgument::flag,
-                                  id());
+                                  id(), {}, session_route(*this));
+#endif
 }
 
 expected<void, CommandFailure> Window::rename(std::string_view name) const {
   if (name.empty()) {
     return unexpected(rejected("window name is empty"));
   }
-  return effect(run({"rename-window", "-t", target(), "--", std::string{name}}));
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux cannot safely target rename-window"));
+#else
+  std::vector<std::string> command{"rename-window", "-t", window_command_target(*this)};
+  command.emplace_back("--");
+  command.emplace_back(name);
+  return effect(run(command));
+#endif
 }
 
 expected<void, CommandFailure> Window::select() const {
-  return effect(run({"select-window", "-t", target()}));
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux cannot safely select a window by stable id"));
+#else
+  return effect(run({"select-window", "-t", window_command_target(*this)}));
+#endif
 }
 
 // Both carry the session, like every other window operation here.
@@ -389,77 +622,131 @@ expected<void, CommandFailure> Window::select() const {
 // expanded against a bare id answers about whichever session tmux chose, which
 // is the answer to a question nobody asked.
 expected<void, CommandFailure> Window::show_message(std::string_view text) const {
-  return effect(run({"display-message", "-t", target(), "--", std::string{text}}));
+#if defined(_WIN32)
+  static_cast<void>(text);
+  return unexpected(unsupported("psmux cannot safely target a window message"));
+#else
+  std::vector<std::string> command{"display-message", "-t",
+                                   window_command_target(*this)};
+  detail::append_display_message_text(command, std::string{text});
+  return effect(run(command));
+#endif
 }
 
 expected<std::string, CommandFailure> Window::expand(std::string_view format) const {
-  return detail::expand_format<Window>(backend(), target(), format, id());
+  return detail::expand_format<Window>(backend(), window_command_target(*this), format,
+                                       id(), session_route(*this));
 }
 
 expected<void, CommandFailure> Window::kill() const {
-  return effect(run({"kill-window", "-t", target()}));
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux can kill the active window for a stale target"));
+#else
+  return effect(run({"kill-window", "-t", window_command_target(*this)}));
+#endif
 }
 
 expected<void, CommandFailure> Window::select_layout(std::string_view layout) const {
   if (layout.empty()) {
     return unexpected(rejected("layout is empty"));
   }
-  return effect(run({"select-layout", "-t", target(), std::string{layout}}));
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux cannot safely target select-layout"));
+#else
+  return effect(
+      run({"select-layout", "-t", window_command_target(*this), std::string{layout}}));
+#endif
 }
 
 expected<void, CommandFailure> Window::resize(long long width, long long height) const {
   if (width <= 0 || height <= 0) {
     return unexpected(rejected("a window cannot be resized to nothing"));
   }
-  return effect(run({"resize-window", "-t", target(), "-x", std::to_string(width), "-y",
-                     std::to_string(height)}));
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux treats resize-window as a no-op"));
+#else
+  return effect(run({"resize-window", "-t", window_command_target(*this), "-x",
+                     std::to_string(width), "-y", std::to_string(height)}));
+#endif
 }
 
 expected<void, CommandFailure> Window::next_layout() const {
-  return effect(run({"next-layout", "-t", target()}));
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux cannot safely target next-layout"));
+#else
+  return effect(run({"next-layout", "-t", window_command_target(*this)}));
+#endif
 }
 
 expected<void, CommandFailure> Window::previous_layout() const {
-  return effect(run({"previous-layout", "-t", target()}));
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux cannot safely target previous-layout"));
+#else
+  return effect(run({"previous-layout", "-t", window_command_target(*this)}));
+#endif
 }
 
 expected<void, CommandFailure> Window::rotate() const {
-  return effect(run({"rotate-window", "-t", target()}));
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux cannot safely target rotate-window"));
+#else
+  return effect(run({"rotate-window", "-t", window_command_target(*this)}));
+#endif
 }
 
 expected<Pane, CommandFailure> Window::select_last_pane() const {
-  const auto moved = run({"select-pane", "-l", "-t", target()});
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux cannot safely target the last pane"));
+#else
+  const auto moved = run({"select-pane", "-l", "-t", window_command_target(*this)});
   if (!moved.has_value()) {
     return unexpected(moved.error());
   }
   return active_pane();
+#endif
 }
 
 expected<void, CommandFailure> Window::link_to(const Session& target) const {
   if (from_different_servers(*this, target)) {
     return unexpected(crossed_servers());
   }
-  return effect(run(
-      {"link-window", "-s", std::string{id()}, "-t", std::string{target.id()} + ":"}));
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux cannot link a window between sessions"));
+#else
+  return effect(
+      run({"link-window", "-s", this->target(), "-t", session_target(target) + ":"}));
+#endif
 }
 
 expected<void, CommandFailure> Window::unlink() const {
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux unlink-window destroys the active window"));
+#else
   // The qualified target, because a window shown in several sessions has
   // several links and a bare id does not say which one to remove.
-  return effect(run({"unlink-window", "-t", target()}));
+  return effect(run({"unlink-window", "-t", window_command_target(*this)}));
+#endif
 }
 
 expected<void, CommandFailure> Window::swap_with(const Window& other) const {
   if (from_different_servers(*this, other)) {
     return unexpected(crossed_servers());
   }
-  return effect(run({"swap-window", "-s", target(), "-t", other.target()}));
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux cannot safely target swap-window"));
+#else
+  return effect(run({"swap-window", "-s", window_command_target(*this), "-t",
+                     window_command_target(other)}));
+#endif
 }
 
 expected<void, CommandFailure> Window::move_to(long long index) const {
   if (index < 0) {
     return unexpected(rejected("a window index cannot be negative"));
   }
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux cannot safely target move-window"));
+#else
   // Both ends carry this window's session. A bare index would land in
   // whichever session tmux considers current, and a bare window id is worse:
   // a window linked into several sessions has several homes, and tmux picks
@@ -468,40 +755,112 @@ expected<void, CommandFailure> Window::move_to(long long index) const {
   //
   // `-d` because move-window otherwise selects what it moved, taking the
   // user's focus somewhere they did not ask to go.
-  const std::string source = target();
-  const std::string target = std::string{session_id()} + ":" + std::to_string(index);
+  const std::string source = window_command_target(*this);
+  const std::string owner{session_id()};
+  const std::string target = owner + ":" + std::to_string(index);
   return effect(run({"move-window", "-d", "-s", source, "-t", target}));
+#endif
 }
 
 expected<Window, CommandFailure> Window::refresh() const {
-  return detail::describe<Window>(backend(), target(), id());
+  return detail::describe<Window>(backend(), window_command_target(*this), id(),
+                                  session_route(*this));
 }
 
 expected<std::vector<OptionEntry>, CommandFailure> Window::options() const {
-  return listed(run(scoped("show-options", "-w", target(), {"-A"})));
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux does not provide window-scoped options"));
+#else
+  return listed(
+      run(scoped("show-options", "-w", window_command_target(*this), {"-A"})));
+#endif
 }
 
 expected<OptionEntry, CommandFailure> Window::option(std::string_view name) const {
-  return named(run(scoped("show-options", "-w", target(), {"-A", name})), name);
+#if defined(_WIN32)
+  static_cast<void>(name);
+  return unexpected(unsupported("psmux does not provide window-scoped options"));
+#else
+  return named(
+      run(scoped("show-options", "-w", window_command_target(*this), {"-A", name})),
+      name);
+#endif
 }
 
 expected<void, CommandFailure> Window::set_option(std::string_view name,
                                                   std::string_view value) const {
-  return effect(run(scoped("set-option", "-w", target(), {name, value})));
+#if defined(_WIN32)
+  static_cast<void>(name);
+  static_cast<void>(value);
+  return unexpected(unsupported("psmux does not provide window-scoped options"));
+#else
+  return effect(
+      run(scoped("set-option", "-w", window_command_target(*this), {name, value})));
+#endif
 }
 
 expected<void, CommandFailure> Window::unset_option(std::string_view name) const {
-  return effect(run(scoped("set-option", "-w", target(), {"-u", name})));
+#if defined(_WIN32)
+  static_cast<void>(name);
+  return unexpected(unsupported("psmux does not provide window-scoped options"));
+#else
+  return effect(
+      run(scoped("set-option", "-w", window_command_target(*this), {"-u", name})));
+#endif
 }
 
 // --- Pane ------------------------------------------------------------------
 
+namespace {
+
+std::string pane_target(const Pane& pane) {
+#if defined(_WIN32)
+  static_cast<void>(pane);
+#endif
+  return std::string{pane.id()};
+}
+
+} // namespace
+
 expected<Window, CommandFailure> Pane::window() const {
-  return detail::describe<Window>(backend(), id());
+#if defined(_WIN32)
+  auto current_window = expand("#{window_id}");
+  if (!current_window.has_value()) {
+    return unexpected(current_window.error());
+  }
+  auto all = detail::list_entities<Window>(backend(), {"list-windows", "-t", ":"},
+                                           session_route(*this));
+  if (!all.has_value()) {
+    return unexpected(all.error());
+  }
+  for (Window& window : *all) {
+    if (window.id() == *current_window) {
+      return std::move(window);
+    }
+  }
+  return unexpected(
+      CommandFailure{.kind = FailureKind::missing,
+                     .dispatched = true,
+                     .exit_code = 0,
+                     .diagnostic = "tmux has no window " + *std::move(current_window)});
+#else
+  return detail::describe<Window>(backend(), pane_target(*this), {},
+                                  session_route(*this));
+#endif
 }
 
 expected<Session, CommandFailure> Pane::session() const {
-  return detail::describe<Session>(backend(), id());
+#if defined(_WIN32)
+  auto current = refresh();
+  if (!current.has_value()) {
+    return unexpected(current.error());
+  }
+  return detail::describe<Session>(current->backend(), ":", current->session_id(),
+                                   session_route(*current));
+#else
+  return detail::describe<Session>(backend(), pane_target(*this), {},
+                                   session_route(*this));
+#endif
 }
 
 expected<void, CommandFailure> Pane::send_text(std::string_view text) const {
@@ -509,9 +868,14 @@ expected<void, CommandFailure> Pane::send_text(std::string_view text) const {
   if (!arguments.has_value()) {
     return unexpected(rejected("text to send is empty"));
   }
-  std::vector<std::string> command{"send-keys", "-t", std::string{id()}};
+#if defined(_WIN32)
+  return unexpected(
+      unsupported("psmux can send text to the active pane for a stale target"));
+#else
+  std::vector<std::string> command{"send-keys", "-t", pane_target(*this)};
   command.insert(command.end(), arguments->begin(), arguments->end());
   return effect(run(command));
+#endif
 }
 
 expected<void, CommandFailure> Pane::send_key(std::string_view key) const {
@@ -520,7 +884,12 @@ expected<void, CommandFailure> Pane::send_key(std::string_view key) const {
   if (!is_key_name(key)) {
     return unexpected(rejected("unknown key name: " + std::string{key}));
   }
-  return effect(run({"send-keys", "-t", std::string{id()}, std::string{key}}));
+#if defined(_WIN32)
+  return unexpected(
+      unsupported("psmux can send a key to the active pane for a stale target"));
+#else
+  return effect(run({"send-keys", "-t", pane_target(*this), std::string{key}}));
+#endif
 }
 
 expected<std::string, CommandFailure> Pane::capture() const {
@@ -528,7 +897,12 @@ expected<std::string, CommandFailure> Pane::capture() const {
 }
 
 expected<std::string, CommandFailure> Pane::capture(CaptureOptions options) const {
-  std::vector<std::string> command{"capture-pane", "-p", "-t", std::string{id()}};
+#if defined(_WIN32)
+  static_cast<void>(options);
+  return unexpected(
+      unsupported("psmux can capture the active pane for a stale target"));
+#else
+  std::vector<std::string> command{"capture-pane", "-p", "-t", pane_target(*this)};
   if (options.whole_history) {
     // tmux spells the top of the scrollback as a bare dash.
     command.emplace_back("-S");
@@ -551,37 +925,55 @@ expected<std::string, CommandFailure> Pane::capture(CaptureOptions options) cons
     command.emplace_back("-N");
   }
   return run(command, options.output_limit);
+#endif
 }
 
 expected<void, CommandFailure> Pane::set_width(long long width) const {
   if (width <= 0) {
     return unexpected(rejected("a pane cannot be resized to nothing"));
   }
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux cannot safely target resize-pane"));
+#else
   return effect(
-      run({"resize-pane", "-t", std::string{id()}, "-x", std::to_string(width)}));
+      run({"resize-pane", "-t", pane_target(*this), "-x", std::to_string(width)}));
+#endif
 }
 
 expected<void, CommandFailure> Pane::set_height(long long height) const {
   if (height <= 0) {
     return unexpected(rejected("a pane cannot be resized to nothing"));
   }
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux cannot safely target resize-pane"));
+#else
   return effect(
-      run({"resize-pane", "-t", std::string{id()}, "-y", std::to_string(height)}));
+      run({"resize-pane", "-t", pane_target(*this), "-y", std::to_string(height)}));
+#endif
 }
 
 expected<void, CommandFailure> Pane::swap_with(const Pane& other) const {
   if (from_different_servers(*this, other)) {
     return unexpected(crossed_servers());
   }
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux cannot safely target swap-pane"));
+#else
   return effect(
-      run({"swap-pane", "-d", "-s", std::string{id()}, "-t", std::string{other.id()}}));
+      run({"swap-pane", "-d", "-s", pane_target(*this), "-t", pane_target(other)}));
+#endif
 }
 
 expected<Window, CommandFailure> Pane::break_out(std::string_view name) const {
   if (backend() == nullptr) {
     return unexpected(detail::disconnected());
   }
-  std::vector<std::string> command{"break-pane", "-d", "-s", std::string{id()}, "-P"};
+#if defined(_WIN32)
+  static_cast<void>(name);
+  return unexpected(
+      unsupported("psmux cannot report the window created by break-pane"));
+#else
+  std::vector<std::string> command{"break-pane", "-d", "-s", pane_target(*this), "-P"};
   if (!name.empty()) {
     command.emplace_back("-n");
     command.emplace_back(name);
@@ -601,25 +993,38 @@ expected<Window, CommandFailure> Pane::break_out(std::string_view name) const {
     }
   }
   return detail::one_entity<Window>(backend(), std::move(command), FormatArgument::flag,
-                                    id());
+                                    id(), {}, session_route(*this));
+#endif
 }
 
 expected<void, CommandFailure> Pane::join(const Window& target) const {
   if (from_different_servers(*this, target)) {
     return unexpected(crossed_servers());
   }
-  return effect(
-      run({"join-pane", "-s", std::string{id()}, "-t", std::string{target.id()}}));
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux cannot safely target join-pane"));
+#else
+  return effect(run(
+      {"join-pane", "-s", pane_target(*this), "-t", window_command_target(target)}));
+#endif
 }
 
 expected<void, CommandFailure> Pane::enter_copy_mode() const {
-  return effect(run({"copy-mode", "-t", std::string{id()}}));
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux cannot safely target copy-mode"));
+#else
+  return effect(run({"copy-mode", "-t", pane_target(*this)}));
+#endif
 }
 
 expected<void, CommandFailure> Pane::leave_mode() const {
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux cannot safely leave mode on a targeted pane"));
+#else
   // `-X cancel` is how a mode is left: there is no leave-mode command, and
   // the key that would do it depends on the caller's bindings.
-  return effect(run({"send-keys", "-t", std::string{id()}, "-X", "cancel"}));
+  return effect(run({"send-keys", "-t", pane_target(*this), "-X", "cancel"}));
+#endif
 }
 
 expected<void, CommandFailure> Pane::pipe_to(std::string_view command) const {
@@ -629,72 +1034,133 @@ expected<void, CommandFailure> Pane::pipe_to(std::string_view command) const {
     // opposite of what was asked.
     return unexpected(rejected("a pipe needs a command; use stop_piping"));
   }
-  return effect(
-      run({"pipe-pane", "-t", std::string{id()}, "--", std::string{command}}));
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux cannot safely target pipe-pane"));
+#else
+  std::vector<std::string> argv{"pipe-pane", "-t", pane_target(*this)};
+  argv.emplace_back("--");
+  argv.emplace_back(command);
+  return effect(run(argv));
+#endif
 }
 
 expected<void, CommandFailure> Pane::stop_piping() const {
-  return effect(run({"pipe-pane", "-t", std::string{id()}}));
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux cannot safely target pipe-pane"));
+#else
+  return effect(run({"pipe-pane", "-t", pane_target(*this)}));
+#endif
 }
 
 expected<void, CommandFailure> Pane::set_title(std::string_view title) const {
+#if defined(_WIN32)
+  static_cast<void>(title);
+  return unexpected(unsupported("psmux cannot safely target a pane title"));
+#else
   // No `--` here, though a title beginning with a dash is data: `-T`
   // consumes the next argument whatever it looks like, and adding the guard
   // makes tmux read the separator as the value and the title as a target —
   // "can't find pane: itled". The guard belongs on positional arguments,
   // like the text of set-buffer, not on the value of a flag.
   return effect(
-      run({"select-pane", "-t", std::string{id()}, "-T", std::string{title}}));
+      run({"select-pane", "-t", pane_target(*this), "-T", std::string{title}}));
+#endif
 }
 
 expected<void, CommandFailure> Pane::respawn(bool replace_running) const {
-  std::vector<std::string> command{"respawn-pane", "-t", std::string{id()}};
+#if defined(_WIN32)
+  static_cast<void>(replace_running);
+  return unexpected(unsupported("psmux respawn-pane can terminate the session server"));
+#else
+  std::vector<std::string> command{"respawn-pane", "-t", pane_target(*this)};
   if (replace_running) {
     command.emplace_back("-k");
   }
   return effect(run(command));
+#endif
 }
 
 expected<void, CommandFailure> Pane::clear_history() const {
-  return effect(run({"clear-history", "-t", std::string{id()}}));
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux cannot safely target clear-history"));
+#else
+  return effect(run({"clear-history", "-t", pane_target(*this)}));
+#endif
 }
 
 expected<void, CommandFailure> Pane::select() const {
-  return effect(run({"select-pane", "-t", std::string{id()}}));
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux cannot atomically select a captured pane"));
+#else
+  return effect(run({"select-pane", "-t", pane_target(*this)}));
+#endif
 }
 
 expected<void, CommandFailure> Pane::show_message(std::string_view text) const {
-  return effect(
-      run({"display-message", "-t", std::string{id()}, "--", std::string{text}}));
+#if defined(_WIN32)
+  static_cast<void>(text);
+  return unexpected(unsupported("psmux cannot safely target a pane message"));
+#else
+  std::vector<std::string> command{"display-message", "-t", pane_target(*this)};
+  detail::append_display_message_text(command, std::string{text});
+  return effect(run(command));
+#endif
 }
 
 expected<std::string, CommandFailure> Pane::expand(std::string_view format) const {
-  return detail::expand_format<Pane>(backend(), id(), format);
+  return detail::expand_format<Pane>(backend(), pane_target(*this), format, id(),
+                                     session_route(*this));
 }
 
 expected<void, CommandFailure> Pane::kill() const {
-  return effect(run({"kill-pane", "-t", std::string{id()}}));
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux cannot atomically kill a captured pane"));
+#else
+  return effect(run({"kill-pane", "-t", pane_target(*this)}));
+#endif
 }
 
 expected<Pane, CommandFailure> Pane::refresh() const {
-  return detail::describe<Pane>(backend(), id(), id());
+  return detail::describe<Pane>(backend(), pane_target(*this), id(),
+                                session_route(*this));
 }
 
 expected<std::vector<OptionEntry>, CommandFailure> Pane::options() const {
-  return listed(run(scoped("show-options", "-p", id(), {"-A"})));
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux does not implement pane options"));
+#else
+  return listed(run(scoped("show-options", "-p", pane_target(*this), {"-A"})));
+#endif
 }
 
 expected<OptionEntry, CommandFailure> Pane::option(std::string_view name) const {
-  return named(run(scoped("show-options", "-p", id(), {"-A", name})), name);
+#if defined(_WIN32)
+  static_cast<void>(name);
+  return unexpected(unsupported("psmux does not implement pane options"));
+#else
+  return named(run(scoped("show-options", "-p", pane_target(*this), {"-A", name})),
+               name);
+#endif
 }
 
 expected<void, CommandFailure> Pane::set_option(std::string_view name,
                                                 std::string_view value) const {
-  return effect(run(scoped("set-option", "-p", id(), {name, value})));
+#if defined(_WIN32)
+  static_cast<void>(name);
+  static_cast<void>(value);
+  return unexpected(unsupported("psmux does not implement pane options"));
+#else
+  return effect(run(scoped("set-option", "-p", pane_target(*this), {name, value})));
+#endif
 }
 
 expected<void, CommandFailure> Pane::unset_option(std::string_view name) const {
-  return effect(run(scoped("set-option", "-p", id(), {"-u", name})));
+#if defined(_WIN32)
+  static_cast<void>(name);
+  return unexpected(unsupported("psmux does not implement pane options"));
+#else
+  return effect(run(scoped("set-option", "-p", pane_target(*this), {"-u", name})));
+#endif
 }
 
 // --- Client ----------------------------------------------------------------
@@ -703,44 +1169,73 @@ expected<void, CommandFailure> Pane::paste(const Buffer& buffer, bool consume) c
   if (from_different_servers(*this, buffer)) {
     return unexpected(crossed_servers());
   }
-  std::vector<std::string> command{"paste-buffer", "-t", std::string{id()}, "-b",
+#if defined(_WIN32)
+  static_cast<void>(consume);
+  return unexpected(unsupported("psmux buffers are separate in each session"));
+#else
+  std::vector<std::string> command{"paste-buffer", "-t", pane_target(*this), "-b",
                                    std::string{buffer.name()}};
   if (consume) {
     command.emplace_back("-d");
   }
   return effect(run(command));
+#endif
 }
 
 expected<std::string, CommandFailure> Buffer::contents() const {
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux buffers are separate in each session"));
+#else
   return run({"show-buffer", "-b", std::string{name()}});
+#endif
 }
 
 expected<void, CommandFailure> Buffer::remove() const {
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux buffers are separate in each session"));
+#else
   return effect(run({"delete-buffer", "-b", std::string{name()}}));
+#endif
 }
 
 expected<Session, CommandFailure> Client::session() const {
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux client handles are not session-routed"));
+#else
   // A client is targeted by name with -c, and the session it is looking at is
   // the one a format query in its context reports.
   return detail::one_entity<Session>(
       backend(), {"display-message", "-p", "-c", std::string{name()}},
       FormatArgument::message, name());
+#endif
 }
 
 expected<void, CommandFailure> Client::switch_to(const Session& session) const {
   if (from_different_servers(*this, session)) {
     return unexpected(crossed_servers());
   }
-  return effect(run(
-      {"switch-client", "-c", std::string{name()}, "-t", std::string{session.id()}}));
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux client handles are not session-routed"));
+#else
+  return effect(
+      run({"switch-client", "-c", std::string{name()}, "-t", session_target(session)}));
+#endif
 }
 
 expected<void, CommandFailure> Client::detach() const {
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux client handles are not session-routed"));
+#else
   return effect(run({"detach-client", "-t", std::string{name()}}));
+#endif
 }
 
 expected<void, CommandFailure> Client::refresh() const {
+#if defined(_WIN32)
+  return unexpected(unsupported("psmux client handles are not session-routed"));
+#else
   return effect(run({"refresh-client", "-t", std::string{name()}}));
+#endif
 }
 
 // --- Printing and hashing --------------------------------------------------
@@ -766,14 +1261,18 @@ LIBTMUX_NAMESPACE_END
 
 namespace {
 
-// The connection and the id, which is what equality compares.
+std::size_t hash_mix(std::size_t left, std::size_t right) noexcept {
+  return left ^ (right + 0x9e3779b9U + (left << 6U) + (left >> 2U));
+}
+
+// Hash the identity fields equality compares, in their comparison order.
 template <typename Entity>
 std::size_t hash_identity(std::string_view connection,
                           std::string_view identity) noexcept {
   const std::size_t left = std::hash<std::string_view>{}(connection);
   const std::size_t right = std::hash<std::string_view>{}(identity);
   // The mix libstdc++ and libc++ both use for pairs.
-  return left ^ (right + 0x9e3779b9U + (left << 6U) + (left >> 2U));
+  return hash_mix(left, right);
 }
 
 } // namespace
@@ -785,12 +1284,24 @@ std::hash<libtmux::Session>::operator()(const libtmux::Session& value) const noe
 
 std::size_t
 std::hash<libtmux::Window>::operator()(const libtmux::Window& value) const noexcept {
+#if defined(_WIN32)
+  return hash_mix(
+      hash_identity<libtmux::Window>(value.connection_identity(), value.session_id()),
+      std::hash<std::string_view>{}(value.id()));
+#else
   return hash_identity<libtmux::Window>(value.connection_identity(), value.id());
+#endif
 }
 
 std::size_t
 std::hash<libtmux::Pane>::operator()(const libtmux::Pane& value) const noexcept {
+#if defined(_WIN32)
+  return hash_mix(
+      hash_identity<libtmux::Pane>(value.connection_identity(), value.session_id()),
+      std::hash<std::string_view>{}(value.id()));
+#else
   return hash_identity<libtmux::Pane>(value.connection_identity(), value.id());
+#endif
 }
 
 std::size_t

@@ -152,10 +152,12 @@ jobs:
         run: |
           binary=build/rel/apps/mcp/libtmux-mcp-server
           test -x "$binary"
+          socket_name="libtmux-cxx-release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RUNNER_OS}"
           printf '%s\n' \
-            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"release","version":"1"}}}' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"release","version":"1"}}}' \
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
             '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
-            | "$binary" > replies.jsonl
+            | "$binary" --socket-name "$socket_name" > replies.jsonl
           python3 - <<'PROBE'
           import json, pathlib, sys
           replies = {json.loads(line)["id"]: json.loads(line)
@@ -183,8 +185,74 @@ jobs:
             libtmux-mcp-server-*
           if-no-files-found: error
 
+  server-windows:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build the Windows server
+        run: |
+          cmake -S . -B build/rel -G "Visual Studio 17 2022" -A x64 `
+            -DLIBTMUX_BUILD_MCP_SERVER=ON -DLIBTMUX_FETCH_DEPS=ON `
+            -DLIBTMUX_BUILD_TESTS=OFF -DLIBTMUX_BUILD_EXAMPLES=OFF `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+          cmake --build build/rel --config Release --target libtmux_mcp_server
+
+      - name: It answers before it is published
+        run: |
+          $binary = Join-Path $PWD "build\rel\apps\mcp\Release\libtmux-mcp-server.exe"
+          if (-not (Test-Path $binary)) {
+            throw "MCP server is missing: $binary"
+          }
+          $requests = @(
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"release","version":"1"}}}'
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+          )
+          $socketName = "libtmux-cxx-release-$($env:GITHUB_RUN_ID)-$($env:GITHUB_RUN_ATTEMPT)-windows"
+          $lines = @($requests | & $binary --socket-name $socketName)
+          if ($LASTEXITCODE -ne 0) {
+            throw "MCP server exited with $LASTEXITCODE"
+          }
+          $replies = @($lines | ForEach-Object { $_ | ConvertFrom-Json })
+          $catalog = @($replies | Where-Object { $_.id -eq 2 })
+          if ($catalog.Count -ne 1) {
+            throw "expected one tools/list reply, got $($catalog.Count)"
+          }
+          $actual = @($catalog[0].result.tools.name | Sort-Object)
+          $expected = @(
+            "inspect_tmux"
+            "list_session_panes"
+            "list_sessions"
+            "list_windows"
+          )
+          $difference = @(Compare-Object -ReferenceObject $expected -DifferenceObject $actual)
+          if ($difference.Count -ne 0) {
+            throw "unexpected Windows MCP tools: $($actual -join ', ')"
+          }
+
+      - name: Name it for Windows
+        run: |
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          $source = Join-Path $PWD "build\rel\apps\mcp\Release\libtmux-mcp-server.exe"
+          $output = "libtmux-mcp-server-$version-windows-x86_64.exe"
+          Copy-Item $source $output
+          $hash = (Get-FileHash -Algorithm SHA256 $output).Hash.ToLowerInvariant()
+          "$hash  $output" | Out-File -FilePath "$output.sha256" -Encoding ascii
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: server-windows-x86_64
+          path: |
+            libtmux-mcp-server-*
+          if-no-files-found: error
+
   publish:
-    needs: [source, server]
+    needs: [source, server, server-windows]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

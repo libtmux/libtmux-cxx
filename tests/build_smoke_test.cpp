@@ -9,6 +9,8 @@
 #include "libtmux/expected.hpp"
 #include "libtmux/version.hpp"
 
+#include <cstddef>
+
 #include <gtest/gtest.h>
 
 // Only when the pinned toolchain was chosen. That build asks for a specific
@@ -57,4 +59,29 @@ TEST(BuildSmoke, TheAbiNamespaceNamesTheBackend) {
 #endif
   EXPECT_EQ(version.major, 3U);
   EXPECT_TRUE(libtmux::is_supported(version));
+}
+
+TEST(BuildSmoke, PsmuxVersionUsesTheExistingRevisionSlot) {
+  const auto version =
+      libtmux::parse_version("tmux 3.3.7\r\npsmux 3.3.7 (05cc5d4 2026-07-20)\r\n");
+  const auto tmux_revision = libtmux::parse_version("tmux 3.3g");
+  ASSERT_TRUE(version.has_value());
+  ASSERT_TRUE(tmux_revision.has_value());
+  EXPECT_EQ(version->major, 3U);
+  EXPECT_EQ(version->minor, 3U);
+  EXPECT_EQ(version->revision, 7U);
+  EXPECT_EQ(tmux_revision->revision, 7U);
+  EXPECT_EQ(*version, *tmux_revision);
+  EXPECT_TRUE(libtmux::is_supported(*version));
+}
+
+TEST(BuildSmoke, VersionLayoutAndNumericBoundsStayStable) {
+  static_assert(sizeof(libtmux::Version) == 16U);
+  static_assert(offsetof(libtmux::Version, revision) == 8U);
+  static_assert(offsetof(libtmux::Version, prerelease) == 12U);
+  static_assert(offsetof(libtmux::Version, unbounded) == 13U);
+
+  EXPECT_FALSE(libtmux::parse_version("tmux 4294967296.1").has_value());
+  EXPECT_FALSE(libtmux::parse_version("tmux 3.4294967296").has_value());
+  EXPECT_FALSE(libtmux::parse_version("tmux 3.3.4294967296").has_value());
 }

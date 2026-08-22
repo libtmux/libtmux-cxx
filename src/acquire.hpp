@@ -6,8 +6,10 @@
 // nothing is an empty list; a query about one named object that matches
 // nothing is a missing object — and tmux does not distinguish them for us.
 
+#include <array>
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -23,6 +25,51 @@
 LIBTMUX_NAMESPACE_BEGIN
 namespace detail {
 
+struct SessionRoute {
+  std::string_view id;
+  std::string_view name;
+};
+
+template <typename Entity>
+[[nodiscard]] std::span<const std::string_view> entity_fields() {
+#if defined(_WIN32)
+  if constexpr (Entity::kNoun == std::string_view{"window"} ||
+                Entity::kNoun == std::string_view{"pane"}) {
+    static constexpr auto fields = [] {
+      std::array<std::string_view, Entity::kFields.size() + 1U> result{};
+      for (std::size_t index = 0; index < Entity::kFields.size(); ++index) {
+        result[index] = Entity::kFields[index];
+      }
+      result.back() = Entity::kSessionNameField;
+      return result;
+    }();
+    return fields;
+  }
+#endif
+  return Entity::kFields;
+}
+
+inline void append_display_message_text(std::vector<std::string>& command,
+                                        std::string text) {
+  // psmux 3.3.7 treats display-message's `--` as message text.
+#if defined(_WIN32)
+  // Psmux quotes and reparses the message, collapsing every `\\`. Doubling
+  // backslashes here makes that parser lossless, including before a quote.
+  std::string escaped;
+  escaped.reserve(text.size());
+  for (const char byte : text) {
+    if (byte == '\\') {
+      escaped.push_back('\\');
+    }
+    escaped.push_back(byte);
+  }
+  text = std::move(escaped);
+#else
+  command.emplace_back("--");
+#endif
+  command.emplace_back(std::move(text));
+}
+
 // An entity read out of a recording has no server behind it. Reading and
 // filtering still work; reaching tmux cannot.
 [[nodiscard]] inline CommandFailure disconnected() {
@@ -35,13 +82,21 @@ namespace detail {
 
 template <typename Entity>
 [[nodiscard]] expected<std::vector<Entity>, CommandFailure>
-list_entities(std::shared_ptr<const Backend> backend,
-              std::vector<std::string> request) {
+list_entities(std::shared_ptr<const Backend> backend, std::vector<std::string> request,
+              SessionRoute route = {},
+              std::optional<ExecutionPolicy> call_policy = std::nullopt) {
   if (backend == nullptr) {
     return unexpected(disconnected());
   }
   auto snapshot =
-      Snapshot::take(std::move(backend), Entity::kFields, std::move(request));
+      call_policy.has_value()
+          ? Snapshot::take_in_session(std::move(backend), entity_fields<Entity>(),
+                                      std::move(request), FormatArgument::flag,
+                                      route.id, route.name, call_policy->timeout,
+                                      call_policy->output_limit)
+          : Snapshot::take_in_session(std::move(backend), entity_fields<Entity>(),
+                                      std::move(request), FormatArgument::flag,
+                                      route.id, route.name);
   if (!snapshot.has_value()) {
     return unexpected(snapshot.error());
   }
@@ -63,12 +118,20 @@ template <typename Entity>
 [[nodiscard]] expected<Entity, CommandFailure>
 one_entity(std::shared_ptr<const Backend> backend, std::vector<std::string> request,
            FormatArgument placement, std::string_view target,
-           std::string_view expected_identity = {}) {
+           std::string_view expected_identity = {}, SessionRoute route = {},
+           std::optional<ExecutionPolicy> call_policy = std::nullopt) {
   if (backend == nullptr) {
     return unexpected(disconnected());
   }
-  auto snapshot = Snapshot::take(std::move(backend), Entity::kFields,
-                                 std::move(request), placement);
+  auto snapshot =
+      call_policy.has_value()
+          ? Snapshot::take_in_session(std::move(backend), entity_fields<Entity>(),
+                                      std::move(request), placement, route.id,
+                                      route.name, call_policy->timeout,
+                                      call_policy->output_limit)
+          : Snapshot::take_in_session(std::move(backend), entity_fields<Entity>(),
+                                      std::move(request), placement, route.id,
+                                      route.name);
   if (!snapshot.has_value()) {
     return unexpected(snapshot.error());
   }
@@ -144,29 +207,49 @@ append_environment(std::vector<std::string>& command,
 // `$id:@id` — a bare window id leaves tmux to pick which session supplies the
 // session-relative half of the format context — but it still answers `@id`,
 // so the target and the identity are two different strings and the guard needs
-// to be told which one it is checking. Empty means they are the same, which
-// they are for a session and a pane.
+// to be told which one it is checking. Empty means the target itself is the
+// expected identity.
 [[nodiscard]] inline expected<std::string, CommandFailure>
 expand_format(const std::shared_ptr<const Backend>& backend, std::string_view target,
               std::string_view identity_field, std::string_view noun,
-              std::string_view format, std::string_view expected_identity = {}) {
+              std::string_view format, std::string_view expected_identity = {},
+              SessionRoute route = {}) {
   if (backend == nullptr) {
     return unexpected(disconnected());
   }
   const std::string_view identity =
       expected_identity.empty() ? target : expected_identity;
-  std::string request{"#{"};
+  std::string request;
+#if defined(_WIN32)
+  if (!route.id.empty()) {
+    request = "#{session_id}";
+    request += kFormatSeparator;
+  }
+#endif
+  request += "#{";
   request += identity_field;
   request += "}";
   request += kFormatSeparator;
   request += format;
-  auto reply = backend->run(
-      {"display-message", "-p", "-t", std::string{target}, "--", std::move(request)});
+  std::vector<std::string> command{"display-message", "-p", "-t", std::string{target}};
+  append_display_message_text(command, std::move(request));
+  const ExecutionPolicy& policy = backend->policy();
+  auto reply = route.id.empty() && route.name.empty()
+                   ? backend->run(command, policy.timeout, policy.output_limit)
+                   : backend->run_in_session(command, route.id, route.name,
+                                             policy.timeout, policy.output_limit);
   if (!reply.has_value()) {
     return unexpected(reply.error());
   }
   std::string answer = without_trailing_newline(std::move(*reply));
-  std::string opening{identity};
+  std::string opening;
+#if defined(_WIN32)
+  if (!route.id.empty()) {
+    opening = route.id;
+    opening += kFormatSeparator;
+  }
+#endif
+  opening += identity;
   opening += kFormatSeparator;
   if (!answer.starts_with(opening)) {
     return unexpected(CommandFailure{.kind = FailureKind::missing,
@@ -184,9 +267,10 @@ expand_format(const std::shared_ptr<const Backend>& backend, std::string_view ta
 template <typename Entity>
 [[nodiscard]] expected<std::string, CommandFailure>
 expand_format(const std::shared_ptr<const Backend>& backend, std::string_view target,
-              std::string_view format, std::string_view expected_identity = {}) {
+              std::string_view format, std::string_view expected_identity = {},
+              SessionRoute route = {}) {
   return expand_format(backend, target, Entity::kFields.front(), Entity::kNoun, format,
-                       expected_identity);
+                       expected_identity, route);
 }
 
 // Every to-one link and every lookup by target is the same tmux question:
@@ -196,10 +280,12 @@ expand_format(const std::shared_ptr<const Backend>& backend, std::string_view ta
 template <typename Entity>
 [[nodiscard]] expected<Entity, CommandFailure>
 describe(const std::shared_ptr<const Backend>& backend, std::string_view target,
-         std::string_view expected_identity = {}) {
+         std::string_view expected_identity = {}, SessionRoute route = {},
+         std::optional<ExecutionPolicy> call_policy = std::nullopt) {
   return one_entity<Entity>(backend,
                             {"display-message", "-p", "-t", std::string{target}},
-                            FormatArgument::message, target, expected_identity);
+                            FormatArgument::message, target, expected_identity, route,
+                            std::move(call_policy));
 }
 
 } // namespace detail

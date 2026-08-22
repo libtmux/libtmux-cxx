@@ -1,5 +1,6 @@
 #include "process.hpp"
 #include "libtmux/expected.hpp"
+#include "path.hpp"
 
 #include <algorithm>
 #include <array>
@@ -116,7 +117,8 @@ struct DrainFailure final {
 }
 
 [[nodiscard]] std::string render_request(const ProcessRequest& request) {
-  std::string rendered = escape_diagnostic_value(request.executable.string());
+  std::string rendered =
+      escape_diagnostic_value(libtmux_path::command_string(request.executable));
   for (const auto& argument : request.arguments) {
     rendered.push_back(' ');
     rendered.append(argument.sensitivity == Sensitivity::secret
@@ -160,7 +162,7 @@ validate_request(const ProcessRequest& request) {
                       std::make_error_code(std::errc::invalid_argument));
   };
 
-  const auto executable = request.executable.string();
+  const auto executable = libtmux_path::command_string(request.executable);
   if (executable.empty() || contains_nul(executable)) {
     return invalid();
   }
@@ -464,7 +466,7 @@ void cleanup_group(pid_t child, bool& reaped, int& status, OwnedFd& stdout_read,
 
 } // namespace
 
-expected<ProcessReply, ProcessError> run_posix(const ProcessRequest& request) {
+expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) {
   if (auto validation = validate_request(request)) {
     return unexpected(std::move(*validation));
   }
@@ -572,7 +574,7 @@ expected<ProcessReply, ProcessError> run_posix(const ProcessRequest& request) {
 
   std::vector<std::string> arguments;
   arguments.reserve(request.arguments.size() + 1U);
-  arguments.push_back(request.executable.string());
+  arguments.push_back(libtmux_path::command_string(request.executable));
   for (const auto& argument : request.arguments) {
     arguments.push_back(argument.value);
   }

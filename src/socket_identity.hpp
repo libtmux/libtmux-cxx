@@ -1,6 +1,6 @@
 #pragma once
 
-// Where tmux would put the socket a selector names.
+// A stable identity for the server a selector names.
 //
 // tmux's own rule, from `make_label` in tmux.c: take the first of
 // `$TMUX_TMPDIR` and `/tmp` that resolves, append `tmux-<uid>`, and put the
@@ -8,9 +8,10 @@
 // resolved the way tmux resolves it, with realpath, so two selectors differing
 // only by a symlink name one server.
 //
-// Two things need this, and neither could be had from the argv alone.
+// On Windows, psmux has no public socket path; the selector itself supplies a
+// logical identity instead.
 //
-// A control client is launched against a path, so a server selected by `-L` or
+// On Unix, a control client is launched against a path, so a server selected by `-L` or
 // by nothing at all had no path to hand it and could not use the faster
 // transport at all.
 //
@@ -30,9 +31,7 @@
 LIBTMUX_NAMESPACE_BEGIN
 namespace detail {
 
-// Empty when the selector is one this does not understand, or when even `/tmp`
-// will not resolve. Callers treat that as "no identity" rather than guessing:
-// an identity nobody can confirm must not make two servers look like one.
+// Empty when the selector is not understood or its Unix path cannot resolve.
 [[nodiscard]] std::optional<std::string>
 resolved_socket_path(const std::vector<std::string>& selector);
 

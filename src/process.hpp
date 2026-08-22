@@ -47,7 +47,7 @@ struct ProcessError {
 };
 
 [[nodiscard]] expected<ProcessReply, ProcessError>
-run_posix(const ProcessRequest& request);
+run_process(const ProcessRequest& request);
 
 } // namespace detail
 LIBTMUX_NAMESPACE_END

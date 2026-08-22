@@ -4,11 +4,8 @@
 //
 // `refused` means tmux ran and said no; `missing` means tmux ran, said yes,
 // and the object asked about was not there; `truncated` means it answered at
-// greater length than the caller allowed for. Every other value means tmux never
-// got that far. They stay apart because the caller's next move differs — a
-// rejected argument is a bug, a spawn failure is an environment problem, a
-// timeout may be worth retrying, and a missing object is ordinary in a program
-// that races a user closing a pane.
+// greater length than the caller allowed for. `unsupported` is a backend
+// feature gap; `validation` is a bad request, so callers handle them differently.
 
 #include "libtmux/abi.hpp"
 #include <chrono>
@@ -32,6 +29,9 @@ enum class FailureKind {
   // returned, because a truncated answer is indistinguishable from a complete
   // one: the last line is simply cut, mid-word.
   truncated,
+  // The backend cannot provide this operation without weakening its contract;
+  // nothing was dispatched.
+  unsupported,
 };
 
 [[nodiscard]] constexpr std::string_view to_string(FailureKind kind) noexcept {
@@ -52,6 +52,8 @@ enum class FailureKind {
     return "tmux has no such object";
   case FailureKind::truncated:
     return "the answer did not fit";
+  case FailureKind::unsupported:
+    return "the backend does not support this operation";
   }
   return "unknown failure";
 }

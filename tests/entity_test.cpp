@@ -656,6 +656,7 @@ TEST(Entity, ARecordedSnapshotFiltersButCannotAct) {
   EXPECT_TRUE(editing.at_top());
   EXPECT_FALSE(editing.at_bottom());
   EXPECT_FALSE(editing.piping());
+  EXPECT_TRUE(editing.session_name().empty());
   EXPECT_TRUE((pane::command.starts_with("nv") && pane::active)(editing));
 
   const auto killed = editing.kill();

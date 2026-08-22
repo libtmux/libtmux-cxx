@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["tomlkit>=0.13"]
+# dependencies = ["tomlkit==0.15.1"]
 # ///
 """Swap MCP server configs across every installed agent CLI.
 
@@ -20,32 +20,40 @@ one place.
 Examples
 --------
 ```console
-$ python tools/mcp/mcp_swap.py detect
+$ ./tools/mcp/mcp_swap.py detect
 ```
 
 ```console
-$ python tools/mcp/mcp_swap.py status
+$ ./tools/mcp/mcp_swap.py status
 ```
 
 ```console
-$ python tools/mcp/mcp_swap.py use-local --dry-run
+$ ./tools/mcp/mcp_swap.py use-local --dry-run --socket /tmp/libtmux-agent/socket
 ```
 
 ```console
-$ python tools/mcp/mcp_swap.py use-local --build-dir cxx/build/cxx-gcc
+$ ./tools/mcp/mcp_swap.py use-local \
+    --build-dir build/cxx-gcc \
+    --socket /tmp/libtmux-agent/socket
 ```
 
 ```console
-$ python tools/mcp/mcp_swap.py use-local --source published
+$ ./tools/mcp/mcp_swap.py use-local \
+    --source published \
+    --socket /tmp/libtmux-agent/socket
 ```
 
 ```console
-$ python tools/mcp/mcp_swap.py revert
+$ ./tools/mcp/mcp_swap.py revert
 ```
 
 Scope
 -----
 This script is best-effort and intentionally narrow:
+
+- **POSIX client configs only.** The Windows psmux setup carries a
+  task-owned config and high-entropy ``--socket-name`` through a PowerShell
+  wrapper; this script neither models nor rewrites that wrapper.
 
 - **Global configs only.** Writes to ``~/.cursor/mcp.json``,
   ``~/.claude.json``, ``~/.codex/config.toml``,
@@ -1422,10 +1430,9 @@ def build_binary_spec(
 ) -> McpServerSpec:
     """Build the spec that runs a compiled server.
 
-    ``socket`` is passed as the server's one positional argument. Without it
-    the server talks to the tmux it was started inside, and failing that the
-    one tmux itself would use — which is what an agent launched from a
-    terminal usually wants.
+    ``socket`` is passed as the server's POSIX-compatible positional path.
+    Without it the server requires a valid inherited ``TMUX`` route and never
+    falls back to the default server.
     """
     return McpServerSpec(
         command=str(binary),
@@ -1434,26 +1441,31 @@ def build_binary_spec(
     )
 
 
-#: One MCP ``initialize`` request, newline-framed for stdio.
-_INITIALIZE_FRAME = (
-    json.dumps(
-        {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2025-06-18",
-                "capabilities": {},
-                "clientInfo": {"name": "mcp_swap-preflight", "version": "1"},
+#: A complete legacy lifecycle and one operational request, newline-framed.
+_PREFLIGHT_FRAMES = (
+    "\n".join(
+        json.dumps(frame)
+        for frame in (
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "mcp_swap-preflight", "version": "1"},
+                },
             },
-        }
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+        )
     )
     + "\n"
 )
 
 
 def preflight_spec(spec: McpServerSpec, *, timeout: float = 300.0) -> str | None:
-    """Launch ``spec`` and complete one MCP ``initialize`` round trip.
+    """Launch ``spec`` and verify lifecycle negotiation plus tool discovery.
 
     Returns ``None`` when the server answered, otherwise a reason to
     show the operator. A pull-request spec resolves its dependencies at
@@ -1477,22 +1489,64 @@ def preflight_spec(spec: McpServerSpec, *, timeout: float = 300.0) -> str | None
         return f"could not launch {spec.command}: {exc}"
 
     try:
-        out, err = proc.communicate(_INITIALIZE_FRAME, timeout=timeout)
+        out, err = proc.communicate(_PREFLIGHT_FRAMES, timeout=timeout)
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.communicate()
         return f"no MCP response within {timeout:.0f}s"
 
+    if proc.returncode != 0:
+        tail = "\n".join(err.strip().splitlines()[-3:])
+        return tail or f"server exited with status {proc.returncode}"
+
+    replies: dict[object, list[dict[str, object]]] = {}
     for line in out.splitlines():
         try:
             message = json.loads(line)
         except json.JSONDecodeError:
-            continue
-        if isinstance(message, dict) and message.get("id") == 1 and "result" in message:
-            return None
+            return "server wrote non-JSON data to the MCP stdout transport"
+        if not isinstance(message, dict):
+            return "server wrote a non-object JSON value to the MCP stdout transport"
+        identifier = message.get("id")
+        if identifier == 1 or identifier == 2:
+            replies.setdefault(identifier, []).append(message)
 
-    tail = "\n".join(err.strip().splitlines()[-3:])
-    return tail or "server exited without answering initialize"
+    if any(len(messages) != 1 for messages in replies.values()):
+        return "server answered an MCP preflight request more than once"
+
+    initialized_reply = replies.get(1, [{}])[0]
+    initialized = initialized_reply.get("result")
+    if not isinstance(initialized, dict):
+        tail = "\n".join(err.strip().splitlines()[-3:])
+        return tail or "server exited without answering initialize"
+    if initialized.get("protocolVersion") != "2025-06-18":
+        return "server did not echo the requested MCP protocol version"
+    server_info = initialized.get("serverInfo")
+    if not isinstance(server_info, dict) or server_info.get("name") not in {
+        "libtmux",
+        "libtmux-cxx",
+    }:
+        return "initialize response did not identify a libtmux MCP server"
+
+    listed_reply = replies.get(2, [{}])[0]
+    listed = listed_reply.get("result")
+    if not isinstance(listed, dict) or not isinstance(listed.get("tools"), list):
+        return "server initialized but did not answer tools/list"
+    tools = listed["tools"]
+    if not all(
+        isinstance(tool, dict) and isinstance(tool.get("name"), str) for tool in tools
+    ):
+        return "server returned a malformed MCP tool catalog"
+    required = {
+        "inspect_tmux",
+        "list_session_panes",
+        "list_sessions",
+        "list_windows",
+    }
+    missing = sorted(required - {tool["name"] for tool in tools})
+    if missing:
+        return f"server tool catalog is missing: {', '.join(missing)}"
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -2368,9 +2422,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--socket",
         metavar="PATH",
         help=(
-            "tmux socket the server should talk to, passed as its one "
-            "argument. Without it the server uses the tmux it is started "
-            "inside, and failing that the default one."
+            "private POSIX tmux socket path, passed as the server's "
+            "compatibility positional argument. Without it the server "
+            "requires a valid inherited TMUX route; it never uses a default."
         ),
     )
     pu.add_argument(

@@ -140,6 +140,9 @@ TEST(Client, AttachingIsACommandLineRatherThanACall) {
   auto sessions = server.sessions();
   ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
   const std::vector<std::string> command = sessions->front().attach_command();
+  const auto checked = sessions->front().checked_attach_command();
+  ASSERT_TRUE(checked.has_value()) << checked.error().diagnostic;
+  EXPECT_EQ(*checked, command);
 
   // Everything needed to reach this exact server, in exec order.
   ASSERT_GE(command.size(), 5U);

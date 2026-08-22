@@ -51,7 +51,12 @@ target_compile_features(
   libtmux_build_options
   INTERFACE cxx_std_${LIBTMUX_CXX_STANDARD})
 
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+if(MSVC)
+  target_compile_options(libtmux_build_options INTERFACE /W4 /permissive-)
+  if(LIBTMUX_WARNINGS_AS_ERRORS)
+    target_compile_options(libtmux_build_options INTERFACE /WX)
+  endif()
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(
     libtmux_build_options
     INTERFACE

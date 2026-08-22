@@ -158,7 +158,11 @@ TEST(ControlDispatch, TheStreamThatJustifiesTheOpenConnectionIsReadable) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server subprocess = connect(*fixture);
-  const auto streamed = subprocess.over_control(fixture->session_name());
+  const auto streamed = subprocess.over_control_with_options(
+      fixture->session_name(), {.socket_path = "/caller-route-must-be-ignored",
+                                .session_name = "caller-session-must-be-ignored",
+                                .pane_output = true,
+                                .pause_after = 17s});
   ASSERT_TRUE(streamed.has_value()) << streamed.error().diagnostic;
 
   // A transport that hears nothing between commands says so.
@@ -167,7 +171,14 @@ TEST(ControlDispatch, TheStreamThatJustifiesTheOpenConnectionIsReadable) {
 
   const auto sessions = streamed->sessions();
   ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
+  const auto panes = streamed->panes();
+  ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
+  ASSERT_FALSE(panes->empty());
   ASSERT_TRUE(sessions->at(0).new_window("watched").has_value());
+  ASSERT_TRUE(streamed
+                  ->run({"send-keys", "-t", std::string{panes->front().id()},
+                         "echo server-routed-stream", "Enter"})
+                  .has_value());
 
   const auto text = [](const libtmux::Notification& notification) {
     std::string out;
@@ -182,17 +193,20 @@ TEST(ControlDispatch, TheStreamThatJustifiesTheOpenConnectionIsReadable) {
   // when the connection attached.
   std::vector<libtmux::Notification> heard;
   bool announced = false;
-  for (int attempt = 0; attempt < 200 && !announced; ++attempt) {
+  bool emitted = false;
+  for (int attempt = 0; attempt < 200 && (!announced || !emitted); ++attempt) {
     for (libtmux::Notification& notification : streamed->take_notifications()) {
       announced = announced || text(notification).starts_with("%window-add");
+      emitted = emitted || text(notification).starts_with("%output ");
       heard.push_back(std::move(notification));
     }
-    if (!announced) {
+    if (!announced || !emitted) {
       std::this_thread::sleep_for(std::chrono::milliseconds{10});
     }
   }
   ASSERT_FALSE(heard.empty()) << "the connection heard nothing at all";
   EXPECT_TRUE(announced) << "nothing in the stream announced the new window";
+  EXPECT_TRUE(emitted) << "the requested pane-output stream stayed silent";
 
   // Nothing was dropped at this volume, and what was taken is not handed out
   // a second time.

@@ -8,6 +8,19 @@
 
 #include <libtmux/libtmux.hpp>
 
+static_assert(std::is_same_v<decltype(&libtmux::Session::attach_command),
+                             std::vector<std::string> (libtmux::Session::*)() const>);
+static_assert(std::is_same_v<decltype(&libtmux::Window::target),
+                             std::string (libtmux::Window::*)() const>);
+static_assert(static_cast<int>(libtmux::FailureKind::truncated) == 7);
+static_assert(static_cast<int>(libtmux::FailureKind::unsupported) == 8);
+static_assert(static_cast<int>(libtmux::SocketError::empty) == 0);
+static_assert(static_cast<int>(libtmux::SocketError::name_has_separator) == 1);
+static_assert(static_cast<int>(libtmux::SocketError::path_too_long) == 2);
+static_assert(static_cast<int>(libtmux::SocketError::path_unsupported) == 3);
+static_assert(libtmux::Window::kFields.size() == 13U);
+static_assert(libtmux::Pane::kFields.size() == 19U);
+
 std::vector<libtmux::Window> listed();
 
 void uses() {
@@ -104,6 +117,29 @@ void a_channel_is_waited_on(const libtmux::Server& server) {
   (void)sent;
 }
 
+// Opening either control surface with defaults or caller-selected stream
+// policy, while the Server remains the only owner of its socket route.
+void control_streams_are_opened(const libtmux::Server& server) {
+  const auto legacy_control_pointer = &libtmux::Server::control;
+  const auto legacy_dispatch_pointer = &libtmux::Server::over_control;
+  libtmux::ConnectionOptions options{.pane_output = true,
+                                     .pause_after = std::chrono::seconds{2}};
+  const libtmux::expected<libtmux::Connection, libtmux::ProtocolError> direct =
+      server.control_with_options("work", options);
+  const libtmux::expected<libtmux::Connection, libtmux::ProtocolError> defaults =
+      server.control("work");
+  const libtmux::expected<libtmux::Server, libtmux::CommandFailure> dispatched =
+      server.over_control_with_options("work", options);
+  const libtmux::expected<libtmux::Server, libtmux::CommandFailure>
+      dispatched_defaults = server.over_control("work");
+  (void)direct;
+  (void)defaults;
+  (void)dispatched;
+  (void)dispatched_defaults;
+  (void)legacy_control_pointer;
+  (void)legacy_dispatch_pointer;
+}
+
 // Asking tmux what it understands.
 void commands_are_listed(const libtmux::Server& server) {
   const libtmux::expected<std::vector<libtmux::Command>, libtmux::CommandFailure>
@@ -152,10 +188,26 @@ void creation_carries_an_environment(const libtmux::Server& server,
 // is a call.
 void clients_come_and_go(const libtmux::Session& session) {
   const std::vector<std::string> attach = session.attach_command();
+  const libtmux::expected<std::vector<std::string>, libtmux::CommandFailure>
+      checked_attach = session.checked_attach_command();
   const libtmux::expected<void, libtmux::CommandFailure> sent =
       session.detach_clients();
   (void)attach;
+  (void)checked_attach;
   (void)sent;
+}
+
+void targets_can_report_unsupported(const libtmux::Window& window) {
+  const libtmux::expected<std::string, libtmux::CommandFailure> target =
+      window.checked_target();
+  (void)target;
+}
+
+void capabilities_are_available_from_the_umbrella(const libtmux::Server& server) {
+  const libtmux::ServerCapabilities capabilities = server.capabilities();
+  const bool can_inspect =
+      capabilities.supports(libtmux::ServerFeature::exact_inspection);
+  (void)can_inspect;
 }
 
 // Binding a key, with the command as argv rather than a quoted string.

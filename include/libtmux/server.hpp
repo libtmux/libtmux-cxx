@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "libtmux/batch.hpp"
+#include "libtmux/capabilities.hpp"
 #include "libtmux/chain.hpp"
 #include "libtmux/control.hpp"
 #include "libtmux/entities.hpp"
@@ -79,8 +80,12 @@ public:
   [[nodiscard]] static expected<Server, CommandFailure>
   at_default(CommandObserver observer = {}, ExecutionPolicy policy = {});
 
+  // The local backend contract; no command runs. `tmux_version()` separately
+  // probes the executable on PATH.
+  [[nodiscard]] ServerCapabilities capabilities() const noexcept;
+
   // Run one command and return its standard output.
-  [[nodiscard]] expected<std::string, CommandFailure>
+  //
   // The timeout still rides on the call: how long a caller will wait is a
   // property of what they asked for, and listing sessions does not share a
   // deadline with attaching a client. Unset takes the server's
@@ -90,6 +95,7 @@ public:
   // it the command reports `truncated` rather than returning a prefix that
   // reads like a complete answer. Unset uses the package default, which is
   // ample for every listing and can be too small for a long scrollback.
+  [[nodiscard]] expected<std::string, CommandFailure>
   run(const std::vector<std::string>& command,
       std::optional<std::chrono::milliseconds> timeout = {},
       std::optional<std::size_t> output_limit = {}) const;
@@ -119,6 +125,10 @@ public:
   // failure.
   [[nodiscard]] expected<Connection, ProtocolError>
   control(std::string_view session) const;
+  // The Server supplies the socket and `session` supplies the session name;
+  // every other connection option is kept, including pane output policy.
+  [[nodiscard]] expected<Connection, ProtocolError>
+  control_with_options(std::string_view session, ConnectionOptions options) const;
 
   // What tmux has said on its own initiative since the last call: a window
   // renamed, a pane exited, a client attached. A Server that runs a process
@@ -139,6 +149,10 @@ public:
   // serialized. Two Servers over the same socket are two conversations.
   [[nodiscard]] expected<Server, CommandFailure>
   over_control(std::string_view session) const;
+  // As above, with the connection's timeouts, limits, executable, and output
+  // policy selected by the caller rather than reconstructed from a route.
+  [[nodiscard]] expected<Server, CommandFailure>
+  over_control_with_options(std::string_view session, ConnectionOptions options) const;
 
   // Which tmux is behind this connection. `tmux -V` answers without touching
   // the server, so this reports a version even when nothing is running.
@@ -301,7 +315,8 @@ public:
   [[nodiscard]] expected<Window, CommandFailure> window(std::string_view target) const;
   [[nodiscard]] expected<Pane, CommandFailure> pane(std::string_view target) const;
 
-  // Created detached, and returned, because tmux prints what it made.
+  // Created detached, and returned, because tmux prints what it made. Windows
+  // psmux rejects typed creation: concurrent creators cannot prove ownership.
   [[nodiscard]] expected<Session, CommandFailure>
   new_session(std::string_view name) const;
   [[nodiscard]] expected<Session, CommandFailure>

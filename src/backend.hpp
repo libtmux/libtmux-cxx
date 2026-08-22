@@ -13,6 +13,7 @@
 
 #include "libtmux/abi.hpp"
 #include "libtmux/batch.hpp"
+#include "libtmux/capabilities.hpp"
 #include "libtmux/command.hpp"
 #include "libtmux/control.hpp"
 #include "libtmux/expected.hpp"
@@ -54,6 +55,27 @@ public:
       std::optional<std::chrono::milliseconds> timeout,
       std::optional<std::size_t> output_limit) const = 0;
 
+  // Route an entity command through its owning psmux session. POSIX backends
+  // already have one server-wide namespace, so their ordinary run is exact.
+  [[nodiscard]] virtual expected<std::string, CommandFailure>
+  run_in_session(const std::vector<std::string>& command, std::string_view session_id,
+                 std::string_view session_name,
+                 std::optional<std::chrono::milliseconds> timeout,
+                 std::optional<std::size_t> output_limit) const {
+    static_cast<void>(session_id);
+    static_cast<void>(session_name);
+    return run(command, timeout, output_limit);
+  }
+
+  [[nodiscard]] virtual expected<bool, CommandFailure>
+  session_belongs(std::string_view session_id, std::string_view session_name,
+                  std::optional<std::chrono::milliseconds> timeout) const {
+    static_cast<void>(session_id);
+    static_cast<void>(session_name);
+    static_cast<void>(timeout);
+    return true;
+  }
+
   [[nodiscard]] expected<std::string, CommandFailure>
   run(const std::vector<std::string>& command) const {
     return run(command, std::nullopt, std::nullopt);
@@ -76,13 +98,16 @@ public:
   // The `-L name` or `-S path` pair that selects the server.
   [[nodiscard]] virtual const std::vector<std::string>& connection() const noexcept = 0;
 
-  // Which tmux server this talks to, as the socket path tmux would resolve the
-  // selector to. Empty when there is no socket behind it — a scripted backend
-  // in a test — and an empty identity names nothing, not even itself.
+  // Which server this talks to: a resolved socket path on POSIX and a logical
+  // psmux selector on Windows. Empty identifies no server, even itself.
   //
-  // The selector cannot serve here: `-L work` and `-S <the path work resolves
-  // to>` select one server and compare as two.
+  // On POSIX the selector cannot serve here: `-L work` and `-S <its path>`
+  // select one server and must compare as one.
   [[nodiscard]] virtual std::string_view identity() const noexcept { return {}; }
+
+  // Unknown custom executors fail capability checks closed. Concrete package
+  // backends override this with the routing contract they implement.
+  [[nodiscard]] virtual ServerCapabilities capabilities() const noexcept { return {}; }
 
   // Which tmux is behind this connection. How to ask depends on the executor,
   // so the executor answers.
@@ -149,6 +174,16 @@ public:
       std::optional<std::chrono::milliseconds> timeout,
       std::optional<std::size_t> output_limit) const override;
 
+  [[nodiscard]] expected<std::string, CommandFailure>
+  run_in_session(const std::vector<std::string>& command, std::string_view session_id,
+                 std::string_view session_name,
+                 std::optional<std::chrono::milliseconds> timeout,
+                 std::optional<std::size_t> output_limit) const override;
+
+  [[nodiscard]] expected<bool, CommandFailure>
+  session_belongs(std::string_view session_id, std::string_view session_name,
+                  std::optional<std::chrono::milliseconds> timeout) const override;
+
   [[nodiscard]] const std::vector<std::string>& connection() const noexcept override {
     return connection_;
   }
@@ -157,11 +192,27 @@ public:
     return identity_;
   }
 
+  [[nodiscard]] ServerCapabilities capabilities() const noexcept override {
+#if defined(_WIN32)
+    return {.implementation = ServerImplementation::psmux,
+            .backend = BackendKind::subprocess};
+#else
+    return {.implementation = ServerImplementation::tmux,
+            .backend = BackendKind::subprocess};
+#endif
+  }
+
   // `tmux -V` answers without connecting, so this works against a socket with
   // no server on it.
   [[nodiscard]] expected<Version, CommandFailure> version() const override;
 
 private:
+  [[nodiscard]] expected<std::string, CommandFailure>
+  run_scoped(const std::vector<std::string>& command,
+             std::optional<std::string_view> session,
+             std::optional<std::chrono::milliseconds> timeout,
+             std::optional<std::size_t> output_limit) const;
+
   std::vector<std::string> connection_;
   // Resolved once, at construction: the answer depends on `TMUX_TMPDIR` and on
   // the filesystem, and a server that changed which tmux it meant partway

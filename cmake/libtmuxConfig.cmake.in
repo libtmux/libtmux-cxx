@@ -19,8 +19,13 @@ if("testing" IN_LIST libtmux_FIND_COMPONENTS)
     # Set here rather than left to `check_required_components`, which sets the
     # flag without a message and reports only "set libtmux_FOUND to FALSE".
     set(libtmux_testing_FOUND FALSE)
-    set(_libtmux_testing_reason
-        "this libtmux was installed without its testing library, so the \"testing\" component is unavailable. Reconfigure and reinstall it with -DLIBTMUX_BUILD_TESTING_LIBRARY=ON.")
+    if("@CMAKE_SYSTEM_NAME@" STREQUAL "Windows")
+      set(_libtmux_testing_reason
+          "the libtmux::testing component is POSIX-only and is unavailable in Windows packages")
+    else()
+      set(_libtmux_testing_reason
+          "this libtmux was installed without its testing library, so the \"testing\" component is unavailable. Reconfigure and reinstall it with -DLIBTMUX_BUILD_TESTING_LIBRARY=ON.")
+    endif()
     if(libtmux_FIND_REQUIRED_testing)
       set(libtmux_FOUND FALSE)
       set(libtmux_NOT_FOUND_MESSAGE "${_libtmux_testing_reason}")

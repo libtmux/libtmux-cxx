@@ -2,10 +2,14 @@
 
 #include "libtmux/batch.hpp"
 
+#include <chrono>
 #include <cstddef>
+#include <string_view>
 #include <variant>
 
+#include "environment.hpp"
 #include "process.hpp"
+#include "psmux.hpp"
 #include "socket_identity.hpp"
 
 // The ABI macros, not `namespace libtmux::detail`: that spelling opens a
@@ -61,6 +65,23 @@ std::string text(const std::vector<std::byte>& bytes) {
   return out;
 }
 
+#if defined(_WIN32)
+std::optional<std::string> psmux_session(const std::vector<std::string>& connection,
+                                         std::string_view session) {
+  if (session.empty()) {
+    return std::nullopt;
+  }
+  if (connection.empty()) {
+    return std::string{session};
+  }
+  if (connection.size() == 2U && connection.front() == "-L") {
+    return connection.back() + "__" + std::string{session};
+  }
+  return std::nullopt;
+}
+
+#endif
+
 } // namespace
 
 std::string rendered_command(const std::vector<std::string>& command) {
@@ -97,9 +118,117 @@ expected<std::string, CommandFailure>
 SubprocessBackend::run(const std::vector<std::string>& command,
                        std::optional<std::chrono::milliseconds> timeout,
                        std::optional<std::size_t> output_limit) const {
+  return run_scoped(command, std::nullopt, timeout, output_limit);
+}
+
+expected<std::string, CommandFailure> SubprocessBackend::run_in_session(
+    const std::vector<std::string>& command, std::string_view session_id,
+    std::string_view session_name, std::optional<std::chrono::milliseconds> timeout,
+    std::optional<std::size_t> output_limit) const {
+#if defined(_WIN32)
+  for (const std::string& argument : command) {
+    if (libtmux_psmux::unsafe_command_argument(argument)) {
+      CommandFailure failure{
+          .kind = FailureKind::validation,
+          .dispatched = false,
+          .exit_code = 0,
+          .diagnostic =
+              "psmux cannot preserve semicolons or newlines in typed arguments"};
+      observe(command, &failure);
+      return unexpected(std::move(failure));
+    }
+  }
+  if (session_id.empty() || session_name.empty()) {
+    CommandFailure failure{.kind = FailureKind::validation,
+                           .dispatched = false,
+                           .exit_code = 0,
+                           .diagnostic =
+                               "psmux cannot route an entity without its session"};
+    observe(command, &failure);
+    return unexpected(std::move(failure));
+  }
+
+  const auto started = std::chrono::steady_clock::now();
+  auto belongs = session_belongs(session_id, session_name, timeout);
+  if (!belongs.has_value()) {
+    return unexpected(belongs.error());
+  }
+  if (!*belongs) {
+    CommandFailure failure{.kind = FailureKind::missing,
+                           .dispatched = true,
+                           .exit_code = 0,
+                           .diagnostic =
+                               "tmux has no session " + std::string{session_name}};
+    observe(command, &failure);
+    return unexpected(std::move(failure));
+  }
+  if (timeout.has_value()) {
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - started);
+    if (elapsed >= *timeout) {
+      CommandFailure failure{.kind = FailureKind::timeout,
+                             .dispatched = false,
+                             .exit_code = 0,
+                             .diagnostic = "psmux session validation exhausted the "
+                                           "command deadline"};
+      observe(command, &failure);
+      return unexpected(std::move(failure));
+    }
+    timeout = *timeout - elapsed;
+  }
+  return run_scoped(command, session_name, timeout, output_limit);
+#else
+  static_cast<void>(session_id);
+  static_cast<void>(session_name);
+  return run_scoped(command, std::nullopt, timeout, output_limit);
+#endif
+}
+
+expected<bool, CommandFailure> SubprocessBackend::session_belongs(
+    std::string_view session_id, std::string_view session_name,
+    std::optional<std::chrono::milliseconds> timeout) const {
+#if defined(_WIN32)
+  auto reply = run_scoped({"display-message", "-p", "-t", ":", "#{session_id}"},
+                          session_name, timeout, std::nullopt);
+  if (!reply.has_value()) {
+    if (reply.error().kind == FailureKind::missing ||
+        (reply.error().kind == FailureKind::refused &&
+         libtmux_psmux::missing_session(reply.error().diagnostic))) {
+      return false;
+    }
+    return unexpected(reply.error());
+  }
+  while (!reply->empty() && (reply->back() == '\n' || reply->back() == '\r')) {
+    reply->pop_back();
+  }
+  return *reply == session_id;
+#else
+  static_cast<void>(session_id);
+  static_cast<void>(session_name);
+  static_cast<void>(timeout);
+  return true;
+#endif
+}
+
+expected<std::string, CommandFailure>
+SubprocessBackend::run_scoped(const std::vector<std::string>& command,
+                              std::optional<std::string_view> session,
+                              std::optional<std::chrono::milliseconds> timeout,
+                              std::optional<std::size_t> output_limit) const {
   ProcessRequest request;
   request.executable = "tmux";
   request.timeout = timeout;
+#if defined(_WIN32)
+  // Warm claiming reserializes the caller's cwd into psmux's line protocol.
+  request.environment = libtmux_env::psmux_child_environment();
+  if (session.has_value()) {
+    if (auto target = psmux_session(connection_, *session); target.has_value()) {
+      request.environment.emplace_back("PSMUX_TARGET_SESSION", std::move(*target));
+    }
+  }
+#else
+  static_cast<void>(session);
+#endif
   if (output_limit.has_value()) {
     request.capture_limit = *output_limit;
   }
@@ -127,7 +256,7 @@ SubprocessBackend::run(const std::vector<std::string>& command,
     return unexpected(std::move(failure));
   };
 
-  const auto reply = run_posix(request);
+  const auto reply = run_process(request);
   if (!reply.has_value()) {
     return reported(CommandFailure{.kind = kind_of(reply.error().kind),
                                    .dispatched = reply.error().dispatch_phase !=

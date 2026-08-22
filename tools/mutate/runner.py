@@ -30,6 +30,7 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import hashlib
+import json
 import os
 import pathlib
 import subprocess
@@ -56,6 +57,12 @@ class Mutation:
     guards : str
         What this mutation is asking about, in one line, so a survivor
         says what is untested rather than only which text changed.
+    test_regex : str | None, optional
+        Explicit CTest regular expression. When omitted, the legacy target-name
+        convention is used.
+    presets : tuple[str, ...], optional
+        Build presets where this mutation has a target and test. Empty means
+        every preset.
     """
 
     mutation_id: str
@@ -64,6 +71,12 @@ class Mutation:
     replace: str
     target: str
     guards: str
+    test_regex: str | None = None
+    presets: tuple[str, ...] = ()
+
+    def applies_to(self, preset: str) -> bool:
+        """Return whether this mutation belongs to the selected build."""
+        return not self.presets or preset in self.presets
 
 
 @dataclasses.dataclass(frozen=True)
@@ -192,7 +205,10 @@ def _fingerprint(build_root: pathlib.Path, preset: str, target: str) -> str | No
     >>> _fingerprint(pathlib.Path("."), "cxx-dev", "no_such_target") is None
     True
     """
-    for candidate in sorted(build_root.glob(f"build/{preset}/**/{target}")):
+    candidates: list[pathlib.Path] = []
+    for executable in (target, f"{target}.exe"):
+        candidates.extend(build_root.glob(f"build/{preset}/**/{executable}"))
+    for candidate in sorted(candidates):
         if candidate.is_file():
             return hashlib.sha256(candidate.read_bytes()).hexdigest()
     return None
@@ -252,6 +268,42 @@ def run(
     if restored.returncode != 0:
         return Outcome(mutation, "not a result", "the target does not build unmutated")
     before = _fingerprint(where, preset, mutation.target)
+    if before is None:
+        return Outcome(mutation, "not a result", "the target executable was not found")
+    test_regex = mutation.test_regex or mutation.target.replace(
+        "libtmux_", "libtmux."
+    ).replace("_test", "")
+    selected = execute(
+        [
+            "ctest",
+            "--preset",
+            preset,
+            "--show-only=json-v1",
+            "--tests-regex",
+            test_regex,
+        ]
+    )
+    if selected.returncode != 0:
+        return Outcome(mutation, "not a result", "the test selector could not be read")
+    try:
+        selection = json.loads(selected.stdout.decode("utf-8-sig"))
+    except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
+        return Outcome(
+            mutation, "not a result", "CTest returned an unreadable test list"
+        )
+    if not isinstance(selection, dict) or not selection.get("tests"):
+        return Outcome(mutation, "not a result", "the test selector matched no tests")
+    test_command = [
+        "ctest",
+        "--preset",
+        preset,
+        "--no-tests=error",
+        "--tests-regex",
+        test_regex,
+    ]
+    baseline = execute(test_command)
+    if baseline.returncode != 0:
+        return Outcome(mutation, "not a result", "the selected tests already fail")
     with _mutated(source, mutation.find, mutation.replace) as applied:
         if not applied:
             return Outcome(
@@ -269,27 +321,30 @@ def run(
         )
         if build.returncode != 0:
             return Outcome(mutation, "not a result", "the mutation did not build")
-        if (
-            before is not None
-            and _fingerprint(where, preset, mutation.target) == before
-        ):
+        after = _fingerprint(where, preset, mutation.target)
+        if after is None or after == before:
             return Outcome(
                 mutation,
                 "not a result",
                 "the mutation did not reach the binary that was tested",
             )
-        tested = execute(
-            [
-                "ctest",
-                "--preset",
-                preset,
-                "--no-tests=error",
-                "--tests-regex",
-                mutation.target.replace("libtmux_", "libtmux.").replace("_test", ""),
-            ]
-        )
+        tested = execute(test_command)
     if tested.returncode == 0:
         return Outcome(mutation, "survived", mutation.guards)
+    restored_after_mutation = execute(
+        ["cmake", "--build", "--preset", preset, "--target", mutation.target]
+    )
+    if restored_after_mutation.returncode != 0:
+        return Outcome(mutation, "not a result", "the restored target did not build")
+    restored_fingerprint = _fingerprint(where, preset, mutation.target)
+    if restored_fingerprint is None or restored_fingerprint == after:
+        return Outcome(
+            mutation,
+            "not a result",
+            "the restoration did not reach the binary that was retested",
+        )
+    if execute(test_command).returncode != 0:
+        return Outcome(mutation, "not a result", "the selected tests did not recover")
     return Outcome(mutation, "killed")
 
 

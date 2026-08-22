@@ -219,9 +219,11 @@ TEST(ScopedTmuxServer, FakeTraceProvesArgvAndSanitizedChildEnvironment) {
   const auto contents = read_file(trace);
   const std::string fake_binary = LIBTMUX_FAKE_TMUX_PATH;
   EXPECT_NE(contents.find("server\t" + fake_binary + "\t-D\t-u\t-f\t/dev/null\t-L\t"),
-            std::string::npos);
+            std::string::npos)
+      << contents;
   EXPECT_NE(contents.find("server\t" + fake_binary + "\t-D\t-u\t-f\t/dev/null\t-S\t"),
-            std::string::npos);
+            std::string::npos)
+      << contents;
   bool queried_name_socket_path = false;
   bool queried_exact_socket_path = false;
   std::size_t position = 0;

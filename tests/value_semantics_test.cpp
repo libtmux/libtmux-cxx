@@ -86,6 +86,9 @@ TEST(ValueSemantics, TheSameObjectFromTwoListingsIsOneValue) {
   ASSERT_TRUE(renamed.has_value()) << renamed.error().diagnostic;
   const auto current = created->refresh();
   ASSERT_TRUE(current.has_value()) << current.error().diagnostic;
+  const auto checked_target = created->checked_target();
+  ASSERT_TRUE(checked_target.has_value()) << checked_target.error().diagnostic;
+  EXPECT_EQ(*checked_target, created->target());
 
   // Equality is identity, not observation: a window that has been renamed is
   // still the window it was.
@@ -147,11 +150,63 @@ TEST(ValueSemantics, AFailureComposesAndCanBeNamed) {
   for (const FailureKind kind :
        {FailureKind::validation, FailureKind::spawn, FailureKind::pre_exec,
         FailureKind::pipe, FailureKind::timeout, FailureKind::refused,
-        FailureKind::missing, FailureKind::truncated}) {
+        FailureKind::missing, FailureKind::truncated, FailureKind::unsupported}) {
     EXPECT_FALSE(libtmux::to_string(kind).empty());
+  }
+  EXPECT_EQ(static_cast<int>(FailureKind::truncated), 7);
+  EXPECT_EQ(static_cast<int>(FailureKind::unsupported), 8);
+  for (const auto implementation :
+       {libtmux::ServerImplementation::unknown, libtmux::ServerImplementation::tmux,
+        libtmux::ServerImplementation::psmux}) {
+    EXPECT_FALSE(libtmux::to_string(implementation).empty());
+  }
+  for (const auto backend :
+       {libtmux::BackendKind::custom, libtmux::BackendKind::subprocess,
+        libtmux::BackendKind::control_mode}) {
+    EXPECT_FALSE(libtmux::to_string(backend).empty());
+  }
+  for (const auto feature : {
+           libtmux::ServerFeature::exact_inspection,
+           libtmux::ServerFeature::server_cleanup,
+           libtmux::ServerFeature::server_entity_lookup,
+           libtmux::ServerFeature::session_creation,
+           libtmux::ServerFeature::window_creation,
+           libtmux::ServerFeature::captured_mutation,
+           libtmux::ServerFeature::pane_io,
+           libtmux::ServerFeature::terminal_attach,
+           libtmux::ServerFeature::reusable_window_target,
+           libtmux::ServerFeature::server_state,
+           libtmux::ServerFeature::wait_channels,
+           libtmux::ServerFeature::control_mode,
+           libtmux::ServerFeature::receives_asynchronous_notifications,
+       }) {
+    EXPECT_FALSE(libtmux::to_string(feature).empty());
   }
   EXPECT_FALSE(libtmux::to_string(libtmux::CardinalityError::several_matched).empty());
   EXPECT_FALSE(libtmux::to_string(libtmux::SocketError::path_too_long).empty());
+}
+
+TEST(ValueSemantics, CapabilitiesDistinguishAvailableControlFromCurrentDelivery) {
+  const libtmux::ServerCapabilities subprocess{
+      .implementation = libtmux::ServerImplementation::tmux,
+      .backend = libtmux::BackendKind::subprocess};
+  EXPECT_TRUE(subprocess.supports(libtmux::ServerFeature::control_mode));
+  EXPECT_FALSE(
+      subprocess.supports(libtmux::ServerFeature::receives_asynchronous_notifications));
+
+  const libtmux::ServerCapabilities control{
+      .implementation = libtmux::ServerImplementation::tmux,
+      .backend = libtmux::BackendKind::control_mode};
+  EXPECT_TRUE(control.supports(libtmux::ServerFeature::control_mode));
+  EXPECT_TRUE(
+      control.supports(libtmux::ServerFeature::receives_asynchronous_notifications));
+
+  const libtmux::ServerCapabilities psmux{.implementation =
+                                              libtmux::ServerImplementation::psmux,
+                                          .backend = libtmux::BackendKind::subprocess};
+  EXPECT_FALSE(psmux.supports(libtmux::ServerFeature::control_mode));
+  EXPECT_FALSE(
+      psmux.supports(libtmux::ServerFeature::receives_asynchronous_notifications));
 }
 
 } // namespace

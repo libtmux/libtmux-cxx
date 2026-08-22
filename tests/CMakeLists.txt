@@ -379,7 +379,10 @@ target_link_libraries(
 target_compile_options(
   libtmux_legacy_lookup_test PRIVATE -fno-sanitize-recover=undefined)
 
-gtest_discover_tests(libtmux_legacy_lookup_test TEST_PREFIX libtmux.legacy.)
+gtest_discover_tests(
+  libtmux_legacy_lookup_test
+  TEST_PREFIX libtmux.legacy.
+  PROPERTIES LABELS libtmux TIMEOUT 10)
 
 add_executable(libtmux_relations_test relations_test.cpp)
 target_link_libraries(

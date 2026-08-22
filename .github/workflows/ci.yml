@@ -76,6 +76,18 @@ jobs:
           cmake --build --preset cxx-dev
           ctest --preset cxx-dev --no-tests=error --output-on-failure
 
+      - name: Test with a macOS-length temporary path
+        if: matrix.tmux-version == '3.7b'
+        run: |
+          export PATH=$HOME/tmux-builds/tmux-${{ matrix.tmux-version }}/bin:$PATH
+          base="/tmp/$(printf 'm%.0s' $(seq 1 52))"
+          mkdir "$base"
+          status=0
+          TMPDIR="$base" ctest --preset cxx-dev --no-tests=error \
+            --output-on-failure || status=$?
+          rmdir "$base" || status=1
+          exit "$status"
+
   macos:
     # tmux is used at least as much on macOS as on Linux, and Apple Clang with
     # its own libc++ is a different compiler from the pinned one. Nothing here
@@ -107,6 +119,219 @@ jobs:
             -DLIBTMUX_FETCH_DEPS=ON
           cmake --build build/macos
           ctest --test-dir build/macos --no-tests=error --output-on-failure
+
+  windows:
+    # Exercise the narrower psmux backend and installed package with MSVC;
+    # a MinGW-only success cannot stand in for Windows support.
+
+    strategy:
+      fail-fast: false
+      matrix:
+        standard: [20, 23]
+    # The preset intentionally targets Visual Studio 2022, and this image also
+    # keeps WSLv1 enabled for the interop gate below.
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install the pinned psmux release
+        run: |
+          $url = "https://github.com/psmux/psmux/releases/download/v3.3.7/psmux-v3.3.7-windows-x64.zip"
+          $expected = "60ff7b236f64184921cef3c1ff2611aa5a36fcc7ed8e2a58e968b8ded57f6028"
+          $archive = Join-Path $env:RUNNER_TEMP "psmux-v3.3.7-windows-x64.zip"
+          $destination = Join-Path $env:RUNNER_TEMP "psmux-v3.3.7"
+
+          curl.exe --fail --location --retry 3 --output $archive $url
+          if ($LASTEXITCODE -ne 0) {
+            throw "failed to download psmux v3.3.7"
+          }
+
+          $actual = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) {
+            throw "psmux SHA-256 mismatch: expected $expected, got $actual"
+          }
+
+          Expand-Archive -Path $archive -DestinationPath $destination
+          $binary = Join-Path $destination "tmux.exe"
+          $expectedBinary = "f3a4ad033f0332972bc79b8d695387adb4fcd1d268074e113c1c84e5381051a6"
+          $actualBinary = (Get-FileHash -Algorithm SHA256 $binary).Hash.ToLowerInvariant()
+          if ($actualBinary -ne $expectedBinary) {
+            throw "psmux executable SHA-256 mismatch: expected $expectedBinary, got $actualBinary"
+          }
+          $reported = @(& $binary -V 2>&1)
+          if ($LASTEXITCODE -ne 0 -or $reported[0] -ne "tmux 3.3.7") {
+            throw "unexpected psmux version: $($reported -join '; ')"
+          }
+          $reported
+          $destination | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Build and run the native Windows smoke
+        run: |
+          cmake --preset windows-psmux "-DLIBTMUX_CXX_STANDARD=${{ matrix.standard }}"
+          cmake --build --preset windows-psmux
+          ctest --preset windows-psmux --no-tests=error
+
+      - name: Kill the Windows psmux safety mutations
+        run: |
+          python -m tools.mutate `
+            --preset windows-psmux `
+            --id windows-psmux-disables-warm-claiming `
+            --id windows-psmux-clears-inherited-route `
+            --id windows-psmux-rejects-rebound-snapshot `
+            --id windows-psmux-cleanup-reports-success
+
+      - name: Run the Windows gates from WSL
+        run: |
+          $name = "libtmux-cxx-${{ matrix.standard }}-$env:GITHUB_RUN_ATTEMPT"
+          $archiveName = "alpine-minirootfs-3.23.5-x86_64.tar.gz"
+          $url = "https://dl-cdn.alpinelinux.org/alpine/v3.23/releases/x86_64/$archiveName"
+          $expected = "313b72de6813c719eee837c45cb3b80e003078247adfa55b943e86ec8aecb205"
+          $archive = Join-Path $env:RUNNER_TEMP $archiveName
+          $tar = Join-Path $env:RUNNER_TEMP "alpine-minirootfs-3.23.5-x86_64.tar"
+          $root = Join-Path $env:RUNNER_TEMP "$name-root"
+
+          curl.exe --fail --location --retry 3 --output $archive $url
+          if ($LASTEXITCODE -ne 0) {
+            throw "failed to download the WSL interop rootfs"
+          }
+          $actual = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) {
+            throw "Alpine rootfs SHA-256 mismatch: expected $expected, got $actual"
+          }
+          & 7z.exe e $archive "-o$env:RUNNER_TEMP" -y | Out-Host
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path $tar)) {
+            throw "failed to decompress the WSL interop rootfs"
+          }
+
+          try {
+            & wsl.exe --import $name $root $tar --version 1
+            if ($LASTEXITCODE -ne 0) {
+              throw "failed to import the WSLv1 interop distribution"
+            }
+
+            $workspace = (Resolve-Path $PWD).Path
+            $testDir = Join-Path $workspace "build\windows-psmux"
+            & wsl.exe -d $name -- env PATHEXT=.CPL ctest.exe `
+              --test-dir $testDir `
+              -C Debug -L windows --no-tests=error --output-on-failure
+            if ($LASTEXITCODE -ne 0) {
+              throw "the WSL-to-Windows psmux gates failed"
+            }
+          } finally {
+            $savedNativePreference = $PSNativeCommandUseErrorActionPreference
+            $PSNativeCommandUseErrorActionPreference = $false
+            try {
+              & wsl.exe --unregister $name 2>$null | Out-Host
+              $registered = @(
+                & wsl.exe --list --quiet 2>$null |
+                  ForEach-Object { ($_ -replace "`0", "").Trim() }
+              )
+              $listStatus = $LASTEXITCODE
+            } finally {
+              $PSNativeCommandUseErrorActionPreference = $savedNativePreference
+            }
+            if ($listStatus -ne 0) {
+              throw "could not verify WSL distribution teardown"
+            }
+            if ($registered -contains $name) {
+              throw "failed to unregister the task-owned WSL distribution"
+            }
+          }
+
+      - name: Check private psmux cleanup
+        if: always()
+        run: |
+          $state = Join-Path $HOME ".psmux"
+          if (Test-Path $state) {
+            $leaks = @(Get-ChildItem -Path $state -Recurse -File |
+              Where-Object { $_.Name -like "libtmux-cxx-*" })
+            if ($leaks.Count -ne 0) {
+              throw "private psmux state leaked:`n$($leaks.FullName -join "`n")"
+            }
+          }
+
+      - name: Install and consume the MSVC package
+        run: |
+          $prefix = Join-Path $PWD "build\windows-prefix"
+          cmake --install build/windows-psmux --config Debug --prefix $prefix
+          cmake -S examples/consume `
+            -B build/windows-consume `
+            -G "Visual Studio 17 2022" `
+            -A x64 `
+            "-DCMAKE_PREFIX_PATH=$prefix"
+          cmake --build build/windows-consume --config Debug
+          & ".\build\windows-consume\Debug\consume.exe"
+
+      - name: Reject the POSIX-only testing component
+        run: |
+          $prefix = Join-Path $PWD "build\windows-prefix"
+          $source = Join-Path $PWD "build\windows-testing-consumer-src"
+          $build = Join-Path $PWD "build\windows-testing-consumer"
+          New-Item -ItemType Directory -Force -Path $source | Out-Null
+          @'
+          cmake_minimum_required(VERSION 3.25)
+          project(libtmux_windows_testing_consumer LANGUAGES CXX)
+          find_package(libtmux REQUIRED COMPONENTS testing)
+          '@ | Set-Content -Path (Join-Path $source "CMakeLists.txt") -Encoding ascii
+
+          $savedNativePreference = $PSNativeCommandUseErrorActionPreference
+          $PSNativeCommandUseErrorActionPreference = $false
+          try {
+            $output = @(& cmake -S $source -B $build `
+              -G "Visual Studio 17 2022" -A x64 `
+              "-DCMAKE_PREFIX_PATH=$prefix" 2>&1)
+            $status = $LASTEXITCODE
+          } finally {
+            $PSNativeCommandUseErrorActionPreference = $savedNativePreference
+          }
+          if ($status -eq 0) {
+            throw "the Windows package unexpectedly provided libtmux::testing"
+          }
+          $reported = $output -join "`n"
+          $normalized = $reported -replace '\s+', ' '
+          $expected = "the libtmux::testing component is POSIX-only and is unavailable in Windows packages"
+          if (-not $normalized.Contains($expected)) {
+            throw "missing testing-component diagnostic:`n$reported"
+          }
+          $global:LASTEXITCODE = 0
+          $expected
+
+      - name: Check the installed Windows MCP catalog
+        run: |
+          $server = Join-Path $PWD "build\windows-prefix\bin\libtmux-mcp-server.exe"
+          if (-not (Test-Path $server)) {
+            throw "installed MCP server is missing: $server"
+          }
+          $requests = @(
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}'
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+          )
+          $lines = @($requests | & $server --socket-name libtmux-cxx-mcp-catalog)
+          if ($LASTEXITCODE -ne 0) {
+            throw "installed MCP server exited with $LASTEXITCODE"
+          }
+          $replies = @($lines | ForEach-Object { $_ | ConvertFrom-Json })
+          $catalog = @($replies | Where-Object { $_.id -eq 2 })
+          if ($catalog.Count -ne 1) {
+            throw "expected one tools/list reply, got $($catalog.Count)"
+          }
+          $actual = @($catalog[0].result.tools.name | Sort-Object)
+          $expected = @(
+            "inspect_tmux"
+            "list_session_panes"
+            "list_sessions"
+            "list_windows"
+          )
+          $difference = @(Compare-Object -ReferenceObject $expected -DifferenceObject $actual)
+          if ($difference.Count -ne 0) {
+            throw "unexpected Windows MCP tools: $($actual -join ', ')"
+          }
+          "Windows MCP tools: $($actual -join ', ')"
 
   toolchains:
     # A second compiler and standard library. Everything here built and passed
@@ -399,6 +624,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Install the pinned Python tool runner
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.0"
+
       - uses: hendrikmuhs/ccache-action@d62db5f07c26379fc4b4e0916f098a92573c3b03 # v1.2.23
         with:
           key: ${{ github.job }}
@@ -425,6 +655,16 @@ jobs:
           python3 tools/docs/api_index.py \
             --include include/libtmux/testing --output docs/api-testing.md \
             --page testing --check
+
+      - name: Check Python tooling
+        run: |
+          uvx --from ruff==0.16.1 ruff format --check .
+          uvx --from ruff==0.16.1 ruff check .
+          uv run --no-project python -m unittest \
+            tools.docs.test_api_index tools.mutate.test_main \
+            tools.mutate.test_runner
+          uv run --no-project --with tomlkit==0.15.1 \
+            python -m unittest tools.mcp.test_mcp_swap
 
       # The README's C++ is quoted from an example that is compiled and run.
       # This is the half that checks the quoting; the example lane checks that
@@ -477,6 +717,12 @@ jobs:
             -DLIBTMUX_FETCH_DEPS=ON
           cmake --build build/pkg
           cmake --install build/pkg --prefix "$PWD/build/prefix"
+          if [ '${{ matrix.standard }}' = 20 ]; then
+            test -f build/prefix/include/tl/expected.hpp
+          else
+            test ! -e build/prefix/include/tl/expected.hpp
+          fi
+          test ! -e build/prefix/share/cmake/tl-expected
           cmake -S examples/consume -B build/consume \
             -DCMAKE_PREFIX_PATH="$PWD/build/prefix" \
             -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CXX_FLAGS=-stdlib=libc++
@@ -513,10 +759,13 @@ jobs:
       - name: The installed MCP server answers on stdio
         run: |
           test -x build/prefix/bin/libtmux-mcp-server
+          socket_name="libtmux-cxx-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-catalog"
           printf '%s\n' \
-            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' \
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
             '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
-            | build/prefix/bin/libtmux-mcp-server > /tmp/mcp-replies.jsonl
+            | build/prefix/bin/libtmux-mcp-server --socket-name "$socket_name" \
+              > /tmp/mcp-replies.jsonl
           python3 - <<'PROBE'
           import json, pathlib, sys
           replies = [json.loads(line)
@@ -525,7 +774,7 @@ jobs:
           by_id = {reply.get("id"): reply for reply in replies}
           if by_id.keys() != {1, 2}:
               sys.exit(f"expected replies to both requests, got {sorted(by_id)}")
-          if by_id[1]["result"]["serverInfo"]["name"] != "libtmux":
+          if by_id[1]["result"]["serverInfo"]["name"] != "libtmux-cxx":
               sys.exit(f"unexpected serverInfo: {by_id[1]['result']['serverInfo']}")
           names = sorted(tool["name"] for tool in by_id[2]["result"]["tools"])
           if not names:
@@ -540,6 +789,7 @@ jobs:
       # JSON of the wrong shape was the gap.
       - name: The installed MCP server survives valid JSON of the wrong shape
         run: |
+          socket_name="libtmux-cxx-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-hostile"
           printf '%s\n' \
             '[1,2,3]' \
             '"a string"' \
@@ -552,7 +802,8 @@ jobs:
             '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":[]}' \
             '{not json at all' \
             '{"jsonrpc":"2.0","id":99,"method":"ping"}' \
-            | build/prefix/bin/libtmux-mcp-server > /tmp/mcp-hostile.jsonl
+            | build/prefix/bin/libtmux-mcp-server --socket-name "$socket_name" \
+              > /tmp/mcp-hostile.jsonl
           python3 - <<'PROBE'
           import json, pathlib, sys
           lines = [line for line in
@@ -616,6 +867,7 @@ jobs:
     needs:
       - compatibility
       - macos
+      - windows
       - toolchains
       - standards
       - fuzz

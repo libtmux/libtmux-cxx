@@ -20,6 +20,27 @@ expected<std::shared_ptr<const Snapshot>, CommandFailure>
 Snapshot::take(std::shared_ptr<const detail::Backend> backend,
                std::span<const std::string_view> fields,
                std::vector<std::string> request, FormatArgument placement) {
+  return take_in_session(std::move(backend), fields, std::move(request), placement, {},
+                         {});
+}
+
+expected<std::shared_ptr<const Snapshot>, CommandFailure>
+Snapshot::take_in_session(std::shared_ptr<const detail::Backend> backend,
+                          std::span<const std::string_view> fields,
+                          std::vector<std::string> request, FormatArgument placement,
+                          std::string_view session_id, std::string_view session_name) {
+  const ExecutionPolicy& policy = backend->policy();
+  return take_in_session(std::move(backend), fields, std::move(request), placement,
+                         session_id, session_name, policy.timeout, policy.output_limit);
+}
+
+expected<std::shared_ptr<const Snapshot>, CommandFailure>
+Snapshot::take_in_session(std::shared_ptr<const detail::Backend> backend,
+                          std::span<const std::string_view> fields,
+                          std::vector<std::string> request, FormatArgument placement,
+                          std::string_view session_id, std::string_view session_name,
+                          std::optional<std::chrono::milliseconds> timeout,
+                          std::optional<std::size_t> output_limit) {
   if (placement == FormatArgument::flag) {
     // Before the terminator, not after it. `--` ends the flags: everything
     // past it is the caller's shell command and its arguments, so a `-F`
@@ -31,7 +52,10 @@ Snapshot::take(std::shared_ptr<const detail::Backend> backend,
     request.push_back(format_request(fields));
   }
 
-  auto output = backend->run(request);
+  auto output = session_id.empty() && session_name.empty()
+                    ? backend->run(request, timeout, output_limit)
+                    : backend->run_in_session(request, session_id, session_name,
+                                              timeout, output_limit);
   if (!output.has_value()) {
     return unexpected(output.error());
   }
@@ -46,6 +70,34 @@ Snapshot::take(std::shared_ptr<const detail::Backend> backend,
                        .exit_code = 0,
                        .diagnostic = "tmux output did not match the fields asked for"});
   }
+#if defined(_WIN32)
+  if (!session_id.empty()) {
+    const std::size_t session_column = snapshot->index_of("session_id");
+    if (session_column == fields.size()) {
+      return unexpected(CommandFailure{
+          .kind = FailureKind::validation,
+          .dispatched = false,
+          .exit_code = 0,
+          .diagnostic = "psmux routed snapshot has no session identity field"});
+    }
+    if (snapshot->rows().empty()) {
+      return unexpected(CommandFailure{
+          .kind = FailureKind::missing,
+          .dispatched = true,
+          .exit_code = 0,
+          .diagnostic = "psmux session changed while reading its snapshot"});
+    }
+    for (const auto& row : snapshot->rows()) {
+      if (row[session_column] != session_id) {
+        return unexpected(CommandFailure{
+            .kind = FailureKind::missing,
+            .dispatched = true,
+            .exit_code = 0,
+            .diagnostic = "psmux session changed while reading its snapshot"});
+      }
+    }
+  }
+#endif
   return std::shared_ptr<const Snapshot>{std::move(snapshot)};
 }
 
