@@ -28,7 +28,8 @@ when a test fails.
 This matters more than it looks: several libtmux ports run their suites on one
 machine, and a tmux server is shared state keyed only by its socket. Two suites
 on one socket end each other's sessions, and the failure surfaces as a bug in
-whichever noticed first. See [AGENTS.md](../AGENTS.md).
+whichever noticed first. See
+[`.github/CONTRIBUTING.md`](../.github/CONTRIBUTING.md).
 
 Which is why it is not kept here. It is `libtmux::testing`, installed with the
 package and documented in [`docs/api-testing.md`](../docs/api-testing.md), so a
