@@ -1,5 +1,6 @@
 #include "libtmux/control.hpp"
 
+#include "control_request.hpp"
 #include "libtmux/expected.hpp"
 #include "notification_buffer.hpp"
 #include <algorithm>
@@ -1040,8 +1041,25 @@ expected<Connection, ProtocolError> Connection::connect(ConnectionOptions option
 
 ControlRequestResult Connection::execute(ControlRequest request,
                                          Clock::time_point deadline) {
-  const auto operation_count = request.group.size();
-  auto pending = std::make_shared<State::PendingRequest>(operation_count);
+  if (auto unsafe = detail::control_request::unsafe(request); unsafe.has_value()) {
+    ControlRequestResult result;
+    result.operations.resize(request.group.size());
+    result.connection_error = ProtocolError{std::move(*unsafe)};
+    return result;
+  }
+  const std::size_t expected_operations = request.group.size();
+  return execute(std::move(request), expected_operations, deadline);
+}
+
+ControlRequestResult Connection::execute(ControlRequest request,
+                                         std::size_t expected_operations,
+                                         Clock::time_point deadline) {
+  auto pending = std::make_shared<State::PendingRequest>(expected_operations);
+  if (expected_operations < request.group.size()) {
+    pending->result.connection_error =
+        ProtocolError{"control request expects fewer replies than it renders"};
+    return std::move(pending->result);
+  }
   auto rendered = render_request(std::move(request));
   if (!rendered) {
     pending->result.connection_error = rendered.error();

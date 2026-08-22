@@ -142,7 +142,7 @@ The server tmux would talk to with no `-L` or `-S` at all, which is the one a pe
 ```cpp
 [[nodiscard]] ServerCapabilities capabilities() const noexcept;
 ```
-The local backend contract; no command runs. `tmux_version()` separately probes the executable on PATH.
+The local backend contract; no command runs. `tmux_version()` separately queries the executable or the connected control server.
 
 <a id="libtmux-server-hpp-server-run"></a>
 #### `Server::run`
@@ -205,7 +205,7 @@ What tmux has said on its own initiative since the last call: a window renamed, 
 ```cpp
 [[nodiscard]] expected<Server, CommandFailure> over_control(std::string_view session) const;
 ```
-The same surface, dispatched over one open control connection instead of a process per command. Entities taken from the result are ordinary entities; nothing above the transport knows the difference.  A connection carries one conversation, so commands over it are serialized. Two Servers over the same socket are two conversations.
+The same surface, dispatched over one open control connection instead of a process per command. Entities taken from the result are ordinary entities; nothing above the transport knows the difference.  A connection carries one conversation, so commands over it are serialized. Two Servers over the same socket are two conversations. Live aliases must preserve the expected flag-1 reply-block count for every command; otherwise use Connection's exact-count overload or subprocess.
 
 <a id="libtmux-server-hpp-server-over-control-with-options"></a>
 #### `Server::over_control_with_options`
@@ -221,7 +221,7 @@ As above, with the connection's timeouts, limits, executable, and output policy 
 ```cpp
 [[nodiscard]] expected<Version, CommandFailure> tmux_version() const;
 ```
-Which tmux is behind this connection. `tmux -V` answers without touching the server, so this reports a version even when nothing is running.
+The subprocess backend asks `tmux -V` without touching a server; a control backend asks its connected server. Both use this Server's execution policy.
 
 <a id="libtmux-server-hpp-server-is-alive"></a>
 #### `Server::is_alive`
@@ -354,7 +354,7 @@ Run a shell command on the machine the server is on.  Reports whether it ran, no
 ```cpp
 [[nodiscard]] expected<void, CommandFailure> source_file(const std::filesystem::path& file) const;
 ```
-Run the commands in a file, the way tmux runs a configuration file.  The server reads the file, so the path is the server's to resolve. A file it cannot read is reported rather than passed over.
+Run the commands in a file, the way tmux runs a configuration file.  The server reads the file, so the path is the server's to resolve. A file it cannot read is reported rather than passed over. A control-backed Server rejects execution because the file can add an unknowable number of reply blocks; `check_file` remains available there.
 
 <a id="libtmux-server-hpp-server-check-file"></a>
 #### `Server::check_file`
@@ -2135,7 +2135,7 @@ The visible contents, as tmux printed them. `capture_lines` frames it into lines
 ```cpp
 [[nodiscard]] expected<Window, CommandFailure> break_out(std::string_view name = {}) const;
 ```
-Take this pane out of its window and into a new one, which is returned. An empty name leaves tmux to name the window after what is running.
+Take this pane out into a window of its own, which is returned. An empty name leaves tmux to name the window after what is running.
 
 <a id="libtmux-entities-hpp-pane-join"></a>
 #### `Pane::join`
@@ -4370,6 +4370,7 @@ Decode tmux's control protocol.  A control-mode stream interleaves command reply
   - [`Connection::Connection`](#libtmux-control-hpp-connection-connection-3)
   - [`Connection::operator=`](#libtmux-control-hpp-connection-operator-2)
   - [`Connection::execute`](#libtmux-control-hpp-connection-execute)
+  - [`Connection::execute`](#libtmux-control-hpp-connection-execute-2)
   - [`Connection::take_notifications`](#libtmux-control-hpp-connection-take-notifications)
   - [`Connection::wait_for_notifications`](#libtmux-control-hpp-connection-wait-for-notifications)
   - [`Connection::notification_fd`](#libtmux-control-hpp-connection-notification-fd)
@@ -4984,6 +4985,15 @@ Connection& operator=(const Connection&) = delete;
 ```cpp
 ControlRequestResult execute(ControlRequest request, std::chrono::steady_clock::time_point deadline);
 ```
+Rejects direct commands whose reply count is not implied by `group`. This overload does not inspect live aliases; use the exact-count overload.
+
+<a id="libtmux-control-hpp-connection-execute-2"></a>
+#### `Connection::execute`
+
+```cpp
+ControlRequestResult execute(ControlRequest request, std::size_t expected_operations, std::chrono::steady_clock::time_point deadline);
+```
+The exact flag-1 block count, including synchronous inserts; flag-0 blocks do not count. A mismatch can misattribute concurrent replies and violates this overload's precondition; custom aliases need their expanded count.
 
 <a id="libtmux-control-hpp-connection-take-notifications"></a>
 #### `Connection::take_notifications`

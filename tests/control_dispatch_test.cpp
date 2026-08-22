@@ -8,6 +8,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <fstream>
 #include <ranges>
 #include <string>
 #include <thread>
@@ -67,6 +68,23 @@ TEST(ControlDispatch, OpeningAndUsingAStreamingServerShareOneErrorType) {
       count_windows_over_control(connect(*fixture), fixture->session_name());
   ASSERT_TRUE(counted.has_value()) << counted.error().diagnostic;
   EXPECT_GE(*counted, 1U);
+}
+
+TEST(ControlDispatch, ControlVersionHonoursTheServersOutputBound) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const libtmux::ExecutionPolicy bounded{.output_limit = 1U};
+  auto subprocess =
+      Server::at_socket_path(fixture->socket_path().string(), {}, bounded);
+  ASSERT_TRUE(subprocess.has_value()) << subprocess.error().diagnostic;
+  const auto streamed = subprocess->over_control(fixture->session_name());
+  ASSERT_TRUE(streamed.has_value()) << streamed.error().diagnostic;
+
+  const auto version = streamed->tmux_version();
+
+  ASSERT_FALSE(version.has_value());
+  EXPECT_EQ(version.error().kind, libtmux::FailureKind::truncated);
+  EXPECT_TRUE(version.error().dispatched);
 }
 
 // The value of a socket name is where tmux resolves it to, and the library
@@ -149,6 +167,205 @@ TEST(ControlDispatch, EveryEntityOperationWorksOverAConnection) {
   const auto seen = subprocess.windows();
   ASSERT_TRUE(seen.has_value()) << seen.error().diagnostic;
   EXPECT_EQ(seen->size(), 2U);
+}
+
+TEST(ControlDispatch, UnnamedBreakOutReturnsItsExactWindow) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  std::vector<std::string> observed;
+  auto subprocess = Server::at_socket_path(
+      fixture->socket_path().string(),
+      [&observed](std::string_view command, const libtmux::CommandFailure*) {
+        observed.emplace_back(command);
+      });
+  ASSERT_TRUE(subprocess.has_value()) << subprocess.error().diagnostic;
+  const auto streamed = subprocess->over_control(fixture->session_name());
+  ASSERT_TRUE(streamed.has_value()) << streamed.error().diagnostic;
+
+  const auto sessions = streamed->sessions();
+  ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
+  const auto crowded = sessions->front().new_window("crowded");
+  ASSERT_TRUE(crowded.has_value()) << crowded.error().diagnostic;
+  const auto pane = crowded->split();
+  ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
+  const std::size_t before_break = observed.size();
+
+  const auto broken = pane->break_out();
+
+  ASSERT_TRUE(broken.has_value()) << broken.error().diagnostic;
+  ASSERT_EQ(observed.size(), before_break + 1U);
+  EXPECT_TRUE(std::string_view{observed.back()}.starts_with("if-shell "));
+  EXPECT_EQ(broken->session_id(), sessions->front().id());
+  const auto moved = pane->refresh();
+  ASSERT_TRUE(moved.has_value()) << moved.error().diagnostic;
+  EXPECT_EQ(moved->window_id(), broken->id());
+}
+
+TEST(ControlDispatch, RawTmux37NamedBreakRepairKeepsReplyOwnership) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server subprocess = connect(*fixture);
+  const auto version = subprocess.tmux_version();
+  ASSERT_TRUE(version.has_value()) << version.error().diagnostic;
+  if (*version != libtmux::Version{.major = 3, .minor = 7}) {
+    GTEST_SKIP() << "raw tmux 3.7 compatibility path";
+  }
+  const auto streamed = subprocess.over_control(fixture->session_name());
+  ASSERT_TRUE(streamed.has_value()) << streamed.error().diagnostic;
+  const auto sessions = streamed->sessions();
+  ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
+  const auto crowded = sessions->front().new_window("crowded");
+  ASSERT_TRUE(crowded.has_value()) << crowded.error().diagnostic;
+  const auto pane = crowded->split();
+  ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
+
+  const auto broken = pane->break_out("#{session_name}#,},comma");
+
+  ASSERT_TRUE(broken.has_value()) << broken.error().diagnostic;
+  EXPECT_EQ(broken->name(), "#{session_name}#,},comma");
+  const auto automatic_rename = broken->expand("#{automatic-rename}");
+  ASSERT_TRUE(automatic_rename.has_value()) << automatic_rename.error().diagnostic;
+  EXPECT_EQ(*automatic_rename, "0");
+  const auto marker = streamed->run({"display-message", "-p", "still-aligned"});
+  ASSERT_TRUE(marker.has_value()) << marker.error().diagnostic;
+  EXPECT_EQ(*marker, "still-aligned\n");
+}
+
+TEST(ControlDispatch, RawTmux37HookRefusalKeepsReplyOwnership) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server subprocess = connect(*fixture);
+  const auto version = subprocess.tmux_version();
+  ASSERT_TRUE(version.has_value()) << version.error().diagnostic;
+  if (*version != libtmux::Version{.major = 3, .minor = 7}) {
+    GTEST_SKIP() << "raw tmux 3.7 compatibility path";
+  }
+  ASSERT_TRUE(
+      subprocess
+          .run({"set-hook", "-g", "window-renamed", "set-option -w @libtmux-hook 1"})
+          .has_value());
+  const auto streamed = subprocess.over_control(fixture->session_name());
+  ASSERT_TRUE(streamed.has_value()) << streamed.error().diagnostic;
+  const auto sessions = streamed->sessions();
+  ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
+  const auto crowded = sessions->front().new_window("crowded");
+  ASSERT_TRUE(crowded.has_value()) << crowded.error().diagnostic;
+  const auto pane = crowded->split();
+  ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
+
+  const auto broken = pane->break_out("roomy");
+
+  ASSERT_FALSE(broken.has_value());
+  EXPECT_TRUE(broken.error().dispatched);
+  EXPECT_NE(broken.error().diagnostic.find("name repair failed"), std::string::npos)
+      << broken.error().diagnostic;
+  const auto marker = streamed->run({"display-message", "-p", "still-aligned"});
+  ASSERT_TRUE(marker.has_value()) << marker.error().diagnostic;
+  EXPECT_EQ(*marker, "still-aligned\n");
+}
+
+TEST(ControlDispatch, RawReplyInserterIsRejectedBeforeItCanChangeState) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  auto server = Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+  auto streamed = server->over_control(fixture->session_name());
+  ASSERT_TRUE(streamed.has_value()) << streamed.error().diagnostic;
+
+  const auto before = streamed->windows();
+  ASSERT_TRUE(before.has_value()) << before.error().diagnostic;
+  ASSERT_EQ(before->size(), 1U);
+  const std::string original_name{before->front().name()};
+
+  const auto rejected =
+      streamed->run({"if-shell", "-F", "1", "rename-window raw-command-must-not-run"});
+
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().kind, libtmux::FailureKind::validation);
+  EXPECT_FALSE(rejected.error().dispatched);
+  EXPECT_NE(rejected.error().diagnostic.find("if-shell"), std::string::npos)
+      << rejected.error().diagnostic;
+  const auto after = streamed->windows();
+  ASSERT_TRUE(after.has_value()) << after.error().diagnostic;
+  ASSERT_EQ(after->size(), 1U);
+  EXPECT_EQ(after->front().name(), original_name);
+  const auto marker = streamed->expand("raw-run-still-aligned");
+  ASSERT_TRUE(marker.has_value()) << marker.error().diagnostic;
+  EXPECT_EQ(*marker, "raw-run-still-aligned");
+}
+
+TEST(ControlDispatch, SourceFileIsRejectedButParseOnlyRemainsReplySafe) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  auto server = Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+  auto streamed = server->over_control(fixture->session_name());
+  ASSERT_TRUE(streamed.has_value()) << streamed.error().diagnostic;
+  const auto config = fixture->tmux_tmpdir() / "control-source.conf";
+  {
+    std::ofstream writing{config};
+    writing << "set-option -g @control-source applied\n";
+  }
+
+  const auto checked = streamed->check_file(config);
+  ASSERT_TRUE(checked.has_value()) << checked.error().diagnostic;
+  const auto sourced = streamed->source_file(config);
+
+  ASSERT_FALSE(sourced.has_value());
+  EXPECT_EQ(sourced.error().kind, libtmux::FailureKind::unsupported);
+  EXPECT_FALSE(sourced.error().dispatched);
+  EXPECT_NE(sourced.error().diagnostic.find("source-file"), std::string::npos)
+      << sourced.error().diagnostic;
+  const auto value = streamed->expand("#{@control-source}");
+  ASSERT_TRUE(value.has_value()) << value.error().diagnostic;
+  EXPECT_TRUE(value->empty());
+}
+
+TEST(ControlDispatch, UnsafeBatchIsRejectedBeforeItsSafePrefixRuns) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  auto server = Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+  auto streamed = server->over_control(fixture->session_name());
+  ASSERT_TRUE(streamed.has_value()) << streamed.error().diagnostic;
+  const auto before = streamed->windows();
+  ASSERT_TRUE(before.has_value()) << before.error().diagnostic;
+  ASSERT_EQ(before->size(), 1U);
+  const std::string original_name{before->front().name()};
+
+  libtmux::CommandBatch batch;
+  ASSERT_TRUE(batch.add({"rename-window", "safe-prefix-must-not-run"}));
+  ASSERT_TRUE(batch.add({"run-s", "-C", "display-message -p inserted-batch-reply"}));
+  const auto rejected = streamed->run_batch(batch);
+
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().kind, libtmux::FailureKind::validation);
+  EXPECT_FALSE(rejected.error().dispatched);
+  EXPECT_NE(rejected.error().diagnostic.find("operation 2"), std::string::npos)
+      << rejected.error().diagnostic;
+  const auto after = streamed->windows();
+  ASSERT_TRUE(after.has_value()) << after.error().diagnostic;
+  ASSERT_EQ(after->size(), 1U);
+  EXPECT_EQ(after->front().name(), original_name);
+}
+
+TEST(ControlDispatch, NoInsertSentinelRemainsAnOrdinaryBatchOperation) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  auto server = Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+  auto streamed = server->over_control(fixture->session_name());
+  ASSERT_TRUE(streamed.has_value()) << streamed.error().diagnostic;
+
+  libtmux::CommandBatch batch;
+  ASSERT_TRUE(batch.add({"display-message", "-p", "before-sentinel"}));
+  ASSERT_TRUE(batch.add({"if-shell", "-F", "-t", ":", "0", "{"}));
+  ASSERT_TRUE(batch.add({"display-message", "-p", "after-sentinel"}));
+
+  const auto ran = streamed->run_batch(batch);
+
+  ASSERT_TRUE(ran.has_value()) << ran.error().diagnostic;
+  EXPECT_EQ(*ran, "before-sentinel\nafter-sentinel\n");
 }
 
 TEST(ControlDispatch, TheStreamThatJustifiesTheOpenConnectionIsReadable) {

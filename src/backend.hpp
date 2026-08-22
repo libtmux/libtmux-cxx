@@ -121,6 +121,15 @@ public:
   }
   [[nodiscard]] virtual std::size_t dropped_notifications() const noexcept { return 0; }
 
+  // A synchronous tmux command inserted by this one writes to subprocess
+  // stdout, but control mode frames it as the next reply block.
+  [[nodiscard]] virtual expected<std::string, CommandFailure>
+  run_inserted(const std::vector<std::string>& command,
+               std::optional<std::chrono::milliseconds> timeout,
+               std::optional<std::size_t> output_limit) const {
+    return run(command, timeout, output_limit);
+  }
+
   // The observer this backend was built with, so a Server that opens a
   // connection over the same selector keeps watching the same way.
   [[nodiscard]] const CommandObserver& observer() const noexcept { return observer_; }

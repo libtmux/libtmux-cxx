@@ -27,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        tmux-version: ['3.2a', '3.3a', '3.4', '3.5', '3.6', '3.7a', '3.7b', 'master']
+        tmux-version: ['3.2a', '3.3a', '3.4', '3.5', '3.6', '3.7', '3.7a', '3.7b', 'master']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

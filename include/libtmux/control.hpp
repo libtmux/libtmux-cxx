@@ -277,7 +277,14 @@ public:
   Connection(const Connection&) = delete;
   Connection& operator=(const Connection&) = delete;
 
+  // Rejects direct commands whose reply count is not implied by `group`.
+  // This overload does not inspect live aliases; use the exact-count overload.
   ControlRequestResult execute(ControlRequest request,
+                               std::chrono::steady_clock::time_point deadline);
+  // The exact flag-1 block count, including synchronous inserts; flag-0 blocks
+  // do not count. A mismatch can misattribute concurrent replies and violates
+  // this overload's precondition; custom aliases need their expanded count.
+  ControlRequestResult execute(ControlRequest request, std::size_t expected_operations,
                                std::chrono::steady_clock::time_point deadline);
   // Everything tmux has said since the last call, and how many were dropped
   // to keep the buffer bounded.

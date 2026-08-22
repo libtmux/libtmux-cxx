@@ -9,6 +9,16 @@ rather than a process.
 way. Nothing above the transport changes: the entities, filters, options and
 failures are the same types, and the same test file drives both.
 
+Executing `source_file` is the deliberate exception. A file can insert an
+unknowable number of synchronous reply blocks, so a control-backed Server
+rejects it before dispatch; parse-only `check_file` remains available. Raw
+reply-inserting commands likewise need the low-level execute overload that
+states their exact count of CONTROL-attributed blocks. The inferred-count
+overload does not inspect the live alias map; an alias that changes the count
+must use the exact-count overload. A control-backed Server has no count
+override, so its live aliases must preserve that count for every command it
+dispatches. Otherwise use a low-level Connection or a subprocess-backed Server.
+
 ## What it is worth
 
 One hundred `windows()` listings against a server holding 21 windows,

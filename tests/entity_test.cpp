@@ -5,6 +5,7 @@
 // children, its parents, and the commands that change it.
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <filesystem>
 #include <string>
@@ -452,6 +453,104 @@ TEST(Entity, APaneBreaksOutIntoAWindowOfItsOwn) {
   ASSERT_TRUE(unnamed.has_value()) << unnamed.error().diagnostic;
   EXPECT_FALSE(unnamed->id().empty());
   EXPECT_TRUE(server.is_alive()) << "break-pane took the server down";
+
+  const auto literal_pane = window->split();
+  ASSERT_TRUE(literal_pane.has_value()) << literal_pane.error().diagnostic;
+  const auto literal = literal_pane->break_out("#{session_name}#");
+  ASSERT_TRUE(literal.has_value()) << literal.error().diagnostic;
+  EXPECT_EQ(literal->name(), "#{session_name}#");
+}
+
+TEST(Entity, BreakingAnOnlyPanePreservesItsWindow) {
+  LIBTMUX_REQUIRES_TMUX(3, 6, "break-pane's created-window report");
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const Session source = only_session(server);
+
+  const auto original = source.active_window();
+  ASSERT_TRUE(original.has_value()) << original.error().diagnostic;
+  ASSERT_TRUE(original->rename("original").has_value());
+  const auto pane = original->active_pane();
+  ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
+
+  const auto destination = server.new_session("destination");
+  ASSERT_TRUE(destination.has_value()) << destination.error().diagnostic;
+  const auto broken = pane->break_out();
+
+  ASSERT_TRUE(broken.has_value()) << broken.error().diagnostic;
+  EXPECT_EQ(broken->id(), original->id());
+  EXPECT_EQ(broken->name(), "original");
+  EXPECT_EQ(broken->session_id(), destination->id());
+  const auto moved = pane->refresh();
+  ASSERT_TRUE(moved.has_value()) << moved.error().diagnostic;
+  EXPECT_EQ(moved->window_id(), original->id());
+}
+
+TEST(Entity, RawTmux37RepairsACoincidentNaturalWindowName) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const auto version = server.tmux_version();
+  ASSERT_TRUE(version.has_value()) << version.error().diagnostic;
+  if (*version != libtmux::Version{.major = 3, .minor = 7}) {
+    GTEST_SKIP() << "raw tmux 3.7 compatibility path";
+  }
+  ASSERT_TRUE(server.set_global_option("automatic-rename", "on").has_value());
+  const Session source = only_session(server);
+  const auto crowded = source.new_window("crowded");
+  ASSERT_TRUE(crowded.has_value()) << crowded.error().diagnostic;
+  const auto pane = crowded->split();
+  ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
+  const auto current = pane->refresh();
+  ASSERT_TRUE(current.has_value()) << current.error().diagnostic;
+  ASSERT_FALSE(current->command().empty());
+  const std::string natural_name{current->command()};
+
+  const auto broken = current->break_out(natural_name);
+
+  ASSERT_TRUE(broken.has_value()) << broken.error().diagnostic;
+  EXPECT_EQ(broken->name(), natural_name);
+  const auto automatic_rename = broken->expand("#{automatic-rename}");
+  ASSERT_TRUE(automatic_rename.has_value()) << automatic_rename.error().diagnostic;
+  EXPECT_EQ(*automatic_rename, "0");
+}
+
+TEST(Entity, RawTmux37RejectsHooksBeforeNameRepair) {
+  constexpr std::array hooks{
+      std::string_view{"after-rename-window"},
+      std::string_view{"window-renamed"},
+      std::string_view{"after-display-message"},
+  };
+  for (const std::string_view hook : hooks) {
+    SCOPED_TRACE(hook);
+    auto fixture = libtmux::test::ScopedTmuxServer::start();
+    ASSERT_TRUE(fixture.has_value()) << fixture.error();
+    const Server server = connect(*fixture);
+    const auto version = server.tmux_version();
+    ASSERT_TRUE(version.has_value()) << version.error().diagnostic;
+    if (*version != libtmux::Version{.major = 3, .minor = 7}) {
+      GTEST_SKIP() << "raw tmux 3.7 compatibility path";
+    }
+    const auto configured = server.run(
+        {"set-hook", "-g", std::string{hook}, "set-option -w @libtmux-hook 1"});
+    ASSERT_TRUE(configured.has_value()) << configured.error().diagnostic;
+    const Session source = only_session(server);
+    const auto crowded = source.new_window("crowded");
+    ASSERT_TRUE(crowded.has_value()) << crowded.error().diagnostic;
+    const auto pane = crowded->split();
+    ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
+
+    const auto broken = pane->break_out("roomy");
+
+    ASSERT_FALSE(broken.has_value());
+    EXPECT_TRUE(broken.error().dispatched);
+    EXPECT_NE(broken.error().diagnostic.find("name repair failed"), std::string::npos)
+        << broken.error().diagnostic;
+    const auto marker = server.run({"display-message", "-p", "still-alive"});
+    ASSERT_TRUE(marker.has_value()) << marker.error().diagnostic;
+    EXPECT_EQ(*marker, "still-alive\n");
+  }
 }
 
 TEST(Entity, NumericFieldsCompareAsNumbersNotAsText) {

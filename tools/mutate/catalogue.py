@@ -104,6 +104,32 @@ CATALOGUE: t.Final = (
         "contract without launching a process",
     ),
     Mutation(
+        mutation_id="tmux37-unnamed-break-guard",
+        path="src/entities.cpp",
+        find='        "#{&&:#{==:#{version},3.7},#{>:#{window_panes},1}}",',
+        replace='        "#{&&:#{==:#{version},3.7a},#{>:#{window_panes},1}}",',
+        target="libtmux_backend_seam_test",
+        test_regex=r"^libtmux[.]backend_seam$",
+        guards="raw tmux 3.7 receives a name before an unnamed multi-pane "
+        "break can crash its server",
+    ),
+    Mutation(
+        mutation_id="tmux37-named-break-repair",
+        path="src/entities.cpp",
+        find=(
+            "  const bool raw_tmux_37 = "
+            "created->version == Version{.major = 3, .minor = 7};"
+        ),
+        replace=(
+            "  const bool raw_tmux_37 = "
+            "created->version == Version{.major = 3, .minor = 8};"
+        ),
+        target="libtmux_backend_seam_test",
+        test_regex=r"^libtmux[.]backend_seam$",
+        guards="raw tmux 3.7 repairs an ignored requested window name by its "
+        "stable identity",
+    ),
+    Mutation(
         mutation_id="notification-bound",
         path="src/notification_buffer.hpp",
         find="inline constexpr std::size_t kMaximumNotifications = 4096U;",
