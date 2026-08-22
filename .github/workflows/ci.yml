@@ -204,7 +204,9 @@ jobs:
           $name = "libtmux-cxx-${{ matrix.standard }}-$env:GITHUB_RUN_ATTEMPT"
           $archiveName = "alpine-minirootfs-3.23.5-x86_64.tar.gz"
           $url = "https://dl-cdn.alpinelinux.org/alpine/v3.23/releases/x86_64/$archiveName"
-          $expected = "313b72de6813c719eee837c45cb3b80e003078247adfa55b943e86ec8aecb205"
+          # Alpine rebuilds minirootfs archives under their existing version, so
+          # this hash moves without the version moving. Take it from $url.sha256.
+          $expected = "fae0d78ad39563573ddececfdd55ae1040ed428442e95ea5401cf66d9079b327"
           $archive = Join-Path $env:RUNNER_TEMP $archiveName
           $tar = Join-Path $env:RUNNER_TEMP "alpine-minirootfs-3.23.5-x86_64.tar"
           $root = Join-Path $env:RUNNER_TEMP "$name-root"
