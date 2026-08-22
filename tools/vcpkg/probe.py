@@ -121,6 +121,10 @@ _TOOL_OUTPUTS = {
         {"elapsed_ms", "matched", "mode", "pane_id", "text", "timed_out"}
     ),
 }
+# Required is not the same set as declared. `wait_for_text` publishes a
+# `pane_id` it cannot fill when the deadline expires before a target resolves,
+# so the field is optional and an answer omitting it is still valid.
+_TOOL_OUTPUT_OPTIONAL = {"wait_for_text": frozenset({"pane_id"})}
 _TOOL_OUTPUT_TYPES = {
     "capture_pane": {"pane_id": "string", "text": "string"},
     "create_session": {"name": "string", "session_id": "string"},
@@ -897,7 +901,8 @@ def _catalog_problem(
             or not isinstance(output_required, list)
             or not all(isinstance(item, str) for item in output_required)
             or len(output_required) != len(frozenset(output_required))
-            or frozenset(output_required) != _TOOL_OUTPUTS[name]
+            or frozenset(output_required)
+            != _TOOL_OUTPUTS[name] - _TOOL_OUTPUT_OPTIONAL.get(name, frozenset())
         ):
             return [], f"server returned the wrong schema for MCP tool {name}"
         if any(

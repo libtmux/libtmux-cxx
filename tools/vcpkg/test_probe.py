@@ -109,7 +109,10 @@ class ProbeTest(unittest.TestCase):
                         key: {"type": probe._TOOL_OUTPUT_TYPES[name][key]}
                         for key in probe._TOOL_OUTPUTS[name]
                     },
-                    "required": sorted(probe._TOOL_OUTPUTS[name]),
+                    "required": sorted(
+                        probe._TOOL_OUTPUTS[name]
+                        - probe._TOOL_OUTPUT_OPTIONAL.get(name, frozenset())
+                    ),
                     "additionalProperties": False,
                 },
                 "annotations": {
