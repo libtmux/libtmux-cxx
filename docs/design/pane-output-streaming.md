@@ -20,6 +20,14 @@ thousands of lines.
 | What does `pause-after` do to a slow reader? | **Discards the pane's whole queue.** With `pause-after=1` and a three-second stall: 0 `%output`, one `%pause %0`. Without it, the same stall delivered 280 lines and no pause. |
 | Does resuming recover the gap? | **No.** `refresh-client -A "%0:continue"` resumes the stream; the offsets snap to the current end, so what was queued is gone. |
 | What does listening cost the command path? | **Almost nothing.** Reply latency under a 20,000-line flood: median 0.2 ms with `no-output`, 0.3 ms with output on; worst case 0.5 ms against 7.4 ms. |
+| What does the way a caller takes the stream cost? | **Everything, if it polls.** Over one three-second window on the same workload, a `take_notifications` loop that sleeps a millisecond between empty takes woke a median 2561 times; `wait_for_notifications` woke 18 and `notification_fd` under `poll` woke 22, for the same notifications. |
+
+The consumption figures are from this repository's own surface rather than raw
+tmux: one connection opened with `pane_output` and `pause_after`, 200
+`send-keys` echoes dispatched as one group, five runs of each strategy, clang
+18 with libc++ at `-O2`, tmux 3.7c, one idle Linux machine. They compare
+wakeups rather than latency because all three see the same notifications; what
+differs is how often the caller is woken to find nothing.
 
 ## What follows from it
 
@@ -28,6 +36,12 @@ measurement settles it: a connection that starts silent cannot be made to
 listen, so there is no per-pane opt-in to offer and pretending otherwise would
 be an API that fails at runtime. Muting a pane on a listening connection is
 the operation tmux actually supports.
+
+**Owning your event loop is free.** `notification_fd` costs the same wakeups as
+`wait_for_notifications`, so a caller with a `poll` of their own gives up
+nothing by integrating there rather than parking a thread in a blocking call.
+What is not free is asking repeatedly: a sleep-and-take loop pays about a
+hundred times the wakeups for the same events.
 
 **It stays off by default.** Not for cost — the last measurement shows there
 is barely any — but because a caller who has not asked to read pane output
