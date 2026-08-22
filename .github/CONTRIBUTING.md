@@ -169,7 +169,7 @@ its own pull request. Commit format is in [`WRITING.md`](WRITING.md).
 
 ## Review
 
-A reviewer is asking four questions, in this order:
+A reviewer is asking five questions, in this order:
 
 1. **Would the test fail without the fix?** If the change is a bug fix and the
    test passes on the unfixed tree, the test is not testing it.
@@ -183,6 +183,9 @@ A reviewer is asking four questions, in this order:
 4. **Is anything here unrelated to the stated change?** Formatting, renames and
    drive-by cleanup get their own commits so the behavioural diff stays
    reviewable.
+5. **Does every commit stand on its own?** Not just the tip. A commit that
+   builds only once the next one lands turns a `git bisect` report into a
+   wrong answer, which is worse than no answer.
 
 ## Releases
 
@@ -205,6 +208,28 @@ consumer's baseline is the registry commit that follows the tag rather than the
 tag itself. [`docs/vcpkg-registry.md`](../docs/vcpkg-registry.md) has the whole
 of it.
 
+### What a release ships
+
+The library is consumed through the registry, so its release is a git-tree
+rather than a file to download. The MCP server is a program, and is published
+as one:
+
+- A `libtmux-mcp-server-<version>-<platform>` binary per platform, each with a
+  `.sha256` beside it.
+- An SPDX SBOM describing what went into the archive.
+- A build provenance attestation, signed with a short-lived workflow identity
+  rather than a stored key.
+
+The notes carry the source archive's `SHA512` and the line that checks a
+binary, so a consumer never has to work out how:
+
+```console
+$ gh attestation verify <file> --repo libtmux/libtmux-cxx
+```
+
+A claim about an artifact belongs in the notes only when a reader can check it
+with a command the notes give them.
+
 ## Compatibility
 
 tmux 3.2a and newer, through `master`, matching the Python package. CI builds
@@ -219,6 +244,12 @@ than a program that reads the wrong bytes.
 
 None of this is promised until `0.1.0`. Alpha releases may change or remove
 exported identifiers with no deprecation period.
+
+The support policy, stated rather than implied: the newest release is the only
+one that gets fixes, there are no backports, and the tmux range moves only when
+a release leaves upstream support or a capability the library needs arrives.
+A change that would move either floor says so in its commit message and in the
+changelog, because moving a floor breaks somebody's build by definition.
 
 ## Reporting a bug
 
