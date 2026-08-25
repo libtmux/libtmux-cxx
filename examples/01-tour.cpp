@@ -1,15 +1,114 @@
 // Five minutes with the library: connect, look around, act, read the result.
 
+#include <charconv>
 #include <cstdio>
 #include <filesystem>
 #include <string>
+#include <string_view>
+#include <system_error>
 
 #include <libtmux/libtmux.hpp>
 
 #include "scratch_server.hpp"
 
+namespace {
+
+void append_json_string(std::string& output, std::string_view value) {
+  constexpr char hex[] = "0123456789abcdef";
+  output.push_back('\"');
+  for (const char value_character : value) {
+    const unsigned char character = static_cast<unsigned char>(value_character);
+    switch (character) {
+    case '\"':
+      output += "\\\"";
+      break;
+    case '\\':
+      output += "\\\\";
+      break;
+    case '\b':
+      output += "\\b";
+      break;
+    case '\f':
+      output += "\\f";
+      break;
+    case '\n':
+      output += "\\n";
+      break;
+    case '\r':
+      output += "\\r";
+      break;
+    case '\t':
+      output += "\\t";
+      break;
+    default:
+      if (character < 0x20U || character >= 0x80U) {
+        output += "\\u00";
+        output.push_back(hex[character >> 4U]);
+        output.push_back(hex[character & 0x0fU]);
+      } else {
+        output.push_back(static_cast<char>(character));
+      }
+    }
+  }
+  output.push_back('\"');
+}
+
+int print_arena_evidence(const example::ScratchServer& scratch,
+                         const libtmux::Server& server) {
+  const auto identity = server.expand("#{pid}\t#{socket_path}");
+  if (!identity.has_value()) {
+    std::fprintf(stderr, "%s\n", identity.error().diagnostic.c_str());
+    return 1;
+  }
+
+  const std::size_t separator = identity->find('\t');
+  if (separator == std::string::npos) {
+    std::fprintf(stderr, "invalid arena server identity\n");
+    return 1;
+  }
+  int server_pid = 0;
+  const char* const pid_end = identity->data() + separator;
+  const auto parsed = std::from_chars(identity->data(), pid_end, server_pid);
+  const std::string socket_path = identity->substr(separator + 1U);
+  if (parsed.ec != std::errc{} || parsed.ptr != pid_end || server_pid <= 0 ||
+      socket_path != scratch.socket_path()) {
+    std::fprintf(stderr, "invalid arena server identity\n");
+    return 1;
+  }
+
+  const auto global_options = server.global_options();
+  if (!global_options.has_value()) {
+    std::fprintf(stderr, "%s\n", global_options.error().diagnostic.c_str());
+    return 1;
+  }
+  std::string_view challenge;
+  for (const libtmux::OptionEntry& option : *global_options) {
+    if (option.name == "@libtmux_arena_challenge" && !option.index.has_value()) {
+      challenge = option.value;
+      break;
+    }
+  }
+  if (challenge.empty()) {
+    std::fprintf(stderr, "arena challenge is missing\n");
+    return 1;
+  }
+
+  std::string evidence{"LIBTMUX_ARENA_EVIDENCE={\"schema\":1,\"server_pid\":"};
+  evidence += std::to_string(server_pid);
+  evidence += ",\"socket_path\":";
+  append_json_string(evidence, socket_path);
+  evidence += ",\"challenge\":";
+  append_json_string(evidence, challenge);
+  evidence += ",\"artifact\":\"libtmux_example_01_tour\"}\n";
+  std::fputs(evidence.c_str(), stdout);
+  return 0;
+}
+
+} // namespace
+
 int main() {
-  const example::ScratchServer scratch = example::ScratchServer::open();
+  const example::ScratchServer scratch =
+      example::ScratchServer::open_or_borrow_arena("libtmux_example_01_tour");
   const libtmux::Server& server = scratch.get();
 
   // Which tmux is on the other end. Nothing throws; every call reports failure
@@ -209,6 +308,9 @@ int main() {
       !replaced.has_value()) {
     std::fprintf(stderr, "%s\n", replaced.error().diagnostic.c_str());
     return 1;
+  }
+  if (scratch.borrows_server()) {
+    return print_arena_evidence(scratch, server);
   }
   return 0;
 }
