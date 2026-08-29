@@ -195,4 +195,29 @@ TEST(ProcessEngine, EndsWhenTheLastHolderLetsGo) {
   EXPECT_TRUE(watched.expired()) << "the engine's own threads still hold it";
 }
 
+// Shutdown does not start what it is about to end. A queue drained into
+// process creation at close time runs real commands, with whatever they do to
+// the world, only to report every one of them as cancelled.
+TEST(ProcessEngine, ShutdownDoesNotStartWorkItIsAboutToEnd) {
+  auto engine = ProcessEngine::start();
+  ASSERT_TRUE(engine.has_value()) << engine.error().diagnostic;
+
+  std::vector<Operation<ProcessReply>> queued;
+  queued.reserve(64);
+  for (int index = 0; index < 64; ++index) {
+    queued.push_back((*engine)->submit(shell("sleep 30")));
+  }
+  static_cast<void>((*engine)->close());
+
+  int never_started = 0;
+  for (auto& one : queued) {
+    auto reply = sync_wait(std::move(one));
+    ASSERT_FALSE(reply.has_value());
+    if (reply.error().delivery == libtmux::DeliveryStatus::not_started) {
+      ++never_started;
+    }
+  }
+  EXPECT_GT(never_started, 0) << "every queued command was started, then ended";
+}
+
 } // namespace

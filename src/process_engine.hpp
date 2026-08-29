@@ -114,7 +114,7 @@ private:
   explicit ProcessEngine(std::shared_ptr<EngineChannel> channel) noexcept;
 
   void launch_loop();
-  void launch_one(EnginePending work);
+  void launch_one(EnginePending work, bool closing);
   void reactor_loop();
 
   std::shared_ptr<EngineChannel> channel_;

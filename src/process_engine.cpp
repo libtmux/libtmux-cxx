@@ -201,6 +201,7 @@ Operation<ProcessReply> ProcessEngine::submit(ProcessRequest request) {
 void ProcessEngine::launch_loop() {
   for (;;) {
     EnginePending work;
+    bool closing = false;
     {
       std::unique_lock lock{mutex_};
       launch_ready_.wait(lock, [this] { return closing_ || !pending_.empty(); });
@@ -209,9 +210,10 @@ void ProcessEngine::launch_loop() {
       }
       work = std::move(pending_.front());
       pending_.pop_front();
+      closing = closing_;
       ++launching_;
     }
-    launch_one(std::move(work));
+    launch_one(std::move(work), closing);
     {
       std::lock_guard lock{mutex_};
       --launching_;
@@ -222,15 +224,20 @@ void ProcessEngine::launch_loop() {
   }
 }
 
-void ProcessEngine::launch_one(EnginePending work) {
-  // Withdrawn before anything started, so nothing starts. This is the one
-  // cancellation that costs a caller nothing to retry.
-  if (work.source.cancel_requested()) {
+void ProcessEngine::launch_one(EnginePending work, bool closing) {
+  // Withdrawn before anything started, or closed before anything started:
+  // either way nothing starts, and this is the one cancellation that costs a
+  // caller nothing to retry. Starting it would run the command for real --
+  // side effects and all -- to end it a moment later and report it cancelled.
+  const bool withdrawn = work.source.cancel_requested();
+  if (withdrawn || closing) {
     static_cast<void>(work.source.publish(unexpected(CommandFailure{
         .kind = FailureKind::cancelled,
         .delivery = DeliveryStatus::not_started,
         .exit_code = 0,
-        .diagnostic = "the caller withdrew the command before it started"})));
+        .diagnostic = withdrawn
+                          ? "the caller withdrew the command before it started"
+                          : "the process engine closed before this started"})));
     work.source.retire();
     return;
   }
