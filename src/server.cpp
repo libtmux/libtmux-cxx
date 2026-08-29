@@ -731,14 +731,6 @@ Server::source_file(const std::filesystem::path& file) const {
   static_cast<void>(file);
   return unexpected(unsupported_psmux_state("configuration state"));
 #else
-  if (backend_->capabilities().backend == BackendKind::control_mode) {
-    return unexpected(CommandFailure{
-        .kind = FailureKind::unsupported,
-        .dispatched = false,
-        .exit_code = 0,
-        .diagnostic = "control mode cannot attribute the commands source-file may "
-                      "insert into its reply stream"});
-  }
   return applied(run({"source-file", "--", libtmux_path::command_string(file)}));
 #endif
 }

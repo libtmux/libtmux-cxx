@@ -148,10 +148,9 @@ public:
   // a process per command. Entities taken from the result are ordinary
   // entities; nothing above the transport knows the difference.
   //
-  // A connection carries one conversation, so commands over it are
-  // serialized. Two Servers over the same socket are two conversations.
-  // Live aliases must preserve the expected flag-1 reply-block count for every
-  // command; otherwise use Connection's exact-count overload or subprocess.
+  // Complete writes are ordered on the shared stream; callers then wait for
+  // their own private request boundaries concurrently. Reply-inserting
+  // commands and live aliases preserve every block before that boundary.
   [[nodiscard]] expected<Server, CommandFailure>
   over_control(std::string_view session) const;
   // As above, with the connection's timeouts, limits, executable, and output

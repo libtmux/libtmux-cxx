@@ -205,7 +205,7 @@ What tmux has said on its own initiative since the last call: a window renamed, 
 ```cpp
 [[nodiscard]] expected<Server, CommandFailure> over_control(std::string_view session) const;
 ```
-The same surface, dispatched over one open control connection instead of a process per command. Entities taken from the result are ordinary entities; nothing above the transport knows the difference.  A connection carries one conversation, so commands over it are serialized. Two Servers over the same socket are two conversations. Live aliases must preserve the expected flag-1 reply-block count for every command; otherwise use Connection's exact-count overload or subprocess.
+The same surface, dispatched over one open control connection instead of a process per command. Entities taken from the result are ordinary entities; nothing above the transport knows the difference.  Complete writes are ordered on the shared stream; callers then wait for their own private request boundaries concurrently. Reply-inserting commands and live aliases preserve every block before that boundary.
 
 <a id="libtmux-server-hpp-server-over-control-with-options"></a>
 #### `Server::over_control_with_options`
@@ -4572,19 +4572,12 @@ Decode tmux's control protocol.  A control-mode stream interleaves command reply
   - [`Parser::Parser`](#libtmux-control-hpp-parser-parser-2)
   - [`Parser::feed`](#libtmux-control-hpp-parser-feed)
   - [`Parser::finish`](#libtmux-control-hpp-parser-finish)
-- [`Attribution`](#libtmux-control-hpp-attribution)
-  - [`Attribution::exact`](#libtmux-control-hpp-attribution-exact)
-  - [`Attribution::skipped`](#libtmux-control-hpp-attribution-skipped)
-  - [`Attribution::unknown`](#libtmux-control-hpp-attribution-unknown)
 - [`ControlCommand`](#libtmux-control-hpp-controlcommand)
   - [`ControlCommand::argv`](#libtmux-control-hpp-controlcommand-argv)
 - [`ControlRequest`](#libtmux-control-hpp-controlrequest)
   - [`ControlRequest::group`](#libtmux-control-hpp-controlrequest-group)
-- [`ControlOperationResult`](#libtmux-control-hpp-controloperationresult)
-  - [`ControlOperationResult::attribution`](#libtmux-control-hpp-controloperationresult-attribution)
-  - [`ControlOperationResult::block`](#libtmux-control-hpp-controloperationresult-block)
 - [`ControlRequestResult`](#libtmux-control-hpp-controlrequestresult)
-  - [`ControlRequestResult::operations`](#libtmux-control-hpp-controlrequestresult-operations)
+  - [`ControlRequestResult::blocks`](#libtmux-control-hpp-controlrequestresult-blocks)
   - [`ControlRequestResult::connection_error`](#libtmux-control-hpp-controlrequestresult-connection-error)
 - [`ConnectionOptions`](#libtmux-control-hpp-connectionoptions)
   - [`ConnectionOptions::tmux_binary`](#libtmux-control-hpp-connectionoptions-tmux-binary)
@@ -4618,7 +4611,6 @@ Decode tmux's control protocol.  A control-mode stream interleaves command reply
   - [`Connection::Connection`](#libtmux-control-hpp-connection-connection-3)
   - [`Connection::operator=`](#libtmux-control-hpp-connection-operator-2)
   - [`Connection::execute`](#libtmux-control-hpp-connection-execute)
-  - [`Connection::execute`](#libtmux-control-hpp-connection-execute-2)
   - [`Connection::take_notifications`](#libtmux-control-hpp-connection-take-notifications)
   - [`Connection::wait_for_notifications`](#libtmux-control-hpp-connection-wait-for-notifications)
   - [`Connection::notification_fd`](#libtmux-control-hpp-connection-notification-fd)
@@ -4931,22 +4923,6 @@ expected<std::vector<Event>, ProtocolError> feed(std::span<const std::byte> byte
 expected<void, ProtocolError> finish();
 ```
 
-<a id="libtmux-control-hpp-attribution"></a>
-### `Attribution`
-
-```cpp
-enum class Attribution : std::uint8_t;
-```
-
-<a id="libtmux-control-hpp-attribution-exact"></a>
-#### `Attribution::exact` — `exact,`
-
-<a id="libtmux-control-hpp-attribution-skipped"></a>
-#### `Attribution::skipped` — `skipped,`
-
-<a id="libtmux-control-hpp-attribution-unknown"></a>
-#### `Attribution::unknown` — `unknown,`
-
 <a id="libtmux-control-hpp-controlcommand"></a>
 ### `ControlCommand`
 
@@ -4975,27 +4951,6 @@ struct ControlRequest;
 std::vector<ControlCommand> group;
 ```
 
-<a id="libtmux-control-hpp-controloperationresult"></a>
-### `ControlOperationResult`
-
-```cpp
-struct ControlOperationResult;
-```
-
-<a id="libtmux-control-hpp-controloperationresult-attribution"></a>
-#### `ControlOperationResult::attribution`
-
-```cpp
-Attribution attribution{Attribution::unknown};
-```
-
-<a id="libtmux-control-hpp-controloperationresult-block"></a>
-#### `ControlOperationResult::block`
-
-```cpp
-std::optional<ControlBlock> block;
-```
-
 <a id="libtmux-control-hpp-controlrequestresult"></a>
 ### `ControlRequestResult`
 
@@ -5003,12 +4958,13 @@ std::optional<ControlBlock> block;
 struct ControlRequestResult;
 ```
 
-<a id="libtmux-control-hpp-controlrequestresult-operations"></a>
-#### `ControlRequestResult::operations`
+<a id="libtmux-control-hpp-controlrequestresult-blocks"></a>
+#### `ControlRequestResult::blocks`
 
 ```cpp
-std::vector<ControlOperationResult> operations;
+std::vector<ControlBlock> blocks;
 ```
+Every synchronous reply block tmux emitted for this request, in wire order. tmux does not put a request or operation ID on its guards, so a command alias or inserted command may make this differ from `group`.
 
 <a id="libtmux-control-hpp-controlrequestresult-connection-error"></a>
 #### `ControlRequestResult::connection_error`
@@ -5065,7 +5021,7 @@ std::chrono::milliseconds shutdown_timeout{2000};
 ```cpp
 std::size_t retained_reply_bytes{kDefaultRetainedReplyBytes};
 ```
-Passed to the decoder. Raise the first to hold a bigger capture; the second bounds a line that never ends and wants raising only if tmux grows a longer one.
+Passed to the decoder. Raise the first to hold a bigger capture; the second bounds a line that never ends. A connection accepts zero (unbounded) or at least 128 bytes, which leaves room for its private request boundary.
 
 <a id="libtmux-control-hpp-connectionoptions-line-bytes"></a>
 #### `ConnectionOptions::line_bytes`
@@ -5245,15 +5201,7 @@ Connection& operator=(const Connection&) = delete;
 ```cpp
 ControlRequestResult execute(ControlRequest request, std::chrono::steady_clock::time_point deadline);
 ```
-Rejects direct commands whose reply count is not implied by `group`. This overload does not inspect live aliases; use the exact-count overload.
-
-<a id="libtmux-control-hpp-connection-execute-2"></a>
-#### `Connection::execute`
-
-```cpp
-ControlRequestResult execute(ControlRequest request, std::size_t expected_operations, std::chrono::steady_clock::time_point deadline);
-```
-The exact flag-1 block count, including synchronous inserts; flag-0 blocks do not count. A mismatch can misattribute concurrent replies and violates this overload's precondition; custom aliases need their expanded count.
+Completes at this request's private protocol boundary and preserves every reply before it. It does not invent per-operation attribution that tmux does not transmit.
 
 <a id="libtmux-control-hpp-connection-take-notifications"></a>
 #### `Connection::take_notifications`

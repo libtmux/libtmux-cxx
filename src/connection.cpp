@@ -1,10 +1,10 @@
 #include "libtmux/control.hpp"
 
-#include "control_request.hpp"
 #include "libtmux/expected.hpp"
 #include "notification_buffer.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <charconv>
 #include <chrono>
@@ -20,6 +20,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <random>
 #include <span>
 #include <string>
 #include <string_view>
@@ -40,6 +41,74 @@ LIBTMUX_NAMESPACE_BEGIN
 namespace {
 
 using Clock = std::chrono::steady_clock;
+using BoundarySeed = std::array<unsigned char, 16>;
+
+constexpr std::size_t kMinimumBoundaryBytes = 128U;
+
+expected<BoundarySeed, ProtocolError> make_boundary_seed() {
+  try {
+    std::random_device source;
+    std::uniform_int_distribution<unsigned int> byte{0U, 0xffU};
+    BoundarySeed seed{};
+    for (auto& value : seed) {
+      value = static_cast<unsigned char>(byte(source));
+    }
+
+    static std::atomic<std::uint64_t> connection_sequence{0U};
+    const auto local =
+        static_cast<std::uint64_t>(Clock::now().time_since_epoch().count()) ^
+        static_cast<std::uint64_t>(::getpid()) ^
+        connection_sequence.fetch_add(1U, std::memory_order_relaxed);
+    for (std::size_t index = 0; index < sizeof(local); ++index) {
+      seed[index] ^= static_cast<unsigned char>(local >> (index * 8U));
+    }
+    return seed;
+  } catch (const std::exception& exception) {
+    return unexpected(
+        ProtocolError{std::string{"request boundary entropy: "} + exception.what()});
+  } catch (...) {
+    return unexpected(ProtocolError{"request boundary entropy failed"});
+  }
+}
+
+void append_hex64(std::string& output, std::uint64_t value) {
+  constexpr std::string_view alphabet = "0123456789abcdef";
+  for (std::size_t remaining = 16U; remaining != 0U; --remaining) {
+    const auto shift = (remaining - 1U) * 4U;
+    output.push_back(alphabet[(value >> shift) & 0x0fU]);
+  }
+}
+
+std::string boundary_name(const BoundarySeed& seed, std::uint64_t sequence) {
+  std::string name{"__libtmux_request_"};
+  name.reserve(name.size() + seed.size() * 2U + 1U + 16U);
+  constexpr std::string_view alphabet = "0123456789abcdef";
+  for (const auto value : seed) {
+    name.push_back(alphabet[value >> 4U]);
+    name.push_back(alphabet[value & 0x0fU]);
+  }
+  name.push_back('_');
+  append_hex64(name, sequence);
+  return name;
+}
+
+std::string boundary_reply(std::string_view name) {
+  return "parse error: unknown command: " + std::string{name} + "\n";
+}
+
+bool is_boundary(const ControlBlock& block, std::string_view expected) {
+  if (block.terminal != ControlTerminal::error || block.body_truncated ||
+      block.body.size() != expected.size()) {
+    return false;
+  }
+  for (std::size_t index = 0; index < expected.size(); ++index) {
+    if (std::to_integer<unsigned char>(block.body[index]) !=
+        static_cast<unsigned char>(expected[index])) {
+      return false;
+    }
+  }
+  return true;
+}
 
 // What the waiter asks `waitid` for.
 //
@@ -447,12 +516,11 @@ expected<ssize_t, ProtocolError> write_without_sigpipe(int descriptor, const voi
 
 struct Connection::State {
   struct PendingRequest {
-    explicit PendingRequest(std::size_t operation_count) {
-      result.operations.resize(operation_count);
-    }
+    explicit PendingRequest(std::string expected_boundary)
+        : boundary(std::move(expected_boundary)) {}
 
     ControlRequestResult result;
-    std::size_t next_operation{0U};
+    std::string boundary;
     bool complete{false};
   };
 
@@ -460,10 +528,12 @@ struct Connection::State {
   // left to a default member initialiser: this order is the one the compiler
   // checks, and a reordered declaration is a warning instead of a decoder that
   // quietly took the defaults.
-  State(ConnectionOptions requested_options, SpawnedClient client)
+  State(ConnectionOptions requested_options, SpawnedClient client,
+        BoundarySeed requested_boundary_seed)
       : options(std::move(requested_options)), pid(client.pid), input(client.input),
         output(client.output), error(client.error),
-        parser(options.retained_reply_bytes, options.line_bytes) {}
+        parser(options.retained_reply_bytes, options.line_bytes),
+        boundary_seed(requested_boundary_seed) {}
 
   ~State() noexcept {
     // Kill first. Closing the input needs the writer's mutex, and a writer
@@ -603,27 +673,13 @@ struct Connection::State {
     }
 
     auto pending_request = pending.front();
-    if (pending_request->next_operation >= pending_request->result.operations.size()) {
-      fail_locked(ProtocolError{"control request received too many blocks"});
-      return;
-    }
-    auto& operation =
-        pending_request->result.operations[pending_request->next_operation];
-    operation.attribution = Attribution::exact;
-    operation.block = std::move(block);
-    ++pending_request->next_operation;
-    if (operation.block->terminal == ControlTerminal::error) {
-      for (auto index = pending_request->next_operation;
-           index < pending_request->result.operations.size(); ++index) {
-        pending_request->result.operations[index].attribution = Attribution::skipped;
-      }
-      pending_request->next_operation = pending_request->result.operations.size();
-    }
-    if (pending_request->next_operation == pending_request->result.operations.size()) {
+    if (is_boundary(block, pending_request->boundary)) {
       pending_request->complete = true;
       pending.pop_front();
       condition.notify_all();
+      return;
     }
+    pending_request->result.blocks.push_back(std::move(block));
   }
 
   void read_output() {
@@ -922,6 +978,8 @@ struct Connection::State {
   bool wake_armed{false};
   std::optional<ProtocolError> fatal_error;
   std::string stderr_tail;
+  BoundarySeed boundary_seed{};
+  std::uint64_t next_boundary{0U};
   std::optional<int> wait_status;
   bool startup_seen{false};
   bool ready{false};
@@ -978,12 +1036,25 @@ expected<Connection, ProtocolError> Connection::connect(ConnectionOptions option
       options.shutdown_timeout <= std::chrono::milliseconds::zero()) {
     return unexpected(ProtocolError{"connection timeouts must be positive"});
   }
+  if ((options.retained_reply_bytes != 0U &&
+       options.retained_reply_bytes < kMinimumBoundaryBytes) ||
+      (options.line_bytes != 0U && options.line_bytes < kMinimumBoundaryBytes)) {
+    return unexpected(
+        ProtocolError{"connection reply and line bounds must be zero or at least " +
+                      std::to_string(kMinimumBoundaryBytes) +
+                      " bytes so private request boundaries remain readable"});
+  }
+
+  auto seed = make_boundary_seed();
+  if (!seed) {
+    return unexpected(seed.error());
+  }
 
   auto spawned = spawn_client(options);
   if (!spawned) {
     return unexpected(spawned.error());
   }
-  auto state = std::make_unique<State>(std::move(options), *spawned);
+  auto state = std::make_unique<State>(std::move(options), *spawned, std::move(*seed));
   // Non-blocking on both ends: a caller polling this must never block on it,
   // and the reader must never block writing to a caller who is not draining.
   // At most one byte is ever outstanding, so the write cannot fill the pipe.
@@ -1041,59 +1112,46 @@ expected<Connection, ProtocolError> Connection::connect(ConnectionOptions option
 
 ControlRequestResult Connection::execute(ControlRequest request,
                                          Clock::time_point deadline) {
-  if (auto unsafe = detail::control_request::unsafe(request); unsafe.has_value()) {
-    ControlRequestResult result;
-    result.operations.resize(request.group.size());
-    result.connection_error = ProtocolError{std::move(*unsafe)};
-    return result;
-  }
-  const std::size_t expected_operations = request.group.size();
-  return execute(std::move(request), expected_operations, deadline);
-}
-
-ControlRequestResult Connection::execute(ControlRequest request,
-                                         std::size_t expected_operations,
-                                         Clock::time_point deadline) {
-  auto pending = std::make_shared<State::PendingRequest>(expected_operations);
-  if (expected_operations < request.group.size()) {
-    pending->result.connection_error =
-        ProtocolError{"control request expects fewer replies than it renders"};
-    return std::move(pending->result);
-  }
+  ControlRequestResult failed;
   auto rendered = render_request(std::move(request));
   if (!rendered) {
-    pending->result.connection_error = rendered.error();
-    return std::move(pending->result);
+    failed.connection_error = rendered.error();
+    return failed;
   }
   if (!state_) {
-    pending->result.connection_error = ProtocolError{"control connection has no state"};
-    return std::move(pending->result);
+    failed.connection_error = ProtocolError{"control connection has no state"};
+    return failed;
   }
   if (Clock::now() >= deadline) {
-    pending->result.connection_error =
+    failed.connection_error =
         ProtocolError{"control request deadline expired before dispatch"};
-    return std::move(pending->result);
+    return failed;
   }
 
+  std::shared_ptr<State::PendingRequest> pending;
   bool poison_connection = false;
   {
     std::unique_lock<std::timed_mutex> write_lock{state_->write_mutex, std::defer_lock};
     if (!write_lock.try_lock_until(deadline) || Clock::now() >= deadline) {
-      pending->result.connection_error =
+      failed.connection_error =
           ProtocolError{"control writer acquisition deadline expired"};
-      return std::move(pending->result);
+      return failed;
     }
+    const auto name = boundary_name(state_->boundary_seed, state_->next_boundary++);
+    rendered->append(name);
+    rendered->push_back('\n');
+    pending = std::make_shared<State::PendingRequest>(boundary_reply(name));
     {
       std::lock_guard state_lock{state_->mutex};
       const auto fatal_error = state_->fatal_error;
       if (fatal_error) {
-        pending->result.connection_error = fatal_error.value();
-        return std::move(pending->result);
+        failed.connection_error = fatal_error.value();
+        return failed;
       }
       if (!state_->ready || state_->closing || state_->shutdown_complete) {
-        pending->result.connection_error =
+        failed.connection_error =
             ProtocolError{"control connection is not accepting requests"};
-        return std::move(pending->result);
+        return failed;
       }
       state_->pending.push_back(pending);
     }
@@ -1187,14 +1245,13 @@ Connection::set_pane_output(std::string_view pane, bool deliver,
   if (result.connection_error.has_value()) {
     return unexpected(*result.connection_error);
   }
-  if (result.operations.empty()) {
-    return unexpected(ProtocolError{"tmux did not answer the refresh"});
+  if (result.blocks.size() != 1U) {
+    return unexpected(ProtocolError{"tmux returned " +
+                                    std::to_string(result.blocks.size()) +
+                                    " reply blocks for one refresh"});
   }
-  const auto& block = result.operations.front().block;
-  if (!block.has_value()) {
-    return unexpected(ProtocolError{"tmux did not answer the refresh"});
-  }
-  if (block.value().terminal == ControlTerminal::error) {
+  const auto& block = result.blocks.front();
+  if (block.terminal == ControlTerminal::error) {
     return unexpected(
         ProtocolError{"tmux refused to change output for " + std::string{pane}});
   }

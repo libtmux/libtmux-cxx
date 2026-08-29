@@ -287,7 +287,7 @@ TEST(ControlDispatch, RawTmux37HookRefusalKeepsReplyOwnership) {
   EXPECT_EQ(*marker, "still-aligned\n");
 }
 
-TEST(ControlDispatch, RawReplyInserterIsRejectedBeforeItCanChangeState) {
+TEST(ControlDispatch, RawReplyInserterReturnsItsWholeResultAndKeepsAlignment) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   auto server = Server::at_socket_path(fixture->socket_path().string());
@@ -298,23 +298,39 @@ TEST(ControlDispatch, RawReplyInserterIsRejectedBeforeItCanChangeState) {
   const auto before = streamed->windows();
   ASSERT_TRUE(before.has_value()) << before.error().diagnostic;
   ASSERT_EQ(before->size(), 1U);
-  const std::string original_name{before->front().name()};
+  const auto renamed =
+      streamed->run({"if-shell", "-F", "1", "rename-window raw-command-ran"});
 
-  const auto rejected =
-      streamed->run({"if-shell", "-F", "1", "rename-window raw-command-must-not-run"});
-
-  ASSERT_FALSE(rejected.has_value());
-  EXPECT_EQ(rejected.error().kind, libtmux::FailureKind::validation);
-  EXPECT_FALSE(rejected.error().dispatched);
-  EXPECT_NE(rejected.error().diagnostic.find("if-shell"), std::string::npos)
-      << rejected.error().diagnostic;
+  ASSERT_TRUE(renamed.has_value()) << renamed.error().diagnostic;
+  EXPECT_TRUE(renamed->empty());
   const auto after = streamed->windows();
   ASSERT_TRUE(after.has_value()) << after.error().diagnostic;
   ASSERT_EQ(after->size(), 1U);
-  EXPECT_EQ(after->front().name(), original_name);
+  EXPECT_EQ(after->front().name(), "raw-command-ran");
   const auto marker = streamed->expand("raw-run-still-aligned");
   ASSERT_TRUE(marker.has_value()) << marker.error().diagnostic;
   EXPECT_EQ(*marker, "raw-run-still-aligned");
+}
+
+TEST(ControlDispatch, AliasExpansionJoinsEveryReplyWithoutLosingAlignment) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  auto server = Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+  const auto configured = server->run(
+      {"set-option", "-s", "command-alias[100]",
+       "nested-reply=display-message -p alias-one ; display-message -p alias-two"});
+  ASSERT_TRUE(configured.has_value()) << configured.error().diagnostic;
+  auto streamed = server->over_control(fixture->session_name());
+  ASSERT_TRUE(streamed.has_value()) << streamed.error().diagnostic;
+
+  const auto expanded = streamed->run({"nested-reply"});
+
+  ASSERT_TRUE(expanded.has_value()) << expanded.error().diagnostic;
+  EXPECT_EQ(*expanded, "alias-one\nalias-two\n");
+  const auto after = streamed->expand("still-aligned");
+  ASSERT_TRUE(after.has_value()) << after.error().diagnostic;
+  EXPECT_EQ(*after, "still-aligned");
 }
 
 TEST(ControlDispatch, ABlockedWriterDoesNotStealAnotherCallsDeadline) {
@@ -410,7 +426,7 @@ TEST(ControlDispatch, InsertedCommandFailureKeepsSensitiveBytesPrivate) {
   EXPECT_EQ(observed.find(secret), std::string::npos) << observed;
 }
 
-TEST(ControlDispatch, SourceFileIsRejectedButParseOnlyRemainsReplySafe) {
+TEST(ControlDispatch, SourceFileRunsAndKeepsItsInsertedRepliesAligned) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   auto server = Server::at_socket_path(fixture->socket_path().string());
@@ -427,17 +443,13 @@ TEST(ControlDispatch, SourceFileIsRejectedButParseOnlyRemainsReplySafe) {
   ASSERT_TRUE(checked.has_value()) << checked.error().diagnostic;
   const auto sourced = streamed->source_file(config);
 
-  ASSERT_FALSE(sourced.has_value());
-  EXPECT_EQ(sourced.error().kind, libtmux::FailureKind::unsupported);
-  EXPECT_FALSE(sourced.error().dispatched);
-  EXPECT_NE(sourced.error().diagnostic.find("source-file"), std::string::npos)
-      << sourced.error().diagnostic;
+  ASSERT_TRUE(sourced.has_value()) << sourced.error().diagnostic;
   const auto value = streamed->expand("#{@control-source}");
   ASSERT_TRUE(value.has_value()) << value.error().diagnostic;
-  EXPECT_TRUE(value->empty());
+  EXPECT_EQ(*value, "applied");
 }
 
-TEST(ControlDispatch, UnsafeBatchIsRejectedBeforeItsSafePrefixRuns) {
+TEST(ControlDispatch, ReplyInsertingBatchKeepsEveryReplyAndRunsItsPrefix) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   auto server = Server::at_socket_path(fixture->socket_path().string());
@@ -447,22 +459,17 @@ TEST(ControlDispatch, UnsafeBatchIsRejectedBeforeItsSafePrefixRuns) {
   const auto before = streamed->windows();
   ASSERT_TRUE(before.has_value()) << before.error().diagnostic;
   ASSERT_EQ(before->size(), 1U);
-  const std::string original_name{before->front().name()};
-
   libtmux::CommandBatch batch;
-  ASSERT_TRUE(batch.add({"rename-window", "safe-prefix-must-not-run"}));
+  ASSERT_TRUE(batch.add({"rename-window", "safe-prefix-ran"}));
   ASSERT_TRUE(batch.add({"run-s", "-C", "display-message -p inserted-batch-reply"}));
-  const auto rejected = streamed->run_batch(batch);
+  const auto ran = streamed->run_batch(batch);
 
-  ASSERT_FALSE(rejected.has_value());
-  EXPECT_EQ(rejected.error().kind, libtmux::FailureKind::validation);
-  EXPECT_FALSE(rejected.error().dispatched);
-  EXPECT_NE(rejected.error().diagnostic.find("operation 2"), std::string::npos)
-      << rejected.error().diagnostic;
+  ASSERT_TRUE(ran.has_value()) << ran.error().diagnostic;
+  EXPECT_EQ(*ran, "inserted-batch-reply\n");
   const auto after = streamed->windows();
   ASSERT_TRUE(after.has_value()) << after.error().diagnostic;
   ASSERT_EQ(after->size(), 1U);
-  EXPECT_EQ(after->front().name(), original_name);
+  EXPECT_EQ(after->front().name(), "safe-prefix-ran");
 }
 
 TEST(ControlDispatch, NoInsertSentinelRemainsAnOrdinaryBatchOperation) {
@@ -648,7 +655,7 @@ TEST(ControlDispatch, EveryCommandInABatchRunsOverAControlConnection) {
   EXPECT_EQ(windows->size(), static_cast<std::size_t>(kWanted) + 1U);
 }
 
-TEST(ControlDispatch, ABatchSaysWhichCommandStoppedIt) {
+TEST(ControlDispatch, ABatchReportsFailureWithoutInventingAnOperationId) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   auto server = Server::at_socket_path(fixture->socket_path().string());
@@ -656,9 +663,9 @@ TEST(ControlDispatch, ABatchSaysWhichCommandStoppedIt) {
   auto streamed = server->over_control(fixture->session_name());
   ASSERT_TRUE(streamed.has_value()) << streamed.error().diagnostic;
 
-  // Fail-fast, and control mode gives each command its own reply, so which
-  // one stopped the group is knowable here where the subprocess transport
-  // can only report one status for all of them.
+  // The group is fail-fast, but tmux does not transmit the request's operation
+  // IDs. The transport keeps every raw block without claiming a block-to-input
+  // mapping it cannot prove.
   const std::string target = "=" + std::string{fixture->session_name()};
   libtmux::CommandBatch batch;
   ASSERT_TRUE(batch.add({"new-window", "-d", "-t", target, "-n", "first"}));
@@ -668,7 +675,7 @@ TEST(ControlDispatch, ABatchSaysWhichCommandStoppedIt) {
   const auto ran = streamed->run_batch(batch);
   ASSERT_FALSE(ran.has_value());
   EXPECT_EQ(ran.error().kind, libtmux::FailureKind::refused);
-  EXPECT_NE(ran.error().diagnostic.find("command 2 of 3"), std::string::npos)
+  EXPECT_NE(ran.error().diagnostic.find("can't find session"), std::string::npos)
       << ran.error().diagnostic;
 
   // And it stopped there: the first ran, the third did not.

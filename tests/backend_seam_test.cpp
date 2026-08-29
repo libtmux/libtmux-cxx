@@ -179,11 +179,9 @@ libtmux::ControlRequestResult inserted_result(
     std::string_view wrapper_body, libtmux::ControlTerminal wrapper_terminal,
     std::string_view inserted_body, libtmux::ControlTerminal inserted_terminal) {
   libtmux::ControlRequestResult result;
-  result.operations = {
-      {.attribution = libtmux::Attribution::exact,
-       .block = control_block(1U, wrapper_terminal, wrapper_body)},
-      {.attribution = libtmux::Attribution::exact,
-       .block = control_block(2U, inserted_terminal, inserted_body)},
+  result.blocks = {
+      control_block(1U, wrapper_terminal, wrapper_body),
+      control_block(2U, inserted_terminal, inserted_body),
   };
   return result;
 }
@@ -950,20 +948,12 @@ TEST(BackendSeam, AnInsertedControlReplyChecksBothFramesAndTheCallBound) {
 
   auto truncated = inserted_result({}, libtmux::ControlTerminal::end, "row\n",
                                    libtmux::ControlTerminal::end);
-  truncated.operations[1].block->body_truncated = true;
-  truncated.operations[1].block->body_bytes = 100U;
+  truncated.blocks[1].body_truncated = true;
+  truncated.blocks[1].body_bytes = 100U;
   const auto rejected_capture =
       libtmux::detail::inserted_command_reply(truncated, std::nullopt);
   ASSERT_FALSE(rejected_capture.has_value());
   EXPECT_EQ(rejected_capture.error().kind, FailureKind::truncated);
-
-  auto unattributed = inserted_result({}, libtmux::ControlTerminal::end, "row\n",
-                                      libtmux::ControlTerminal::end);
-  unattributed.operations[1].attribution = libtmux::Attribution::unknown;
-  const auto rejected_attribution =
-      libtmux::detail::inserted_command_reply(unattributed, std::nullopt);
-  ASSERT_FALSE(rejected_attribution.has_value());
-  EXPECT_EQ(rejected_attribution.error().kind, FailureKind::timeout);
 
   const auto bounded = inserted_result({}, libtmux::ControlTerminal::end, "row\n",
                                        libtmux::ControlTerminal::end);

@@ -9,15 +9,11 @@ rather than a process.
 way. Nothing above the transport changes: the entities, filters, options and
 failures are the same types, and the same test file drives both.
 
-Executing `source_file` is the deliberate exception. A file can insert an
-unknowable number of synchronous reply blocks, so a control-backed Server
-rejects it before dispatch; parse-only `check_file` remains available. Raw
-reply-inserting commands likewise need the low-level execute overload that
-states their exact count of CONTROL-attributed blocks. The inferred-count
-overload does not inspect the live alias map; an alias that changes the count
-must use the exact-count overload. A control-backed Server has no count
-override, so its live aliases must preserve that count for every command it
-dispatches. Otherwise use a low-level Connection or a subprocess-backed Server.
+One request may produce several reply blocks. Command aliases, `source-file`,
+and commands that insert other commands all do this. The low-level
+`Connection::execute` returns those blocks in wire order. The Server surface
+joins successful bodies, matching subprocess output without pretending tmux
+identified which input operation produced each block.
 
 ## What it is worth
 
@@ -33,23 +29,29 @@ Both answers are identical; only the way of asking differs.
 
 ## What it costs
 
-**One conversation at a time.** Control mode matches replies to commands by
-order, so the backend holds a mutex across a command. Two Servers over the
-same socket are two conversations and do not contend. A caller who wants
-parallelism opens more connections, which is the honest shape of the protocol
-rather than a limitation of this class.
+**A private end boundary.** tmux guards contain a time, a global command
+number, and flags, but no request or command-group identity. Equivalent grouped
+and separate commands can therefore produce identical guards. The connection
+appends one random unknown command to each request and completes on that exact
+guarded parse error. This costs one extra reply block per request. The random
+name prevents accidental alias collisions; it is not a security boundary
+against a same-user process that can inspect or alter the connection.
+
+**Concurrent callers keep separate deadlines.** A mutex orders complete writes
+to the shared stream, then releases. Callers may wait for their own private
+boundaries concurrently, and one caller timing out before it acquires the
+writer does not consume another caller's deadline or poison its request.
 
 **A different way to ask the same question.** `tmux -V` is a flag of the
 binary, not a command a connection can carry, so the control backend reads
 `#{version}` as a format instead. That is why the version question lives on the
 transport interface: only the transport knows how to ask it.
 
-**Attribution instead of exit codes.** A subprocess reports an exit status; a
-control connection reports a reply block that ends in `%end` or `%error`, and
-an attribution saying whether that block belongs to the command that was sent.
-A block that cannot be attributed is reported as a timeout with
-`dispatched` set, because the command reached tmux and what it did is unknown —
-the same answer a subprocess timeout gives, for the same reason.
+**Blocks instead of invented operation IDs.** A subprocess reports one exit
+status. A control request reports every `%end` or `%error` block before its
+private boundary. tmux does not expose the parse group's internal operation
+IDs, so the library preserves the evidence it has rather than assigning blocks
+to operations by a guessed count.
 
 **A connection can die.** The subprocess transport fails one command at a time.
 A broken connection fails every later command, and reports the transport

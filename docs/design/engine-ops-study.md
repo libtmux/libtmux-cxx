@@ -5,7 +5,7 @@ operations rather than issuing commands one at a time. Three of its ideas
 shaped this library; two did not survive the crossing. The prototype that
 carried them here has been deleted, so this records what was kept and why.
 
-## Kept: a status per operation, not per invocation
+## Kept: retry safety without guessed operation status
 
 Engine-ops gives every planned operation its own status, and the vocabulary is
 the interesting part: `complete`, `skipped`, and `unknown` are three different
@@ -17,9 +17,11 @@ That distinction is load-bearing because the caller's next move differs. A
 skipped operation can be retried freely. An unknown one cannot: retrying may
 repeat something that already happened.
 
-It survives here as `Attribution` on control-mode results, and as the reason
-`CommandFailure` separates `dispatched` from its `FailureKind`. A timeout is
-reported as dispatched precisely because tmux may already have acted.
+The retry distinction survives in `CommandFailure::dispatched`. A timeout is
+reported as dispatched precisely because tmux may already have acted. It does
+not survive as per-operation control attribution: tmux's public guards omit the
+parse-group operation IDs, so assigning blocks to inputs by count would turn a
+guess into API data.
 
 ## Kept: one exit status cannot describe a group
 
@@ -28,10 +30,10 @@ whole thing. Engine-ops treats that as a limit to work around rather than a
 result to report.
 
 `CommandBatch` states the same limit rather than hiding it: `run_batch` reports
-the group outcome and cannot say which member failed, and its test proves the
+the group outcome and cannot prove which member failed, and its test proves the
 consequence — the commands before a failure have already taken effect, so a
-failed batch is partially applied, not rolled back. Per-command attribution is
-what a control connection buys, which is why both exist.
+failed batch is partially applied, not rolled back. A control connection buys
+the ordered raw reply blocks, not operation IDs tmux never transmitted.
 
 ## Kept: capture bindings must be strict
 

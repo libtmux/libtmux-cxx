@@ -510,19 +510,15 @@ Three ways to send work, and the difference matters:
 | **Call** | One command, one process | Reported on the call |
 | **Batch** | One tmux invocation, one fail-fast group | Partially applied, not rolled back |
 | **Chain** | Validated as it is built | A bad target is caught before tmux is reached |
-| **Control** | One connection held open | Every command gets its own reply block |
+| **Control** | One connection held open | Ordered reply blocks before a private request boundary |
 
 `Server::over_control(session)` returns a `Server` that dispatches every entity
 operation over a held-open connection — the same entity calls, without a
-process each, about 4.6× faster per listing. `source_file` is deliberately
-unsupported there because a file can add an unknowable number of control reply
-blocks; `check_file` remains available. Direct raw commands that synchronously
-insert reply blocks are rejected unless the low-level connection is given their
-exact reply count. The inferred-count path does not inspect live aliases, so an
-alias that changes the count must use that overload. A control-backed `Server`
-has no count override and requires aliases to preserve that count for every
-command it dispatches; otherwise use a low-level `Connection` or a
-subprocess-backed `Server`. See
+process each, about 4.6× faster per listing. Each request ends with a private
+random boundary, so `source_file`, command aliases, and other synchronous reply
+inserters keep every block with the request that produced it. The low-level
+`Connection` exposes those blocks in wire order; the `Server` surface joins
+successful bodies to match subprocess output. See
 [`docs/design/control-transport.md`](docs/design/control-transport.md).
 
 Streaming policy can enter through either Server doorway without rebuilding

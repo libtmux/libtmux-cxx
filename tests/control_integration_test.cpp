@@ -44,7 +44,6 @@
 namespace {
 
 using namespace std::chrono_literals;
-using libtmux::Attribution;
 using libtmux::Connection;
 using libtmux::ConnectionOptions;
 using libtmux::ControlCommand;
@@ -118,11 +117,9 @@ void expect_exact_end(const ControlRequestResult& result,
                       std::string_view expected_body) {
   ASSERT_FALSE(result.connection_error.has_value())
       << (result.connection_error ? result.connection_error->message : "");
-  ASSERT_EQ(result.operations.size(), 1U);
-  EXPECT_EQ(result.operations[0].attribution, Attribution::exact);
-  ASSERT_TRUE(result.operations[0].block.has_value());
-  EXPECT_EQ(required_value(result.operations[0].block).terminal, ControlTerminal::end);
-  EXPECT_EQ(text(required_value(result.operations[0].block).body), expected_body);
+  ASSERT_EQ(result.blocks.size(), 1U);
+  EXPECT_EQ(result.blocks[0].terminal, ControlTerminal::end);
+  EXPECT_EQ(text(result.blocks[0].body), expected_body);
 }
 
 bool has_notification(const std::vector<Notification>& notifications,
@@ -132,7 +129,28 @@ bool has_notification(const std::vector<Notification>& notifications,
   });
 }
 
-TEST(ControlModeConnection, FailFastGroupMarksDeletedSuffixSkipped) {
+TEST(ControlModeConnection, RejectsBoundsTooSmallForItsPrivateBoundary) {
+  auto server = start_server(unique_name("control-boundary-bounds"));
+  ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
+  ConnectionOptions options{.tmux_binary = LIBTMUX_CONTROL_TMUX_PATH,
+                            .socket_path = server->socket_path(),
+                            .session_name = std::string{server->session_name()},
+                            .startup_timeout = 2s,
+                            .shutdown_timeout = 2s};
+
+  options.retained_reply_bytes = 127U;
+  auto short_reply = Connection::connect(options);
+  ASSERT_FALSE(short_reply.has_value());
+  EXPECT_NE(short_reply.error().message.find("at least 128 bytes"), std::string::npos);
+
+  options.retained_reply_bytes = libtmux::kDefaultRetainedReplyBytes;
+  options.line_bytes = 127U;
+  auto short_line = Connection::connect(std::move(options));
+  ASSERT_FALSE(short_line.has_value());
+  EXPECT_NE(short_line.error().message.find("at least 128 bytes"), std::string::npos);
+}
+
+TEST(ControlModeConnection, FailFastGroupStopsAtTheErrorBoundary) {
   auto server = start_server(unique_name("control-fail-fast"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
   auto connected = connect_to(*server);
@@ -150,18 +168,9 @@ TEST(ControlModeConnection, FailFastGroupMarksDeletedSuffixSkipped) {
   EXPECT_LT(std::chrono::steady_clock::now(), deadline);
   ASSERT_FALSE(result.connection_error.has_value())
       << (result.connection_error ? result.connection_error->message : "");
-  ASSERT_EQ(result.operations.size(), 3U);
-  EXPECT_EQ(result.operations[0].attribution, Attribution::exact);
-  ASSERT_TRUE(result.operations[0].block.has_value());
-  EXPECT_EQ(required_value(result.operations[0].block).terminal,
-            ControlTerminal::error);
-  EXPECT_NE(
-      text(required_value(result.operations[0].block).body).find("can't find session"),
-      std::string::npos);
-  EXPECT_EQ(result.operations[1].attribution, Attribution::skipped);
-  EXPECT_FALSE(result.operations[1].block.has_value());
-  EXPECT_EQ(result.operations[2].attribution, Attribution::skipped);
-  EXPECT_FALSE(result.operations[2].block.has_value());
+  ASSERT_EQ(result.blocks.size(), 1U);
+  EXPECT_EQ(result.blocks[0].terminal, ControlTerminal::error);
+  EXPECT_NE(text(result.blocks[0].body).find("can't find session"), std::string::npos);
 
   const auto next =
       connection.execute(group({{"display-message", "-p", "after-fail-fast"}}),
@@ -218,8 +227,40 @@ TEST(ControlModeConnection, ConcurrentIndependentRequestsKeepReplyOwnership) {
   EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
 }
 
-TEST(ControlModeConnection,
-     ExplicitReplyCountKeepsAnInsertedReplyFromAConcurrentRequest) {
+TEST(ControlModeConnection, AliasExpansionKeepsEveryReplyAndTheNextRequestAligned) {
+  auto fixture = start_server(unique_name("control-alias-boundary"));
+  ASSERT_TRUE(fixture.has_value()) << (fixture.has_value() ? "" : fixture.error());
+  auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+  const auto configured = server->run(
+      {"set-option", "-s", "command-alias[100]",
+       "nested-reply=display-message -p alias-one ; display-message -p alias-two"});
+  ASSERT_TRUE(configured.has_value()) << configured.error().diagnostic;
+
+  auto connected = connect_to(*fixture);
+  ASSERT_TRUE(connected.has_value())
+      << (connected.has_value() ? "" : connected.error().message);
+  auto connection = std::move(*connected);
+
+  const auto expanded = connection.execute(group({{"nested-reply"}}),
+                                           std::chrono::steady_clock::now() + 2s);
+  ASSERT_FALSE(expanded.connection_error.has_value())
+      << (expanded.connection_error ? expanded.connection_error->message : "");
+  ASSERT_EQ(expanded.blocks.size(), 2U);
+  for (const auto& block : expanded.blocks) {
+    EXPECT_EQ(block.terminal, ControlTerminal::end);
+  }
+  EXPECT_EQ(text(expanded.blocks[0].body), "alias-one\n");
+  EXPECT_EQ(text(expanded.blocks[1].body), "alias-two\n");
+
+  const auto after =
+      connection.execute(group({{"display-message", "-p", "still-aligned"}}),
+                         std::chrono::steady_clock::now() + 2s);
+  expect_exact_end(after, "still-aligned\n");
+  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+}
+
+TEST(ControlModeConnection, InsertedReplyStaysWithItsConcurrentRequest) {
   auto server = start_server(unique_name("control-explicit-replies"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
   auto connected = connect_to(*server);
@@ -233,7 +274,7 @@ TEST(ControlModeConnection,
   std::thread inserted_thread{[&] {
     ready.arrive_and_wait();
     inserted = connection.execute(
-        group({{"if-shell", "-F", "1", "display-message -p inserted-marker"}}), 2U,
+        group({{"if-shell", "-F", "1", "display-message -p inserted-marker"}}),
         std::chrono::steady_clock::now() + 2s);
   }};
   std::thread marker_thread{[&] {
@@ -248,14 +289,12 @@ TEST(ControlModeConnection,
   ASSERT_TRUE(inserted.has_value());
   ASSERT_FALSE(inserted->connection_error.has_value())
       << (inserted->connection_error ? inserted->connection_error->message : "");
-  ASSERT_EQ(inserted->operations.size(), 2U);
-  for (const auto& operation : inserted->operations) {
-    EXPECT_EQ(operation.attribution, Attribution::exact);
-    ASSERT_TRUE(operation.block.has_value());
-    EXPECT_EQ(operation.block->terminal, ControlTerminal::end);
+  ASSERT_EQ(inserted->blocks.size(), 2U);
+  for (const auto& block : inserted->blocks) {
+    EXPECT_EQ(block.terminal, ControlTerminal::end);
   }
-  EXPECT_TRUE(inserted->operations[0].block->body.empty());
-  EXPECT_EQ(text(inserted->operations[1].block->body), "inserted-marker\n");
+  EXPECT_TRUE(inserted->blocks[0].body.empty());
+  EXPECT_EQ(text(inserted->blocks[1].body), "inserted-marker\n");
 
   ASSERT_TRUE(marker.has_value());
   expect_exact_end(*marker, "next-marker\n");
@@ -263,101 +302,6 @@ TEST(ControlModeConnection,
       connection.execute(group({{"display-message", "-p", "after-marker"}}),
                          std::chrono::steady_clock::now() + 2s);
   expect_exact_end(after, "after-marker\n");
-  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
-}
-
-TEST(ControlModeConnection,
-     DefaultReplyCountRejectsAnInserterWithoutDisturbingAConcurrentRequest) {
-  auto server = start_server(unique_name("control-reject-inserter"));
-  ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
-  auto connected = connect_to(*server);
-  ASSERT_TRUE(connected.has_value())
-      << (connected.has_value() ? "" : connected.error().message);
-  auto connection = std::move(*connected);
-
-  std::optional<ControlRequestResult> rejected;
-  std::optional<ControlRequestResult> marker;
-  std::barrier ready{3};
-  std::thread rejected_thread{[&] {
-    ready.arrive_and_wait();
-    rejected = connection.execute(
-        group({{"if-shell", "-F", "1", "display-message -p must-not-escape"}}),
-        std::chrono::steady_clock::now() + 2s);
-  }};
-  std::thread marker_thread{[&] {
-    ready.arrive_and_wait();
-    marker = connection.execute(group({{"display-message", "-p", "owned-marker"}}),
-                                std::chrono::steady_clock::now() + 2s);
-  }};
-  ready.arrive_and_wait();
-  rejected_thread.join();
-  marker_thread.join();
-
-  ASSERT_TRUE(rejected.has_value());
-  ASSERT_TRUE(rejected->connection_error.has_value());
-  EXPECT_NE(rejected->connection_error->message.find("if-shell"), std::string::npos)
-      << rejected->connection_error->message;
-  ASSERT_EQ(rejected->operations.size(), 1U);
-  EXPECT_EQ(rejected->operations[0].attribution, Attribution::unknown);
-  EXPECT_FALSE(rejected->operations[0].block.has_value());
-
-  ASSERT_TRUE(marker.has_value());
-  expect_exact_end(*marker, "owned-marker\n");
-  const auto after =
-      connection.execute(group({{"display-message", "-p", "still-aligned"}}),
-                         std::chrono::steady_clock::now() + 2s);
-  expect_exact_end(after, "still-aligned\n");
-  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
-}
-
-TEST(ControlModeConnection, DefaultReplyCountClassifiesInserterAliasesAndPrefixes) {
-  auto server = start_server(unique_name("control-reject-prefixes"));
-  ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
-  auto connected = connect_to(*server);
-  ASSERT_TRUE(connected.has_value())
-      << (connected.has_value() ? "" : connected.error().message);
-  auto connection = std::move(*connected);
-
-  const std::vector<std::vector<std::string>> commands{
-      {"if-s", "-F", "1", "display-message -p inserted"},
-      {"command-p", "display-message -p prompted"},
-      {"confirm", "display-message -p confirmed"},
-      {"displayp", "display-message -p selected"},
-      {"source-f", "/no-file-is-opened-before-rejection"},
-      {"run-s", "-C", "display-message -p run"},
-      {"if-shell", "false", "-b", "display-message -p positional-else"},
-      {"if-shell", "-t", "-b", "false", "display-message -p target-value"},
-      {"run-shell", "-C", "display-message -p positional-run", "-b"},
-      {"source-file", "/no-file-is-opened-before-rejection", "-n"},
-  };
-  for (const auto& command : commands) {
-    SCOPED_TRACE(command.front());
-    ControlRequest request;
-    request.group.push_back(ControlCommand{command});
-    const auto rejected =
-        connection.execute(std::move(request), std::chrono::steady_clock::now() + 2s);
-    ASSERT_TRUE(rejected.connection_error.has_value());
-    EXPECT_NE(rejected.connection_error->message.find("can emit control reply blocks"),
-              std::string::npos)
-        << rejected.connection_error->message;
-    ASSERT_EQ(rejected.operations.size(), 1U);
-    EXPECT_EQ(rejected.operations[0].attribution, Attribution::unknown);
-  }
-
-  const auto installed =
-      connection.execute(group({{"set-hook", "-g", "after-select-window",
-                                 "display-message -p ignored-hook-body"}}),
-                         std::chrono::steady_clock::now() + 2s);
-  expect_exact_end(installed, "");
-  const auto ran_hook =
-      connection.execute(group({{"set-h", "-g", "-R", "after-select-window"}}),
-                         std::chrono::steady_clock::now() + 2s);
-  expect_exact_end(ran_hook, "");
-
-  const auto after =
-      connection.execute(group({{"display-message", "-p", "prefixes-aligned"}}),
-                         std::chrono::steady_clock::now() + 2s);
-  expect_exact_end(after, "prefixes-aligned\n");
   EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
 }
 
@@ -682,9 +626,8 @@ TEST(ControlModeConnection, MutesOnePaneAndRefusesToWidenASilentConnection) {
   const auto listed = connection.execute(group({{"list-panes", "-F", "#{pane_id}"}}),
                                          std::chrono::steady_clock::now() + 2s);
   ASSERT_FALSE(listed.connection_error.has_value());
-  ASSERT_FALSE(listed.operations.empty());
-  ASSERT_TRUE(listed.operations.front().block.has_value());
-  auto pane = text(required_value(listed.operations.front().block).body);
+  ASSERT_FALSE(listed.blocks.empty());
+  auto pane = text(listed.blocks.front().body);
   while (!pane.empty() && (pane.back() == '\n' || pane.back() == '\r')) {
     pane.pop_back();
   }
@@ -830,7 +773,7 @@ TEST(ControlModeConnection, ShutdownIsBoundedAndLeavesFixtureAlive) {
   EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
 }
 
-TEST(ControlModeConnection, ExecuteVsShutdownCompletesOnceAndMarksUnresolvedUnknown) {
+TEST(ControlModeConnection, ExecuteVsShutdownCompletesOnceWithOnlyReceivedBlocks) {
   auto server = start_server(unique_name("control-shutdown-race"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
   auto connected = connect_to(*server);
@@ -875,20 +818,12 @@ TEST(ControlModeConnection, ExecuteVsShutdownCompletesOnceAndMarksUnresolvedUnkn
   ASSERT_TRUE(result.has_value());
   const auto& completed = required_value(result);
   EXPECT_EQ(completions.load(std::memory_order_relaxed), 1U);
-  ASSERT_EQ(completed.operations.size(), 3U);
-  EXPECT_EQ(completed.operations[0].attribution, Attribution::exact);
-  EXPECT_TRUE(completed.operations[0].block.has_value());
-  EXPECT_TRUE(completed.operations[1].attribution == Attribution::exact ||
-              completed.operations[1].attribution == Attribution::unknown);
-  EXPECT_EQ(completed.operations[1].block.has_value(),
-            completed.operations[1].attribution == Attribution::exact);
-  EXPECT_EQ(completed.operations[2].attribution, Attribution::unknown);
-  EXPECT_FALSE(completed.operations[2].block.has_value());
+  EXPECT_LE(completed.blocks.size(), 2U);
   EXPECT_TRUE(completed.connection_error.has_value());
   EXPECT_TRUE(server->is_alive());
 }
 
-TEST(ControlModeConnection, LargeSubmitVsShutdownIsBoundedAndMarksUnknown) {
+TEST(ControlModeConnection, LargeSubmitVsShutdownReturnsNoFabricatedBlocks) {
   LIBTMUX_SKIP_WITHOUT_PROCFS("how many bytes are queued on the client's stdin");
 
   auto server = start_server(unique_name("control-large-shutdown-race"));
@@ -937,9 +872,7 @@ TEST(ControlModeConnection, LargeSubmitVsShutdownIsBoundedAndMarksUnknown) {
   ASSERT_TRUE(result.has_value());
   const auto& completed = required_value(result);
   EXPECT_EQ(completions.load(std::memory_order_relaxed), 1U);
-  ASSERT_EQ(completed.operations.size(), 1U);
-  EXPECT_EQ(completed.operations[0].attribution, Attribution::unknown);
-  EXPECT_FALSE(completed.operations[0].block.has_value());
+  EXPECT_TRUE(completed.blocks.empty());
   EXPECT_TRUE(completed.connection_error.has_value());
   int status = 0;
   errno = 0;
@@ -1007,9 +940,7 @@ TEST(ControlModeConnection, PartialWriteShutdownNeverDispatchesTruncatedCommand)
   ASSERT_TRUE(shutdown.has_value());
   ASSERT_TRUE(result.has_value());
   const auto& completed = required_value(result);
-  ASSERT_EQ(completed.operations.size(), 1U);
-  EXPECT_EQ(completed.operations[0].attribution, Attribution::unknown);
-  EXPECT_FALSE(completed.operations[0].block.has_value());
+  EXPECT_TRUE(completed.blocks.empty());
   EXPECT_TRUE(completed.connection_error.has_value());
   const auto marker_deadline = std::chrono::steady_clock::now() + 1s;
   while (!std::filesystem::exists(marker) &&
@@ -1087,9 +1018,7 @@ struct WriterDeadlineAttempt {
   std::string owner_error;
   bool server_alive{};
   bool waiter_within_deadline{};
-  std::size_t waiter_operations{};
-  Attribution waiter_attribution{Attribution::exact};
-  bool waiter_block{};
+  std::size_t waiter_blocks{};
 };
 
 // The error a request gets when someone else holds the writer, which is the
@@ -1170,11 +1099,7 @@ WriterDeadlineAttempt run_writer_deadline_attempt(std::size_t index) {
   // owner's ten seconds, and the runner's scheduling jitter lives well inside
   // the gap.
   attempt.waiter_within_deadline = waiter_finished <= waiter_deadline + 500ms;
-  attempt.waiter_operations = waiter_result.operations.size();
-  if (!waiter_result.operations.empty()) {
-    attempt.waiter_attribution = waiter_result.operations[0].attribution;
-    attempt.waiter_block = waiter_result.operations[0].block.has_value();
-  }
+  attempt.waiter_blocks = waiter_result.blocks.size();
   if (waiter_result.connection_error.has_value()) {
     attempt.waiter_error = waiter_result.connection_error->message;
   }
@@ -1210,9 +1135,7 @@ TEST(ControlModeConnection, WriterWaitHonorsDeadlineWithoutPoisoningOwner) {
       << " attempt(s); last waiter error was: " << attempt.waiter_error;
 
   EXPECT_TRUE(attempt.waiter_within_deadline);
-  ASSERT_EQ(attempt.waiter_operations, 1U);
-  EXPECT_EQ(attempt.waiter_attribution, Attribution::unknown);
-  EXPECT_FALSE(attempt.waiter_block);
+  EXPECT_EQ(attempt.waiter_blocks, 0U);
   // The owner is ended by shutdown, never by the waiter's timeout.
   EXPECT_EQ(attempt.owner_error, "control connection shut down");
   EXPECT_TRUE(attempt.server_alive);
@@ -1260,9 +1183,7 @@ TEST(ControlModeConnection, ExternallyTerminatedClientIsReapedWhileOwned) {
   ASSERT_TRUE(killed);
   ASSERT_TRUE(result.has_value());
   const auto& completed = required_value(result);
-  ASSERT_EQ(completed.operations.size(), 1U);
-  EXPECT_EQ(completed.operations[0].attribution, Attribution::unknown);
-  EXPECT_FALSE(completed.operations[0].block.has_value());
+  EXPECT_TRUE(completed.blocks.empty());
   EXPECT_TRUE(completed.connection_error.has_value());
 
   bool reaped = false;
@@ -1281,15 +1202,13 @@ TEST(ControlModeConnection, ExternallyTerminatedClientIsReapedWhileOwned) {
   const auto later =
       connection.execute(group({{"display-message", "-p", "must-not-dispatch"}}),
                          std::chrono::steady_clock::now() + 2s);
-  ASSERT_EQ(later.operations.size(), 1U);
-  EXPECT_EQ(later.operations[0].attribution, Attribution::unknown);
-  EXPECT_FALSE(later.operations[0].block.has_value());
+  EXPECT_TRUE(later.blocks.empty());
   EXPECT_TRUE(later.connection_error.has_value());
   static_cast<void>(connection.shutdown(std::chrono::steady_clock::now() + 2s));
   EXPECT_TRUE(server->is_alive());
 }
 
-TEST(ControlModeConnection, DeadlineMarksUnresolvedUnknownAndPoisonsLaterAttribution) {
+TEST(ControlModeConnection, DeadlineReturnsOnlyReceivedBlocksAndPoisonsTheConnection) {
   auto server = start_server(unique_name("control-deadline"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
   auto connected = connect_to(*server);
@@ -1300,21 +1219,13 @@ TEST(ControlModeConnection, DeadlineMarksUnresolvedUnknownAndPoisonsLaterAttribu
   const auto timed_out = connection.execute(
       group({{"run-shell", "sleep 5"}, {"display-message", "-p", "late-old-request"}}),
       std::chrono::steady_clock::now() + 200ms);
-  ASSERT_EQ(timed_out.operations.size(), 2U);
-  EXPECT_TRUE(timed_out.operations[0].attribution == Attribution::exact ||
-              timed_out.operations[0].attribution == Attribution::unknown);
-  EXPECT_EQ(timed_out.operations[0].block.has_value(),
-            timed_out.operations[0].attribution == Attribution::exact);
-  EXPECT_EQ(timed_out.operations[1].attribution, Attribution::unknown);
-  EXPECT_FALSE(timed_out.operations[1].block.has_value());
+  EXPECT_LE(timed_out.blocks.size(), 1U);
   EXPECT_TRUE(timed_out.connection_error.has_value());
 
   const auto later =
       connection.execute(group({{"display-message", "-p", "new-request"}}),
                          std::chrono::steady_clock::now() + 1s);
-  ASSERT_EQ(later.operations.size(), 1U);
-  EXPECT_EQ(later.operations[0].attribution, Attribution::unknown);
-  EXPECT_FALSE(later.operations[0].block.has_value());
+  EXPECT_TRUE(later.blocks.empty());
   EXPECT_TRUE(later.connection_error.has_value());
   static_cast<void>(connection.shutdown(std::chrono::steady_clock::now() + 2s));
 }

@@ -1,7 +1,5 @@
 #include "control_backend.hpp"
 
-#include "control_request.hpp"
-
 #include <cstddef>
 #include <utility>
 
@@ -24,6 +22,37 @@ CommandFailure carried(FailureKind kind, bool dispatched, std::string diagnostic
                         .dispatched = dispatched,
                         .exit_code = 0,
                         .diagnostic = std::move(diagnostic)};
+}
+
+expected<std::string, CommandFailure>
+joined_reply(const std::vector<ControlBlock>& blocks,
+             std::optional<std::size_t> output_limit) {
+  if (blocks.empty()) {
+    return unexpected(
+        carried(FailureKind::pipe, true, "the connection returned no reply block"));
+  }
+
+  std::string body;
+  for (const auto& block : blocks) {
+    if (block.body_truncated) {
+      return unexpected(
+          carried(FailureKind::truncated, true,
+                  "tmux produced " + std::to_string(block.body_bytes) +
+                      " bytes in one reply, more than this connection retains"));
+    }
+    if (output_limit.has_value() && body.size() + block.body.size() > *output_limit) {
+      return unexpected(carried(FailureKind::truncated, true,
+                                "tmux produced more output than the " +
+                                    std::to_string(*output_limit) +
+                                    " byte limit this call allowed for"));
+    }
+    std::string part = text(block.body);
+    if (block.terminal == ControlTerminal::error) {
+      return unexpected(carried(FailureKind::refused, true, std::move(part)));
+    }
+    body += part;
+  }
+  return body;
 }
 
 } // namespace
@@ -52,31 +81,26 @@ inserted_command_reply(const ControlRequestResult& result,
     return unexpected(
         carried(FailureKind::pipe, true, result.connection_error->message));
   }
-  if (result.operations.size() != 2U) {
+  if (result.blocks.size() != 2U) {
     return unexpected(
         carried(FailureKind::pipe, true,
-                "tmux returned " + std::to_string(result.operations.size()) +
+                "tmux returned " + std::to_string(result.blocks.size()) +
                     " reply blocks for a command and its inserted operation"));
   }
 
   const auto exact_block =
-      [](const ControlOperationResult& operation,
+      [](const ControlBlock& block,
          std::string_view label) -> expected<const ControlBlock*, CommandFailure> {
-    if (operation.attribution != Attribution::exact || !operation.block.has_value()) {
-      return unexpected(carried(FailureKind::timeout, true,
-                                "the " + std::string{label} +
-                                    " reply could not be matched to this command"));
-    }
-    if (operation.block->body_truncated) {
+    if (block.body_truncated) {
       return unexpected(carried(FailureKind::truncated, true,
                                 std::string{label} + " produced " +
-                                    std::to_string(operation.block->body_bytes) +
+                                    std::to_string(block.body_bytes) +
                                     " bytes, more than this connection retains"));
     }
-    return &*operation.block;
+    return &block;
   };
 
-  auto wrapper = exact_block(result.operations[0], "if-shell");
+  auto wrapper = exact_block(result.blocks[0], "if-shell");
   if (!wrapper.has_value()) {
     return unexpected(wrapper.error());
   }
@@ -88,7 +112,7 @@ inserted_command_reply(const ControlRequestResult& result,
                               "if-shell returned output before its inserted command"));
   }
 
-  auto inserted = exact_block(result.operations[1], "inserted command");
+  auto inserted = exact_block(result.blocks[1], "inserted command");
   if (!inserted.has_value()) {
     return unexpected(inserted.error());
   }
@@ -138,10 +162,6 @@ ControlBackend::run(const CommandRequest& command,
   const auto reported = [this, &command](CommandFailure failure) {
     return report_failure(command, std::move(failure));
   };
-  if (auto unsafe = control_request::unsafe(request); unsafe.has_value()) {
-    return reported(carried(FailureKind::validation, false, std::move(*unsafe)));
-  }
-
   // No timeout means no deadline. The furthest representable point is what
   // "wait as long as it takes" is, on a clock that only ever moves forward.
   const auto deadline = timeout.has_value()
@@ -156,47 +176,12 @@ ControlBackend::run(const CommandRequest& command,
     // a retry of something that may already have happened.
     return reported(carried(FailureKind::pipe, true, result.connection_error->message));
   }
-  if (result.operations.empty()) {
-    // The transport misbehaved rather than tmux refusing, which is what the
-    // pipe kind already means.
-    return reported(
-        carried(FailureKind::pipe, true, "the connection returned no reply block"));
-  }
-
-  const ControlOperationResult& operation = result.operations.front();
-  if (operation.attribution != Attribution::exact || !operation.block.has_value()) {
-    // A reply that cannot be attributed is the control-mode shape of a
-    // timeout: the command reached tmux, and what it did is unknown.
-    return reported(carried(FailureKind::timeout, true,
-                            "the reply could not be matched to this command"));
-  }
-
-  // Two bounds, both checked before the body is copied anywhere.
-  //
-  // The connection's is a bound on memory: the decoder stopped retaining at it
-  // and drained the rest, so what is held is not the reply and saying so is the
-  // only honest answer. The call's is a bound on the contract: the whole reply
-  // arrived and is larger than the caller said it would take. Conflating them
-  // is how `output_limit` came to bound the answer without bounding anything
-  // this process held.
-  const ControlBlock& block = *operation.block;
-  if (block.body_truncated) {
-    return reported(carried(FailureKind::truncated, true,
-                            "tmux produced " + std::to_string(block.body_bytes) +
-                                " bytes, more than this connection retains"));
-  }
-  if (output_limit.has_value() && block.body.size() > *output_limit) {
-    return reported(carried(FailureKind::truncated, true,
-                            "tmux produced more output than the " +
-                                std::to_string(*output_limit) +
-                                " byte limit this call allowed for"));
-  }
-  std::string body = text(block.body);
-  if (block.terminal == ControlTerminal::error) {
-    return reported(carried(FailureKind::refused, true, std::move(body)));
+  auto reply = joined_reply(result.blocks, output_limit);
+  if (!reply) {
+    return reported(reply.error());
   }
   observe(command, nullptr);
-  return body;
+  return reply;
 }
 
 expected<std::string, CommandFailure>
@@ -209,7 +194,7 @@ ControlBackend::run_inserted(const CommandRequest& command,
                             ? std::chrono::steady_clock::now() + *timeout
                             : std::chrono::steady_clock::time_point::max();
 
-  ControlRequestResult result = connection_.execute(std::move(request), 2U, deadline);
+  ControlRequestResult result = connection_.execute(std::move(request), deadline);
 
   auto reply = inserted_command_reply(result, output_limit);
   if (!reply.has_value()) {
@@ -229,10 +214,6 @@ ControlBackend::run_batch(const CommandBatch& batch,
   const auto reported = [this, &observed](CommandFailure failure) {
     return report_failure(observed, std::move(failure));
   };
-  if (auto unsafe = control_request::unsafe(request); unsafe.has_value()) {
-    return reported(carried(FailureKind::validation, false, std::move(*unsafe)));
-  }
-
   const auto deadline = timeout.has_value()
                             ? std::chrono::steady_clock::now() + *timeout
                             : std::chrono::steady_clock::time_point::max();
@@ -242,53 +223,12 @@ ControlBackend::run_batch(const CommandBatch& batch,
   if (result.connection_error.has_value()) {
     return reported(carried(FailureKind::pipe, true, result.connection_error->message));
   }
-  if (result.operations.size() != batch.commands().size()) {
-    // Fewer replies than commands is the shape the old flattening produced:
-    // something ran, and what is unknown. Said rather than passed off as the
-    // first reply.
-    return reported(carried(
-        FailureKind::pipe, true,
-        "tmux replied to " + std::to_string(result.operations.size()) + " of " +
-            std::to_string(batch.commands().size()) + " commands in the batch"));
-  }
-
-  std::string body;
-  for (std::size_t index = 0; index < result.operations.size(); ++index) {
-    const ControlOperationResult& operation = result.operations[index];
-    if (operation.attribution != Attribution::exact || !operation.block.has_value()) {
-      return reported(carried(FailureKind::timeout, true,
-                              "the reply to command " + std::to_string(index + 1) +
-                                  " could not be matched to it"));
-    }
-    if (operation.block->body_truncated) {
-      return reported(carried(FailureKind::truncated, true,
-                              "command " + std::to_string(index + 1) + " produced " +
-                                  std::to_string(operation.block->body_bytes) +
-                                  " bytes, more than this connection retains"));
-    }
-    // Checked as the parts arrive rather than once they are all joined: a
-    // batch of replies each inside the bound can still exceed it together, and
-    // the caller already said it would not take that much.
-    if (output_limit.has_value() &&
-        body.size() + operation.block->body.size() > *output_limit) {
-      return reported(carried(FailureKind::truncated, true,
-                              "tmux produced more output than the " +
-                                  std::to_string(*output_limit) +
-                                  " byte limit this call allowed for"));
-    }
-    std::string part = text(operation.block->body);
-    if (operation.block->terminal == ControlTerminal::error) {
-      // A batch is fail-fast, and control mode can say which member stopped
-      // it where the subprocess transport cannot.
-      return reported(carried(FailureKind::refused, true,
-                              "command " + std::to_string(index + 1) + " of " +
-                                  std::to_string(result.operations.size()) + ": " +
-                                  std::move(part)));
-    }
-    body += part;
+  auto reply = joined_reply(result.blocks, output_limit);
+  if (!reply) {
+    return reported(reply.error());
   }
   observe(observed, nullptr);
-  return body;
+  return reply;
 }
 
 expected<Version, CommandFailure> ControlBackend::version() const {
