@@ -201,13 +201,13 @@ CATALOGUE: t.Final = (
             "      if (outcome_) {\n"
             "        return false;\n"
             "      }\n"
-            "      outcome_.emplace(std::move(result));"
+            "      outcome_ = std::move(published_outcome);"
         ),
         replace=(
             "      if (false) {\n"
             "        return false;\n"
             "      }\n"
-            "      outcome_.emplace(std::move(result));"
+            "      outcome_ = std::move(published_outcome);"
         ),
         target="libtmux_operation_state_test",
         test_regex=(
@@ -221,10 +221,7 @@ CATALOGUE: t.Final = (
         path="src/operation_state.hpp",
         find=("      cancellation_requested_ = true;\n      hooks = hooks_;"),
         replace=(
-            "      outcome_.emplace(unexpected(CommandFailure{\n"
-            "          .kind = FailureKind::cancelled,\n"
-            "          .delivery = DeliveryStatus::not_started,\n"
-            "          .diagnostic = {}}));\n"
+            "      outcome_ = make_abandoned_outcome<T>();\n"
             "      cancellation_requested_ = true;\n"
             "      hooks = hooks_;"
         ),
@@ -247,7 +244,8 @@ CATALOGUE: t.Final = (
         target="libtmux_operation_state_test",
         test_regex=(
             r"^libtmux[.]operation_state[.]OperationCallback[.]"
-            r"PublicationBeforeSubscribeSurvivesTheRecheck$"
+            r"(PublicationBeforeSubscribeSurvivesTheRecheck|"
+            r"PublicationAndRegistrationOverlapDeliverOnce)$"
         ),
         guards="publication before callback registration still reaches its queue",
     ),
@@ -255,12 +253,12 @@ CATALOGUE: t.Final = (
         mutation_id="operation-source-retention",
         path="src/operation_state.hpp",
         find=(
-            "  [[nodiscard]] bool publish(OperationResult<T> result) {\n"
+            "  [[nodiscard]] bool publish(OperationResult<T>&& result) {\n"
             "    return state_ && state_->publish(std::move(result));\n"
             "  }"
         ),
         replace=(
-            "  [[nodiscard]] bool publish(OperationResult<T> result) {\n"
+            "  [[nodiscard]] bool publish(OperationResult<T>&& result) {\n"
             "    const bool published =\n"
             "        state_ && state_->publish(std::move(result));\n"
             "    if (published) {\n"
@@ -275,6 +273,75 @@ CATALOGUE: t.Final = (
             r"AdmissionReleasesAfterObserverAndTransportFinish$"
         ),
         guards="the source retains transport state through final retirement",
+    ),
+    Mutation(
+        mutation_id="operation-source-publish-by-value",
+        path="src/operation_state.hpp",
+        find=(
+            "  [[nodiscard]] bool publish(OperationResult<T>&& result) {\n"
+            "    return state_ && state_->publish(std::move(result));\n"
+            "  }"
+        ),
+        replace=(
+            "  [[nodiscard]] bool publish(OperationResult<T> result) {\n"
+            "    return state_ && state_->publish(std::move(result));\n"
+            "  }"
+        ),
+        target="libtmux_operation_state_test",
+        test_regex=(
+            r"^libtmux[.]operation_state[.]OperationState[.]"
+            r"PublicationDoesNotMoveAWholeExpected$"
+        ),
+        guards="publication moves the active alternative, not its expected wrapper",
+    ),
+    Mutation(
+        mutation_id="operation-retirement-publishes",
+        path="src/operation_state.hpp",
+        find="      if (!outcome_) {\n",
+        replace="      if (false) {\n",
+        target="libtmux_operation_state_test",
+        test_regex=(
+            r"^libtmux[.]operation_state[.](OperationCallback[.]"
+            r"SourceDestructionPublishesTransportFailure|OperationState[.]"
+            r"RetirementPublishesFailureToBlockingObserver)$"
+        ),
+        guards="retirement leaves every observer with a terminal outcome",
+    ),
+    Mutation(
+        mutation_id="completion-detach-unlinks-ready",
+        path="src/completion_queue.cpp",
+        find=(
+            "    if (record->second->enqueued) {\n"
+            "      core->unlink_ready(token.value, *record->second);\n"
+            "    }\n"
+        ),
+        replace="",
+        target="libtmux_operation_state_test",
+        test_regex=(
+            r"^libtmux[.]operation_state[.]CompletionQueue[.]"
+            r"EnqueueAndDetachOverlapLeaveNoReadyRecord$"
+        ),
+        guards="detaching ready work removes its queue link under the same lock",
+    ),
+    Mutation(
+        mutation_id="completion-dispatch-claim",
+        path="src/completion_queue.cpp",
+        find=(
+            "    bool available = false;\n"
+            "    owns_ = dispatching_.compare_exchange_strong(\n"
+            "        available, true, std::memory_order_acquire, "
+            "std::memory_order_relaxed);\n"
+        ),
+        replace=(
+            "    dispatching_.store(true, std::memory_order_release);\n"
+            "    owns_ = true;\n"
+        ),
+        target="libtmux_operation_state_test",
+        test_regex=(
+            r"^libtmux[.]operation_state[.]CompletionQueue[.]"
+            r"(CallbackReentry|CaptureDestruction)DoesNotOverlapDispatch$"
+        ),
+        guards="nested callback destruction cannot claim the active dispatcher",
     ),
     Mutation(
         mutation_id="legacy-empty-lookup",

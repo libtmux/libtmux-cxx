@@ -254,6 +254,46 @@ TEST(CompletionQueue, CaptureDestructionDoesNotOverlapDispatch) {
   EXPECT_EQ(queue.run_ready(), 1U);
 }
 
+TEST(CompletionQueue, EnqueueAndDetachOverlapLeaveNoReadyRecord) {
+  constexpr std::size_t iterations = 512U;
+  CompletionQueue queue;
+  const auto mailbox = queue.mailbox();
+  std::atomic<std::size_t> calls{0U};
+  std::vector<CompletionToken> tokens;
+  tokens.reserve(iterations);
+  for (std::size_t index = 0U; index < iterations; ++index) {
+    const auto token = queue.next_token();
+    ASSERT_TRUE(queue.register_record(
+        token, [&] { calls.fetch_add(1U, std::memory_order_relaxed); }));
+    tokens.push_back(token);
+  }
+
+  std::barrier phase{3};
+  std::thread enqueuer{[&] {
+    for (const auto token : tokens) {
+      phase.arrive_and_wait();
+      static_cast<void>(mailbox.enqueue(token));
+      phase.arrive_and_wait();
+    }
+  }};
+  std::thread detacher{[&] {
+    for (const auto token : tokens) {
+      phase.arrive_and_wait();
+      mailbox.detach(token);
+      phase.arrive_and_wait();
+    }
+  }};
+
+  for (std::size_t index = 0U; index < iterations; ++index) {
+    phase.arrive_and_wait();
+    phase.arrive_and_wait();
+    EXPECT_EQ(queue.run_ready(), 0U);
+  }
+  enqueuer.join();
+  detacher.join();
+  EXPECT_EQ(calls.load(std::memory_order_relaxed), 0U);
+}
+
 class RecordingHooks final : public OperationHooks {
 public:
   void wake_reactor() noexcept override {
@@ -286,6 +326,73 @@ TEST(OperationCallback, PublicationBeforeSubscribeSurvivesTheRecheck) {
   EXPECT_EQ(observed, 53);
   started.source.retire();
   EXPECT_EQ(hooks->releases.load(std::memory_order_relaxed), 1);
+}
+
+TEST(OperationCallback, PublicationAndRegistrationOverlapDeliverOnce) {
+  constexpr std::size_t iterations = 256U;
+  CompletionQueue queue;
+  std::atomic<std::size_t> generation{0U};
+  std::atomic<std::size_t> subscribed{0U};
+  std::atomic<std::size_t> published_generation{0U};
+  libtmux::detail::StartedOperation<int>* current = nullptr;
+  std::optional<Subscription<int>> subscription;
+  bool published = false;
+  int observed = -1;
+  const auto wait_for = [](std::atomic<std::size_t>& counter, std::size_t expected) {
+    auto observed = counter.load(std::memory_order_acquire);
+    while (observed < expected) {
+      counter.wait(observed, std::memory_order_acquire);
+      observed = counter.load(std::memory_order_acquire);
+    }
+  };
+
+  std::thread subscriber{[&] {
+    for (std::size_t index = 0U; index < iterations; ++index) {
+      wait_for(generation, index + 1U);
+      subscription.emplace(
+          std::move(current->operation)
+              .subscribe(queue, [&, expected = static_cast<int>(index)](
+                                    OperationResult<int> result) {
+                EXPECT_TRUE(result.has_value());
+                if (result) {
+                  EXPECT_EQ(*result, expected);
+                  observed = *result;
+                }
+              }));
+      subscribed.store(index + 1U, std::memory_order_release);
+      subscribed.notify_one();
+    }
+  }};
+  std::thread publisher{[&] {
+    for (std::size_t index = 0U; index < iterations; ++index) {
+      wait_for(generation, index + 1U);
+      published =
+          current->source.publish(OperationResult<int>{static_cast<int>(index)});
+      published_generation.store(index + 1U, std::memory_order_release);
+      published_generation.notify_one();
+    }
+  }};
+
+  for (std::size_t index = 0U; index < iterations; ++index) {
+    auto hooks = std::make_shared<RecordingHooks>();
+    auto started = make_operation<int>(hooks);
+    current = &started;
+    published = false;
+    observed = -1;
+    generation.store(index + 1U, std::memory_order_release);
+    generation.notify_all();
+    wait_for(subscribed, index + 1U);
+    wait_for(published_generation, index + 1U);
+
+    EXPECT_TRUE(published);
+    EXPECT_EQ(queue.run_ready(), 1U);
+    EXPECT_EQ(observed, static_cast<int>(index));
+    started.source.retire();
+    EXPECT_EQ(hooks->releases.load(std::memory_order_relaxed), 1);
+    subscription.reset();
+  }
+  subscriber.join();
+  publisher.join();
 }
 
 TEST(OperationCallback, MovesOnePayloadIntoOneCallback) {
