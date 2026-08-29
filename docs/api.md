@@ -482,6 +482,7 @@ What this Server can promise without probing tmux.  These describe the local bac
   - [`ServerCapabilities::implementation`](#libtmux-capabilities-hpp-servercapabilities-implementation)
   - [`ServerCapabilities::backend`](#libtmux-capabilities-hpp-servercapabilities-backend)
   - [`ServerCapabilities::supports`](#libtmux-capabilities-hpp-servercapabilities-supports)
+  - [`ServerCapabilities::refuses`](#libtmux-capabilities-hpp-servercapabilities-refuses)
 - [`Free symbols`](#libtmux-capabilities-hpp-free-symbols)
   - [`to_string`](#libtmux-capabilities-hpp-free-symbols-to-string)
   - [`to_string`](#libtmux-capabilities-hpp-free-symbols-to-string-2)
@@ -613,6 +614,14 @@ BackendKind backend{BackendKind::custom};
 [[nodiscard]] constexpr bool supports(ServerFeature feature) const noexcept;
 ```
 Purely local: this never launches tmux or touches a server.
+
+<a id="libtmux-capabilities-hpp-servercapabilities-refuses"></a>
+#### `ServerCapabilities::refuses`
+
+```cpp
+[[nodiscard]] constexpr bool refuses(ServerFeature feature) const noexcept;
+```
+Whether this implementation is known to get the feature wrong, which is the opposite question from `supports` rather than its negation. Both answer no for a backend nobody recognises: a caller asking what it may rely on must not be promised anything, and a custom executor running real tmux must not be refused for being unfamiliar.
 
 <a id="libtmux-capabilities-hpp-free-symbols"></a>
 ### `Free symbols`

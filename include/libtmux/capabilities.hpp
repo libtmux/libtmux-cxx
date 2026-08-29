@@ -130,6 +130,15 @@ struct ServerCapabilities {
     }
     return false;
   }
+
+  // Whether this implementation is known to get the feature wrong, which is
+  // the opposite question from `supports` rather than its negation. Both
+  // answer no for a backend nobody recognises: a caller asking what it may
+  // rely on must not be promised anything, and a custom executor running real
+  // tmux must not be refused for being unfamiliar.
+  [[nodiscard]] constexpr bool refuses(ServerFeature feature) const noexcept {
+    return implementation != ServerImplementation::unknown && !supports(feature);
+  }
 };
 
 LIBTMUX_NAMESPACE_END

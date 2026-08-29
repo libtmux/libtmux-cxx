@@ -106,6 +106,18 @@ template <typename Left, typename Right>
 
 } // namespace
 
+std::optional<CommandFailure> detail::Row::refused(ServerFeature feature,
+                                                   std::string_view why) const {
+  const auto& executor = backend();
+  if (executor == nullptr || !executor->capabilities().refuses(feature)) {
+    return std::nullopt;
+  }
+  return CommandFailure{.kind = FailureKind::unsupported,
+                        .delivery = DeliveryStatus::not_started,
+                        .exit_code = -1,
+                        .diagnostic = std::string{why}};
+}
+
 std::string_view detail::Row::connection_identity() const noexcept {
   const auto& connection = backend();
   return connection == nullptr ? std::string_view{} : connection->identity();
@@ -124,7 +136,6 @@ expected<Server, CommandFailure> detail::Row::server() const {
 
 namespace {
 
-#if !defined(_WIN32)
 // A command run for its effect. The output of `kill-window` is not a result.
 expected<void, CommandFailure> effect(expected<std::string, CommandFailure> reply) {
   if (!reply.has_value()) {
@@ -132,7 +143,6 @@ expected<void, CommandFailure> effect(expected<std::string, CommandFailure> repl
   }
   return {};
 }
-#endif
 
 CommandFailure rejected(std::string diagnostic) {
   return CommandFailure{.kind = FailureKind::validation,
@@ -150,7 +160,6 @@ CommandFailure unsupported(std::string diagnostic) {
 }
 #endif
 
-#if !defined(_WIN32)
 // tmux prints options one per line in the same shape at every scope, so the
 // only thing that differs between the four is the flag that selects it.
 expected<std::vector<OptionEntry>, CommandFailure>
@@ -205,7 +214,6 @@ std::vector<std::string> scoped(std::string_view verb, std::string_view scope,
   }
   return command;
 }
-#endif
 
 std::string session_target(const Session& session) {
 #if defined(_WIN32)
@@ -258,7 +266,6 @@ namespace {
 // Each of these selects, then reports where the selection ended up. The
 // second call is what makes the result useful; tmux's own commands print
 // nothing.
-#if !defined(_WIN32)
 expected<Window, CommandFailure> moved(const Session& session,
                                        expected<std::string, CommandFailure> ran) {
   if (!ran.has_value()) {
@@ -266,32 +273,31 @@ expected<Window, CommandFailure> moved(const Session& session,
   }
   return session.active_window();
 }
-#endif
 
 } // namespace
 
 expected<Window, CommandFailure> Session::select_next_window() const {
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux cannot atomically target session navigation"));
-#else
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux cannot atomically target session navigation")) {
+    return unexpected(std::move(*refusal));
+  }
   return moved(*this, run({"next-window", "-t", session_target(*this)}));
-#endif
 }
 
 expected<Window, CommandFailure> Session::select_previous_window() const {
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux cannot atomically target session navigation"));
-#else
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux cannot atomically target session navigation")) {
+    return unexpected(std::move(*refusal));
+  }
   return moved(*this, run({"previous-window", "-t", session_target(*this)}));
-#endif
 }
 
 expected<Window, CommandFailure> Session::select_last_window() const {
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux cannot atomically target session navigation"));
-#else
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux cannot atomically target session navigation")) {
+    return unexpected(std::move(*refusal));
+  }
   return moved(*this, run({"last-window", "-t", session_target(*this)}));
-#endif
 }
 
 expected<Window, CommandFailure> Session::new_window(std::string_view name) const {
@@ -302,11 +308,11 @@ expected<Window, CommandFailure> Session::new_window(NewWindowOptions options) c
   if (options.name.empty()) {
     return unexpected(rejected("window name is empty"));
   }
-#if defined(_WIN32)
-  static_cast<void>(options);
-  return unexpected(
-      unsupported("psmux can report a failed new-window as an existing window"));
-#else
+  if (auto refusal =
+          refused(ServerFeature::window_creation,
+                  "psmux can report a failed new-window as an existing window")) {
+    return unexpected(std::move(*refusal));
+  }
   std::string target = session_target(*this);
   if (options.index.has_value()) {
     target += ":" + std::to_string(*options.index);
@@ -335,7 +341,6 @@ expected<Window, CommandFailure> Session::new_window(NewWindowOptions options) c
   }
   return detail::one_entity<Window>(backend(), std::move(command), FormatArgument::flag,
                                     options.name, {}, session_route(*this));
-#endif
 }
 
 expected<void, CommandFailure> Session::rename(std::string_view name) const {
@@ -357,11 +362,11 @@ expected<void, CommandFailure> Session::rename(std::string_view name) const {
 }
 
 expected<void, CommandFailure> Session::kill() const {
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux cannot atomically kill a captured session"));
-#else
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux cannot atomically kill a captured session")) {
+    return unexpected(std::move(*refusal));
+  }
   return effect(run({"kill-session", "-t", session_target(*this)}));
-#endif
 }
 
 expected<Session, CommandFailure> Session::refresh() const {
@@ -370,43 +375,39 @@ expected<Session, CommandFailure> Session::refresh() const {
 }
 
 expected<std::vector<OptionEntry>, CommandFailure> Session::options() const {
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux cannot atomically read session options"));
-#else
+  if (auto refusal = refused(ServerFeature::server_state,
+                             "psmux cannot atomically read session options")) {
+    return unexpected(std::move(*refusal));
+  }
   return listed(run(scoped("show-options", {}, session_target(*this), {"-A"})));
-#endif
 }
 
 expected<OptionEntry, CommandFailure> Session::option(std::string_view name) const {
-#if defined(_WIN32)
-  static_cast<void>(name);
-  return unexpected(unsupported("psmux cannot atomically read a session option"));
-#else
+  if (auto refusal = refused(ServerFeature::server_state,
+                             "psmux cannot atomically read a session option")) {
+    return unexpected(std::move(*refusal));
+  }
   return named(run(scoped("show-options", {}, session_target(*this), {"-A", name})),
                name);
-#endif
 }
 
 expected<void, CommandFailure> Session::set_option(std::string_view name,
                                                    std::string_view value) const {
-#if defined(_WIN32)
-  static_cast<void>(name);
-  static_cast<void>(value);
-  return unexpected(unsupported("psmux cannot atomically set a session option"));
-#else
+  if (auto refusal = refused(ServerFeature::server_state,
+                             "psmux cannot atomically set a session option")) {
+    return unexpected(std::move(*refusal));
+  }
   CommandRequest command = scoped("set-option", {}, session_target(*this), {name});
   command.push_back(CommandArgument::sensitive(std::string{value}));
   return effect(run(command));
-#endif
 }
 
 expected<void, CommandFailure> Session::unset_option(std::string_view name) const {
-#if defined(_WIN32)
-  static_cast<void>(name);
-  return unexpected(unsupported("psmux cannot atomically unset a session option"));
-#else
+  if (auto refusal = refused(ServerFeature::server_state,
+                             "psmux cannot atomically unset a session option")) {
+    return unexpected(std::move(*refusal));
+  }
   return effect(run(scoped("set-option", {}, session_target(*this), {"-u", name})));
-#endif
 }
 
 expected<std::string, CommandFailure> Session::expand(std::string_view format) const {
@@ -415,14 +416,13 @@ expected<std::string, CommandFailure> Session::expand(std::string_view format) c
 }
 
 expected<void, CommandFailure> Session::show_message(std::string_view text) const {
-#if defined(_WIN32)
-  static_cast<void>(text);
-  return unexpected(unsupported("psmux cannot safely preserve a session message"));
-#else
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux cannot safely preserve a session message")) {
+    return unexpected(std::move(*refusal));
+  }
   std::vector<std::string> command{"display-message", "-t", session_target(*this)};
   detail::append_display_message_text(command, std::string{text});
   return effect(run(command));
-#endif
 }
 
 expected<AttachCommand, CommandFailure> Session::attach_command() const {
@@ -439,33 +439,31 @@ expected<AttachCommand, CommandFailure> Session::attach_command() const {
 }
 
 expected<void, CommandFailure> Session::detach_clients() const {
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux cannot safely route detach-client"));
-#else
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux cannot safely route detach-client")) {
+    return unexpected(std::move(*refusal));
+  }
   return effect(run({"detach-client", "-s", session_target(*this)}));
-#endif
 }
 
 expected<std::vector<OptionEntry>, CommandFailure> Session::hooks() const {
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux cannot atomically read session hooks"));
-#else
+  if (auto refusal = refused(ServerFeature::server_state,
+                             "psmux cannot atomically read session hooks")) {
+    return unexpected(std::move(*refusal));
+  }
   auto hooks = listed(run({"show-hooks", "-t", session_target(*this)}));
   return hooks;
-#endif
 }
 
 expected<void, CommandFailure> Session::set_hook(std::string_view name,
                                                  std::string_view command) const {
-#if defined(_WIN32)
-  static_cast<void>(name);
-  static_cast<void>(command);
-  return unexpected(unsupported("psmux cannot atomically set a session hook"));
-#else
+  if (auto refusal = refused(ServerFeature::server_state,
+                             "psmux cannot atomically set a session hook")) {
+    return unexpected(std::move(*refusal));
+  }
   CommandRequest request{"set-hook", "-t", session_target(*this), std::string{name}};
   request.push_back(CommandArgument::sensitive(std::string{command}));
   return effect(run(request));
-#endif
 }
 
 // --- Window ----------------------------------------------------------------
@@ -476,17 +474,17 @@ std::string Window::target() const {
 }
 
 expected<std::string, CommandFailure> Window::checked_target() const {
-#if defined(_WIN32)
-  return unexpected(
-      unsupported("psmux cannot bind a reusable target to a captured window safely"));
-#else
+  if (auto refusal =
+          refused(ServerFeature::reusable_window_target,
+                  "psmux cannot bind a reusable target to a captured window safely")) {
+    return unexpected(std::move(*refusal));
+  }
   // A window read out of a recording may carry no session; a bare id is then
   // the only thing there is to say.
   if (session_id().empty()) {
     return std::string{id()};
   }
   return std::string{session_id()} + ":" + std::string{id()};
-#endif
 }
 
 namespace {
@@ -572,9 +570,10 @@ expected<Pane, CommandFailure> Window::split(SplitOptions options) const {
       (*options.percentage < 1 || *options.percentage > 100)) {
     return unexpected(rejected("a percentage of the window is between 1 and 100"));
   }
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux cannot safely target split-window"));
-#else
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux cannot safely target split-window")) {
+    return unexpected(std::move(*refusal));
+  }
   CommandRequest command{"split-window", "-t", window_command_target(*this), "-P"};
   if (!options.focus) {
     command.emplace_back("-d");
@@ -609,29 +608,28 @@ expected<Pane, CommandFailure> Window::split(SplitOptions options) const {
   }
   return detail::one_entity<Pane>(backend(), std::move(command), FormatArgument::flag,
                                   id(), {}, session_route(*this));
-#endif
 }
 
 expected<void, CommandFailure> Window::rename(std::string_view name) const {
   if (name.empty()) {
     return unexpected(rejected("window name is empty"));
   }
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux cannot safely target rename-window"));
-#else
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux cannot safely target rename-window")) {
+    return unexpected(std::move(*refusal));
+  }
   std::vector<std::string> command{"rename-window", "-t", window_command_target(*this)};
   command.emplace_back("--");
   command.emplace_back(name);
   return effect(run(command));
-#endif
 }
 
 expected<void, CommandFailure> Window::select() const {
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux cannot safely select a window by stable id"));
-#else
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux cannot safely select a window by stable id")) {
+    return unexpected(std::move(*refusal));
+  }
   return effect(run({"select-window", "-t", window_command_target(*this)}));
-#endif
 }
 
 // Both carry the session, like every other window operation here.
@@ -642,15 +640,14 @@ expected<void, CommandFailure> Window::select() const {
 // expanded against a bare id answers about whichever session tmux chose, which
 // is the answer to a question nobody asked.
 expected<void, CommandFailure> Window::show_message(std::string_view text) const {
-#if defined(_WIN32)
-  static_cast<void>(text);
-  return unexpected(unsupported("psmux cannot safely target a window message"));
-#else
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux cannot safely target a window message")) {
+    return unexpected(std::move(*refusal));
+  }
   std::vector<std::string> command{"display-message", "-t",
                                    window_command_target(*this)};
   detail::append_display_message_text(command, std::string{text});
   return effect(run(command));
-#endif
 }
 
 expected<std::string, CommandFailure> Window::expand(std::string_view format) const {
@@ -659,114 +656,115 @@ expected<std::string, CommandFailure> Window::expand(std::string_view format) co
 }
 
 expected<void, CommandFailure> Window::kill() const {
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux can kill the active window for a stale target"));
-#else
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux can kill the active window for a stale target")) {
+    return unexpected(std::move(*refusal));
+  }
   return effect(run({"kill-window", "-t", window_command_target(*this)}));
-#endif
 }
 
 expected<void, CommandFailure> Window::select_layout(std::string_view layout) const {
   if (layout.empty()) {
     return unexpected(rejected("layout is empty"));
   }
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux cannot safely target select-layout"));
-#else
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux cannot safely target select-layout")) {
+    return unexpected(std::move(*refusal));
+  }
   return effect(
       run({"select-layout", "-t", window_command_target(*this), std::string{layout}}));
-#endif
 }
 
 expected<void, CommandFailure> Window::resize(long long width, long long height) const {
   if (width <= 0 || height <= 0) {
     return unexpected(rejected("a window cannot be resized to nothing"));
   }
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux treats resize-window as a no-op"));
-#else
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux treats resize-window as a no-op")) {
+    return unexpected(std::move(*refusal));
+  }
   return effect(run({"resize-window", "-t", window_command_target(*this), "-x",
                      std::to_string(width), "-y", std::to_string(height)}));
-#endif
 }
 
 expected<void, CommandFailure> Window::next_layout() const {
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux cannot safely target next-layout"));
-#else
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux cannot safely target next-layout")) {
+    return unexpected(std::move(*refusal));
+  }
   return effect(run({"next-layout", "-t", window_command_target(*this)}));
-#endif
 }
 
 expected<void, CommandFailure> Window::previous_layout() const {
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux cannot safely target previous-layout"));
-#else
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux cannot safely target previous-layout")) {
+    return unexpected(std::move(*refusal));
+  }
   return effect(run({"previous-layout", "-t", window_command_target(*this)}));
-#endif
 }
 
 expected<void, CommandFailure> Window::rotate() const {
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux cannot safely target rotate-window"));
-#else
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux cannot safely target rotate-window")) {
+    return unexpected(std::move(*refusal));
+  }
   return effect(run({"rotate-window", "-t", window_command_target(*this)}));
-#endif
 }
 
 expected<Pane, CommandFailure> Window::select_last_pane() const {
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux cannot safely target the last pane"));
-#else
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux cannot safely target the last pane")) {
+    return unexpected(std::move(*refusal));
+  }
   const auto moved = run({"select-pane", "-l", "-t", window_command_target(*this)});
   if (!moved.has_value()) {
     return unexpected(moved.error());
   }
   return active_pane();
-#endif
 }
 
 expected<void, CommandFailure> Window::link_to(const Session& target) const {
   if (from_different_servers(*this, target)) {
     return unexpected(crossed_servers());
   }
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux cannot link a window between sessions"));
-#else
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux cannot link a window between sessions")) {
+    return unexpected(std::move(*refusal));
+  }
   return effect(
       run({"link-window", "-s", this->target(), "-t", session_target(target) + ":"}));
-#endif
 }
 
 expected<void, CommandFailure> Window::unlink() const {
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux unlink-window destroys the active window"));
-#else
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux unlink-window destroys the active window")) {
+    return unexpected(std::move(*refusal));
+  }
   // The qualified target, because a window shown in several sessions has
   // several links and a bare id does not say which one to remove.
   return effect(run({"unlink-window", "-t", window_command_target(*this)}));
-#endif
 }
 
 expected<void, CommandFailure> Window::swap_with(const Window& other) const {
   if (from_different_servers(*this, other)) {
     return unexpected(crossed_servers());
   }
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux cannot safely target swap-window"));
-#else
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux cannot safely target swap-window")) {
+    return unexpected(std::move(*refusal));
+  }
   return effect(run({"swap-window", "-s", window_command_target(*this), "-t",
                      window_command_target(other)}));
-#endif
 }
 
 expected<void, CommandFailure> Window::move_to(long long index) const {
   if (index < 0) {
     return unexpected(rejected("a window index cannot be negative"));
   }
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux cannot safely target move-window"));
-#else
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux cannot safely target move-window")) {
+    return unexpected(std::move(*refusal));
+  }
   // Both ends carry this window's session. A bare index would land in
   // whichever session tmux considers current, and a bare window id is worse:
   // a window linked into several sessions has several homes, and tmux picks
@@ -779,7 +777,6 @@ expected<void, CommandFailure> Window::move_to(long long index) const {
   const std::string owner{session_id()};
   const std::string target = owner + ":" + std::to_string(index);
   return effect(run({"move-window", "-d", "-s", source, "-t", target}));
-#endif
 }
 
 expected<Window, CommandFailure> Window::refresh() const {
@@ -788,47 +785,43 @@ expected<Window, CommandFailure> Window::refresh() const {
 }
 
 expected<std::vector<OptionEntry>, CommandFailure> Window::options() const {
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux does not provide window-scoped options"));
-#else
+  if (auto refusal = refused(ServerFeature::server_state,
+                             "psmux does not provide window-scoped options")) {
+    return unexpected(std::move(*refusal));
+  }
   return listed(
       run(scoped("show-options", "-w", window_command_target(*this), {"-A"})));
-#endif
 }
 
 expected<OptionEntry, CommandFailure> Window::option(std::string_view name) const {
-#if defined(_WIN32)
-  static_cast<void>(name);
-  return unexpected(unsupported("psmux does not provide window-scoped options"));
-#else
+  if (auto refusal = refused(ServerFeature::server_state,
+                             "psmux does not provide window-scoped options")) {
+    return unexpected(std::move(*refusal));
+  }
   return named(
       run(scoped("show-options", "-w", window_command_target(*this), {"-A", name})),
       name);
-#endif
 }
 
 expected<void, CommandFailure> Window::set_option(std::string_view name,
                                                   std::string_view value) const {
-#if defined(_WIN32)
-  static_cast<void>(name);
-  static_cast<void>(value);
-  return unexpected(unsupported("psmux does not provide window-scoped options"));
-#else
+  if (auto refusal = refused(ServerFeature::server_state,
+                             "psmux does not provide window-scoped options")) {
+    return unexpected(std::move(*refusal));
+  }
   CommandRequest command =
       scoped("set-option", "-w", window_command_target(*this), {name});
   command.push_back(CommandArgument::sensitive(std::string{value}));
   return effect(run(command));
-#endif
 }
 
 expected<void, CommandFailure> Window::unset_option(std::string_view name) const {
-#if defined(_WIN32)
-  static_cast<void>(name);
-  return unexpected(unsupported("psmux does not provide window-scoped options"));
-#else
+  if (auto refusal = refused(ServerFeature::server_state,
+                             "psmux does not provide window-scoped options")) {
+    return unexpected(std::move(*refusal));
+  }
   return effect(
       run(scoped("set-option", "-w", window_command_target(*this), {"-u", name})));
-#endif
 }
 
 // --- Pane ------------------------------------------------------------------
@@ -842,7 +835,6 @@ std::string pane_target(const Pane& pane) {
   return std::string{pane.id()};
 }
 
-#if !defined(_WIN32)
 ExecutionPolicy
 remaining_execution_policy(const ExecutionPolicy& policy,
                            std::chrono::steady_clock::time_point started) {
@@ -988,7 +980,6 @@ std::string named_repair_guard(std::string_view window_id,
   }
   return condition;
 }
-#endif
 
 } // namespace
 
@@ -1038,14 +1029,14 @@ expected<void, CommandFailure> Pane::send_text(std::string_view text) const {
   if (!arguments.has_value()) {
     return unexpected(rejected("text to send is empty"));
   }
-#if defined(_WIN32)
-  return unexpected(
-      unsupported("psmux can send text to the active pane for a stale target"));
-#else
+  if (auto refusal =
+          refused(ServerFeature::pane_io,
+                  "psmux can send text to the active pane for a stale target")) {
+    return unexpected(std::move(*refusal));
+  }
   std::vector<std::string> command{"send-keys", "-t", pane_target(*this)};
   command.insert(command.end(), arguments->begin(), arguments->end());
   return effect(run(command));
-#endif
 }
 
 expected<void, CommandFailure> Pane::send_key(std::string_view key) const {
@@ -1054,12 +1045,12 @@ expected<void, CommandFailure> Pane::send_key(std::string_view key) const {
   if (!is_key_name(key)) {
     return unexpected(rejected("unknown key name: " + std::string{key}));
   }
-#if defined(_WIN32)
-  return unexpected(
-      unsupported("psmux can send a key to the active pane for a stale target"));
-#else
+  if (auto refusal =
+          refused(ServerFeature::pane_io,
+                  "psmux can send a key to the active pane for a stale target")) {
+    return unexpected(std::move(*refusal));
+  }
   return effect(run({"send-keys", "-t", pane_target(*this), std::string{key}}));
-#endif
 }
 
 expected<std::string, CommandFailure> Pane::capture() const {
@@ -1067,11 +1058,10 @@ expected<std::string, CommandFailure> Pane::capture() const {
 }
 
 expected<std::string, CommandFailure> Pane::capture(CaptureOptions options) const {
-#if defined(_WIN32)
-  static_cast<void>(options);
-  return unexpected(
-      unsupported("psmux can capture the active pane for a stale target"));
-#else
+  if (auto refusal = refused(ServerFeature::pane_io,
+                             "psmux can capture the active pane for a stale target")) {
+    return unexpected(std::move(*refusal));
+  }
   std::vector<std::string> command{"capture-pane", "-p", "-t", pane_target(*this)};
   if (options.whole_history) {
     // tmux spells the top of the scrollback as a bare dash.
@@ -1095,54 +1085,52 @@ expected<std::string, CommandFailure> Pane::capture(CaptureOptions options) cons
     command.emplace_back("-N");
   }
   return run(command, options.output_limit);
-#endif
 }
 
 expected<void, CommandFailure> Pane::set_width(long long width) const {
   if (width <= 0) {
     return unexpected(rejected("a pane cannot be resized to nothing"));
   }
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux cannot safely target resize-pane"));
-#else
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux cannot safely target resize-pane")) {
+    return unexpected(std::move(*refusal));
+  }
   return effect(
       run({"resize-pane", "-t", pane_target(*this), "-x", std::to_string(width)}));
-#endif
 }
 
 expected<void, CommandFailure> Pane::set_height(long long height) const {
   if (height <= 0) {
     return unexpected(rejected("a pane cannot be resized to nothing"));
   }
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux cannot safely target resize-pane"));
-#else
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux cannot safely target resize-pane")) {
+    return unexpected(std::move(*refusal));
+  }
   return effect(
       run({"resize-pane", "-t", pane_target(*this), "-y", std::to_string(height)}));
-#endif
 }
 
 expected<void, CommandFailure> Pane::swap_with(const Pane& other) const {
   if (from_different_servers(*this, other)) {
     return unexpected(crossed_servers());
   }
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux cannot safely target swap-pane"));
-#else
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux cannot safely target swap-pane")) {
+    return unexpected(std::move(*refusal));
+  }
   return effect(
       run({"swap-pane", "-d", "-s", pane_target(*this), "-t", pane_target(other)}));
-#endif
 }
 
 expected<Window, CommandFailure> Pane::break_out(std::string_view name) const {
   if (backend() == nullptr) {
     return unexpected(detail::disconnected());
   }
-#if defined(_WIN32)
-  static_cast<void>(name);
-  return unexpected(
-      unsupported("psmux cannot report the window created by break-pane"));
-#else
+  if (auto refusal = refused(ServerFeature::window_creation,
+                             "psmux cannot report the window created by break-pane")) {
+    return unexpected(std::move(*refusal));
+  }
   const auto started = std::chrono::steady_clock::now();
   const ExecutionPolicy policy = backend()->policy();
   if (name.empty()) {
@@ -1310,37 +1298,36 @@ expected<Window, CommandFailure> Pane::break_out(std::string_view name) const {
                       ", but its raw tmux 3.7 name repair was not durable"});
   }
   return std::move(final->window);
-#endif
 }
 
 expected<void, CommandFailure> Pane::join(const Window& target) const {
   if (from_different_servers(*this, target)) {
     return unexpected(crossed_servers());
   }
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux cannot safely target join-pane"));
-#else
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux cannot safely target join-pane")) {
+    return unexpected(std::move(*refusal));
+  }
   return effect(run(
       {"join-pane", "-s", pane_target(*this), "-t", window_command_target(target)}));
-#endif
 }
 
 expected<void, CommandFailure> Pane::enter_copy_mode() const {
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux cannot safely target copy-mode"));
-#else
+  if (auto refusal =
+          refused(ServerFeature::pane_io, "psmux cannot safely target copy-mode")) {
+    return unexpected(std::move(*refusal));
+  }
   return effect(run({"copy-mode", "-t", pane_target(*this)}));
-#endif
 }
 
 expected<void, CommandFailure> Pane::leave_mode() const {
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux cannot safely leave mode on a targeted pane"));
-#else
+  if (auto refusal = refused(ServerFeature::pane_io,
+                             "psmux cannot safely leave mode on a targeted pane")) {
+    return unexpected(std::move(*refusal));
+  }
   // `-X cancel` is how a mode is left: there is no leave-mode command, and
   // the key that would do it depends on the caller's bindings.
   return effect(run({"send-keys", "-t", pane_target(*this), "-X", "cancel"}));
-#endif
 }
 
 expected<void, CommandFailure> Pane::pipe_to(std::string_view command) const {
@@ -1350,29 +1337,29 @@ expected<void, CommandFailure> Pane::pipe_to(std::string_view command) const {
     // opposite of what was asked.
     return unexpected(rejected("a pipe needs a command; use stop_piping"));
   }
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux cannot safely target pipe-pane"));
-#else
+  if (auto refusal =
+          refused(ServerFeature::pane_io, "psmux cannot safely target pipe-pane")) {
+    return unexpected(std::move(*refusal));
+  }
   CommandRequest argv{"pipe-pane", "-t", pane_target(*this)};
   argv.emplace_back("--");
   argv.push_back(CommandArgument::sensitive(std::string{command}));
   return effect(run(argv));
-#endif
 }
 
 expected<void, CommandFailure> Pane::stop_piping() const {
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux cannot safely target pipe-pane"));
-#else
+  if (auto refusal =
+          refused(ServerFeature::pane_io, "psmux cannot safely target pipe-pane")) {
+    return unexpected(std::move(*refusal));
+  }
   return effect(run({"pipe-pane", "-t", pane_target(*this)}));
-#endif
 }
 
 expected<void, CommandFailure> Pane::set_title(std::string_view title) const {
-#if defined(_WIN32)
-  static_cast<void>(title);
-  return unexpected(unsupported("psmux cannot safely target a pane title"));
-#else
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux cannot safely target a pane title")) {
+    return unexpected(std::move(*refusal));
+  }
   // No `--` here, though a title beginning with a dash is data: `-T`
   // consumes the next argument whatever it looks like, and adding the guard
   // makes tmux read the separator as the value and the title as a target —
@@ -1380,47 +1367,44 @@ expected<void, CommandFailure> Pane::set_title(std::string_view title) const {
   // like the text of set-buffer, not on the value of a flag.
   return effect(
       run({"select-pane", "-t", pane_target(*this), "-T", std::string{title}}));
-#endif
 }
 
 expected<void, CommandFailure> Pane::respawn(bool replace_running) const {
-#if defined(_WIN32)
-  static_cast<void>(replace_running);
-  return unexpected(unsupported("psmux respawn-pane can terminate the session server"));
-#else
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux respawn-pane can terminate the session server")) {
+    return unexpected(std::move(*refusal));
+  }
   std::vector<std::string> command{"respawn-pane", "-t", pane_target(*this)};
   if (replace_running) {
     command.emplace_back("-k");
   }
   return effect(run(command));
-#endif
 }
 
 expected<void, CommandFailure> Pane::clear_history() const {
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux cannot safely target clear-history"));
-#else
+  if (auto refusal =
+          refused(ServerFeature::pane_io, "psmux cannot safely target clear-history")) {
+    return unexpected(std::move(*refusal));
+  }
   return effect(run({"clear-history", "-t", pane_target(*this)}));
-#endif
 }
 
 expected<void, CommandFailure> Pane::select() const {
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux cannot atomically select a captured pane"));
-#else
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux cannot atomically select a captured pane")) {
+    return unexpected(std::move(*refusal));
+  }
   return effect(run({"select-pane", "-t", pane_target(*this)}));
-#endif
 }
 
 expected<void, CommandFailure> Pane::show_message(std::string_view text) const {
-#if defined(_WIN32)
-  static_cast<void>(text);
-  return unexpected(unsupported("psmux cannot safely target a pane message"));
-#else
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux cannot safely target a pane message")) {
+    return unexpected(std::move(*refusal));
+  }
   std::vector<std::string> command{"display-message", "-t", pane_target(*this)};
   detail::append_display_message_text(command, std::string{text});
   return effect(run(command));
-#endif
 }
 
 expected<std::string, CommandFailure> Pane::expand(std::string_view format) const {
@@ -1429,11 +1413,11 @@ expected<std::string, CommandFailure> Pane::expand(std::string_view format) cons
 }
 
 expected<void, CommandFailure> Pane::kill() const {
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux cannot atomically kill a captured pane"));
-#else
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux cannot atomically kill a captured pane")) {
+    return unexpected(std::move(*refusal));
+  }
   return effect(run({"kill-pane", "-t", pane_target(*this)}));
-#endif
 }
 
 expected<Pane, CommandFailure> Pane::refresh() const {
@@ -1442,43 +1426,39 @@ expected<Pane, CommandFailure> Pane::refresh() const {
 }
 
 expected<std::vector<OptionEntry>, CommandFailure> Pane::options() const {
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux does not implement pane options"));
-#else
+  if (auto refusal = refused(ServerFeature::server_state,
+                             "psmux does not implement pane options")) {
+    return unexpected(std::move(*refusal));
+  }
   return listed(run(scoped("show-options", "-p", pane_target(*this), {"-A"})));
-#endif
 }
 
 expected<OptionEntry, CommandFailure> Pane::option(std::string_view name) const {
-#if defined(_WIN32)
-  static_cast<void>(name);
-  return unexpected(unsupported("psmux does not implement pane options"));
-#else
+  if (auto refusal = refused(ServerFeature::server_state,
+                             "psmux does not implement pane options")) {
+    return unexpected(std::move(*refusal));
+  }
   return named(run(scoped("show-options", "-p", pane_target(*this), {"-A", name})),
                name);
-#endif
 }
 
 expected<void, CommandFailure> Pane::set_option(std::string_view name,
                                                 std::string_view value) const {
-#if defined(_WIN32)
-  static_cast<void>(name);
-  static_cast<void>(value);
-  return unexpected(unsupported("psmux does not implement pane options"));
-#else
+  if (auto refusal = refused(ServerFeature::server_state,
+                             "psmux does not implement pane options")) {
+    return unexpected(std::move(*refusal));
+  }
   CommandRequest command = scoped("set-option", "-p", pane_target(*this), {name});
   command.push_back(CommandArgument::sensitive(std::string{value}));
   return effect(run(command));
-#endif
 }
 
 expected<void, CommandFailure> Pane::unset_option(std::string_view name) const {
-#if defined(_WIN32)
-  static_cast<void>(name);
-  return unexpected(unsupported("psmux does not implement pane options"));
-#else
+  if (auto refusal = refused(ServerFeature::server_state,
+                             "psmux does not implement pane options")) {
+    return unexpected(std::move(*refusal));
+  }
   return effect(run(scoped("set-option", "-p", pane_target(*this), {"-u", name})));
-#endif
 }
 
 // --- Client ----------------------------------------------------------------
@@ -1487,73 +1467,72 @@ expected<void, CommandFailure> Pane::paste(const Buffer& buffer, bool consume) c
   if (from_different_servers(*this, buffer)) {
     return unexpected(crossed_servers());
   }
-#if defined(_WIN32)
-  static_cast<void>(consume);
-  return unexpected(unsupported("psmux buffers are separate in each session"));
-#else
+  if (auto refusal = refused(ServerFeature::server_state,
+                             "psmux buffers are separate in each session")) {
+    return unexpected(std::move(*refusal));
+  }
   std::vector<std::string> command{"paste-buffer", "-t", pane_target(*this), "-b",
                                    std::string{buffer.name()}};
   if (consume) {
     command.emplace_back("-d");
   }
   return effect(run(command));
-#endif
 }
 
 expected<std::string, CommandFailure> Buffer::contents() const {
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux buffers are separate in each session"));
-#else
+  if (auto refusal = refused(ServerFeature::server_state,
+                             "psmux buffers are separate in each session")) {
+    return unexpected(std::move(*refusal));
+  }
   return run({"show-buffer", "-b", std::string{name()}});
-#endif
 }
 
 expected<void, CommandFailure> Buffer::remove() const {
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux buffers are separate in each session"));
-#else
+  if (auto refusal = refused(ServerFeature::server_state,
+                             "psmux buffers are separate in each session")) {
+    return unexpected(std::move(*refusal));
+  }
   return effect(run({"delete-buffer", "-b", std::string{name()}}));
-#endif
 }
 
 expected<Session, CommandFailure> Client::session() const {
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux client handles are not session-routed"));
-#else
+  if (auto refusal = refused(ServerFeature::server_state,
+                             "psmux client handles are not session-routed")) {
+    return unexpected(std::move(*refusal));
+  }
   // A client is targeted by name with -c, and the session it is looking at is
   // the one a format query in its context reports.
   return detail::one_entity<Session>(
       backend(), {"display-message", "-p", "-c", std::string{name()}},
       FormatArgument::message, name());
-#endif
 }
 
 expected<void, CommandFailure> Client::switch_to(const Session& session) const {
   if (from_different_servers(*this, session)) {
     return unexpected(crossed_servers());
   }
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux client handles are not session-routed"));
-#else
+  if (auto refusal = refused(ServerFeature::server_state,
+                             "psmux client handles are not session-routed")) {
+    return unexpected(std::move(*refusal));
+  }
   return effect(
       run({"switch-client", "-c", std::string{name()}, "-t", session_target(session)}));
-#endif
 }
 
 expected<void, CommandFailure> Client::detach() const {
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux client handles are not session-routed"));
-#else
+  if (auto refusal = refused(ServerFeature::server_state,
+                             "psmux client handles are not session-routed")) {
+    return unexpected(std::move(*refusal));
+  }
   return effect(run({"detach-client", "-t", std::string{name()}}));
-#endif
 }
 
 expected<void, CommandFailure> Client::refresh() const {
-#if defined(_WIN32)
-  return unexpected(unsupported("psmux client handles are not session-routed"));
-#else
+  if (auto refusal = refused(ServerFeature::server_state,
+                             "psmux client handles are not session-routed")) {
+    return unexpected(std::move(*refusal));
+  }
   return effect(run({"refresh-client", "-t", std::string{name()}}));
-#endif
 }
 
 // --- Printing and hashing --------------------------------------------------

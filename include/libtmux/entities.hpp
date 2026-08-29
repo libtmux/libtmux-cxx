@@ -22,6 +22,7 @@
 // an older server instead of failing.
 
 #include "libtmux/abi.hpp"
+#include "libtmux/capabilities.hpp"
 #include "libtmux/command.hpp"
 #include "libtmux/expected.hpp"
 #include <array>
@@ -213,6 +214,12 @@ protected:
   [[nodiscard]] expected<std::string, CommandFailure>
   run(const CommandRequest& command,
       std::optional<std::size_t> output_limit = {}) const;
+
+  // The refusal to return when this server is known to get `feature` wrong,
+  // and nothing when it is not. `why` says what it does instead, which is the
+  // part a caller cannot look up.
+  [[nodiscard]] std::optional<CommandFailure> refused(ServerFeature feature,
+                                                      std::string_view why) const;
 
 public:
   // The server this entity came from, for a command the typed surface does not

@@ -49,6 +49,14 @@ public:
                   libtmux::ExecutionPolicy policy = {})
       : Backend{{}, policy}, replies_{std::move(replies)}, version_{version} {}
 
+  // Stands in for an implementation, so a refusal only Windows would meet is
+  // reachable here. Unrecognised by default, which is what a custom executor
+  // reports.
+  libtmux::ServerCapabilities declared{};
+  [[nodiscard]] libtmux::ServerCapabilities capabilities() const noexcept override {
+    return declared;
+  }
+
   expected<std::string, CommandFailure>
   run(const libtmux::CommandRequest& command,
       std::optional<std::chrono::milliseconds> timeout,
@@ -216,6 +224,42 @@ TEST(BackendSeam, EveryOperationSendsTheArgvItClaimsTo) {
   EXPECT_EQ(backend->issued[2], (std::vector<std::string>{"set-option", "-t", "$0",
                                                           "status-position", "top"}));
   EXPECT_EQ(backend->issued[3], (std::vector<std::string>{"kill-session", "-t", "$0"}));
+}
+
+// psmux refuses what it cannot target safely, and until now that answer only
+// existed in a Windows build. Declaring the implementation reaches it here.
+TEST(BackendSeam, APsmuxServerRefusesNavigationWithoutDispatching) {
+  auto backend = std::make_shared<ScriptedBackend>(
+      std::vector<std::string>{session_row("$7", "work"), ""});
+  backend->declared = {.implementation = libtmux::ServerImplementation::psmux,
+                       .backend = libtmux::BackendKind::subprocess};
+  const Server server = libtmux::detail::server_over(backend);
+  const auto sessions = server.sessions();
+  ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
+  const auto listed = backend->issued.size();
+
+  const auto moved = sessions->front().select_next_window();
+
+  ASSERT_FALSE(moved.has_value());
+  EXPECT_EQ(moved.error().kind, libtmux::FailureKind::unsupported);
+  EXPECT_EQ(moved.error().delivery, libtmux::DeliveryStatus::not_started);
+  EXPECT_NE(moved.error().diagnostic.find("session navigation"), std::string::npos);
+  EXPECT_EQ(backend->issued.size(), listed) << "refused after dispatching";
+}
+
+// The same call over a backend nobody recognises still runs: unfamiliar is not
+// the same as known-broken.
+TEST(BackendSeam, AnUnrecognisedBackendIsNotRefused) {
+  auto backend = std::make_shared<ScriptedBackend>(
+      std::vector<std::string>{session_row("$7", "work"), "", ""});
+  const Server server = libtmux::detail::server_over(backend);
+  const auto sessions = server.sessions();
+  ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
+  const auto listed = backend->issued.size();
+
+  static_cast<void>(sessions->front().select_next_window());
+
+  EXPECT_GT(backend->issued.size(), listed);
 }
 
 TEST(BackendSeam, AnEntityTargetsItsIdRatherThanItsName) {
