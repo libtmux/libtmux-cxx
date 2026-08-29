@@ -241,7 +241,11 @@ std::size_t CompletionQueue::run_ready() {
       if (core->ready_count == 0U) {
         break;
       }
-      const auto head = core->records.find(*core->ready_head);
+      const auto ready_head = core->ready_head;
+      if (!ready_head) {
+        break;
+      }
+      const auto head = core->records.find(*ready_head);
       assert(head != core->records.end());
       if (head->second->ready_generation > cutoff_generation) {
         break;
