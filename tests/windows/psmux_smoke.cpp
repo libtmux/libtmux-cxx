@@ -714,7 +714,7 @@ private:
 class ReboundSessionBackend final : public libtmux::detail::Backend {
 public:
   libtmux::expected<std::string, CommandFailure>
-  run(const std::vector<std::string>&, std::optional<std::chrono::milliseconds>,
+  run(const libtmux::CommandRequest&, std::optional<std::chrono::milliseconds>,
       std::optional<std::size_t>) const override {
     return libtmux::unexpected(
         CommandFailure{.kind = libtmux::FailureKind::refused,
@@ -724,7 +724,7 @@ public:
   }
 
   libtmux::expected<std::string, CommandFailure>
-  run_in_session(const std::vector<std::string>&, std::string_view, std::string_view,
+  run_in_session(const libtmux::CommandRequest&, std::string_view, std::string_view,
                  std::optional<std::chrono::milliseconds>,
                  std::optional<std::size_t>) const override {
     const std::string separator{libtmux::kFormatSeparator};

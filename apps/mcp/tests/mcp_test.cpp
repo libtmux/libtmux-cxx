@@ -36,7 +36,7 @@ public:
   explicit DeadlineBackend(std::chrono::milliseconds delay) : delay_{delay} {}
 
   libtmux::expected<std::string, libtmux::CommandFailure>
-  run(const std::vector<std::string>& command,
+  run(const libtmux::CommandRequest& command,
       std::optional<std::chrono::milliseconds> timeout,
       std::optional<std::size_t>) const override {
     timeouts_.push_back(timeout);
@@ -56,11 +56,12 @@ public:
                                   .exit_code = 0,
                                   .diagnostic = "empty scripted command"});
     }
-    if (command.front() == "capture-pane") {
+    const std::vector<std::string> argv = command.argv();
+    if (argv.front() == "capture-pane") {
       return "visible text without the marker\n";
     }
-    if (command.front() == "display-message" &&
-        command.back().find("pane_id") != std::string::npos) {
+    if (argv.front() == "display-message" &&
+        argv.back().find("pane_id") != std::string::npos) {
       std::string row{"%1"};
       row += libtmux::kFormatSeparator;
       row += "mcp";
@@ -68,7 +69,7 @@ public:
       row += '\n';
       return row;
     }
-    if (command.front() == "display-message" && command.back() == "#{socket_path}") {
+    if (argv.front() == "display-message" && argv.back() == "#{socket_path}") {
       return "\n";
     }
     return libtmux::unexpected(

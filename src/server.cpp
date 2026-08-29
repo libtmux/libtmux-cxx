@@ -219,7 +219,7 @@ ServerCapabilities Server::capabilities() const noexcept {
 }
 
 expected<std::string, CommandFailure>
-Server::run(const std::vector<std::string>& command,
+Server::run(const CommandRequest& command,
             std::optional<std::chrono::milliseconds> timeout,
             std::optional<std::size_t> output_limit) const {
   // The policy fills in what the call did not say. Applied here rather than in
@@ -708,12 +708,12 @@ expected<void, CommandFailure> Server::run_shell(std::string_view command,
   static_cast<void>(background);
   return unexpected(unsupported_psmux_state("run-shell state"));
 #else
-  std::vector<std::string> argv{"run-shell"};
+  CommandRequest argv{"run-shell"};
   if (background) {
     argv.emplace_back("-b");
   }
   argv.emplace_back("--");
-  argv.emplace_back(command);
+  argv.push_back(CommandArgument::sensitive(std::string{command}));
   return applied(run(argv));
 #endif
 }
@@ -884,7 +884,7 @@ expected<Session, CommandFailure> Server::new_session(NewSessionOptions options)
       .diagnostic = "psmux cannot prove ownership of a concurrently created session; "
                     "create it with the psmux CLI and reacquire it from this Server"});
 #else
-  std::vector<std::string> command{"new-session", "-d", "-P", "-s", options.name};
+  CommandRequest command{"new-session", "-d", "-P", "-s", options.name};
   if (!options.first_window_name.empty()) {
     command.emplace_back("-n");
     command.push_back(options.first_window_name);
@@ -907,7 +907,7 @@ expected<Session, CommandFailure> Server::new_session(NewSessionOptions options)
   }
   if (!options.shell_command.empty()) {
     command.emplace_back("--");
-    command.push_back(std::move(options.shell_command));
+    command.push_back(CommandArgument::sensitive(std::move(options.shell_command)));
   }
   auto created = detail::one_entity<Session>(backend_, std::move(command),
                                              FormatArgument::flag, options.name);
@@ -940,7 +940,9 @@ expected<void, CommandFailure> Server::set_server_option(std::string_view name,
   static_cast<void>(value);
   return unexpected(unsupported_psmux_state("server options"));
 #else
-  return applied(run({"set-option", "-s", std::string{name}, std::string{value}}));
+  CommandRequest command{"set-option", "-s", std::string{name}};
+  command.push_back(CommandArgument::sensitive(std::string{value}));
+  return applied(run(command));
 #endif
 }
 
@@ -959,7 +961,9 @@ expected<void, CommandFailure> Server::set_global_option(std::string_view name,
   static_cast<void>(value);
   return unexpected(unsupported_psmux_state("global options"));
 #else
-  return applied(run({"set-option", "-g", std::string{name}, std::string{value}}));
+  CommandRequest command{"set-option", "-g", std::string{name}};
+  command.push_back(CommandArgument::sensitive(std::string{value}));
+  return applied(run(command));
 #endif
 }
 
@@ -988,7 +992,9 @@ expected<void, CommandFailure> Server::set_global_hook(std::string_view name,
   static_cast<void>(command);
   return unexpected(unsupported_psmux_state("global hooks"));
 #else
-  return applied(run({"set-hook", "-g", std::string{name}, std::string{command}}));
+  CommandRequest request{"set-hook", "-g", std::string{name}};
+  request.push_back(CommandArgument::sensitive(std::string{command}));
+  return applied(run(request));
 #endif
 }
 

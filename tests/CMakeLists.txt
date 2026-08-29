@@ -414,6 +414,8 @@ set_tests_properties(
   libtmux.backend_seam PROPERTIES LABELS "libtmux" TIMEOUT 30)
 
 add_executable(libtmux_control_dispatch_test control_dispatch_test.cpp)
+target_include_directories(
+  libtmux_control_dispatch_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(
   libtmux_control_dispatch_test
   PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux

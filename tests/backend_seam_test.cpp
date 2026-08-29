@@ -50,10 +50,10 @@ public:
       : Backend{{}, policy}, replies_{std::move(replies)}, version_{version} {}
 
   expected<std::string, CommandFailure>
-  run(const std::vector<std::string>& command,
+  run(const libtmux::CommandRequest& command,
       std::optional<std::chrono::milliseconds> timeout,
       std::optional<std::size_t> output_limit) const override {
-    issued.push_back(command);
+    issued.push_back(command.argv());
     command_timeouts.push_back(timeout);
     command_output_limits.push_back(output_limit);
     std::this_thread::sleep_for(delay);
@@ -68,12 +68,22 @@ public:
     return reply;
   }
 
+  CommandFailure report(CommandFailure failure,
+                        const libtmux::CommandRequest& command) const {
+    return report_failure(command, std::move(failure)).error();
+  }
+
   expected<std::string, CommandFailure>
   run_batch(const libtmux::CommandBatch& batch,
             std::optional<std::chrono::milliseconds> timeout,
             std::optional<std::size_t> output_limit) const override {
-    batches.push_back(batch.commands());
-    return run(batch.argv(), timeout, output_limit);
+    std::vector<std::vector<std::string>> commands;
+    commands.reserve(batch.commands().size());
+    for (const libtmux::CommandRequest& command : batch.commands()) {
+      commands.push_back(command.argv());
+    }
+    batches.push_back(std::move(commands));
+    return run(batch.request(), timeout, output_limit);
   }
 
   const std::vector<std::string>& connection() const noexcept override {
@@ -806,13 +816,58 @@ TEST(BackendSeam, SnapshotFormattingPrecedesTheCommandTerminator) {
 
 TEST(BackendSeam, InvalidEnvironmentNamesFailBeforeDispatch) {
   for (const std::string& name : {std::string{}, std::string{"BAD=NAME"}}) {
-    std::vector<std::string> command{"new-session"};
+    libtmux::CommandRequest command{"new-session"};
     const auto appended =
         libtmux::detail::append_environment(command, {{name, "value"}});
     ASSERT_FALSE(appended.has_value());
     EXPECT_FALSE(appended.error().dispatched);
-    EXPECT_EQ(command, (std::vector<std::string>{"new-session"}));
+    EXPECT_EQ(command.argv(), (std::vector<std::string>{"new-session"}));
   }
+}
+
+TEST(BackendSeam, ACompositeArgumentRedactsItsSensitivePart) {
+  auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{});
+  const std::string secret{"sensitive-part-only"};
+  libtmux::CommandRequest command{"new-session", "-e"};
+  constexpr std::string_view prefix{"PUBLIC_NAME="};
+  command.push_back(libtmux::CommandArgument::sensitive_range(
+      std::string{prefix} + secret, prefix.size(), secret.size()));
+  libtmux::CommandRequest copied = command;
+  libtmux::CommandRequest moved = std::move(copied);
+
+  const auto scrubbed = backend->report(
+      CommandFailure{.diagnostic = "tmux rejected value " + secret}, moved);
+
+  EXPECT_EQ(scrubbed.diagnostic.find(secret), std::string::npos) << scrubbed.diagnostic;
+  EXPECT_NE(scrubbed.diagnostic.find("[REDACTED]"), std::string::npos)
+      << scrubbed.diagnostic;
+  const std::string rendered = libtmux::detail::rendered_command(moved);
+  EXPECT_EQ(rendered.find(secret), std::string::npos) << rendered;
+  EXPECT_NE(rendered.find("PUBLIC_NAME="), std::string::npos) << rendered;
+}
+
+TEST(BackendSeam, ASecretCannotReappearThroughTheRedactionMarker) {
+  auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{});
+  const std::string secret{"[REDACTED]"};
+  libtmux::CommandRequest command{"display-message"};
+  command.push_back(libtmux::CommandArgument::sensitive(secret));
+
+  const auto failure =
+      backend->report(CommandFailure{.diagnostic = "tmux repeated " + secret}, command);
+  const std::string rendered = libtmux::detail::rendered_command(command);
+
+  EXPECT_EQ(failure.diagnostic.find(secret), std::string::npos) << failure.diagnostic;
+  EXPECT_EQ(rendered.find(secret), std::string::npos) << rendered;
+}
+
+TEST(BackendSeam, AnInvalidEmptySensitiveRangeFailsClosed) {
+  libtmux::CommandRequest command{"display-message"};
+  command.push_back(
+      libtmux::CommandArgument::sensitive_range("must-stay-private", 99U, 0U));
+
+  const std::string rendered = libtmux::detail::rendered_command(command);
+
+  EXPECT_EQ(rendered.find("must-stay-private"), std::string::npos) << rendered;
 }
 
 TEST(BackendSeam, UnreadableKeyTablesFailBeforeDispatch) {

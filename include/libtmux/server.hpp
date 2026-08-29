@@ -96,7 +96,7 @@ public:
   // reads like a complete answer. Unset uses the package default, which is
   // ample for every listing and can be too small for a long scrollback.
   [[nodiscard]] expected<std::string, CommandFailure>
-  run(const std::vector<std::string>& command,
+  run(const CommandRequest& command,
       std::optional<std::chrono::milliseconds> timeout = {},
       std::optional<std::size_t> output_limit = {}) const;
 

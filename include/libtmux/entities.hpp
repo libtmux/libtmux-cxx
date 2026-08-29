@@ -211,7 +211,7 @@ protected:
   // Run a command for this entity. An entity read out of a recording has no
   // server to run it against, and says so rather than doing nothing.
   [[nodiscard]] expected<std::string, CommandFailure>
-  run(const std::vector<std::string>& command,
+  run(const CommandRequest& command,
       std::optional<std::size_t> output_limit = {}) const;
 
 public:

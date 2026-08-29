@@ -22,7 +22,7 @@
 LIBTMUX_NAMESPACE_BEGIN
 
 expected<std::string, CommandFailure>
-detail::Row::run(const std::vector<std::string>& command,
+detail::Row::run(const CommandRequest& command,
                  std::optional<std::size_t> output_limit) const {
   if (backend() == nullptr) {
     return unexpected(detail::disconnected());
@@ -289,8 +289,8 @@ expected<Window, CommandFailure> Session::new_window(NewWindowOptions options) c
   if (options.index.has_value()) {
     target += ":" + std::to_string(*options.index);
   }
-  std::vector<std::string> command{"new-window", "-t", std::move(target),
-                                   "-P",         "-n", options.name};
+  CommandRequest command{"new-window", "-t", std::move(target),
+                         "-P",         "-n", options.name};
   if (!options.focus) {
     command.emplace_back("-d");
   }
@@ -309,7 +309,7 @@ expected<Window, CommandFailure> Session::new_window(NewWindowOptions options) c
     // Positional, so it goes last and after `--`: a command beginning with a
     // dash is data here, not a flag of new-window.
     command.emplace_back("--");
-    command.push_back(std::move(options.shell_command));
+    command.push_back(CommandArgument::sensitive(std::move(options.shell_command)));
   }
   return detail::one_entity<Window>(backend(), std::move(command), FormatArgument::flag,
                                     options.name, {}, session_route(*this));
@@ -372,7 +372,9 @@ expected<void, CommandFailure> Session::set_option(std::string_view name,
   static_cast<void>(value);
   return unexpected(unsupported("psmux cannot atomically set a session option"));
 #else
-  return effect(run(scoped("set-option", {}, session_target(*this), {name, value})));
+  CommandRequest command = scoped("set-option", {}, session_target(*this), {name});
+  command.push_back(CommandArgument::sensitive(std::string{value}));
+  return effect(run(command));
 #endif
 }
 
@@ -448,8 +450,9 @@ expected<void, CommandFailure> Session::set_hook(std::string_view name,
   static_cast<void>(command);
   return unexpected(unsupported("psmux cannot atomically set a session hook"));
 #else
-  return effect(run({"set-hook", "-t", session_target(*this), std::string{name},
-                     std::string{command}}));
+  CommandRequest request{"set-hook", "-t", session_target(*this), std::string{name}};
+  request.push_back(CommandArgument::sensitive(std::string{command}));
+  return effect(run(request));
 #endif
 }
 
@@ -560,8 +563,7 @@ expected<Pane, CommandFailure> Window::split(SplitOptions options) const {
 #if defined(_WIN32)
   return unexpected(unsupported("psmux cannot safely target split-window"));
 #else
-  std::vector<std::string> command{"split-window", "-t", window_command_target(*this),
-                                   "-P"};
+  CommandRequest command{"split-window", "-t", window_command_target(*this), "-P"};
   if (!options.focus) {
     command.emplace_back("-d");
   }
@@ -591,7 +593,7 @@ expected<Pane, CommandFailure> Window::split(SplitOptions options) const {
   }
   if (!options.shell_command.empty()) {
     command.emplace_back("--");
-    command.push_back(std::move(options.shell_command));
+    command.push_back(CommandArgument::sensitive(std::move(options.shell_command)));
   }
   return detail::one_entity<Pane>(backend(), std::move(command), FormatArgument::flag,
                                   id(), {}, session_route(*this));
@@ -800,8 +802,10 @@ expected<void, CommandFailure> Window::set_option(std::string_view name,
   static_cast<void>(value);
   return unexpected(unsupported("psmux does not provide window-scoped options"));
 #else
-  return effect(
-      run(scoped("set-option", "-w", window_command_target(*this), {name, value})));
+  CommandRequest command =
+      scoped("set-option", "-w", window_command_target(*this), {name});
+  command.push_back(CommandArgument::sensitive(std::string{value}));
+  return effect(run(command));
 #endif
 }
 
@@ -1276,9 +1280,9 @@ expected<void, CommandFailure> Pane::pipe_to(std::string_view command) const {
 #if defined(_WIN32)
   return unexpected(unsupported("psmux cannot safely target pipe-pane"));
 #else
-  std::vector<std::string> argv{"pipe-pane", "-t", pane_target(*this)};
+  CommandRequest argv{"pipe-pane", "-t", pane_target(*this)};
   argv.emplace_back("--");
-  argv.emplace_back(command);
+  argv.push_back(CommandArgument::sensitive(std::string{command}));
   return effect(run(argv));
 #endif
 }
@@ -1389,7 +1393,9 @@ expected<void, CommandFailure> Pane::set_option(std::string_view name,
   static_cast<void>(value);
   return unexpected(unsupported("psmux does not implement pane options"));
 #else
-  return effect(run(scoped("set-option", "-p", pane_target(*this), {name, value})));
+  CommandRequest command = scoped("set-option", "-p", pane_target(*this), {name});
+  command.push_back(CommandArgument::sensitive(std::string{value}));
+  return effect(run(command));
 #endif
 }
 

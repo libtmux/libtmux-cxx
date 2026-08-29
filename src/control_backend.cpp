@@ -39,8 +39,8 @@ ControlRequest batch_request(const CommandBatch& batch) {
   // The protocol separator belongs between operations; flattening it into an
   // argv makes tmux read the remaining commands as arguments to the first.
   ControlRequest request;
-  for (const std::vector<std::string>& command : batch.commands()) {
-    request.group.push_back(ControlCommand{command});
+  for (const CommandRequest& command : batch.commands()) {
+    request.group.push_back(ControlCommand{command.argv()});
   }
   return request;
 }
@@ -127,15 +127,14 @@ ControlBackend::open(std::vector<std::string> selector, std::string socket_path,
 }
 
 expected<std::string, CommandFailure>
-ControlBackend::run(const std::vector<std::string>& command,
+ControlBackend::run(const CommandRequest& command,
                     std::optional<std::chrono::milliseconds> timeout,
                     std::optional<std::size_t> output_limit) const {
   ControlRequest request;
-  request.group.push_back(ControlCommand{command});
+  request.group.push_back(ControlCommand{command.argv()});
 
   const auto reported = [this, &command](CommandFailure failure) {
-    observe(command, &failure);
-    return unexpected(std::move(failure));
+    return report_failure(command, std::move(failure));
   };
   if (auto unsafe = control_request::unsafe(request); unsafe.has_value()) {
     return reported(carried(FailureKind::validation, false, std::move(*unsafe)));
@@ -207,11 +206,11 @@ ControlBackend::run(const std::vector<std::string>& command,
 }
 
 expected<std::string, CommandFailure>
-ControlBackend::run_inserted(const std::vector<std::string>& command,
+ControlBackend::run_inserted(const CommandRequest& command,
                              std::optional<std::chrono::milliseconds> timeout,
                              std::optional<std::size_t> output_limit) const {
   ControlRequest request;
-  request.group.push_back(ControlCommand{command});
+  request.group.push_back(ControlCommand{command.argv()});
   const auto deadline = timeout.has_value()
                             ? std::chrono::steady_clock::now() + *timeout
                             : std::chrono::steady_clock::time_point::max();
@@ -224,9 +223,7 @@ ControlBackend::run_inserted(const std::vector<std::string>& command,
 
   auto reply = inserted_command_reply(result, output_limit);
   if (!reply.has_value()) {
-    CommandFailure failure = reply.error();
-    observe(command, &failure);
-    return unexpected(std::move(failure));
+    return report_failure(command, reply.error());
   }
   observe(command, nullptr);
   return reply;
@@ -237,11 +234,10 @@ ControlBackend::run_batch(const CommandBatch& batch,
                           std::optional<std::chrono::milliseconds> timeout,
                           std::optional<std::size_t> output_limit) const {
   ControlRequest request = batch_request(batch);
-  const std::vector<std::string> observed = batch.argv();
+  const CommandRequest observed = batch.request();
 
   const auto reported = [this, &observed](CommandFailure failure) {
-    observe(observed, &failure);
-    return unexpected(std::move(failure));
+    return report_failure(observed, std::move(failure));
   };
   if (auto unsafe = control_request::unsafe(request); unsafe.has_value()) {
     return reported(carried(FailureKind::validation, false, std::move(*unsafe)));

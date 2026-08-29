@@ -148,7 +148,7 @@ The local backend contract; no command runs. `tmux_version()` separately queries
 #### `Server::run`
 
 ```cpp
-[[nodiscard]] expected<std::string, CommandFailure> run(const std::vector<std::string>& command, std::optional<std::chrono::milliseconds> timeout = {}, std::optional<std::size_t> output_limit = {}) const;
+[[nodiscard]] expected<std::string, CommandFailure> run(const CommandRequest& command, std::optional<std::chrono::milliseconds> timeout = {}, std::optional<std::size_t> output_limit = {}) const;
 ```
 Run one command and return its standard output.  The timeout still rides on the call: how long a caller will wait is a property of what they asked for, and listing sessions does not share a deadline with attaching a client. Unset takes the server's `ExecutionPolicy`, which is thirty seconds rather than forever — a floor, not a guess at what this particular command needs. `output_limit` bounds how much of tmux's answer this call will hold. Past it the command reports `truncated` rather than returning a prefix that reads like a complete answer. Unset uses the package default, which is ample for every listing and can be too small for a long scrollback.
 
@@ -3052,7 +3052,7 @@ class Snapshot;
 #### `Snapshot::take`
 
 ```cpp
-[[nodiscard]] static expected<std::shared_ptr<const Snapshot>, CommandFailure> take(std::shared_ptr<const detail::Backend> backend, std::span<const std::string_view> fields, std::vector<std::string> request, FormatArgument placement = FormatArgument::flag);
+[[nodiscard]] static expected<std::shared_ptr<const Snapshot>, CommandFailure> take(std::shared_ptr<const detail::Backend> backend, std::span<const std::string_view> fields, CommandRequest request, FormatArgument placement = FormatArgument::flag);
 ```
 Run `request` with this entity's fields appended and parse what came back. Rows are parsed once, here: entities hold views into them, so a second parse would invalidate every entity already handed out.
 
@@ -3060,14 +3060,14 @@ Run `request` with this entity's fields appended and parse what came back. Rows 
 #### `Snapshot::take_in_session`
 
 ```cpp
-[[nodiscard]] static expected<std::shared_ptr<const Snapshot>, CommandFailure> take_in_session(std::shared_ptr<const detail::Backend> backend, std::span<const std::string_view> fields, std::vector<std::string> request, FormatArgument placement, std::string_view session_id, std::string_view session_name);
+[[nodiscard]] static expected<std::shared_ptr<const Snapshot>, CommandFailure> take_in_session(std::shared_ptr<const detail::Backend> backend, std::span<const std::string_view> fields, CommandRequest request, FormatArgument placement, std::string_view session_id, std::string_view session_name);
 ```
 
 <a id="libtmux-snapshot-hpp-snapshot-take-in-session-2"></a>
 #### `Snapshot::take_in_session`
 
 ```cpp
-[[nodiscard]] static expected<std::shared_ptr<const Snapshot>, CommandFailure> take_in_session(std::shared_ptr<const detail::Backend> backend, std::span<const std::string_view> fields, std::vector<std::string> request, FormatArgument placement, std::string_view session_id, std::string_view session_name, std::optional<std::chrono::milliseconds> timeout, std::optional<std::size_t> output_limit);
+[[nodiscard]] static expected<std::shared_ptr<const Snapshot>, CommandFailure> take_in_session(std::shared_ptr<const detail::Backend> backend, std::span<const std::string_view> fields, CommandRequest request, FormatArgument placement, std::string_view session_id, std::string_view session_name, std::optional<std::chrono::milliseconds> timeout, std::optional<std::size_t> output_limit);
 ```
 
 <a id="libtmux-snapshot-hpp-snapshot-from-recording"></a>
@@ -4060,6 +4060,31 @@ Why a tmux command produced no answer.  `refused` means tmux ran and said no; `m
   - [`CommandFailure::dispatched`](#libtmux-command-hpp-commandfailure-dispatched)
   - [`CommandFailure::exit_code`](#libtmux-command-hpp-commandfailure-exit-code)
   - [`CommandFailure::diagnostic`](#libtmux-command-hpp-commandfailure-diagnostic)
+- [`ArgumentSensitivity`](#libtmux-command-hpp-argumentsensitivity)
+  - [`ArgumentSensitivity::public_value`](#libtmux-command-hpp-argumentsensitivity-public-value)
+  - [`ArgumentSensitivity::secret`](#libtmux-command-hpp-argumentsensitivity-secret)
+- [`CommandArgument`](#libtmux-command-hpp-commandargument)
+  - [`CommandArgument::CommandArgument`](#libtmux-command-hpp-commandargument-commandargument)
+  - [`CommandArgument::CommandArgument`](#libtmux-command-hpp-commandargument-commandargument-2)
+  - [`CommandArgument::CommandArgument`](#libtmux-command-hpp-commandargument-commandargument-3)
+  - [`CommandArgument::sensitive`](#libtmux-command-hpp-commandargument-sensitive)
+  - [`CommandArgument::sensitive_range`](#libtmux-command-hpp-commandargument-sensitive-range)
+  - [`CommandArgument::value`](#libtmux-command-hpp-commandargument-value)
+  - [`CommandArgument::sensitivity`](#libtmux-command-hpp-commandargument-sensitivity)
+  - [`CommandArgument::sensitive_parts`](#libtmux-command-hpp-commandargument-sensitive-parts)
+- [`CommandRequest`](#libtmux-command-hpp-commandrequest)
+  - [`CommandRequest::CommandRequest`](#libtmux-command-hpp-commandrequest-commandrequest)
+  - [`CommandRequest::CommandRequest`](#libtmux-command-hpp-commandrequest-commandrequest-2)
+  - [`CommandRequest::CommandRequest`](#libtmux-command-hpp-commandrequest-commandrequest-3)
+  - [`CommandRequest::empty`](#libtmux-command-hpp-commandrequest-empty)
+  - [`CommandRequest::size`](#libtmux-command-hpp-commandrequest-size)
+  - [`CommandRequest::reserve`](#libtmux-command-hpp-commandrequest-reserve)
+  - [`CommandRequest::emplace_back`](#libtmux-command-hpp-commandrequest-emplace-back)
+  - [`CommandRequest::emplace_back`](#libtmux-command-hpp-commandrequest-emplace-back-2)
+  - [`CommandRequest::emplace_back`](#libtmux-command-hpp-commandrequest-emplace-back-3)
+  - [`CommandRequest::push_back`](#libtmux-command-hpp-commandrequest-push-back)
+  - [`CommandRequest::arguments`](#libtmux-command-hpp-commandrequest-arguments)
+  - [`CommandRequest::argv`](#libtmux-command-hpp-commandrequest-argv)
 - [`ExecutionPolicy`](#libtmux-command-hpp-executionpolicy)
   - [`ExecutionPolicy::timeout`](#libtmux-command-hpp-executionpolicy-timeout)
   - [`ExecutionPolicy::output_limit`](#libtmux-command-hpp-executionpolicy-output-limit)
@@ -4141,6 +4166,174 @@ int exit_code{};
 std::string diagnostic;
 ```
 
+<a id="libtmux-command-hpp-argumentsensitivity"></a>
+### `ArgumentSensitivity`
+
+```cpp
+enum class ArgumentSensitivity : std::uint8_t;
+```
+
+<a id="libtmux-command-hpp-argumentsensitivity-public-value"></a>
+#### `ArgumentSensitivity::public_value` — `public_value,`
+
+<a id="libtmux-command-hpp-argumentsensitivity-secret"></a>
+#### `ArgumentSensitivity::secret` — `secret,`
+
+<a id="libtmux-command-hpp-commandargument"></a>
+### `CommandArgument`
+
+```cpp
+class CommandArgument;
+```
+
+<a id="libtmux-command-hpp-commandargument-commandargument"></a>
+#### `CommandArgument::CommandArgument`
+
+```cpp
+CommandArgument(const char* value);
+```
+
+<a id="libtmux-command-hpp-commandargument-commandargument-2"></a>
+#### `CommandArgument::CommandArgument`
+
+```cpp
+CommandArgument(std::string value);
+```
+
+<a id="libtmux-command-hpp-commandargument-commandargument-3"></a>
+#### `CommandArgument::CommandArgument`
+
+```cpp
+CommandArgument(std::string_view value);
+```
+
+<a id="libtmux-command-hpp-commandargument-sensitive"></a>
+#### `CommandArgument::sensitive`
+
+```cpp
+[[nodiscard]] static CommandArgument sensitive(std::string value);
+```
+
+<a id="libtmux-command-hpp-commandargument-sensitive-range"></a>
+#### `CommandArgument::sensitive_range`
+
+```cpp
+[[nodiscard]] static CommandArgument sensitive_range(std::string value, std::size_t offset, std::size_t size);
+```
+Keep a composite argument intact on the wire while treating one byte range inside it as sensitive. An invalid range hides the whole argument.
+
+<a id="libtmux-command-hpp-commandargument-value"></a>
+#### `CommandArgument::value`
+
+```cpp
+[[nodiscard]] const std::string& value() const noexcept;
+```
+
+<a id="libtmux-command-hpp-commandargument-sensitivity"></a>
+#### `CommandArgument::sensitivity`
+
+```cpp
+[[nodiscard]] ArgumentSensitivity sensitivity() const noexcept;
+```
+
+<a id="libtmux-command-hpp-commandargument-sensitive-parts"></a>
+#### `CommandArgument::sensitive_parts`
+
+```cpp
+[[nodiscard]] const std::vector<std::string>& sensitive_parts() const noexcept;
+```
+
+<a id="libtmux-command-hpp-commandrequest"></a>
+### `CommandRequest`
+
+```cpp
+class CommandRequest;
+```
+
+<a id="libtmux-command-hpp-commandrequest-commandrequest"></a>
+#### `CommandRequest::CommandRequest`
+
+```cpp
+CommandRequest() = default;
+```
+
+<a id="libtmux-command-hpp-commandrequest-commandrequest-2"></a>
+#### `CommandRequest::CommandRequest`
+
+```cpp
+CommandRequest(std::initializer_list<CommandArgument> arguments);
+```
+
+<a id="libtmux-command-hpp-commandrequest-commandrequest-3"></a>
+#### `CommandRequest::CommandRequest`
+
+```cpp
+CommandRequest(std::vector<std::string> arguments);
+```
+
+<a id="libtmux-command-hpp-commandrequest-empty"></a>
+#### `CommandRequest::empty`
+
+```cpp
+[[nodiscard]] bool empty() const noexcept;
+```
+
+<a id="libtmux-command-hpp-commandrequest-size"></a>
+#### `CommandRequest::size`
+
+```cpp
+[[nodiscard]] std::size_t size() const noexcept;
+```
+
+<a id="libtmux-command-hpp-commandrequest-reserve"></a>
+#### `CommandRequest::reserve`
+
+```cpp
+void reserve(std::size_t size);
+```
+
+<a id="libtmux-command-hpp-commandrequest-emplace-back"></a>
+#### `CommandRequest::emplace_back`
+
+```cpp
+void emplace_back(const char* value);
+```
+
+<a id="libtmux-command-hpp-commandrequest-emplace-back-2"></a>
+#### `CommandRequest::emplace_back`
+
+```cpp
+void emplace_back(std::string value);
+```
+
+<a id="libtmux-command-hpp-commandrequest-emplace-back-3"></a>
+#### `CommandRequest::emplace_back`
+
+```cpp
+void emplace_back(std::string_view value);
+```
+
+<a id="libtmux-command-hpp-commandrequest-push-back"></a>
+#### `CommandRequest::push_back`
+
+```cpp
+void push_back(CommandArgument argument);
+```
+
+<a id="libtmux-command-hpp-commandrequest-arguments"></a>
+#### `CommandRequest::arguments`
+
+```cpp
+[[nodiscard]] const std::vector<CommandArgument>& arguments() const noexcept;
+```
+
+<a id="libtmux-command-hpp-commandrequest-argv"></a>
+#### `CommandRequest::argv`
+
+```cpp
+[[nodiscard]] std::vector<std::string> argv() const;
+```
+
 <a id="libtmux-command-hpp-executionpolicy"></a>
 ### `ExecutionPolicy`
 
@@ -4182,7 +4375,7 @@ Absent leaves the transport's own bound, which is one megabyte.
 ```cpp
 using CommandObserver = std::function<void(std::string_view command, const CommandFailure* failure)>;
 ```
-Told about every command, as it finishes.  There is otherwise no way to see what this library ran: a caller debugging a tmux interaction has only the failures, and nothing at all when things succeed. The command is rendered as tmux received it, with any argument marked sensitive replaced.  Called on the thread that ran the command, while nothing is held, so an observer that itself calls tmux does not deadlock — but one shared between threads has to say so itself.
+Told about every command, as it finishes.  There is otherwise no way to see what this library ran: a caller debugging a tmux interaction has only the failures, and nothing at all when things succeed. The command is rendered as tmux received it, with any argument marked sensitive replaced.  Called on the thread that ran the command, while nothing is held, so an observer that itself calls tmux does not deadlock — but one shared between threads has to say so itself. Both callback arguments expire on return.
 
 <a id="libtmux-options-hpp"></a>
 ## `libtmux/options.hpp`
@@ -5114,6 +5307,7 @@ Build one tmux command sequence from several commands.  tmux accepts multiple co
   - [`CommandBatch::add`](#libtmux-batch-hpp-commandbatch-add)
   - [`CommandBatch::size`](#libtmux-batch-hpp-commandbatch-size)
   - [`CommandBatch::empty`](#libtmux-batch-hpp-commandbatch-empty)
+  - [`CommandBatch::request`](#libtmux-batch-hpp-commandbatch-request)
   - [`CommandBatch::argv`](#libtmux-batch-hpp-commandbatch-argv)
   - [`CommandBatch::commands`](#libtmux-batch-hpp-commandbatch-commands)
 - [`Free symbols`](#libtmux-batch-hpp-free-symbols)
@@ -5130,7 +5324,7 @@ class CommandBatch;
 #### `CommandBatch::add`
 
 ```cpp
-bool add(std::vector<std::string> command);
+bool add(CommandRequest command);
 ```
 Append one command. An empty command is rejected rather than emitted, because an empty argv between separators makes tmux read the next command's name as an argument.
 
@@ -5148,19 +5342,26 @@ Append one command. An empty command is rejected rather than emitted, because an
 [[nodiscard]] bool empty() const noexcept;
 ```
 
+<a id="libtmux-batch-hpp-commandbatch-request"></a>
+#### `CommandBatch::request`
+
+```cpp
+[[nodiscard]] CommandRequest request() const;
+```
+Render the whole batch as one argv. A single command renders with no separator, so a batch of one is byte-identical to running it alone.
+
 <a id="libtmux-batch-hpp-commandbatch-argv"></a>
 #### `CommandBatch::argv`
 
 ```cpp
 [[nodiscard]] std::vector<std::string> argv() const;
 ```
-Render the whole batch as one argv. A single command renders with no separator, so a batch of one is byte-identical to running it alone.
 
 <a id="libtmux-batch-hpp-commandbatch-commands"></a>
 #### `CommandBatch::commands`
 
 ```cpp
-[[nodiscard]] const std::vector<std::vector<std::string>>& commands() const noexcept;
+[[nodiscard]] const std::vector<CommandRequest>& commands() const noexcept;
 ```
 
 <a id="libtmux-batch-hpp-free-symbols"></a>

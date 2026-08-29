@@ -35,7 +35,7 @@ namespace detail {
 // The command as one line, which is what a person reads in a log or in a
 // diagnostic. Bounded: a format request is long, and a caller wanting all of
 // it has the argv already.
-[[nodiscard]] std::string rendered_command(const std::vector<std::string>& command);
+[[nodiscard]] std::string rendered_command(const CommandRequest& command);
 
 class Backend {
 public:
@@ -51,14 +51,13 @@ public:
   // No default argument: a default on a virtual function binds to the static
   // type, so an override could silently disagree about what "no timeout" is.
   [[nodiscard]] virtual expected<std::string, CommandFailure>
-  run(const std::vector<std::string>& command,
-      std::optional<std::chrono::milliseconds> timeout,
+  run(const CommandRequest& command, std::optional<std::chrono::milliseconds> timeout,
       std::optional<std::size_t> output_limit) const = 0;
 
   // Route an entity command through its owning psmux session. POSIX backends
   // already have one server-wide namespace, so their ordinary run is exact.
   [[nodiscard]] virtual expected<std::string, CommandFailure>
-  run_in_session(const std::vector<std::string>& command, std::string_view session_id,
+  run_in_session(const CommandRequest& command, std::string_view session_id,
                  std::string_view session_name,
                  std::optional<std::chrono::milliseconds> timeout,
                  std::optional<std::size_t> output_limit) const {
@@ -77,7 +76,7 @@ public:
   }
 
   [[nodiscard]] expected<std::string, CommandFailure>
-  run(const std::vector<std::string>& command) const {
+  run(const CommandRequest& command) const {
     return run(command, std::nullopt, std::nullopt);
   }
 
@@ -92,7 +91,7 @@ public:
   [[nodiscard]] virtual expected<std::string, CommandFailure>
   run_batch(const CommandBatch& batch, std::optional<std::chrono::milliseconds> timeout,
             std::optional<std::size_t> output_limit) const {
-    return run(batch.argv(), timeout, output_limit);
+    return run(batch.request(), timeout, output_limit);
   }
 
   // The `-L name` or `-S path` pair that selects the server.
@@ -124,7 +123,7 @@ public:
   // A synchronous tmux command inserted by this one writes to subprocess
   // stdout, but control mode frames it as the next reply block.
   [[nodiscard]] virtual expected<std::string, CommandFailure>
-  run_inserted(const std::vector<std::string>& command,
+  run_inserted(const CommandRequest& command,
                std::optional<std::chrono::milliseconds> timeout,
                std::optional<std::size_t> output_limit) const {
     return run(command, timeout, output_limit);
@@ -140,12 +139,17 @@ public:
   [[nodiscard]] const ExecutionPolicy& policy() const noexcept { return policy_; }
 
 protected:
+  [[nodiscard]] expected<std::string, CommandFailure>
+  report_failure(const CommandRequest& command, CommandFailure failure) const;
+
   // Render a command the way tmux received it and hand it to the observer, if
   // there is one. Called after the command finishes and outside any lock.
-  void observe(const std::vector<std::string>& command,
-               const CommandFailure* failure) const;
+  void observe(const CommandRequest& command, const CommandFailure* failure) const;
 
 private:
+  [[nodiscard]] CommandFailure redact(CommandFailure failure,
+                                      const CommandRequest& command) const;
+
   CommandObserver observer_;
   ExecutionPolicy policy_;
 };
@@ -179,12 +183,11 @@ public:
   using Backend::run;
 
   [[nodiscard]] expected<std::string, CommandFailure>
-  run(const std::vector<std::string>& command,
-      std::optional<std::chrono::milliseconds> timeout,
+  run(const CommandRequest& command, std::optional<std::chrono::milliseconds> timeout,
       std::optional<std::size_t> output_limit) const override;
 
   [[nodiscard]] expected<std::string, CommandFailure>
-  run_in_session(const std::vector<std::string>& command, std::string_view session_id,
+  run_in_session(const CommandRequest& command, std::string_view session_id,
                  std::string_view session_name,
                  std::optional<std::chrono::milliseconds> timeout,
                  std::optional<std::size_t> output_limit) const override;
@@ -217,8 +220,7 @@ public:
 
 private:
   [[nodiscard]] expected<std::string, CommandFailure>
-  run_scoped(const std::vector<std::string>& command,
-             std::optional<std::string_view> session,
+  run_scoped(const CommandRequest& command, std::optional<std::string_view> session,
              std::optional<std::chrono::milliseconds> timeout,
              std::optional<std::size_t> output_limit) const;
 

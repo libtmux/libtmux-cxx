@@ -1,6 +1,7 @@
 #pragma once
 
 #include "libtmux/abi.hpp"
+#include "libtmux/command.hpp"
 
 #include <cstddef>
 #include <string>
@@ -9,7 +10,7 @@
 LIBTMUX_NAMESPACE_BEGIN
 namespace detail {
 
-enum class Sensitivity { public_value, secret };
+using Sensitivity = ArgumentSensitivity;
 
 inline constexpr std::size_t default_capture_limit = 1024U * 1024U;
 

@@ -2,6 +2,7 @@
 
 #include "libtmux/batch.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <string_view>
@@ -65,6 +66,56 @@ std::string text(const std::vector<std::byte>& bytes) {
   return out;
 }
 
+std::vector<std::string_view> sensitive_parts(const CommandRequest& command) {
+  std::vector<std::string_view> parts;
+  for (const CommandArgument& argument : command.arguments()) {
+    for (const std::string& part : argument.sensitive_parts()) {
+      if (!part.empty() &&
+          std::ranges::find(parts, std::string_view{part}) == parts.end()) {
+        parts.push_back(part);
+      }
+    }
+  }
+  return parts;
+}
+
+std::string redacted_text(std::string_view text,
+                          const std::vector<std::string_view>& parts) {
+  std::string_view marker{"[REDACTED]"};
+  if (std::ranges::any_of(parts, [marker](const std::string_view part) {
+        return marker.find(part) != std::string_view::npos;
+      })) {
+    marker = {};
+  }
+  std::string result;
+  result.reserve(text.size());
+  std::size_t cursor = 0U;
+  while (cursor < text.size()) {
+    std::size_t match = std::string_view::npos;
+    std::size_t length = 0U;
+    for (const std::string_view part : parts) {
+      const std::size_t candidate = text.find(part, cursor);
+      if (candidate < match || (candidate == match && part.size() > length)) {
+        match = candidate;
+        length = part.size();
+      }
+    }
+    if (match == std::string_view::npos) {
+      result.append(text.substr(cursor));
+      break;
+    }
+    result.append(text.substr(cursor, match - cursor));
+    result.append(marker);
+    cursor = match + length;
+  }
+  if (std::ranges::any_of(parts, [&result](const std::string_view part) {
+        return result.find(part) != std::string::npos;
+      })) {
+    return std::string{marker};
+  }
+  return result;
+}
+
 #if defined(_WIN32)
 std::optional<std::string> psmux_session(const std::vector<std::string>& connection,
                                          std::string_view session) {
@@ -84,14 +135,15 @@ std::optional<std::string> psmux_session(const std::vector<std::string>& connect
 
 } // namespace
 
-std::string rendered_command(const std::vector<std::string>& command) {
+std::string rendered_command(const CommandRequest& command) {
   constexpr std::size_t maximum = 300U;
+  const std::vector<std::string_view> parts = sensitive_parts(command);
   std::string rendered;
-  for (const std::string& argument : command) {
+  for (const CommandArgument& argument : command.arguments()) {
     if (!rendered.empty()) {
       rendered.push_back(' ');
     }
-    rendered += argument;
+    rendered += redacted_text(argument.value(), parts);
     if (rendered.size() > maximum) {
       rendered.resize(maximum);
       rendered += "...";
@@ -101,12 +153,25 @@ std::string rendered_command(const std::vector<std::string>& command) {
   return rendered;
 }
 
-void Backend::observe(const std::vector<std::string>& command,
+void Backend::observe(const CommandRequest& command,
                       const CommandFailure* failure) const {
   if (!observer_) {
     return;
   }
   observer_(rendered_command(command), failure);
+}
+
+CommandFailure Backend::redact(CommandFailure failure,
+                               const CommandRequest& command) const {
+  failure.diagnostic = redacted_text(failure.diagnostic, sensitive_parts(command));
+  return failure;
+}
+
+expected<std::string, CommandFailure>
+Backend::report_failure(const CommandRequest& command, CommandFailure failure) const {
+  failure = redact(std::move(failure), command);
+  observe(command, &failure);
+  return unexpected(std::move(failure));
 }
 
 SubprocessBackend::SubprocessBackend(std::vector<std::string> connection,
@@ -115,27 +180,29 @@ SubprocessBackend::SubprocessBackend(std::vector<std::string> connection,
       identity_{resolved_socket_path(connection_).value_or(std::string{})} {}
 
 expected<std::string, CommandFailure>
-SubprocessBackend::run(const std::vector<std::string>& command,
+SubprocessBackend::run(const CommandRequest& command,
                        std::optional<std::chrono::milliseconds> timeout,
                        std::optional<std::size_t> output_limit) const {
   return run_scoped(command, std::nullopt, timeout, output_limit);
 }
 
 expected<std::string, CommandFailure> SubprocessBackend::run_in_session(
-    const std::vector<std::string>& command, std::string_view session_id,
+    const CommandRequest& command, std::string_view session_id,
     std::string_view session_name, std::optional<std::chrono::milliseconds> timeout,
     std::optional<std::size_t> output_limit) const {
 #if defined(_WIN32)
-  for (const std::string& argument : command) {
-    if (libtmux_psmux::unsafe_command_argument(argument)) {
+  const auto reported = [this, &command](CommandFailure failure) {
+    return report_failure(command, std::move(failure));
+  };
+  for (const CommandArgument& argument : command.arguments()) {
+    if (libtmux_psmux::unsafe_command_argument(argument.value())) {
       CommandFailure failure{
           .kind = FailureKind::validation,
           .dispatched = false,
           .exit_code = 0,
           .diagnostic =
               "psmux cannot preserve semicolons or newlines in typed arguments"};
-      observe(command, &failure);
-      return unexpected(std::move(failure));
+      return reported(std::move(failure));
     }
   }
   if (session_id.empty() || session_name.empty()) {
@@ -144,8 +211,7 @@ expected<std::string, CommandFailure> SubprocessBackend::run_in_session(
                            .exit_code = 0,
                            .diagnostic =
                                "psmux cannot route an entity without its session"};
-    observe(command, &failure);
-    return unexpected(std::move(failure));
+    return reported(std::move(failure));
   }
 
   const auto started = std::chrono::steady_clock::now();
@@ -159,8 +225,7 @@ expected<std::string, CommandFailure> SubprocessBackend::run_in_session(
                            .exit_code = 0,
                            .diagnostic =
                                "tmux has no session " + std::string{session_name}};
-    observe(command, &failure);
-    return unexpected(std::move(failure));
+    return reported(std::move(failure));
   }
   if (timeout.has_value()) {
     const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -171,8 +236,7 @@ expected<std::string, CommandFailure> SubprocessBackend::run_in_session(
                              .exit_code = 0,
                              .diagnostic = "psmux session validation exhausted the "
                                            "command deadline"};
-      observe(command, &failure);
-      return unexpected(std::move(failure));
+      return reported(std::move(failure));
     }
     timeout = *timeout - elapsed;
   }
@@ -211,7 +275,7 @@ expected<bool, CommandFailure> SubprocessBackend::session_belongs(
 }
 
 expected<std::string, CommandFailure>
-SubprocessBackend::run_scoped(const std::vector<std::string>& command,
+SubprocessBackend::run_scoped(const CommandRequest& command,
                               std::optional<std::string_view> session,
                               std::optional<std::chrono::milliseconds> timeout,
                               std::optional<std::size_t> output_limit) const {
@@ -243,8 +307,10 @@ SubprocessBackend::run_scoped(const std::vector<std::string>& command,
   for (const std::string& argument : connection_) {
     request.arguments.push_back(Argument{argument});
   }
-  for (const std::string& argument : command) {
-    request.arguments.push_back(Argument{escaped_argument(argument)});
+  for (const CommandArgument& argument : command.arguments()) {
+    request.arguments.push_back(
+        Argument{escaped_argument(argument.value()),
+                 static_cast<Sensitivity>(argument.sensitivity())});
   }
 
   // `CommandObserver` is told about every command, and these two are the
@@ -252,8 +318,7 @@ SubprocessBackend::run_scoped(const std::vector<std::string>& command,
   // the answer was too big to keep. Returning without a word left exactly the
   // failures a caller is debugging out of the log they turned on to debug them.
   const auto reported = [this, &command](CommandFailure failure) {
-    observe(command, &failure);
-    return unexpected(std::move(failure));
+    return report_failure(command, std::move(failure));
   };
 
   const auto reply = run_process(request);
@@ -296,12 +361,10 @@ SubprocessBackend::run_scoped(const std::vector<std::string>& command,
     // And which command it was: on its own, "can't find session: work" leaves
     // the reader to work out where in their program it came from.
     diagnostic += " (running: " + rendered_command(command) + ")";
-    CommandFailure failure{.kind = FailureKind::refused,
-                           .dispatched = true,
-                           .exit_code = exited == nullptr ? -1 : exited->code,
-                           .diagnostic = std::move(diagnostic)};
-    observe(command, &failure);
-    return unexpected(std::move(failure));
+    return reported(CommandFailure{.kind = FailureKind::refused,
+                                   .dispatched = true,
+                                   .exit_code = exited == nullptr ? -1 : exited->code,
+                                   .diagnostic = std::move(diagnostic)});
   }
   observe(command, nullptr);
   return out;

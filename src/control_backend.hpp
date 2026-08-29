@@ -52,8 +52,7 @@ public:
   using Backend::run;
 
   [[nodiscard]] expected<std::string, CommandFailure>
-  run(const std::vector<std::string>& command,
-      std::optional<std::chrono::milliseconds> timeout,
+  run(const CommandRequest& command, std::optional<std::chrono::milliseconds> timeout,
       std::optional<std::size_t> output_limit) const override;
 
   [[nodiscard]] const std::vector<std::string>& connection() const noexcept override {
@@ -88,7 +87,7 @@ public:
 
 private:
   [[nodiscard]] expected<std::string, CommandFailure>
-  run_inserted(const std::vector<std::string>& command,
+  run_inserted(const CommandRequest& command,
                std::optional<std::chrono::milliseconds> timeout,
                std::optional<std::size_t> output_limit) const override;
 

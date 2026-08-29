@@ -146,7 +146,7 @@ list_entities(std::shared_ptr<const Backend> backend, std::vector<std::string> r
 // here rather than handing back an entity whose id is the empty string.
 template <typename Entity>
 [[nodiscard]] expected<Entity, CommandFailure>
-one_entity(std::shared_ptr<const Backend> backend, std::vector<std::string> request,
+one_entity(std::shared_ptr<const Backend> backend, CommandRequest request,
            FormatArgument placement, std::string_view target,
            std::string_view expected_identity = {}, SessionRoute route = {},
            std::optional<ExecutionPolicy> call_policy = std::nullopt) {
@@ -192,7 +192,7 @@ one_entity(std::shared_ptr<const Backend> backend, std::vector<std::string> requ
 // has to be caught here. The value is unconstrained: an empty one sets the
 // variable to empty, which is a thing a caller may mean.
 [[nodiscard]] inline expected<void, CommandFailure>
-append_environment(std::vector<std::string>& command,
+append_environment(CommandRequest& command,
                    const std::vector<std::pair<std::string, std::string>>& variables) {
   for (const auto& [name, value] : variables) {
     if (name.empty() || name.find('=') != std::string::npos) {
@@ -204,7 +204,8 @@ append_environment(std::vector<std::string>& command,
                         "an '=': tmux would accept it and set nothing"});
     }
     command.emplace_back("-e");
-    command.push_back(name + "=" + value);
+    command.push_back(CommandArgument::sensitive_range(name + "=" + value,
+                                                       name.size() + 1U, value.size()));
   }
   return {};
 }

@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstddef>
 #include <fstream>
+#include <memory>
 #include <ranges>
 #include <string>
 #include <thread>
@@ -22,6 +23,9 @@
 #include "libtmux/server.hpp"
 #include "libtmux/testing/environment_guard.hpp"
 #include "libtmux/testing/scoped_server.hpp"
+
+#include "backend.hpp"
+#include "control_backend.hpp"
 
 namespace {
 
@@ -292,6 +296,51 @@ TEST(ControlDispatch, RawReplyInserterIsRejectedBeforeItCanChangeState) {
   const auto marker = streamed->expand("raw-run-still-aligned");
   ASSERT_TRUE(marker.has_value()) << marker.error().diagnostic;
   EXPECT_EQ(*marker, "raw-run-still-aligned");
+}
+
+TEST(ControlDispatch, InsertedCommandFailureKeepsSensitiveBytesPrivate) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+
+  std::string observed;
+  const auto observer = [&observed](std::string_view command,
+                                    const libtmux::CommandFailure* failure) {
+    observed += command;
+    if (failure != nullptr) {
+      observed += failure->diagnostic;
+    }
+  };
+  auto opened = libtmux::detail::ControlBackend::open(
+      {"-S", fixture->socket_path().string()}, fixture->socket_path().string(),
+      fixture->socket_path().string(), std::string{fixture->session_name()}, {},
+      observer);
+  ASSERT_TRUE(opened.has_value()) << (opened.has_value() ? "" : opened.error().message);
+  std::shared_ptr<const libtmux::detail::Backend> backend = *opened;
+
+  const std::string secret{"inserted-command-secret"};
+  const std::string output = "display-message -p '" + secret + "'";
+  libtmux::CommandRequest successful{"if-shell", "-F", "1"};
+  successful.push_back(libtmux::CommandArgument::sensitive_range(
+      output, output.find(secret), secret.size()));
+  successful.emplace_back("display-message -p ignored");
+  const auto printed =
+      backend->run_inserted(successful, std::chrono::seconds{2}, std::nullopt);
+  ASSERT_TRUE(printed.has_value()) << printed.error().diagnostic;
+  EXPECT_EQ(*printed, secret + "\n");
+
+  const std::string nested = "kill-session -t '" + secret + "'";
+  libtmux::CommandRequest command{"if-shell", "-F", "1"};
+  command.push_back(libtmux::CommandArgument::sensitive_range(
+      nested, nested.find(secret), secret.size()));
+  command.emplace_back("display-message -p ignored");
+
+  const auto refused =
+      backend->run_inserted(command, std::chrono::seconds{2}, std::nullopt);
+
+  ASSERT_FALSE(refused.has_value());
+  EXPECT_EQ(refused.error().diagnostic.find(secret), std::string::npos)
+      << refused.error().diagnostic;
+  EXPECT_EQ(observed.find(secret), std::string::npos) << observed;
 }
 
 TEST(ControlDispatch, SourceFileIsRejectedButParseOnlyRemainsReplySafe) {

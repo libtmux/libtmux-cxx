@@ -285,6 +285,111 @@ TEST(ServerContract, AnObserverSeesEveryCommandAndWhyOneFailed) {
   EXPECT_EQ(failed.at(0), "kill-session -t absent");
 }
 
+TEST(ServerContract, AnObserverNeverSeesAnEnvironmentValue) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+
+  std::vector<std::string> seen;
+  std::vector<std::string> diagnostics;
+  auto server = Server::at_socket_path(
+      fixture->socket_path().string(),
+      [&seen, &diagnostics](std::string_view command,
+                            const libtmux::CommandFailure* failure) {
+        seen.emplace_back(command);
+        if (failure != nullptr) {
+          diagnostics.push_back(failure->diagnostic);
+        }
+      });
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+
+  constexpr std::string_view secret = "known-only-to-tmux-$[] with spaces;";
+  libtmux::CommandRequest raw{"display-message", "-p"};
+  raw.push_back(libtmux::CommandArgument::sensitive(std::string{secret}));
+  const auto printed = server->run(raw);
+  ASSERT_TRUE(printed.has_value()) << printed.error().diagnostic;
+  EXPECT_EQ(*printed, std::string{secret} + "\n");
+
+  libtmux::NewSessionOptions options;
+  options.name = "redacted";
+  options.environment = {{"LIBTMUX_SECRET", std::string{secret}}};
+  const auto session = server->new_session(std::move(options));
+  ASSERT_TRUE(session.has_value()) << session.error().diagnostic;
+
+  const auto set_option = server->set_global_option("@secret", secret);
+  ASSERT_TRUE(set_option.has_value()) << set_option.error().diagnostic;
+
+  const auto control = server->over_control(session->name());
+  ASSERT_TRUE(control.has_value()) << control.error().diagnostic;
+  const auto streamed = control->run(raw);
+  ASSERT_TRUE(streamed.has_value()) << streamed.error().diagnostic;
+  EXPECT_EQ(*streamed, std::string{secret} + "\n");
+
+  libtmux::CommandBatch batch;
+  ASSERT_TRUE(batch.add({"display-message", "-p", "public-prefix"}));
+  ASSERT_TRUE(batch.add(raw));
+  const auto batched = server->run_batch(batch);
+  ASSERT_TRUE(batched.has_value()) << batched.error().diagnostic;
+  EXPECT_EQ(*batched, "public-prefix\n" + std::string{secret} + "\n");
+  const auto streamed_batch = control->run_batch(batch);
+  ASSERT_TRUE(streamed_batch.has_value()) << streamed_batch.error().diagnostic;
+  EXPECT_EQ(*streamed_batch, "public-prefix\n" + std::string{secret} + "\n");
+
+  const std::string shell_secret{"shell-secret with spaces"};
+  const std::string shell_command =
+      "tmux set-option -g @shell-secret '" + shell_secret + "'";
+  ASSERT_TRUE(server->run_shell(shell_command).has_value());
+  const auto shell_value = server->run({"show-options", "-gv", "@shell-secret"});
+  ASSERT_TRUE(shell_value.has_value()) << shell_value.error().diagnostic;
+  EXPECT_EQ(*shell_value, shell_secret + "\n");
+
+  const std::string hook_command = "display-message '" + shell_secret + "'";
+  ASSERT_TRUE(server->set_global_hook("alert-bell", hook_command).has_value());
+  const auto pane = session->active_pane();
+  ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
+  ASSERT_TRUE(pane->pipe_to("cat >/dev/null # " + shell_secret).has_value());
+  ASSERT_TRUE(pane->stop_piping().has_value());
+
+  libtmux::CommandRequest failing{"kill-session", "-t"};
+  failing.push_back(libtmux::CommandArgument::sensitive(std::string{secret}));
+  const auto refused = server->run(failing);
+  ASSERT_FALSE(refused.has_value());
+  EXPECT_EQ(refused.error().diagnostic.find(secret), std::string::npos)
+      << refused.error().diagnostic;
+  const auto streamed_refused = control->run(failing);
+  ASSERT_FALSE(streamed_refused.has_value());
+  EXPECT_EQ(streamed_refused.error().diagnostic.find(secret), std::string::npos)
+      << streamed_refused.error().diagnostic;
+
+  libtmux::CommandBatch failing_batch;
+  ASSERT_TRUE(failing_batch.add({"display-message", "-p", "safe-before-failure"}));
+  ASSERT_TRUE(failing_batch.add(failing));
+  const auto refused_batch = server->run_batch(failing_batch);
+  ASSERT_FALSE(refused_batch.has_value());
+  EXPECT_EQ(refused_batch.error().diagnostic.find(secret), std::string::npos)
+      << refused_batch.error().diagnostic;
+  const auto streamed_refused_batch = control->run_batch(failing_batch);
+  ASSERT_FALSE(streamed_refused_batch.has_value());
+  EXPECT_EQ(streamed_refused_batch.error().diagnostic.find(secret), std::string::npos)
+      << streamed_refused_batch.error().diagnostic;
+
+  const auto value = server->run(
+      {"show-environment", "-t", std::string{session->id()}, "LIBTMUX_SECRET"});
+  ASSERT_TRUE(value.has_value()) << value.error().diagnostic;
+  EXPECT_EQ(*value, "LIBTMUX_SECRET=" + std::string{secret} + "\n");
+
+  bool replaced = false;
+  for (const std::string& command : seen) {
+    EXPECT_EQ(command.find(secret), std::string::npos) << command;
+    EXPECT_EQ(command.find(shell_secret), std::string::npos) << command;
+    replaced = replaced || command.find("[REDACTED]") != std::string::npos;
+  }
+  EXPECT_TRUE(replaced);
+  for (const std::string& diagnostic : diagnostics) {
+    EXPECT_EQ(diagnostic.find(secret), std::string::npos) << diagnostic;
+    EXPECT_EQ(diagnostic.find(shell_secret), std::string::npos) << diagnostic;
+  }
+}
+
 TEST(ServerContract, ARefusalNamesTheCommandAndCarriesNoStrayNewline) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
