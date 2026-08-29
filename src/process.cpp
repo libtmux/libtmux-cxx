@@ -1,6 +1,8 @@
 #include "process.hpp"
+
 #include "libtmux/expected.hpp"
 #include "path.hpp"
+#include "spawn_signals.hpp"
 
 #include <algorithm>
 #include <array>
@@ -560,29 +562,9 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
     attributes_initialized = false;
     return ::posix_spawnattr_destroy(&attributes);
   };
-  // A blocked mask and an ignored disposition both survive exec, and tmux
-  // restores the mask it inherited rather than an empty one. A signal blocked
-  // here stays blocked in the server tmux starts, which then cannot be
-  // terminated by it, and in every pane command that sets no mask of its own.
-  sigset_t defaulted;
-  sigset_t unblocked;
-  if (::sigfillset(&defaulted) != 0 || ::sigdelset(&defaulted, SIGKILL) != 0 ||
-      ::sigdelset(&defaulted, SIGSTOP) != 0 || ::sigemptyset(&unblocked) != 0) {
-    const auto mask_error = errno;
-    static_cast<void>(destroy_attributes());
-    return action_failure(mask_error);
-  }
-  setup_result = ::posix_spawnattr_setflags(
-      &attributes, static_cast<short>(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGDEF |
-                                      POSIX_SPAWN_SETSIGMASK));
+  setup_result = apply_clean_signal_attributes(attributes, POSIX_SPAWN_SETPGROUP);
   if (setup_result == 0) {
     setup_result = ::posix_spawnattr_setpgroup(&attributes, 0);
-  }
-  if (setup_result == 0) {
-    setup_result = ::posix_spawnattr_setsigdefault(&attributes, &defaulted);
-  }
-  if (setup_result == 0) {
-    setup_result = ::posix_spawnattr_setsigmask(&attributes, &unblocked);
   }
   if (setup_result != 0) {
     static_cast<void>(destroy_attributes());
