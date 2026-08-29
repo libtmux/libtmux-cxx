@@ -461,6 +461,24 @@ if(NOT WIN32)
     PROPERTIES LABELS "libtmux" TIMEOUT 30)
 endif()
 
+# White-box: the child owner is private, and what it owns — pipes, signals,
+# a reap — is not observable through the runner's result.
+if(NOT WIN32)
+  add_executable(libtmux_posix_child_test posix_child_test.cpp)
+  target_include_directories(
+    libtmux_posix_child_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
+  target_link_libraries(
+    libtmux_posix_child_test
+    PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+  target_compile_options(
+    libtmux_posix_child_test PRIVATE -fno-sanitize-recover=undefined)
+
+  gtest_discover_tests(
+    libtmux_posix_child_test
+    TEST_PREFIX libtmux.posix_child.
+    PROPERTIES LABELS "libtmux" TIMEOUT 30)
+endif()
+
 add_executable(libtmux_backend_seam_test backend_seam_test.cpp)
 target_include_directories(
   libtmux_backend_seam_test PRIVATE "${PROJECT_SOURCE_DIR}/src")

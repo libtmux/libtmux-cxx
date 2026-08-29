@@ -8,7 +8,8 @@ set(LIBTMUX_SOURCES
 if(WIN32)
   list(APPEND LIBTMUX_SOURCES process_windows.cpp connection_windows.cpp)
 else()
-  list(APPEND LIBTMUX_SOURCES process.cpp connection.cpp notification_stream.cpp)
+  list(APPEND LIBTMUX_SOURCES process.cpp posix_child.cpp connection.cpp
+       notification_stream.cpp)
 endif()
 add_library(libtmux STATIC ${LIBTMUX_SOURCES})
 add_library(libtmux::libtmux ALIAS libtmux)
