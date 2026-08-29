@@ -47,6 +47,15 @@ constexpr auto idle_quantum = std::chrono::milliseconds{500};
 constexpr auto terminate_grace = std::chrono::milliseconds{100};
 constexpr auto post_exit_drain = std::chrono::milliseconds{100};
 
+// An operation the engine never admitted has no slot to give back and no
+// reactor to wake. Wiring it to the engine instead would return admission it
+// never took, and a bound that leaks a slot per refusal stops bounding.
+class UnadmittedHooks final : public OperationHooks {
+public:
+  void wake_reactor() noexcept override {}
+  void release_admission() noexcept override {}
+};
+
 [[nodiscard]] int poll_timeout(Clock::time_point boundary) {
   const auto now = Clock::now();
   if (now >= boundary) {
@@ -151,17 +160,17 @@ void ProcessEngine::release_admission() noexcept {
 }
 
 Operation<ProcessReply> ProcessEngine::submit(ProcessRequest request) {
-  auto hooks = std::make_shared<Hooks>(weak_from_this());
-  auto started = make_operation<ProcessReply>(hooks);
   if (!admit()) {
-    static_cast<void>(started.source.publish(unexpected(CommandFailure{
+    auto refused = make_operation<ProcessReply>(std::make_shared<UnadmittedHooks>());
+    static_cast<void>(refused.source.publish(unexpected(CommandFailure{
         .kind = FailureKind::overloaded,
         .delivery = DeliveryStatus::not_started,
         .exit_code = 0,
         .diagnostic = "the process engine has more work in flight than it accepts"})));
-    started.source.retire();
-    return std::move(started.operation);
+    refused.source.retire();
+    return std::move(refused.operation);
   }
+  auto started = make_operation<ProcessReply>(std::make_shared<Hooks>(weak_from_this()));
   started.source.mark_dispatching();
   std::optional<Clock::time_point> deadline;
   if (request.timeout.has_value()) {

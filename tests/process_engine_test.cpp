@@ -161,4 +161,22 @@ TEST(ProcessEngine, DeliversOutputLargerThanAPipeBuffer) {
   EXPECT_FALSE(reply->output_truncated);
 }
 
+// A refusal never held a slot, so handing one back on the way out gives away
+// admission nobody took. Enough refusals and the bound stops bounding.
+TEST(ProcessEngine, ARefusalDoesNotReturnASlotItNeverHeld) {
+  auto engine =
+      ProcessEngine::start(libtmux::detail::EngineConfig{.operation_limit = 1U});
+  ASSERT_TRUE(engine.has_value()) << engine.error().diagnostic;
+
+  auto occupying = (*engine)->submit(shell("sleep 5"));
+  auto refused = sync_wait((*engine)->submit(shell("true")));
+  ASSERT_FALSE(refused.has_value());
+  ASSERT_EQ(refused.error().kind, libtmux::FailureKind::overloaded);
+
+  auto again = sync_wait((*engine)->submit(shell("true")));
+
+  ASSERT_FALSE(again.has_value()) << "the one slot is still occupied";
+  EXPECT_EQ(again.error().kind, libtmux::FailureKind::overloaded);
+}
+
 } // namespace
