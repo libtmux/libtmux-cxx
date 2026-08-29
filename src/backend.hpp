@@ -240,6 +240,13 @@ private:
              std::optional<std::chrono::milliseconds> timeout,
              std::optional<std::size_t> output_limit) const;
 
+  // What a reply means: the capture bound, the exit status, the diagnostic
+  // tmux wrote, and the observer. All of it belongs to whoever is consuming
+  // the answer rather than to the thread that read the pipe.
+  [[nodiscard]] expected<std::string, CommandFailure>
+  interpret(const CommandRequest& command, std::size_t allowed_bytes,
+            ProcessReply reply) const;
+
   std::vector<std::string> connection_;
   // Captured once, at construction. Keeping the alias alive keeps the inode
   // from being reused and prevents this handle from following a replacement.

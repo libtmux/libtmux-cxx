@@ -428,7 +428,17 @@ SubprocessBackend::run_scoped(const CommandRequest& command,
   }
 #endif
 
-  if (reply->output_truncated) {
+  return interpret(command, allowed_bytes, *std::move(reply));
+}
+
+expected<std::string, CommandFailure>
+SubprocessBackend::interpret(const CommandRequest& command, std::size_t allowed_bytes,
+                             ProcessReply reply) const {
+  const auto reported = [this, &command](CommandFailure failure) {
+    return report_failure(command, std::move(failure));
+  };
+  const ProcessReply* const reply_ptr = &reply;
+  if (reply_ptr->output_truncated) {
     // The runner bounds what it will hold. Returning the prefix as a complete
     // answer is the one outcome a caller cannot detect: the last line is cut
     // mid-way and looks like data.
@@ -440,13 +450,13 @@ SubprocessBackend::run_scoped(const CommandRequest& command,
                                                  " byte limit this call allowed for"});
   }
 
-  std::string out = text(reply->stdout_bytes);
+  std::string out = text(reply_ptr->stdout_bytes);
   // A signalled tmux is a failure with no exit code of its own.
-  const auto* exited = std::get_if<Exited>(&reply->termination);
+  const auto* exited = std::get_if<Exited>(&reply_ptr->termination);
   if (exited == nullptr || exited->code != 0) {
     // tmux reports why it refused on stderr, so a diagnostic built from
     // stdout alone is empty for every ordinary failure.
-    std::string diagnostic = text(reply->stderr_bytes);
+    std::string diagnostic = text(reply_ptr->stderr_bytes);
     if (diagnostic.empty()) {
       diagnostic = std::move(out);
     }
