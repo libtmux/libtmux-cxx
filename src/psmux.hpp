@@ -106,7 +106,9 @@ invalid_session_name(std::string_view name) {
   if (name.starts_with('$') && all_decimal(name.substr(1))) {
     return "a psmux session name cannot look like a session id";
   }
-  const std::size_t dot = name.find('.');
+  // The last dot, not the first: psmux reads `session:window.pane`, so what
+  // makes a name ambiguous is the suffix it ends with.
+  const std::size_t dot = name.rfind('.');
   if (dot != std::string_view::npos && all_decimal(name.substr(dot + 1U))) {
     return "a psmux session name cannot end in a numeric target suffix";
   }

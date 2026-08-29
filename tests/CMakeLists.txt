@@ -479,6 +479,22 @@ if(NOT WIN32)
     PROPERTIES LABELS "libtmux" TIMEOUT 30)
 endif()
 
+# The psmux rules are pure string logic, so they are tested wherever this
+# builds rather than only where psmux runs.
+add_executable(libtmux_psmux_rules_test psmux_rules_test.cpp)
+target_include_directories(
+  libtmux_psmux_rules_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_link_libraries(
+  libtmux_psmux_rules_test
+  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+target_compile_options(
+  libtmux_psmux_rules_test PRIVATE -fno-sanitize-recover=undefined)
+
+gtest_discover_tests(
+  libtmux_psmux_rules_test
+  TEST_PREFIX libtmux.psmux_rules.
+  PROPERTIES LABELS "libtmux" TIMEOUT 30)
+
 add_executable(libtmux_backend_seam_test backend_seam_test.cpp)
 target_include_directories(
   libtmux_backend_seam_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
