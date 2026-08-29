@@ -30,6 +30,28 @@ template <typename T>
   }
 }
 
+template <typename T>
+[[nodiscard]] std::unique_ptr<OperationResult<T>>
+box_result_alternative(OperationResult<T>& result) {
+  if (!result.has_value()) {
+    return std::make_unique<OperationResult<T>>(unexpected(std::move(result.error())));
+  }
+  if constexpr (std::is_void_v<T>) {
+    return std::make_unique<OperationResult<T>>();
+  } else {
+    return std::make_unique<OperationResult<T>>(std::move(*result));
+  }
+}
+
+template <typename T>
+[[nodiscard]] std::unique_ptr<OperationResult<T>> make_abandoned_outcome() {
+  return std::make_unique<OperationResult<T>>(unexpected(CommandFailure{
+      .kind = FailureKind::pipe,
+      .delivery = DeliveryStatus::not_started,
+      .diagnostic = "operation source retired without an outcome",
+  }));
+}
+
 // tl::expected 1.1.0 marks active-value construction noexcept, so construct the
 // callback argument directly from the selected alternative.
 template <typename Result, typename T>
@@ -116,11 +138,13 @@ template <typename T>
 template <typename T> class OperationState final {
 public:
   explicit OperationState(std::shared_ptr<OperationHooks> hooks)
-      : hooks_{std::move(hooks)} {
+      : abandoned_outcome_{make_abandoned_outcome<T>()}, hooks_{std::move(hooks)} {
     assert(hooks_);
   }
 
-  [[nodiscard]] bool publish(OperationResult<T> result) {
+  [[nodiscard]] bool publish(OperationResult<T>&& result) {
+    auto published_outcome = box_result_alternative(result);
+    std::unique_ptr<OperationResult<T>> discarded_outcome;
     WeakCompletionMailbox observer_mailbox;
     CompletionToken observer_token;
     bool enqueue_observer = false;
@@ -129,7 +153,8 @@ public:
       if (outcome_) {
         return false;
       }
-      outcome_.emplace(std::move(result));
+      outcome_ = std::move(published_outcome);
+      discarded_outcome = std::move(abandoned_outcome_);
       if (observer_ == ObserverPhase::callback) {
         observer_mailbox = observer_mailbox_;
         observer_token = observer_token_;
@@ -165,7 +190,7 @@ public:
 
   [[nodiscard]] bool outcome_published() const {
     std::lock_guard lock{mutex_};
-    return outcome_.has_value();
+    return static_cast<bool>(outcome_);
   }
 
   void select_blocking() {
@@ -186,7 +211,7 @@ public:
     std::shared_ptr<OperationHooks> release;
     {
       std::unique_lock lock{mutex_};
-      outcome_changed_.wait(lock, [this] { return outcome_.has_value(); });
+      outcome_changed_.wait(lock, [this] { return static_cast<bool>(outcome_); });
       assert(observer_ == ObserverPhase::blocking);
       observer_ = ObserverPhase::delivered;
       release = release_hook_locked();
@@ -201,7 +226,7 @@ public:
     std::shared_ptr<OperationHooks> release;
     {
       std::unique_lock lock{mutex_};
-      assert(outcome_.has_value());
+      assert(outcome_);
       assert(observer_ == ObserverPhase::callback);
       assert(observer_token_ == token);
       observer_ = ObserverPhase::delivered;
@@ -257,11 +282,39 @@ public:
   void begin_retirement() { advance_transport(TransportPhase::retiring); }
 
   void retire() noexcept {
+    std::unique_ptr<OperationResult<T>> discarded_outcome;
+    WeakCompletionMailbox observer_mailbox;
+    CompletionToken observer_token;
+    bool outcome_published = false;
+    bool enqueue_observer = false;
     std::shared_ptr<OperationHooks> release;
     {
       std::lock_guard lock{mutex_};
+      const auto abandoned_delivery = transport_ == TransportPhase::queued
+                                          ? DeliveryStatus::not_started
+                                          : DeliveryStatus::indeterminate;
       transport_ = TransportPhase::retired;
+      if (!outcome_) {
+        assert(abandoned_outcome_);
+        assert(!abandoned_outcome_->has_value());
+        abandoned_outcome_->error().delivery = abandoned_delivery;
+        outcome_ = std::move(abandoned_outcome_);
+        outcome_published = true;
+        if (observer_ == ObserverPhase::callback) {
+          observer_mailbox = observer_mailbox_;
+          observer_token = observer_token_;
+          enqueue_observer = true;
+        }
+      } else {
+        discarded_outcome = std::move(abandoned_outcome_);
+      }
       release = release_hook_locked();
+    }
+    if (outcome_published) {
+      outcome_changed_.notify_all();
+    }
+    if (enqueue_observer) {
+      static_cast<void>(observer_mailbox.enqueue(observer_token));
     }
     if (release) {
       release->release_admission();
@@ -288,7 +341,8 @@ private:
 
   mutable std::mutex mutex_;
   std::condition_variable outcome_changed_;
-  std::optional<OperationResult<T>> outcome_;
+  std::unique_ptr<OperationResult<T>> outcome_;
+  std::unique_ptr<OperationResult<T>> abandoned_outcome_;
   std::shared_ptr<OperationHooks> hooks_;
   CompletionToken observer_token_{};
   WeakCompletionMailbox observer_mailbox_;
@@ -470,7 +524,7 @@ public:
     return *this;
   }
 
-  [[nodiscard]] bool publish(OperationResult<T> result) {
+  [[nodiscard]] bool publish(OperationResult<T>&& result) {
     return state_ && state_->publish(std::move(result));
   }
 

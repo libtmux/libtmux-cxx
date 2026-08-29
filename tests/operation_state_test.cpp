@@ -2,6 +2,7 @@
 #include <barrier>
 #include <chrono>
 #include <condition_variable>
+#include <functional>
 #include <future>
 #include <memory>
 #include <mutex>
@@ -418,6 +419,29 @@ TEST(OperationCallback, CallbackExceptionsKeepDeliveryTerminal) {
   EXPECT_EQ(hooks->releases.load(std::memory_order_relaxed), 1);
 }
 
+TEST(OperationCallback, SourceDestructionPublishesTransportFailure) {
+  CompletionQueue queue;
+  auto hooks = std::make_shared<RecordingHooks>();
+  auto started = make_operation<int>(hooks);
+  std::optional<OperationResult<int>> observed;
+  auto subscription =
+      std::move(started.operation).subscribe(queue, [&](OperationResult<int> result) {
+        observed.emplace(std::move(result));
+      });
+
+  { auto source = std::move(started.source); }
+
+  EXPECT_EQ(queue.run_ready(), 1U);
+  ASSERT_TRUE(observed.has_value());
+  ASSERT_FALSE(observed->has_value());
+  EXPECT_EQ(observed->error().kind, FailureKind::pipe);
+  EXPECT_EQ(observed->error().delivery, DeliveryStatus::not_started);
+  EXPECT_EQ(observed->error().diagnostic,
+            "operation source retired without an outcome");
+  EXPECT_FALSE(subscription.observing());
+  EXPECT_EQ(hooks->releases.load(std::memory_order_relaxed), 1);
+}
+
 TEST(OperationState, CancellationIsOnlyARequestUntilTheSourcePublishes) {
   auto hooks = std::make_shared<RecordingHooks>();
   auto started = make_operation<int>(hooks);
@@ -534,6 +558,21 @@ TEST(OperationState, AdmissionReleasesAfterObserverAndTransportFinish) {
   EXPECT_EQ(hooks->releases.load(std::memory_order_relaxed), 1);
 }
 
+TEST(OperationState, RetirementPublishesFailureToBlockingObserver) {
+  auto hooks = std::make_shared<RecordingHooks>();
+  auto started = make_operation<int>(hooks);
+
+  started.source.retire();
+  ASSERT_TRUE(started.source.outcome_published());
+  const auto result = sync_wait(std::move(started.operation));
+
+  ASSERT_FALSE(result.has_value());
+  EXPECT_EQ(result.error().kind, FailureKind::pipe);
+  EXPECT_EQ(result.error().delivery, DeliveryStatus::not_started);
+  EXPECT_EQ(result.error().diagnostic, "operation source retired without an outcome");
+  EXPECT_EQ(hooks->releases.load(std::memory_order_relaxed), 1);
+}
+
 TEST(OperationState, DroppingAnOperationDetachesWithoutCancelling) {
   auto hooks = std::make_shared<RecordingHooks>();
   auto started = make_operation<int>(hooks);
@@ -565,10 +604,20 @@ TEST(OperationState, SourceMoveAssignmentRetiresItsPreviousTransport) {
   auto second_hooks = std::make_shared<RecordingHooks>();
   auto first = make_operation<int>(first_hooks);
   auto second = make_operation<int>(second_hooks);
-  first.operation = {};
+  CompletionQueue queue;
+  std::optional<OperationResult<int>> observed;
+  auto subscription =
+      std::move(first.operation).subscribe(queue, [&](OperationResult<int> result) {
+        observed.emplace(std::move(result));
+      });
   second.operation = {};
 
   first.source = std::move(second.source);
+  EXPECT_EQ(queue.run_ready(), 1U);
+  ASSERT_TRUE(observed.has_value());
+  ASSERT_FALSE(observed->has_value());
+  EXPECT_EQ(observed->error().kind, FailureKind::pipe);
+  EXPECT_FALSE(subscription.observing());
   EXPECT_EQ(first_hooks->releases.load(std::memory_order_relaxed), 1);
   EXPECT_EQ(second_hooks->releases.load(std::memory_order_relaxed), 0);
 
@@ -607,6 +656,55 @@ struct CountedThrowingMove final {
   std::shared_ptr<int> moves;
   std::shared_ptr<int> throw_on;
 };
+
+struct ReenteringMove final {
+  explicit ReenteringMove(std::shared_ptr<std::function<void()>> on_move)
+      : on_move{std::move(on_move)} {}
+  ReenteringMove(const ReenteringMove&) = delete;
+  ReenteringMove& operator=(const ReenteringMove&) = delete;
+  ReenteringMove(ReenteringMove&& other) : on_move{other.on_move} {
+    if (*on_move) {
+      (*on_move)();
+    }
+  }
+  ReenteringMove& operator=(ReenteringMove&&) = delete;
+
+  std::shared_ptr<std::function<void()>> on_move;
+};
+
+TEST(OperationState, PublicationDoesNotMoveAWholeExpected) {
+  auto hooks = std::make_shared<RecordingHooks>();
+  auto moves = std::make_shared<int>(0);
+  auto throw_on = std::make_shared<int>(0);
+  auto started = make_operation<CountedThrowingMove>(hooks);
+  OperationResult<CountedThrowingMove> pending{CountedThrowingMove{moves, throw_on}};
+  *throw_on = *moves + 2;
+
+  bool published = false;
+  EXPECT_NO_THROW(published = started.source.publish(std::move(pending)));
+  ASSERT_TRUE(published);
+  *throw_on = 0;
+  started.source.retire();
+
+  const auto result = sync_wait(std::move(started.operation));
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(hooks->releases.load(std::memory_order_relaxed), 1);
+}
+
+TEST(OperationState, PublicationMovesUserValuesWithoutTheStateLock) {
+  auto hooks = std::make_shared<RecordingHooks>();
+  auto on_move = std::make_shared<std::function<void()>>();
+  auto started = make_operation<ReenteringMove>(hooks);
+  OperationResult<ReenteringMove> pending{ReenteringMove{on_move}};
+  *on_move = [&] { static_cast<void>(started.source.cancel_requested()); };
+
+  ASSERT_TRUE(started.source.publish(std::move(pending)));
+  started.source.retire();
+  const auto result = sync_wait(std::move(started.operation));
+
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(hooks->releases.load(std::memory_order_relaxed), 1);
+}
 
 TEST(OperationState, AThrowingResultMoveStillReleasesAdmission) {
   auto hooks = std::make_shared<RecordingHooks>();
