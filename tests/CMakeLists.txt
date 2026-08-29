@@ -400,6 +400,20 @@ gtest_discover_tests(
 # White-box: this one reaches into the private transport header, which is how
 # it can substitute an executor at all. It links no test support because it
 # never starts a tmux.
+add_executable(libtmux_operation_state_test operation_state_test.cpp)
+target_include_directories(
+  libtmux_operation_state_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_link_libraries(
+  libtmux_operation_state_test
+  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+target_compile_options(
+  libtmux_operation_state_test PRIVATE -fno-sanitize-recover=undefined)
+
+gtest_discover_tests(
+  libtmux_operation_state_test
+  TEST_PREFIX libtmux.operation_state.
+  PROPERTIES LABELS concurrency TIMEOUT 30)
+
 add_executable(libtmux_backend_seam_test backend_seam_test.cpp)
 target_include_directories(
   libtmux_backend_seam_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
