@@ -7,9 +7,11 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <csignal>
 #include <cstddef>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <ranges>
 #include <string>
 #include <thread>
@@ -23,6 +25,8 @@
 #include "libtmux/server.hpp"
 #include "libtmux/testing/environment_guard.hpp"
 #include "libtmux/testing/scoped_server.hpp"
+#include "support/descriptors.hpp"
+#include "support/platform.hpp"
 
 #include "backend.hpp"
 #include "control_backend.hpp"
@@ -311,6 +315,54 @@ TEST(ControlDispatch, RawReplyInserterIsRejectedBeforeItCanChangeState) {
   const auto marker = streamed->expand("raw-run-still-aligned");
   ASSERT_TRUE(marker.has_value()) << marker.error().diagnostic;
   EXPECT_EQ(*marker, "raw-run-still-aligned");
+}
+
+TEST(ControlDispatch, ABlockedWriterDoesNotStealAnotherCallsDeadline) {
+  LIBTMUX_SKIP_WITHOUT_PROCFS("the control client's queued input");
+
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  auto connected = libtmux::Connection::connect(
+      {.socket_path = fixture->socket_path(),
+       .session_name = std::string{fixture->session_name()}});
+  ASSERT_TRUE(connected.has_value()) << connected.error().message;
+  const auto child_pid = connected->native_child_pid();
+  ASSERT_GT(child_pid, 0);
+  auto backend = std::make_shared<const libtmux::detail::ControlBackend>(
+      *std::move(connected),
+      std::vector<std::string>{"-S", fixture->socket_path().string()},
+      fixture->socket_path().string(), fixture->socket_path().string(),
+      libtmux::CommandObserver{}, libtmux::ExecutionPolicy{}, nullptr);
+  ASSERT_EQ(::kill(static_cast<pid_t>(child_pid), SIGSTOP), 0);
+
+  libtmux::CommandRequest large{"display-message", "-p",
+                                std::string(4U * 1024U * 1024U, 'x')};
+  std::thread waiting{
+      [&] { static_cast<void>(backend->run(large, 1500ms, std::nullopt)); }};
+  std::optional<int> queued;
+  const auto queued_deadline = std::chrono::steady_clock::now() + 2s;
+  while (std::chrono::steady_clock::now() < queued_deadline) {
+    queued = libtmux::test::queued_child_stdin_bytes(child_pid);
+    if (queued.has_value() && *queued > 0) {
+      break;
+    }
+    std::this_thread::sleep_for(1ms);
+  }
+
+  const auto started = std::chrono::steady_clock::now();
+  const auto timed_out =
+      backend->run({"display-message", "-p", "deadline"}, 100ms, std::nullopt);
+  const auto elapsed = std::chrono::steady_clock::now() - started;
+  const auto resumed = ::kill(static_cast<pid_t>(child_pid), SIGCONT) == 0;
+  waiting.join();
+
+  ASSERT_TRUE(resumed);
+  ASSERT_TRUE(queued.has_value());
+  ASSERT_GT(*queued, 0);
+  ASSERT_FALSE(timed_out.has_value());
+  EXPECT_NE(timed_out.error().diagnostic.find("deadline"), std::string::npos)
+      << timed_out.error().diagnostic;
+  EXPECT_LT(elapsed, 750ms) << "the call waited behind an unrelated command";
 }
 
 TEST(ControlDispatch, InsertedCommandFailureKeepsSensitiveBytesPrivate) {

@@ -7,9 +7,8 @@
 // command stops being the cost of a process. Every entity works over it
 // unchanged, because nothing above this line knows which one it has.
 //
-// One connection carries one conversation, so commands are serialized here.
-// That is a property of the protocol rather than a limitation of this class:
-// replies are matched to commands by order.
+// The connection serializes writes and attributes replies. This wrapper adds
+// no wider lock, so each caller's deadline remains independent.
 
 #include "libtmux/abi.hpp"
 #include "libtmux/command.hpp"
@@ -18,7 +17,6 @@
 #include <chrono>
 #include <cstddef>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -100,7 +98,6 @@ private:
 
   // Declared before the live connection so it is destroyed after it.
   std::shared_ptr<const SocketAlias> socket_alias_;
-  mutable std::mutex mutex_;
   mutable Connection connection_;
   std::vector<std::string> selector_;
   std::string socket_path_;

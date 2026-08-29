@@ -4,6 +4,7 @@
 
 #include "libtmux/testing/capabilities.hpp"
 #include "libtmux/testing/scoped_server.hpp"
+#include "support/descriptors.hpp"
 #include "support/platform.hpp"
 
 #include <algorithm>
@@ -24,7 +25,6 @@
 #include <utility>
 #include <vector>
 
-#include <sys/ioctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -130,32 +130,6 @@ bool has_notification(const std::vector<Notification>& notifications,
   return std::ranges::any_of(notifications, [prefix](const auto& notification) {
     return text(notification.body).starts_with(prefix);
   });
-}
-
-std::optional<int> queued_control_input(pid_t child_pid) {
-  std::error_code error;
-  const auto child_input = std::filesystem::read_symlink(
-      "/proc/" + std::to_string(child_pid) + "/fd/0", error);
-  if (error) {
-    return std::nullopt;
-  }
-  for (const auto& entry :
-       std::filesystem::directory_iterator{"/proc/self/fd", error}) {
-    if (error) {
-      return std::nullopt;
-    }
-    std::error_code link_error;
-    const auto input = std::filesystem::read_symlink(entry.path(), link_error);
-    if (link_error || input != child_input) {
-      continue;
-    }
-    int queued = 0;
-    const auto descriptor = std::stoi(entry.path().filename().string());
-    if (::ioctl(descriptor, FIONREAD, &queued) == 0) {
-      return queued;
-    }
-  }
-  return std::nullopt;
 }
 
 TEST(ControlModeConnection, FailFastGroupMarksDeletedSuffixSkipped) {
@@ -943,7 +917,7 @@ TEST(ControlModeConnection, LargeSubmitVsShutdownIsBoundedAndMarksUnknown) {
   std::optional<int> queued;
   const auto partial_deadline = std::chrono::steady_clock::now() + 5s;
   while (std::chrono::steady_clock::now() < partial_deadline) {
-    queued = queued_control_input(static_cast<pid_t>(child_pid));
+    queued = libtmux::test::queued_child_stdin_bytes(child_pid);
     if (queued && *queued > 0) {
       break;
     }
@@ -1006,7 +980,7 @@ TEST(ControlModeConnection, PartialWriteShutdownNeverDispatchesTruncatedCommand)
   std::optional<int> queued;
   const auto partial_deadline = std::chrono::steady_clock::now() + 5s;
   while (std::chrono::steady_clock::now() < partial_deadline) {
-    queued = queued_control_input(static_cast<pid_t>(child_pid));
+    queued = libtmux::test::queued_child_stdin_bytes(child_pid);
     if (queued && *queued > 0) {
       break;
     }
@@ -1271,7 +1245,7 @@ TEST(ControlModeConnection, ExternallyTerminatedClientIsReapedWhileOwned) {
   std::optional<int> queued;
   const auto dispatch_deadline = std::chrono::steady_clock::now() + 5s;
   while (std::chrono::steady_clock::now() < dispatch_deadline) {
-    queued = queued_control_input(static_cast<pid_t>(child_pid));
+    queued = libtmux::test::queued_child_stdin_bytes(child_pid);
     if (queued && *queued > 0) {
       break;
     }

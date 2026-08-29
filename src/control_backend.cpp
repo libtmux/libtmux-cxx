@@ -148,15 +148,7 @@ ControlBackend::run(const CommandRequest& command,
                             ? std::chrono::steady_clock::now() + *timeout
                             : std::chrono::steady_clock::time_point::max();
 
-  // The lock covers the conversation and nothing else. Everything below runs
-  // released, because `CommandObserver` promises an observer that calls tmux
-  // again will not deadlock against the call that told it — and an observer is
-  // exactly the place someone reaches for tmux.
-  ControlRequestResult result;
-  {
-    const std::lock_guard<std::mutex> held{mutex_};
-    result = connection_.execute(std::move(request), deadline);
-  }
+  ControlRequestResult result = connection_.execute(std::move(request), deadline);
 
   if (result.connection_error.has_value()) {
     // The connection is what failed, so whether tmux acted is unknowable from
@@ -217,11 +209,7 @@ ControlBackend::run_inserted(const CommandRequest& command,
                             ? std::chrono::steady_clock::now() + *timeout
                             : std::chrono::steady_clock::time_point::max();
 
-  ControlRequestResult result;
-  {
-    const std::lock_guard<std::mutex> held{mutex_};
-    result = connection_.execute(std::move(request), 2U, deadline);
-  }
+  ControlRequestResult result = connection_.execute(std::move(request), 2U, deadline);
 
   auto reply = inserted_command_reply(result, output_limit);
   if (!reply.has_value()) {
@@ -249,12 +237,7 @@ ControlBackend::run_batch(const CommandBatch& batch,
                             ? std::chrono::steady_clock::now() + *timeout
                             : std::chrono::steady_clock::time_point::max();
 
-  // Released before anything reports, for the reason `run` gives.
-  ControlRequestResult result;
-  {
-    const std::lock_guard<std::mutex> held{mutex_};
-    result = connection_.execute(std::move(request), deadline);
-  }
+  ControlRequestResult result = connection_.execute(std::move(request), deadline);
 
   if (result.connection_error.has_value()) {
     return reported(carried(FailureKind::pipe, true, result.connection_error->message));
@@ -324,12 +307,10 @@ expected<Version, CommandFailure> ControlBackend::version() const {
 }
 
 std::vector<Notification> ControlBackend::take_notifications() const {
-  const std::lock_guard<std::mutex> held{mutex_};
   return connection_.take_notifications();
 }
 
 std::size_t ControlBackend::dropped_notifications() const noexcept {
-  const std::lock_guard<std::mutex> held{mutex_};
   return connection_.dropped_notifications();
 }
 
