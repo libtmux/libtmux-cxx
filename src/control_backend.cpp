@@ -83,11 +83,10 @@ inserted_command_reply(const ControlRequestResult& result,
     return unexpected(carried(FailureKind::pipe, result.connection_error->delivery,
                               result.connection_error->message));
   }
-  if (result.blocks.size() != 2U) {
-    return unexpected(
-        carried(FailureKind::pipe, DeliveryStatus::replied,
-                "tmux returned " + std::to_string(result.blocks.size()) +
-                    " reply blocks for a command and its inserted operation"));
+  if (result.blocks.size() < 2U) {
+    return unexpected(carried(FailureKind::pipe, DeliveryStatus::replied,
+                              "tmux returned " + std::to_string(result.blocks.size()) +
+                                  " reply blocks for an inserted operation"));
   }
 
   const auto exact_block =
@@ -102,20 +101,23 @@ inserted_command_reply(const ControlRequestResult& result,
     return &block;
   };
 
-  auto wrapper = exact_block(result.blocks[0], "if-shell");
-  if (!wrapper.has_value()) {
-    return unexpected(wrapper.error());
-  }
-  if ((*wrapper)->terminal == ControlTerminal::error) {
-    return unexpected(
-        carried(FailureKind::refused, DeliveryStatus::replied, text((*wrapper)->body)));
-  }
-  if (!(*wrapper)->body.empty() || (*wrapper)->body_bytes != 0U) {
-    return unexpected(carried(FailureKind::pipe, DeliveryStatus::replied,
-                              "if-shell returned output before its inserted command"));
+  for (std::size_t index = 0U; index + 1U < result.blocks.size(); ++index) {
+    auto wrapper = exact_block(result.blocks[index], "if-shell");
+    if (!wrapper.has_value()) {
+      return unexpected(wrapper.error());
+    }
+    if ((*wrapper)->terminal == ControlTerminal::error) {
+      return unexpected(carried(FailureKind::refused, DeliveryStatus::replied,
+                                text((*wrapper)->body)));
+    }
+    if (!(*wrapper)->body.empty() || (*wrapper)->body_bytes != 0U) {
+      return unexpected(
+          carried(FailureKind::pipe, DeliveryStatus::replied,
+                  "if-shell returned output before its inserted command"));
+    }
   }
 
-  auto inserted = exact_block(result.blocks[1], "inserted command");
+  auto inserted = exact_block(result.blocks.back(), "inserted command");
   if (!inserted.has_value()) {
     return unexpected(inserted.error());
   }

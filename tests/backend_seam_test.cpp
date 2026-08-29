@@ -22,6 +22,7 @@
 #include <gtest/gtest.h>
 
 #include "libtmux/entities.hpp"
+#include "libtmux/format.hpp"
 #include "libtmux/server.hpp"
 
 #include "acquire.hpp"
@@ -153,6 +154,19 @@ std::string named_window_row(std::string_view id, std::string_view name,
       automatic_rename});
 }
 
+std::string octal_word(std::string_view value) {
+  std::string quoted{"\""};
+  for (const char character : value) {
+    const auto byte = static_cast<unsigned char>(character);
+    quoted.push_back('\\');
+    quoted.push_back(static_cast<char>('0' + ((byte >> 6U) & 7U)));
+    quoted.push_back(static_cast<char>('0' + ((byte >> 3U) & 7U)));
+    quoted.push_back(static_cast<char>('0' + (byte & 7U)));
+  }
+  quoted.push_back('"');
+  return quoted;
+}
+
 std::vector<std::byte> bytes(std::string_view text) {
   std::vector<std::byte> result;
   result.reserve(text.size());
@@ -261,11 +275,13 @@ TEST(BackendSeam, RawTmux37RepairsABrokenOutWindowByStableId) {
   EXPECT_EQ(broken->name(), "roomy");
   EXPECT_EQ(backend->version_queries, 0U);
   ASSERT_EQ(backend->issued.size(), 3U);
-  ASSERT_EQ(backend->issued[1].size(), 9U);
-  EXPECT_EQ(
-      std::vector(backend->issued[1].begin(), backend->issued[1].begin() + 7),
-      (std::vector<std::string>{"break-pane", "-d", "-s", "%7", "-P", "-n", "roomy"}));
-  EXPECT_EQ(backend->issued[1][7], "-F");
+  ASSERT_EQ(backend->issued[1].size(), 7U);
+  EXPECT_EQ(std::vector(backend->issued[1].begin(), backend->issued[1].begin() + 5),
+            (std::vector<std::string>{"if-shell", "-F", "-t", "%7",
+                                      "#{==:#{window_panes},1}"}));
+  EXPECT_TRUE(backend->issued[1][6].starts_with("break-pane -d -s %7 -t $2: -P -n " +
+                                                octal_word("roomy")));
+  EXPECT_EQ(backend->issued[1][6].find("roomy"), std::string::npos);
   ASSERT_EQ(backend->batches.size(), 1U);
   ASSERT_EQ(backend->batches.front().size(), 3U);
   const auto& guard = backend->batches.front()[0];
@@ -293,6 +309,12 @@ TEST(BackendSeam, RawTmux37NameRepairTreatsHashesLiterally) {
 
   ASSERT_TRUE(broken.has_value()) << broken.error().diagnostic;
   EXPECT_EQ(broken->name(), requested);
+  ASSERT_EQ(backend->issued[1].size(), 7U);
+  EXPECT_NE(backend->issued[1][5].find(octal_word(libtmux::escape_literal(requested))),
+            std::string::npos);
+  EXPECT_NE(backend->issued[1][6].find(octal_word(requested)), std::string::npos);
+  EXPECT_EQ(backend->issued[1][5].find(requested), std::string::npos);
+  EXPECT_EQ(backend->issued[1][6].find(requested), std::string::npos);
   ASSERT_EQ(backend->batches.size(), 1U);
   EXPECT_EQ(backend->batches.front()[1],
             (std::vector<std::string>{"rename-window", "-t", "$2:@9", "--",
@@ -319,7 +341,7 @@ TEST(BackendSeam, RawTmux37RepairsACoincidentNaturalName) {
 TEST(BackendSeam, RawTmux37OnePaneKeepsItsNativeCleanedName) {
   auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{
       pane_row("%7", "@3", "$2"),
-      named_window_row("@3", R"(back\\slash\t雪)", "$4", "3.7", "0")});
+      named_window_row("@3", R"(back\\slash\t雪)", "$2", "3.7", "0")});
   const auto snapshot = libtmux::Snapshot::take(
       backend, libtmux::Pane::kFields, {"list-panes"}, libtmux::FormatArgument::flag);
   ASSERT_TRUE(snapshot.has_value()) << snapshot.error().diagnostic;
@@ -418,7 +440,7 @@ TEST(BackendSeam, NamedBreakMismatchOnAnotherVersionIsReturnedUnchanged) {
   EXPECT_TRUE(backend->batches.empty());
 }
 
-TEST(BackendSeam, NamedOnePaneMoveMismatchSkipsVersionDetection) {
+TEST(BackendSeam, NamedBreakRejectsAReplyFromAnotherSession) {
   auto backend = std::make_shared<ScriptedBackend>(
       std::vector<std::string>{pane_row("%7", "@3", "$2"),
                                named_window_row("@3", "hooked", "$4", "3.7", "0")},
@@ -430,9 +452,11 @@ TEST(BackendSeam, NamedOnePaneMoveMismatchSkipsVersionDetection) {
 
   const auto broken = pane.break_out("roomy");
 
-  ASSERT_TRUE(broken.has_value()) << broken.error().diagnostic;
-  EXPECT_EQ(broken->id(), "@3");
-  EXPECT_EQ(broken->name(), "hooked");
+  ASSERT_FALSE(broken.has_value());
+  EXPECT_EQ(broken.error().kind, FailureKind::refused);
+  EXPECT_NE(broken.error().delivery, libtmux::DeliveryStatus::not_started);
+  EXPECT_NE(broken.error().diagnostic.find("exact connected window"), std::string::npos)
+      << broken.error().diagnostic;
   EXPECT_EQ(backend->version_queries, 0U);
   EXPECT_EQ(backend->issued.size(), 2U);
   EXPECT_TRUE(backend->batches.empty());
@@ -461,9 +485,10 @@ TEST(BackendSeam, EveryOtherTmuxKeepsTheNativeNamedBreakPath) {
     EXPECT_EQ(broken->name(), "roomy");
     EXPECT_EQ(backend->version_queries, 0U);
     ASSERT_EQ(backend->issued.size(), 2U);
-    EXPECT_EQ(std::vector(backend->issued[1].begin(), backend->issued[1].begin() + 7),
-              (std::vector<std::string>{"break-pane", "-d", "-s", "%7", "-P", "-n",
-                                        "roomy"}));
+    ASSERT_EQ(backend->issued[1].size(), 7U);
+    EXPECT_EQ(backend->issued[1][4], "#{==:#{window_panes},1}");
+    EXPECT_TRUE(backend->issued[1][6].starts_with("break-pane -d -s %7 -t $2: -P -n " +
+                                                  octal_word("roomy")));
     EXPECT_TRUE(backend->batches.empty());
   }
 }
@@ -531,13 +556,15 @@ TEST(BackendSeam, UnnamedBreakAtomicallyGuardsOnlyRawTmux37) {
   EXPECT_EQ(broken->name(), "sh");
   EXPECT_EQ(backend->version_queries, 0U);
   ASSERT_EQ(backend->issued.size(), 2U);
-  const std::string reported = "break-pane -d -s %7 -P -F '" +
+  const std::string reported = "break-pane -d -s %7 -t $2: -P -F '" +
                                libtmux::format_request(libtmux::Window::kFields) + "'";
+  const std::string current = "display-message -p -t $2:@3 '" +
+                              libtmux::format_request(libtmux::Window::kFields) + "'";
+  const std::string guarded = "if-shell -F -t %7 '#{==:#{version},3.7}' { " + reported +
+                              " -n libtmux } { " + reported + " }";
   EXPECT_EQ(backend->issued[1],
             (std::vector<std::string>{"if-shell", "-F", "-t", "%7",
-                                      "#{&&:#{==:#{version},3.7},"
-                                      "#{>:#{window_panes},1}}",
-                                      reported + " -n libtmux", reported}));
+                                      "#{==:#{window_panes},1}", current, guarded}));
 }
 
 TEST(BackendSeam, AFailedInsertedBreakHasNoMaskingFollowup) {
@@ -562,7 +589,7 @@ TEST(BackendSeam, UnnamedBreakRejectsMalformedOrNoncanonicalWindowRows) {
   for (const std::string& reply :
        {std::string{"$2:@9\n"}, window_row("@09", "sh", "$2"),
         window_row("@9", "sh", "$02"), window_row("@4294967296", "sh", "$2"),
-        window_row("@9", "sh", "$4294967296"),
+        window_row("@9", "sh", "$4294967296"), window_row("@9", "sh", "$3"),
         window_row("@9", "sh", "$2") + window_row("@10", "sh", "$2")}) {
     SCOPED_TRACE(reply);
     auto backend = std::make_shared<ScriptedBackend>(
@@ -645,6 +672,69 @@ TEST(BackendSeam, RawTmux37RejectsAnUnsafeIdBeforeBuildingACommandString) {
   }
 }
 
+TEST(BackendSeam, BreakOutRejectsAnUnsafeSessionBeforeBuildingACommandString) {
+  for (const std::string_view name : {std::string_view{}, std::string_view{"roomy"}}) {
+    SCOPED_TRACE(name);
+    auto backend = std::make_shared<ScriptedBackend>(
+        std::vector<std::string>{pane_row("%7", "@3", "$2; kill-server")});
+    const auto snapshot = libtmux::Snapshot::take(
+        backend, libtmux::Pane::kFields, {"list-panes"}, libtmux::FormatArgument::flag);
+    ASSERT_TRUE(snapshot.has_value()) << snapshot.error().diagnostic;
+    const libtmux::Pane pane{*snapshot, 0};
+
+    const auto broken = pane.break_out(name);
+
+    ASSERT_FALSE(broken.has_value());
+    EXPECT_EQ(broken.error().kind, FailureKind::validation);
+    EXPECT_EQ(broken.error().delivery, libtmux::DeliveryStatus::not_started);
+    EXPECT_NE(broken.error().diagnostic.find("stable numeric session id"),
+              std::string::npos)
+        << broken.error().diagnostic;
+    EXPECT_EQ(backend->issued.size(), 1U);
+  }
+}
+
+TEST(BackendSeam, BreakOutRejectsAnUnsafeWindowBeforeBuildingACommandString) {
+  for (const std::string_view name : {std::string_view{}, std::string_view{"roomy"}}) {
+    SCOPED_TRACE(name);
+    auto backend = std::make_shared<ScriptedBackend>(
+        std::vector<std::string>{pane_row("%7", "@3; kill-server", "$2")});
+    const auto snapshot = libtmux::Snapshot::take(
+        backend, libtmux::Pane::kFields, {"list-panes"}, libtmux::FormatArgument::flag);
+    ASSERT_TRUE(snapshot.has_value()) << snapshot.error().diagnostic;
+    const libtmux::Pane pane{*snapshot, 0};
+
+    const auto broken = pane.break_out(name);
+
+    ASSERT_FALSE(broken.has_value());
+    EXPECT_EQ(broken.error().kind, FailureKind::validation);
+    EXPECT_EQ(broken.error().delivery, libtmux::DeliveryStatus::not_started);
+    EXPECT_NE(broken.error().diagnostic.find("stable numeric window id"),
+              std::string::npos)
+        << broken.error().diagnostic;
+    EXPECT_EQ(backend->issued.size(), 1U);
+  }
+}
+
+TEST(BackendSeam, NamedBreakRejectsNulBeforeBuildingACommandString) {
+  auto backend = std::make_shared<ScriptedBackend>(
+      std::vector<std::string>{pane_row("%7", "@3", "$2")});
+  const auto snapshot = libtmux::Snapshot::take(
+      backend, libtmux::Pane::kFields, {"list-panes"}, libtmux::FormatArgument::flag);
+  ASSERT_TRUE(snapshot.has_value()) << snapshot.error().diagnostic;
+  const libtmux::Pane pane{*snapshot, 0};
+  const std::string name{"room\0y", 6U};
+
+  const auto broken = pane.break_out(name);
+
+  ASSERT_FALSE(broken.has_value());
+  EXPECT_EQ(broken.error().kind, FailureKind::validation);
+  EXPECT_EQ(broken.error().delivery, libtmux::DeliveryStatus::not_started);
+  EXPECT_NE(broken.error().diagnostic.find("cannot contain NUL"), std::string::npos)
+      << broken.error().diagnostic;
+  EXPECT_EQ(backend->issued.size(), 1U);
+}
+
 TEST(BackendSeam, Tmux37aUnnamedBreakLeavesNamingToTmux) {
   auto backend = std::make_shared<ScriptedBackend>(
       std::vector<std::string>{pane_row("%7", "@3", "$2"),
@@ -662,9 +752,10 @@ TEST(BackendSeam, Tmux37aUnnamedBreakLeavesNamingToTmux) {
   EXPECT_EQ(backend->version_queries, 0U);
   ASSERT_EQ(backend->issued.size(), 2U);
   EXPECT_EQ(backend->issued[1].front(), "if-shell");
-  EXPECT_EQ(backend->issued[1].back(),
-            "break-pane -d -s %7 -P -F '" +
-                libtmux::format_request(libtmux::Window::kFields) + "'");
+  const std::string native = "break-pane -d -s %7 -t $2: -P -F '" +
+                             libtmux::format_request(libtmux::Window::kFields) + "'";
+  EXPECT_EQ(backend->issued[1].back(), "if-shell -F -t %7 '#{==:#{version},3.7}' { " +
+                                           native + " -n libtmux } { " + native + " }");
 }
 
 TEST(BackendSeam, AFailingExecutorIsReportedNotSwallowed) {
@@ -916,6 +1007,18 @@ TEST(BackendSeam, AnInsertedControlReplyReturnsOnlyTheSecondBlock) {
   EXPECT_EQ(*reply, "window-row\n");
 }
 
+TEST(BackendSeam, ANestedInsertedReplyReturnsTheFinalBlock) {
+  libtmux::ControlRequestResult result;
+  result.blocks = {control_block(1U, libtmux::ControlTerminal::end),
+                   control_block(2U, libtmux::ControlTerminal::end),
+                   control_block(3U, libtmux::ControlTerminal::end, "window-row\n")};
+
+  const auto reply = libtmux::detail::inserted_command_reply(result, std::nullopt);
+
+  ASSERT_TRUE(reply.has_value()) << reply.error().diagnostic;
+  EXPECT_EQ(*reply, "window-row\n");
+}
+
 TEST(BackendSeam, AnInsertedControlFailureCannotBeMaskedByWrapperSuccess) {
   const auto result =
       inserted_result({}, libtmux::ControlTerminal::end, "break failed\n",
@@ -936,6 +1039,17 @@ TEST(BackendSeam, AnInsertedControlFailureCannotBeMaskedByWrapperSuccess) {
   ASSERT_FALSE(wrapper_reply.has_value());
   EXPECT_EQ(wrapper_reply.error().kind, FailureKind::refused);
   EXPECT_EQ(wrapper_reply.error().diagnostic, "if-shell failed\n");
+
+  libtmux::ControlRequestResult nested_failure;
+  nested_failure.blocks = {
+      control_block(1U, libtmux::ControlTerminal::end),
+      control_block(2U, libtmux::ControlTerminal::error, "nested if-shell failed\n"),
+      control_block(3U, libtmux::ControlTerminal::end, "window-row\n")};
+  const auto nested_reply =
+      libtmux::detail::inserted_command_reply(nested_failure, std::nullopt);
+  ASSERT_FALSE(nested_reply.has_value());
+  EXPECT_EQ(nested_reply.error().kind, FailureKind::refused);
+  EXPECT_EQ(nested_reply.error().diagnostic, "nested if-shell failed\n");
 }
 
 TEST(BackendSeam, AnInsertedControlReplyChecksBothFramesAndTheCallBound) {

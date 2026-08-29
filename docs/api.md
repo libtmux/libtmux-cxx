@@ -2197,7 +2197,7 @@ The visible contents, as tmux printed them. `capture_lines` frames it into lines
 ```cpp
 [[nodiscard]] expected<Window, CommandFailure> break_out(std::string_view name = {}) const;
 ```
-Take this pane out into a window of its own, which is returned. An empty name leaves tmux to name the window after what is running.
+Take this pane out into a window of its own, which is returned. If it is already the window's only pane, return that window without moving it. An empty name leaves tmux to name the window after what is running.
 
 <a id="libtmux-entities-hpp-pane-join"></a>
 #### `Pane::join`

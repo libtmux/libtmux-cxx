@@ -106,12 +106,67 @@ CATALOGUE: t.Final = (
     Mutation(
         mutation_id="tmux37-unnamed-break-guard",
         path="src/entities.cpp",
-        find='        "#{&&:#{==:#{version},3.7},#{>:#{window_panes},1}}",',
-        replace='        "#{&&:#{==:#{version},3.7a},#{>:#{window_panes},1}}",',
+        find='                                " \'#{==:#{version},3.7}\' { " + native +',
+        replace='                                " \'#{==:#{version},3.7a}\' { " + native +',
         target="libtmux_backend_seam_test",
         test_regex=r"^libtmux[.]backend_seam$",
         guards="raw tmux 3.7 receives a name before an unnamed multi-pane "
         "break can crash its server",
+    ),
+    Mutation(
+        mutation_id="unnamed-only-pane-stays-put",
+        path="src/entities.cpp",
+        find='        "if-shell", "-F", "-t", target, "#{==:#{window_panes},1}", current, guarded};',
+        replace='        "if-shell", "-F", "-t", target, "#{==:#{window_panes},0}", current, guarded};',
+        target="libtmux_backend_seam_test",
+        test_regex=r"^libtmux[.]backend_seam$",
+        guards="an only-pane unnamed break returns its existing window rather than "
+        "moving it to tmux's implicit target session",
+    ),
+    Mutation(
+        mutation_id="named-only-pane-stays-put",
+        path="src/entities.cpp",
+        find='      "if-shell", "-F", "-t", target, "#{==:#{window_panes},1}", retained, native};',
+        replace='      "if-shell", "-F", "-t", target, "#{==:#{window_panes},0}", retained, native};',
+        target="libtmux_backend_seam_test",
+        test_regex=r"^libtmux[.]backend_seam$",
+        guards="naming an only-pane window renames it in place rather than moving "
+        "it to tmux's implicit target session",
+    ),
+    Mutation(
+        mutation_id="nested-inserted-reply",
+        path="src/control_backend.cpp",
+        find="  if (result.blocks.size() < 2U) {",
+        replace="  if (result.blocks.size() != 2U) {",
+        target="libtmux_backend_seam_test",
+        test_regex=r"^libtmux[.]backend_seam$",
+        guards="nested if-shell command lists return the final inserted reply after "
+        "every empty successful wrapper",
+    ),
+    Mutation(
+        mutation_id="unnamed-break-report-keeps-source-session",
+        path="src/entities.cpp",
+        find="        created.session_id() != owner) {",
+        replace="        false) {",
+        target="libtmux_backend_seam_test",
+        test_regex=r"^libtmux[.]backend_seam$",
+        guards="an unnamed break rejects a window report from a session other than "
+        "the explicit destination",
+    ),
+    Mutation(
+        mutation_id="named-break-report-keeps-source-session",
+        path="src/entities.cpp",
+        find=(
+            "  auto created = named_break_report(backend(), *std::move(broken), "
+            "id(), {}, owner);"
+        ),
+        replace=(
+            "  auto created = named_break_report(backend(), *std::move(broken), id());"
+        ),
+        target="libtmux_backend_seam_test",
+        test_regex=r"^libtmux[.]backend_seam$",
+        guards="a named break rejects a window report from a session other than "
+        "the explicit destination",
     ),
     Mutation(
         mutation_id="tmux37-named-break-repair",

@@ -629,7 +629,8 @@ public:
   [[nodiscard]] expected<void, CommandFailure> set_height(long long height) const;
   [[nodiscard]] expected<void, CommandFailure> swap_with(const Pane& other) const;
 
-  // Take this pane out into a window of its own, which is returned.
+  // Take this pane out into a window of its own, which is returned. If it is
+  // already the window's only pane, return that window without moving it.
   // An empty name leaves tmux to name the window after what is running.
   [[nodiscard]] expected<Window, CommandFailure>
   break_out(std::string_view name = {}) const;

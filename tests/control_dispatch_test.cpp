@@ -259,6 +259,35 @@ TEST(ControlDispatch, UnnamedBreakOutReturnsItsExactWindow) {
   EXPECT_EQ(moved->window_id(), broken->id());
 }
 
+TEST(ControlDispatch, NamedOnlyPaneStaysInItsSession) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server subprocess = connect(*fixture);
+  const auto streamed = subprocess.over_control(fixture->session_name());
+  ASSERT_TRUE(streamed.has_value()) << streamed.error().diagnostic;
+
+  const auto sessions = streamed->sessions();
+  ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
+  const Session source = sessions->front();
+  const auto original = source.active_window();
+  ASSERT_TRUE(original.has_value()) << original.error().diagnostic;
+  const auto pane = original->active_pane();
+  ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
+  const auto destination = streamed->new_session("destination");
+  ASSERT_TRUE(destination.has_value()) << destination.error().diagnostic;
+
+  constexpr std::string_view requested = "#{session_name}#,},comma";
+  const auto broken = pane->break_out(requested);
+
+  ASSERT_TRUE(broken.has_value()) << broken.error().diagnostic;
+  EXPECT_EQ(broken->id(), original->id());
+  EXPECT_EQ(broken->session_id(), source.id());
+  EXPECT_EQ(broken->name(), requested);
+  const auto moved = pane->refresh();
+  ASSERT_TRUE(moved.has_value()) << moved.error().diagnostic;
+  EXPECT_EQ(moved->window_id(), original->id());
+}
+
 TEST(ControlDispatch, RawTmux37NamedBreakRepairKeepsReplyOwnership) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
