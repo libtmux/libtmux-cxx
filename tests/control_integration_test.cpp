@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <expected>
 #include <filesystem>
+#include <fstream>
 #include <initializer_list>
 #include <optional>
 #include <stdexcept>
@@ -31,6 +32,7 @@
 #include <array>
 
 #include <poll.h>
+#include <pthread.h>
 
 #include <gtest/gtest.h>
 
@@ -129,6 +131,52 @@ bool has_notification(const std::vector<Notification>& notifications,
     return text(notification.body).starts_with(prefix);
   });
 }
+
+#if defined(__linux__)
+// No portable call reports another process's signal mask, and /proc gives it
+// as a hex word.
+std::optional<unsigned long long> blocked_signals(int pid) {
+  std::ifstream status{"/proc/" + std::to_string(pid) + "/status"};
+  std::string line;
+  while (std::getline(status, line)) {
+    constexpr std::string_view field{"SigBlk:"};
+    if (line.starts_with(field)) {
+      return std::stoull(line.substr(field.size()), nullptr, 16);
+    }
+  }
+  return std::nullopt;
+}
+
+// tmux restores the mask it inherited rather than an empty one, so a signal
+// blocked here stays blocked in the server and in every pane command that does
+// not set a mask of its own. A server that cannot be terminated by SIGTERM
+// outlives whatever was supposed to stop it.
+TEST(ControlModeConnection, ServerDoesNotInheritABlockedSignalMask) {
+  sigset_t blocked;
+  sigemptyset(&blocked);
+  sigaddset(&blocked, SIGTERM);
+  sigset_t previous;
+  ASSERT_EQ(::pthread_sigmask(SIG_BLOCK, &blocked, &previous), 0);
+  auto server = start_server(unique_name("control-signal-mask"));
+  ASSERT_EQ(::pthread_sigmask(SIG_SETMASK, &previous, nullptr), 0);
+  ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
+
+  auto connected = connect_to(*server);
+  ASSERT_TRUE(connected.has_value())
+      << (connected.has_value() ? "" : connected.error().message);
+  auto connection = std::move(*connected);
+
+  const auto reported = connection.execute(group({{"display-message", "-p", "#{pid}"}}),
+                                           std::chrono::steady_clock::now() + 2s);
+  ASSERT_FALSE(reported.connection_error.has_value());
+  ASSERT_EQ(reported.blocks.size(), 1U);
+  const auto server_pid = std::stoi(text(reported.blocks[0].body));
+
+  const auto mask = blocked_signals(server_pid);
+  ASSERT_TRUE(mask.has_value());
+  EXPECT_EQ(*mask, 0ULL);
+}
+#endif
 
 TEST(ControlModeConnection, RejectsBoundsTooSmallForItsPrivateBoundary) {
   auto server = start_server(unique_name("control-boundary-bounds"));

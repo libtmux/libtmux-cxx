@@ -1,6 +1,8 @@
 #include "process.hpp"
 #include "libtmux/expected.hpp"
 
+#include "spawn_signals.hpp"
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -430,10 +432,28 @@ ChildProcess::spawn(ProcessOptions options) {
     return libtmux::unexpected(pidfd_reservation.error());
   }
 
+  posix_spawnattr_t attributes;
+  result = ::posix_spawnattr_init(&attributes);
+  if (result == 0) {
+    result = libtmux::detail::apply_clean_signal_attributes(attributes, 0);
+    if (result != 0) {
+      static_cast<void>(::posix_spawnattr_destroy(&attributes));
+    }
+  }
+  if (result != 0) {
+    static_cast<void>(::posix_spawn_file_actions_destroy(&actions));
+    close_fd(*pidfd_reservation);
+    close_pipes();
+    return libtmux::unexpected(system_error("posix_spawnattr", result));
+  }
+
   pid_t child_pid = -1;
-  result = ::posix_spawnp(&child_pid, arguments.front().c_str(), &actions, nullptr,
+  result = ::posix_spawnp(&child_pid, arguments.front().c_str(), &actions, &attributes,
                           argument_pointers.data(), environment_pointers.data());
-  const auto destroy_result = ::posix_spawn_file_actions_destroy(&actions);
+  const auto actions_destroyed = ::posix_spawn_file_actions_destroy(&actions);
+  const auto attributes_destroyed = ::posix_spawnattr_destroy(&attributes);
+  const auto destroy_result =
+      actions_destroyed != 0 ? actions_destroyed : attributes_destroyed;
   close_fd(stdout_write);
   close_fd(stderr_write);
   close_fd(*pidfd_reservation);

@@ -2,6 +2,7 @@
 
 #include "libtmux/expected.hpp"
 #include "notification_stream.hpp"
+#include "spawn_signals.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -333,9 +334,9 @@ expected<SpawnedClient, ProtocolError> spawn_client(const ConnectionOptions& opt
     static_cast<void>(::posix_spawnattr_destroy(&attributes));
     return fail_actions(operation, error_number);
   };
-  result = ::posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP);
+  result = detail::apply_clean_signal_attributes(attributes, POSIX_SPAWN_SETPGROUP);
   if (result != 0) {
-    return fail_attributes("posix_spawnattr_setflags", result);
+    return fail_attributes("posix_spawnattr signal setup", result);
   }
   result = ::posix_spawnattr_setpgroup(&attributes, 0);
   if (result != 0) {
