@@ -44,7 +44,7 @@ public:
       std::this_thread::sleep_for(*timeout);
       return libtmux::unexpected(
           libtmux::CommandFailure{.kind = libtmux::FailureKind::timeout,
-                                  .dispatched = true,
+                                  .delivery = libtmux::DeliveryStatus::replied,
                                   .exit_code = -1,
                                   .diagnostic = "scripted timeout"});
     }
@@ -52,7 +52,7 @@ public:
     if (command.empty()) {
       return libtmux::unexpected(
           libtmux::CommandFailure{.kind = libtmux::FailureKind::validation,
-                                  .dispatched = false,
+                                  .delivery = libtmux::DeliveryStatus::not_started,
                                   .exit_code = 0,
                                   .diagnostic = "empty scripted command"});
     }
@@ -74,7 +74,7 @@ public:
     }
     return libtmux::unexpected(
         libtmux::CommandFailure{.kind = libtmux::FailureKind::validation,
-                                .dispatched = false,
+                                .delivery = libtmux::DeliveryStatus::not_started,
                                 .exit_code = 0,
                                 .diagnostic = "unexpected scripted command"});
   }

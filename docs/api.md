@@ -17,6 +17,7 @@ is the prose there. Run it with `--check` to prove this page is current.
 - [`libtmux/filter_expr.hpp`](#libtmux-filter-expr-hpp)
 - [`libtmux/relations.hpp`](#libtmux-relations-hpp)
 - [`libtmux/cardinality.hpp`](#libtmux-cardinality-hpp)
+- [`libtmux/delivery.hpp`](#libtmux-delivery-hpp)
 - [`libtmux/command.hpp`](#libtmux-command-hpp)
 - [`libtmux/options.hpp`](#libtmux-options-hpp)
 - [`libtmux/control.hpp`](#libtmux-control-hpp)
@@ -4089,6 +4090,50 @@ template <ReferenceRange Range> [[nodiscard]] expected<Referenced<Range>, Cardin
 ```
 `exactly_one` states that several is a caller error, and says which one.
 
+<a id="libtmux-delivery-hpp"></a>
+## `libtmux/delivery.hpp`
+
+How far a tmux command is known to have progressed before a failure.  Only `not_started` is safe to retry without inspecting the operation. `written` means the complete request reached the transport but no terminal reply did. `replied` means tmux produced a terminal reply. `indeterminate` means the transport cannot prove whether tmux saw or completed the request.
+
+**Symbols:**
+
+- [`DeliveryStatus`](#libtmux-delivery-hpp-deliverystatus)
+  - [`DeliveryStatus::not_started`](#libtmux-delivery-hpp-deliverystatus-not-started)
+  - [`DeliveryStatus::written`](#libtmux-delivery-hpp-deliverystatus-written)
+  - [`DeliveryStatus::replied`](#libtmux-delivery-hpp-deliverystatus-replied)
+  - [`DeliveryStatus::indeterminate`](#libtmux-delivery-hpp-deliverystatus-indeterminate)
+- [`Free symbols`](#libtmux-delivery-hpp-free-symbols)
+  - [`to_string`](#libtmux-delivery-hpp-free-symbols-to-string)
+
+<a id="libtmux-delivery-hpp-deliverystatus"></a>
+### `DeliveryStatus`
+
+```cpp
+enum class DeliveryStatus : std::uint8_t;
+```
+
+<a id="libtmux-delivery-hpp-deliverystatus-not-started"></a>
+#### `DeliveryStatus::not_started` — `not_started,`
+
+<a id="libtmux-delivery-hpp-deliverystatus-written"></a>
+#### `DeliveryStatus::written` — `written,`
+
+<a id="libtmux-delivery-hpp-deliverystatus-replied"></a>
+#### `DeliveryStatus::replied` — `replied,`
+
+<a id="libtmux-delivery-hpp-deliverystatus-indeterminate"></a>
+#### `DeliveryStatus::indeterminate` — `indeterminate,`
+
+<a id="libtmux-delivery-hpp-free-symbols"></a>
+### `Free symbols`
+
+<a id="libtmux-delivery-hpp-free-symbols-to-string"></a>
+#### `to_string`
+
+```cpp
+[[nodiscard]] constexpr std::string_view to_string(DeliveryStatus status) noexcept;
+```
+
 <a id="libtmux-command-hpp"></a>
 ## `libtmux/command.hpp`
 
@@ -4108,7 +4153,7 @@ Why a tmux command produced no answer.  `refused` means tmux ran and said no; `m
   - [`FailureKind::unsupported`](#libtmux-command-hpp-failurekind-unsupported)
 - [`CommandFailure`](#libtmux-command-hpp-commandfailure)
   - [`CommandFailure::kind`](#libtmux-command-hpp-commandfailure-kind)
-  - [`CommandFailure::dispatched`](#libtmux-command-hpp-commandfailure-dispatched)
+  - [`CommandFailure::delivery`](#libtmux-command-hpp-commandfailure-delivery)
   - [`CommandFailure::exit_code`](#libtmux-command-hpp-commandfailure-exit-code)
   - [`CommandFailure::diagnostic`](#libtmux-command-hpp-commandfailure-diagnostic)
 - [`ArgumentSensitivity`](#libtmux-command-hpp-argumentsensitivity)
@@ -4195,13 +4240,13 @@ struct CommandFailure;
 FailureKind kind{FailureKind::refused};
 ```
 
-<a id="libtmux-command-hpp-commandfailure-dispatched"></a>
-#### `CommandFailure::dispatched`
+<a id="libtmux-command-hpp-commandfailure-delivery"></a>
+#### `CommandFailure::delivery`
 
 ```cpp
-bool dispatched{};
+DeliveryStatus delivery{DeliveryStatus::not_started};
 ```
-True only when tmux itself ran. Retrying a dispatched command repeats whatever it already did.
+How far the command is known to have progressed. Only `not_started` is safe to retry blindly.
 
 <a id="libtmux-command-hpp-commandfailure-exit-code"></a>
 #### `CommandFailure::exit_code`
@@ -4517,6 +4562,7 @@ Decode tmux's control protocol.  A control-mode stream interleaves command reply
 
 - [`ProtocolError`](#libtmux-control-hpp-protocolerror)
   - [`ProtocolError::message`](#libtmux-control-hpp-protocolerror-message)
+  - [`ProtocolError::delivery`](#libtmux-control-hpp-protocolerror-delivery)
 - [`ControlTerminal`](#libtmux-control-hpp-controlterminal)
   - [`ControlTerminal::end`](#libtmux-control-hpp-controlterminal-end)
   - [`ControlTerminal::error`](#libtmux-control-hpp-controlterminal-error)
@@ -4630,7 +4676,7 @@ Decode tmux's control protocol.  A control-mode stream interleaves command reply
 <a id="libtmux-control-hpp-protocolerror"></a>
 ### `ProtocolError`
 
-Why a decode stopped. The stream is terminal for its connection: a caller cannot resynchronise a control stream, only start a new one.
+Why a control operation stopped. The stream is terminal after a protocol failure: a caller cannot resynchronise it, only start a new one. `delivery` says whether the affected request was untouched, fully written, answered, or left indeterminate.
 
 ```cpp
 struct ProtocolError;
@@ -4641,6 +4687,13 @@ struct ProtocolError;
 
 ```cpp
 std::string message;
+```
+
+<a id="libtmux-control-hpp-protocolerror-delivery"></a>
+#### `ProtocolError::delivery`
+
+```cpp
+DeliveryStatus delivery{DeliveryStatus::indeterminate};
 ```
 
 <a id="libtmux-control-hpp-controlterminal"></a>

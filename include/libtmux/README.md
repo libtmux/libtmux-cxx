@@ -38,7 +38,8 @@ server-side `command-alias` redefine a built-in command.
 | [`entities.hpp`](entities.hpp) | `Session`, `Window`, `Pane`, `Client`, `Buffer`, and the option structs their creators take |
 | [`socket.hpp`](socket.hpp) | How a server is addressed, and what makes an address valid |
 | [`target.hpp`](target.hpp) | The id-based targets every operation is addressed by |
-| [`command.hpp`](command.hpp) | `CommandFailure`, `FailureKind`, `DispatchPhase` — the one error type |
+| [`delivery.hpp`](delivery.hpp) | `DeliveryStatus` — whether a failed command was not started, written, answered, or left indeterminate |
+| [`command.hpp`](command.hpp) | `CommandFailure`, `FailureKind` — the one command error type |
 
 ### Asking questions
 

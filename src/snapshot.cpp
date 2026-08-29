@@ -78,7 +78,7 @@ Snapshot::take_in_session(std::shared_ptr<const detail::Backend> backend,
   if (!snapshot->parse()) {
     return unexpected(
         CommandFailure{.kind = FailureKind::refused,
-                       .dispatched = true,
+                       .delivery = DeliveryStatus::replied,
                        .exit_code = 0,
                        .diagnostic = "tmux output did not match the fields asked for"});
   }
@@ -88,14 +88,14 @@ Snapshot::take_in_session(std::shared_ptr<const detail::Backend> backend,
     if (session_column == fields.size()) {
       return unexpected(CommandFailure{
           .kind = FailureKind::validation,
-          .dispatched = false,
+          .delivery = DeliveryStatus::not_started,
           .exit_code = 0,
           .diagnostic = "psmux routed snapshot has no session identity field"});
     }
     if (snapshot->rows().empty()) {
       return unexpected(CommandFailure{
           .kind = FailureKind::missing,
-          .dispatched = true,
+          .delivery = DeliveryStatus::replied,
           .exit_code = 0,
           .diagnostic = "psmux session changed while reading its snapshot"});
     }
@@ -103,7 +103,7 @@ Snapshot::take_in_session(std::shared_ptr<const detail::Backend> backend,
       if (row[session_column] != session_id) {
         return unexpected(CommandFailure{
             .kind = FailureKind::missing,
-            .dispatched = true,
+            .delivery = DeliveryStatus::replied,
             .exit_code = 0,
             .diagnostic = "psmux session changed while reading its snapshot"});
       }

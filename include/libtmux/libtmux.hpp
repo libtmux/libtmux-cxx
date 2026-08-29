@@ -15,6 +15,7 @@
 #include "libtmux/chain.hpp"
 #include "libtmux/command.hpp"
 #include "libtmux/control.hpp"
+#include "libtmux/delivery.hpp"
 #include "libtmux/entities.hpp"
 #include "libtmux/expected.hpp"
 #include "libtmux/filter_expr.hpp"

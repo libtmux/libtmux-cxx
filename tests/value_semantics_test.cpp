@@ -144,7 +144,7 @@ TEST(ValueSemantics, AFailureComposesAndCanBeNamed) {
       [](const Server& server) { return server.sessions(); });
   ASSERT_FALSE(sessions.has_value());
   EXPECT_EQ(sessions.error().kind, FailureKind::validation);
-  EXPECT_FALSE(sessions.error().dispatched);
+  EXPECT_EQ(sessions.error().delivery, libtmux::DeliveryStatus::not_started);
 
   // Every failure a caller can be handed says what it is.
   for (const FailureKind kind :

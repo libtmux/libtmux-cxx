@@ -26,14 +26,18 @@
 #include <vector>
 
 #include "libtmux/abi.hpp"
+#include "libtmux/delivery.hpp"
 #include "libtmux/expected.hpp"
 
 LIBTMUX_NAMESPACE_BEGIN
 
-// Why a decode stopped. The stream is terminal for its connection: a caller
-// cannot resynchronise a control stream, only start a new one.
+// Why a control operation stopped. The stream is terminal after a protocol
+// failure: a caller cannot resynchronise it, only start a new one. `delivery`
+// says whether the affected request was untouched, fully written, answered,
+// or left indeterminate.
 struct ProtocolError {
   std::string message;
+  DeliveryStatus delivery{DeliveryStatus::indeterminate};
 };
 
 enum class ControlTerminal : std::uint8_t { end, error };

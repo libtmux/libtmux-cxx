@@ -60,7 +60,7 @@ detail::Row::run(const CommandRequest& command,
     if (snapshot_->rows()[row_][session_id].empty()) {
       return unexpected(
           CommandFailure{.kind = FailureKind::validation,
-                         .dispatched = false,
+                         .delivery = DeliveryStatus::not_started,
                          .exit_code = 0,
                          .diagnostic = "psmux entity has no stable session id"});
     }
@@ -98,7 +98,7 @@ template <typename Left, typename Right>
 
 [[nodiscard]] CommandFailure crossed_servers() {
   return CommandFailure{.kind = FailureKind::validation,
-                        .dispatched = false,
+                        .delivery = DeliveryStatus::not_started,
                         .exit_code = 0,
                         .diagnostic =
                             "the two values name objects on different tmux servers"};
@@ -136,7 +136,7 @@ expected<void, CommandFailure> effect(expected<std::string, CommandFailure> repl
 
 CommandFailure rejected(std::string diagnostic) {
   return CommandFailure{.kind = FailureKind::validation,
-                        .dispatched = false,
+                        .delivery = DeliveryStatus::not_started,
                         .exit_code = 0,
                         .diagnostic = std::move(diagnostic)};
 }
@@ -144,7 +144,7 @@ CommandFailure rejected(std::string diagnostic) {
 #if defined(_WIN32)
 CommandFailure unsupported(std::string diagnostic) {
   return CommandFailure{.kind = FailureKind::unsupported,
-                        .dispatched = false,
+                        .delivery = DeliveryStatus::not_started,
                         .exit_code = 0,
                         .diagnostic = std::move(diagnostic)};
 }
@@ -173,7 +173,7 @@ expected<OptionEntry, CommandFailure> named(expected<std::string, CommandFailure
   if (entries->empty()) {
     return unexpected(
         CommandFailure{.kind = FailureKind::missing,
-                       .dispatched = true,
+                       .delivery = DeliveryStatus::replied,
                        .exit_code = 0,
                        .diagnostic = "no value set for option " + std::string{name}});
   }
@@ -531,7 +531,7 @@ expected<std::vector<Pane>, CommandFailure> Window::panes() const {
   if (owned.empty()) {
     return unexpected(
         CommandFailure{.kind = FailureKind::missing,
-                       .dispatched = true,
+                       .delivery = DeliveryStatus::replied,
                        .exit_code = 0,
                        .diagnostic = "tmux has no window " + std::string{id()}});
   }
@@ -556,7 +556,7 @@ expected<Pane, CommandFailure> Window::active_pane() const {
   }
   return unexpected(
       CommandFailure{.kind = FailureKind::missing,
-                     .dispatched = true,
+                     .delivery = DeliveryStatus::replied,
                      .exit_code = 0,
                      .diagnostic = "tmux has no active pane in " + std::string{id()}});
 #else
@@ -909,14 +909,14 @@ named_break_report(const std::shared_ptr<const detail::Backend>& backend,
   if (rows.empty() || rows.front().front().empty()) {
     return unexpected(
         CommandFailure{.kind = FailureKind::missing,
-                       .dispatched = true,
+                       .delivery = DeliveryStatus::replied,
                        .exit_code = 0,
                        .diagnostic = "tmux has no window " + std::string{source}});
   }
   if (rows.size() != 1U) {
     return unexpected(CommandFailure{
         .kind = FailureKind::refused,
-        .dispatched = true,
+        .delivery = DeliveryStatus::replied,
         .exit_code = 0,
         .diagnostic = "break-pane completed for pane " + std::string{source} +
                       ", but did not report one exact connected window row"});
@@ -929,7 +929,7 @@ named_break_report(const std::shared_ptr<const detail::Backend>& backend,
       (!expected_session.empty() && window.session_id() != expected_session)) {
     return unexpected(CommandFailure{
         .kind = FailureKind::refused,
-        .dispatched = true,
+        .delivery = DeliveryStatus::replied,
         .exit_code = 0,
         .diagnostic = "break-pane completed for pane " + std::string{source} +
                       ", but did not report the exact connected window"});
@@ -941,7 +941,7 @@ named_break_report(const std::shared_ptr<const detail::Backend>& backend,
   if (!version.has_value() || (automatic_rename != "0" && automatic_rename != "1")) {
     return unexpected(CommandFailure{
         .kind = FailureKind::refused,
-        .dispatched = true,
+        .delivery = DeliveryStatus::replied,
         .exit_code = 0,
         .diagnostic = "break-pane completed for pane " + std::string{source} +
                       ", but its version or automatic-rename report was invalid"});
@@ -989,7 +989,7 @@ expected<Window, CommandFailure> Pane::window() const {
   }
   return unexpected(
       CommandFailure{.kind = FailureKind::missing,
-                     .dispatched = true,
+                     .delivery = DeliveryStatus::replied,
                      .exit_code = 0,
                      .diagnostic = "tmux has no window " + *std::move(current_window)});
 #else
@@ -1161,14 +1161,14 @@ expected<Window, CommandFailure> Pane::break_out(std::string_view name) const {
     const auto& rows = (*snapshot)->rows();
     if (rows.empty() || rows.front().front().empty()) {
       return unexpected(CommandFailure{.kind = FailureKind::missing,
-                                       .dispatched = true,
+                                       .delivery = DeliveryStatus::replied,
                                        .exit_code = 0,
                                        .diagnostic = "tmux has no window " + target});
     }
     if (rows.size() != 1U) {
       return unexpected(CommandFailure{
           .kind = FailureKind::refused,
-          .dispatched = true,
+          .delivery = DeliveryStatus::replied,
           .exit_code = 0,
           .diagnostic = "break-pane completed for pane " + target +
                         ", but did not report one exact connected window row"});
@@ -1178,7 +1178,7 @@ expected<Window, CommandFailure> Pane::break_out(std::string_view name) const {
         !is_canonical_tmux_id(created.session_id(), '$')) {
       return unexpected(CommandFailure{
           .kind = FailureKind::refused,
-          .dispatched = true,
+          .delivery = DeliveryStatus::replied,
           .exit_code = 0,
           .diagnostic = "break-pane completed for pane " + target +
                         ", but did not report one exact connected window row"});
@@ -1226,7 +1226,11 @@ expected<Window, CommandFailure> Pane::break_out(std::string_view name) const {
       backend()->run_batch(repair, repair_policy.timeout, repair_policy.output_limit);
   if (!repaired.has_value()) {
     CommandFailure failure = repaired.error();
-    failure.dispatched = true;
+    if (failure.delivery == DeliveryStatus::not_started) {
+      // The repair did not start, but break-pane itself already replied and
+      // moved the pane. Retrying the whole operation is therefore unsafe.
+      failure.delivery = DeliveryStatus::replied;
+    }
     failure.diagnostic =
         "break-pane moved pane " + std::string{id()} + " into window " +
         created_window +
@@ -1242,7 +1246,7 @@ expected<Window, CommandFailure> Pane::break_out(std::string_view name) const {
   if (final->version != Version{.major = 3, .minor = 7} || final->automatic_rename) {
     return unexpected(CommandFailure{
         .kind = FailureKind::refused,
-        .dispatched = true,
+        .delivery = DeliveryStatus::replied,
         .exit_code = 0,
         .diagnostic = "break-pane moved pane " + std::string{id()} + " into window " +
                       created_window +

@@ -54,7 +54,7 @@ public:
     }
     return libtmux::unexpected(
         libtmux::CommandFailure{.kind = libtmux::FailureKind::timeout,
-                                .dispatched = true,
+                                .delivery = libtmux::DeliveryStatus::replied,
                                 .exit_code = -1,
                                 .diagnostic = "scripted timeout"});
   }

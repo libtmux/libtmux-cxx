@@ -2,6 +2,7 @@
 
 #include "libtmux/abi.hpp"
 
+#include "libtmux/delivery.hpp"
 #include "libtmux/expected.hpp"
 #include <chrono>
 #include <cstddef>
@@ -17,7 +18,6 @@
 LIBTMUX_NAMESPACE_BEGIN
 namespace detail {
 
-enum class DispatchPhase { not_dispatched, dispatch_uncertain };
 enum class StdioPolicy { capture, inherit_terminal };
 
 struct ProcessRequest {
@@ -38,7 +38,7 @@ struct ProcessReply {
 
 struct ProcessError {
   enum class Kind { validation, spawn, pre_exec, pipe, timeout } kind;
-  DispatchPhase dispatch_phase;
+  DeliveryStatus delivery;
   std::error_code cause;
   std::string diagnostic;
   std::vector<std::byte> stdout_bytes;

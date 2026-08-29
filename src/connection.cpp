@@ -133,6 +133,11 @@ ProtocolError system_error(std::string_view operation, int error_number) {
   return ProtocolError{std::string{operation} + ": " + std::strerror(error_number)};
 }
 
+ProtocolError not_started_error(std::string message) {
+  return ProtocolError{.message = std::move(message),
+                       .delivery = DeliveryStatus::not_started};
+}
+
 expected<std::array<int, 2>, ProtocolError> make_pipe() {
   std::array<int, 2> descriptors{-1, -1};
 #if defined(__linux__) && !defined(LIBTMUX_FORCE_PORTABLE_SYSCALLS)
@@ -188,14 +193,14 @@ std::string encode_token(std::string_view value) {
 
 expected<std::string, ProtocolError> render_request(ControlRequest&& request) {
   if (request.group.empty()) {
-    return unexpected(ProtocolError{"control request group is empty"});
+    return unexpected(not_started_error("control request group is empty"));
   }
   std::string line;
   for (std::size_t operation_index = 0; operation_index < request.group.size();
        ++operation_index) {
     const auto& operation = request.group[operation_index];
     if (operation.argv.empty()) {
-      return unexpected(ProtocolError{"control request operation has no command"});
+      return unexpected(not_started_error("control request operation has no command"));
     }
     if (operation_index != 0U) {
       line.append(" ; ");
@@ -204,7 +209,7 @@ expected<std::string, ProtocolError> render_request(ControlRequest&& request) {
          ++argument_index) {
       const auto& argument = operation.argv[argument_index];
       if (contains_nul(argument)) {
-        return unexpected(ProtocolError{"control request argument contains NUL"});
+        return unexpected(not_started_error("control request argument contains NUL"));
       }
       if (argument_index != 0U) {
         line.push_back(' ');
@@ -521,6 +526,7 @@ struct Connection::State {
 
     ControlRequestResult result;
     std::string boundary;
+    std::atomic<DeliveryStatus> delivery{DeliveryStatus::not_started};
     bool complete{false};
   };
 
@@ -597,7 +603,9 @@ struct Connection::State {
     }
     for (auto& pending_request : pending) {
       if (!pending_request->result.connection_error) {
-        pending_request->result.connection_error = fatal_error.value();
+        ProtocolError request_error = fatal_error.value();
+        request_error.delivery = pending_request->delivery.load();
+        pending_request->result.connection_error = std::move(request_error);
       }
       pending_request->complete = true;
     }
@@ -673,11 +681,13 @@ struct Connection::State {
 
     auto pending_request = pending.front();
     if (is_boundary(block, pending_request->boundary)) {
+      pending_request->delivery.store(DeliveryStatus::replied);
       pending_request->complete = true;
       pending.pop_front();
       condition.notify_all();
       return;
     }
+    pending_request->delivery.store(DeliveryStatus::replied);
     pending_request->result.blocks.push_back(std::move(block));
   }
 
@@ -897,21 +907,35 @@ struct Connection::State {
     }
   }
 
-  expected<void, ProtocolError> write_bytes(std::string_view bytes_to_write,
-                                            Clock::time_point deadline,
-                                            bool permit_closing = false) {
+  expected<void, ProtocolError>
+  write_bytes(std::string_view bytes_to_write, Clock::time_point deadline,
+              bool permit_closing = false,
+              std::atomic<DeliveryStatus>* delivery = nullptr) {
     std::size_t written = 0U;
+    const auto failed = [&](ProtocolError error) -> expected<void, ProtocolError> {
+      error.delivery =
+          written == 0U ? DeliveryStatus::not_started : DeliveryStatus::indeterminate;
+      return unexpected(std::move(error));
+    };
+    const auto advance_delivery = [&](DeliveryStatus next) {
+      if (delivery == nullptr) {
+        return;
+      }
+      DeliveryStatus current = delivery->load();
+      while (current != DeliveryStatus::replied &&
+             !delivery->compare_exchange_weak(current, next)) {
+      }
+    };
     while (written < bytes_to_write.size()) {
       if (!permit_closing) {
         std::lock_guard lock{mutex};
         if (closing || fatal_error) {
-          return unexpected(
-              ProtocolError{"control write cancelled by connection closure"});
+          return failed(ProtocolError{"control write cancelled by connection closure"});
         }
       }
       const auto now = Clock::now();
       if (now >= deadline) {
-        return unexpected(ProtocolError{"control write deadline expired"});
+        return failed(ProtocolError{"control write deadline expired"});
       }
       const auto remaining =
           std::chrono::ceil<std::chrono::milliseconds>(deadline - now);
@@ -923,31 +947,33 @@ struct Connection::State {
         if (errno == EINTR) {
           continue;
         }
-        return unexpected(system_error("poll(control input)", errno));
+        return failed(system_error("poll(control input)", errno));
       }
       if (polled == 0) {
         continue;
       }
       if ((descriptor.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
-        return unexpected(ProtocolError{"control input pipe closed"});
+        return failed(ProtocolError{"control input pipe closed"});
       }
       auto safe_write = write_without_sigpipe(input, bytes_to_write.data() + written,
                                               bytes_to_write.size() - written);
       if (!safe_write) {
-        return unexpected(safe_write.error());
+        return failed(safe_write.error());
       }
       const auto count = *safe_write;
       if (count > 0) {
         written += static_cast<std::size_t>(count);
         if (!permit_closing) {
           partial_command_frame = written != bytes_to_write.size();
+          advance_delivery(partial_command_frame ? DeliveryStatus::indeterminate
+                                                 : DeliveryStatus::written);
         }
         continue;
       }
       if (count < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) {
         continue;
       }
-      return unexpected(system_error("write(control input)", errno));
+      return failed(system_error("write(control input)", errno));
     }
     return {};
   }
@@ -1015,40 +1041,44 @@ Connection& Connection::operator=(Connection&& other) noexcept {
 
 expected<Connection, ProtocolError> Connection::connect(ConnectionOptions options) {
   if (options.tmux_binary.empty()) {
-    return unexpected(ProtocolError{"tmux binary path is empty"});
+    return unexpected(not_started_error("tmux binary path is empty"));
   }
   if (options.socket_path.empty()) {
-    return unexpected(ProtocolError{"tmux socket path is empty"});
+    return unexpected(not_started_error("tmux socket path is empty"));
   }
   if (options.session_name.empty()) {
-    return unexpected(ProtocolError{"tmux session name is empty"});
+    return unexpected(not_started_error("tmux session name is empty"));
   }
   if (contains_nul(options.tmux_binary.native()) ||
       contains_nul(options.socket_path.native()) ||
       contains_nul(options.session_name)) {
-    return unexpected(ProtocolError{"connection option contains NUL"});
+    return unexpected(not_started_error("connection option contains NUL"));
   }
   if (options.startup_timeout <= std::chrono::milliseconds::zero() ||
       options.shutdown_timeout <= std::chrono::milliseconds::zero()) {
-    return unexpected(ProtocolError{"connection timeouts must be positive"});
+    return unexpected(not_started_error("connection timeouts must be positive"));
   }
   if ((options.retained_reply_bytes != 0U &&
        options.retained_reply_bytes < kMinimumBoundaryBytes) ||
       (options.line_bytes != 0U && options.line_bytes < kMinimumBoundaryBytes)) {
     return unexpected(
-        ProtocolError{"connection reply and line bounds must be zero or at least " +
-                      std::to_string(kMinimumBoundaryBytes) +
-                      " bytes so private request boundaries remain readable"});
+        not_started_error("connection reply and line bounds must be zero or at least " +
+                          std::to_string(kMinimumBoundaryBytes) +
+                          " bytes so private request boundaries remain readable"));
   }
 
   auto seed = make_boundary_seed();
   if (!seed) {
-    return unexpected(seed.error());
+    ProtocolError failure = seed.error();
+    failure.delivery = DeliveryStatus::not_started;
+    return unexpected(std::move(failure));
   }
 
   auto spawned = spawn_client(options);
   if (!spawned) {
-    return unexpected(spawned.error());
+    ProtocolError failure = spawned.error();
+    failure.delivery = DeliveryStatus::not_started;
+    return unexpected(std::move(failure));
   }
   auto state = std::make_unique<State>(std::move(options), *spawned, std::move(*seed));
   // Non-blocking on both ends: a caller polling this must never block on it,
@@ -1078,8 +1108,8 @@ expected<Connection, ProtocolError> Connection::connect(ConnectionOptions option
     state->reader =
         std::thread{[raw_state = state.get()] { raw_state->reader_main(); }};
   } catch (const std::exception& exception) {
-    return unexpected(
-        ProtocolError{std::string{"control worker start failed: "} + exception.what()});
+    return unexpected(not_started_error(std::string{"control worker start failed: "} +
+                                        exception.what()));
   }
 
   const auto startup_deadline = Clock::now() + state->options.startup_timeout;
@@ -1096,8 +1126,9 @@ expected<Connection, ProtocolError> Connection::connect(ConnectionOptions option
     if (fatal_error) {
       failure = fatal_error.value();
     } else {
-      failure = ProtocolError{"control client startup deadline expired"};
+      failure = not_started_error("control client startup deadline expired");
     }
+    failure->delivery = DeliveryStatus::not_started;
   }
 
   Connection cleanup{std::move(state)};
@@ -1115,12 +1146,12 @@ ControlRequestResult Connection::execute(ControlRequest request,
     return failed;
   }
   if (!state_) {
-    failed.connection_error = ProtocolError{"control connection has no state"};
+    failed.connection_error = not_started_error("control connection has no state");
     return failed;
   }
   if (Clock::now() >= deadline) {
     failed.connection_error =
-        ProtocolError{"control request deadline expired before dispatch"};
+        not_started_error("control request deadline expired before dispatch");
     return failed;
   }
 
@@ -1130,7 +1161,7 @@ ControlRequestResult Connection::execute(ControlRequest request,
     std::unique_lock<std::timed_mutex> write_lock{state_->write_mutex, std::defer_lock};
     if (!write_lock.try_lock_until(deadline) || Clock::now() >= deadline) {
       failed.connection_error =
-          ProtocolError{"control writer acquisition deadline expired"};
+          not_started_error("control writer acquisition deadline expired");
       return failed;
     }
     const auto name = boundary_name(state_->boundary_seed, state_->next_boundary++);
@@ -1142,17 +1173,18 @@ ControlRequestResult Connection::execute(ControlRequest request,
       const auto fatal_error = state_->fatal_error;
       if (fatal_error) {
         failed.connection_error = fatal_error.value();
+        failed.connection_error->delivery = DeliveryStatus::not_started;
         return failed;
       }
       if (!state_->ready || state_->closing || state_->shutdown_complete) {
         failed.connection_error =
-            ProtocolError{"control connection is not accepting requests"};
+            not_started_error("control connection is not accepting requests");
         return failed;
       }
       state_->pending.push_back(pending);
     }
 
-    auto written = state_->write_bytes(*rendered, deadline);
+    auto written = state_->write_bytes(*rendered, deadline, false, &pending->delivery);
     if (!written) {
       std::lock_guard state_lock{state_->mutex};
       if (!state_->closing) {
@@ -1185,6 +1217,15 @@ ControlRequestResult Connection::execute(ControlRequest request,
     {
       std::lock_guard lock{state_->mutex};
       state_->signal_child_locked(SIGTERM);
+    }
+  }
+  {
+    std::lock_guard lock{state_->mutex};
+    if (pending->result.connection_error) {
+      // A reader can fail the connection between the pre-write closure check
+      // and the write itself. Use the final progress observed by this writer,
+      // not the earlier snapshot fail_locked had available.
+      pending->result.connection_error->delivery = pending->delivery.load();
     }
   }
   return std::move(pending->result);
@@ -1221,15 +1262,15 @@ expected<void, ProtocolError>
 Connection::set_pane_output(std::string_view pane, bool deliver,
                             std::chrono::steady_clock::time_point deadline) {
   if (!state_) {
-    return unexpected(ProtocolError{"connection is empty"});
+    return unexpected(not_started_error("connection is empty"));
   }
   if (!state_->options.pane_output) {
-    return unexpected(ProtocolError{
+    return unexpected(not_started_error(
         "this connection did not ask for pane output, and tmux cannot add it "
-        "to a client that started without it"});
+        "to a client that started without it"));
   }
   if (pane.empty()) {
-    return unexpected(ProtocolError{"no pane named"});
+    return unexpected(not_started_error("no pane named"));
   }
 
   ControlRequest request;
@@ -1240,14 +1281,16 @@ Connection::set_pane_output(std::string_view pane, bool deliver,
     return unexpected(*result.connection_error);
   }
   if (result.blocks.size() != 1U) {
-    return unexpected(ProtocolError{"tmux returned " +
-                                    std::to_string(result.blocks.size()) +
-                                    " reply blocks for one refresh"});
+    return unexpected(ProtocolError{.message = "tmux returned " +
+                                               std::to_string(result.blocks.size()) +
+                                               " reply blocks for one refresh",
+                                    .delivery = DeliveryStatus::written});
   }
   const auto& block = result.blocks.front();
   if (block.terminal == ControlTerminal::error) {
-    return unexpected(
-        ProtocolError{"tmux refused to change output for " + std::string{pane}});
+    return unexpected(ProtocolError{.message = "tmux refused to change output for " +
+                                               std::string{pane},
+                                    .delivery = DeliveryStatus::replied});
   }
   return {};
 }

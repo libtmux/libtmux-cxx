@@ -8,6 +8,7 @@
 // feature gap; `validation` is a bad request, so callers handle them differently.
 
 #include "libtmux/abi.hpp"
+#include "libtmux/delivery.hpp"
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -64,9 +65,9 @@ enum class FailureKind {
 
 struct CommandFailure {
   FailureKind kind{FailureKind::refused};
-  // True only when tmux itself ran. Retrying a dispatched command repeats
-  // whatever it already did.
-  bool dispatched{};
+  // How far the command is known to have progressed. Only `not_started` is
+  // safe to retry blindly.
+  DeliveryStatus delivery{DeliveryStatus::not_started};
   int exit_code{};
   std::string diagnostic;
 };

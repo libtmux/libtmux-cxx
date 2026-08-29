@@ -11,8 +11,10 @@ LIBTMUX_NAMESPACE_BEGIN
 namespace {
 
 ProtocolError control_unavailable() {
-  return ProtocolError{"persistent control mode is unavailable with psmux on Windows; "
-                       "subprocess Server operations remain supported"};
+  return ProtocolError{
+      .message = "persistent control mode is unavailable with psmux on Windows; "
+                 "subprocess Server operations remain supported",
+      .delivery = DeliveryStatus::not_started};
 }
 
 } // namespace

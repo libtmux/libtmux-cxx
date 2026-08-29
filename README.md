@@ -57,8 +57,8 @@ failure by throwing.)
 - **Typed queries.** [`FilterExpr`](#query-with-typed-filters) over tmux's own
   fields, composed with `&&`, `||` and `!`, working with standard ranges.
 - **Errors as values.** One `CommandFailure` type with a
-  [kind](#when-things-fail), so a caller can tell a malformed request from
-  tmux refusing from tmux never answering.
+  [kind and delivery state](#when-things-fail), so a caller can tell a
+  malformed request from a tmux refusal and an indeterminate timeout.
 - **No dependencies.** The core links nothing. Not even a JSON parser.
 - **Two standards.** C++23 over `std::expected`, or C++20 over pinned
   `tl::expected`, each in its own ABI namespace so they cannot be mixed by
@@ -446,12 +446,21 @@ if (!gone.has_value()) {
 | Kind | Means |
 |---|---|
 | `validation` | The request was malformed; it never left the process |
-| `unsupported` | The selected backend cannot provide the operation safely; nothing was dispatched |
+| `unsupported` | The selected backend cannot provide the operation safely |
 | `spawn`, `pre_exec`, `pipe` | tmux could not be started or talked to |
-| `timeout` | Dispatched, no answer — tmux may already have acted |
+| `timeout` | A deadline expired |
 | `refused` | tmux ran and said no |
 | `missing` | The object is gone. tmux itself reports this as empty fields and exit zero |
 | `truncated` | The answer did not fit the limit given |
+
+`kind` says why the call failed; `delivery` says how far the command got:
+
+| Delivery | Means |
+|---|---|
+| `not_started` | tmux definitely did not receive the command; blind retry is safe |
+| `written` | the complete request reached the transport, but no terminal reply did |
+| `replied` | tmux produced a terminal reply |
+| `indeterminate` | the transport cannot prove whether tmux saw or completed it |
 
 ### Escape hatch
 
@@ -703,7 +712,7 @@ child-to-parent relations that first prove the child still exists.
 launching `tmux.exe`. Check `ServerFeature` before choosing a workflow; a
 custom backend is unknown and supports nothing until it identifies its own
 contract. Unsupported typed calls return `FailureKind::unsupported` with
-`dispatched == false`.
+`delivery == DeliveryStatus::not_started`.
 
 The following capability boundaries fail before dispatch on Windows:
 

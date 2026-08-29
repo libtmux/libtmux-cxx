@@ -49,7 +49,7 @@ private:
     if (!snapshot->parse()) {
       return unexpected(CommandFailure{
           .kind = FailureKind::refused,
-          .dispatched = true,
+          .delivery = DeliveryStatus::replied,
           .exit_code = 0,
           .diagnostic = "tmux output did not match the fields asked for"});
     }
@@ -104,7 +104,7 @@ inline void append_display_message_text(std::vector<std::string>& command,
 // filtering still work; reaching tmux cannot.
 [[nodiscard]] inline CommandFailure disconnected() {
   return CommandFailure{.kind = FailureKind::validation,
-                        .dispatched = false,
+                        .delivery = DeliveryStatus::not_started,
                         .exit_code = 0,
                         .diagnostic =
                             "this snapshot has no connection to a tmux server"};
@@ -175,7 +175,7 @@ one_entity(std::shared_ptr<const Backend> backend, CommandRequest request,
   if (rows.size() != 1 || rows.front().front().empty() ||
       (!expected_identity.empty() && rows.front().front() != expected_identity)) {
     return unexpected(CommandFailure{.kind = FailureKind::missing,
-                                     .dispatched = true,
+                                     .delivery = DeliveryStatus::replied,
                                      .exit_code = 0,
                                      .diagnostic = "tmux has no " +
                                                    std::string{Entity::kNoun} + " " +
@@ -198,7 +198,7 @@ append_environment(CommandRequest& command,
     if (name.empty() || name.find('=') != std::string::npos) {
       return unexpected(CommandFailure{
           .kind = FailureKind::validation,
-          .dispatched = false,
+          .delivery = DeliveryStatus::not_started,
           .exit_code = 0,
           .diagnostic = "an environment variable name cannot be empty or hold "
                         "an '=': tmux would accept it and set nothing"});
@@ -284,7 +284,7 @@ expand_format(const std::shared_ptr<const Backend>& backend, std::string_view ta
   opening += kFormatSeparator;
   if (!answer.starts_with(opening)) {
     return unexpected(CommandFailure{.kind = FailureKind::missing,
-                                     .dispatched = true,
+                                     .delivery = DeliveryStatus::replied,
                                      .exit_code = 0,
                                      .diagnostic = "tmux has no " + std::string{noun} +
                                                    " " + std::string{target}});

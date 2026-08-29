@@ -139,13 +139,13 @@ struct DrainFailure final {
   return result;
 }
 
-[[nodiscard]] ProcessError make_error(ProcessError::Kind kind, DispatchPhase phase,
+[[nodiscard]] ProcessError make_error(ProcessError::Kind kind, DeliveryStatus delivery,
                                       std::string_view operation,
                                       const ProcessRequest& request,
                                       std::error_code cause, Capture capture = {}) {
   return {
       .kind = kind,
-      .dispatch_phase = phase,
+      .delivery = delivery,
       .cause = cause,
       .diagnostic = diagnostic(operation, request, cause),
       .stdout_bytes = std::move(capture.stdout_bytes),
@@ -157,7 +157,7 @@ struct DrainFailure final {
 [[nodiscard]] std::optional<ProcessError>
 validate_request(const ProcessRequest& request) {
   const auto invalid = [&]() {
-    return make_error(ProcessError::Kind::validation, DispatchPhase::not_dispatched,
+    return make_error(ProcessError::Kind::validation, DeliveryStatus::not_started,
                       "validation", request,
                       std::make_error_code(std::errc::invalid_argument));
   };
@@ -473,7 +473,7 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
   if (request.timeout.has_value() &&
       *request.timeout <= std::chrono::milliseconds::zero()) {
     return unexpected(make_error(ProcessError::Kind::timeout,
-                                 DispatchPhase::not_dispatched, "timeout", request,
+                                 DeliveryStatus::not_started, "timeout", request,
                                  std::make_error_code(std::errc::timed_out)));
   }
 
@@ -488,7 +488,7 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
     if (!created_stdout) {
       const auto cause = generic_error(created_stdout.error());
       return unexpected(make_error(ProcessError::Kind::pipe,
-                                   DispatchPhase::not_dispatched, "pipe", request,
+                                   DeliveryStatus::not_started, "pipe", request,
                                    cause));
     }
     stdout_pipe = std::move(*created_stdout);
@@ -496,7 +496,7 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
     if (!created_stderr) {
       const auto cause = generic_error(created_stderr.error());
       return unexpected(make_error(ProcessError::Kind::pipe,
-                                   DispatchPhase::not_dispatched, "pipe", request,
+                                   DeliveryStatus::not_started, "pipe", request,
                                    cause));
     }
     stderr_pipe = std::move(*created_stderr);
@@ -506,9 +506,8 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
   auto setup_result = ::posix_spawn_file_actions_init(&actions);
   if (setup_result != 0) {
     const auto cause = generic_error(setup_result);
-    return unexpected(make_error(ProcessError::Kind::pipe,
-                                 DispatchPhase::not_dispatched, "pipe", request,
-                                 cause));
+    return unexpected(make_error(ProcessError::Kind::pipe, DeliveryStatus::not_started,
+                                 "pipe", request, cause));
   }
   bool actions_initialized = true;
   const auto destroy_actions = [&]() {
@@ -520,9 +519,8 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
   };
   const auto action_failure = [&](int error_number) {
     static_cast<void>(destroy_actions());
-    return unexpected(make_error(ProcessError::Kind::pipe,
-                                 DispatchPhase::not_dispatched, "pipe", request,
-                                 generic_error(error_number)));
+    return unexpected(make_error(ProcessError::Kind::pipe, DeliveryStatus::not_started,
+                                 "pipe", request, generic_error(error_number)));
   };
 
   if (request.stdio == StdioPolicy::capture) {
@@ -590,7 +588,7 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
     stderr_pipe.read.reset();
     stderr_pipe.write.reset();
     return unexpected(make_error(ProcessError::Kind::timeout,
-                                 DispatchPhase::not_dispatched, "timeout", request,
+                                 DeliveryStatus::not_started, "timeout", request,
                                  std::make_error_code(std::errc::timed_out)));
   }
 
@@ -605,7 +603,7 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
 
   if (spawn_result != 0) {
     const auto kind = spawn_error_kind(spawn_result);
-    return unexpected(make_error(kind, DispatchPhase::not_dispatched,
+    return unexpected(make_error(kind, DeliveryStatus::not_started,
                                  spawn_operation(kind), request,
                                  generic_error(spawn_result)));
   }
@@ -617,8 +615,8 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
     cleanup_group(child, reaped, status, stdout_pipe.read, stderr_pipe.read, capture,
                   request.capture_limit, true);
     return unexpected(make_error(
-        ProcessError::Kind::timeout, DispatchPhase::dispatch_uncertain, "timeout",
-        request, std::make_error_code(std::errc::timed_out), std::move(capture)));
+        ProcessError::Kind::timeout, DeliveryStatus::indeterminate, "timeout", request,
+        std::make_error_code(std::errc::timed_out), std::move(capture)));
   }
 
   capture.stdout_bytes.reserve(std::min(request.capture_limit, std::size_t{4096}));
@@ -630,7 +628,7 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
     cleanup_group(child, reaped, status, stdout_pipe.read, stderr_pipe.read, capture,
                   request.capture_limit, false);
     return unexpected(
-        make_error(ProcessError::Kind::pipe, DispatchPhase::dispatch_uncertain, "pipe",
+        make_error(ProcessError::Kind::pipe, DeliveryStatus::indeterminate, "pipe",
                    request, generic_error(post_spawn_setup_error), std::move(capture)));
   }
 
@@ -640,9 +638,9 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
     if (!update_status(child, reaped, status, wait_error)) {
       cleanup_group(child, reaped, status, stdout_pipe.read, stderr_pipe.read, capture,
                     request.capture_limit, false);
-      auto failure = make_error(ProcessError::Kind::pipe,
-                                DispatchPhase::dispatch_uncertain, "waitpid pipe",
-                                request, generic_error(wait_error), std::move(capture));
+      auto failure = make_error(ProcessError::Kind::pipe, DeliveryStatus::indeterminate,
+                                "waitpid pipe", request, generic_error(wait_error),
+                                std::move(capture));
       // A process that has set SIGCHLD to SIG_IGN — routine in a daemon — has
       // told the kernel to reap its children itself, so there is no status
       // left to collect and waitpid answers ECHILD for every command run.
@@ -668,7 +666,7 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
       cleanup_group(child, reaped, status, stdout_pipe.read, stderr_pipe.read, capture,
                     request.capture_limit, true);
       return unexpected(make_error(
-          ProcessError::Kind::timeout, DispatchPhase::dispatch_uncertain, "timeout",
+          ProcessError::Kind::timeout, DeliveryStatus::indeterminate, "timeout",
           request, std::make_error_code(std::errc::timed_out), std::move(capture)));
     }
 
@@ -681,10 +679,9 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
                                       request.capture_limit, boundary)) {
       cleanup_group(child, reaped, status, stdout_pipe.read, stderr_pipe.read, capture,
                     request.capture_limit, false);
-      return unexpected(
-          make_error(ProcessError::Kind::pipe, DispatchPhase::dispatch_uncertain,
-                     failure->operation, request, generic_error(failure->error_number),
-                     std::move(capture)));
+      return unexpected(make_error(
+          ProcessError::Kind::pipe, DeliveryStatus::indeterminate, failure->operation,
+          request, generic_error(failure->error_number), std::move(capture)));
     }
   }
 

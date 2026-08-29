@@ -244,7 +244,7 @@ TEST(Buffers, LoadingSaysWhenTheFileIsNotThere) {
   const auto unnamed = server.load_buffer("", fixture->tmux_tmpdir() / "no.txt");
   ASSERT_FALSE(unnamed.has_value());
   EXPECT_EQ(unnamed.error().kind, libtmux::FailureKind::validation);
-  EXPECT_FALSE(unnamed.error().dispatched);
+  EXPECT_EQ(unnamed.error().delivery, libtmux::DeliveryStatus::not_started);
 }
 
 } // namespace

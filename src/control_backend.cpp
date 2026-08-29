@@ -17,9 +17,10 @@ std::string text(const std::vector<std::byte>& bytes) {
   return out;
 }
 
-CommandFailure carried(FailureKind kind, bool dispatched, std::string diagnostic) {
+CommandFailure carried(FailureKind kind, DeliveryStatus delivery,
+                       std::string diagnostic) {
   return CommandFailure{.kind = kind,
-                        .dispatched = dispatched,
+                        .delivery = delivery,
                         .exit_code = 0,
                         .diagnostic = std::move(diagnostic)};
 }
@@ -28,27 +29,28 @@ expected<std::string, CommandFailure>
 joined_reply(const std::vector<ControlBlock>& blocks,
              std::optional<std::size_t> output_limit) {
   if (blocks.empty()) {
-    return unexpected(
-        carried(FailureKind::pipe, true, "the connection returned no reply block"));
+    return unexpected(carried(FailureKind::pipe, DeliveryStatus::written,
+                              "the connection returned no reply block"));
   }
 
   std::string body;
   for (const auto& block : blocks) {
     if (block.body_truncated) {
       return unexpected(
-          carried(FailureKind::truncated, true,
+          carried(FailureKind::truncated, DeliveryStatus::replied,
                   "tmux produced " + std::to_string(block.body_bytes) +
                       " bytes in one reply, more than this connection retains"));
     }
     if (output_limit.has_value() && body.size() + block.body.size() > *output_limit) {
-      return unexpected(carried(FailureKind::truncated, true,
+      return unexpected(carried(FailureKind::truncated, DeliveryStatus::replied,
                                 "tmux produced more output than the " +
                                     std::to_string(*output_limit) +
                                     " byte limit this call allowed for"));
     }
     std::string part = text(block.body);
     if (block.terminal == ControlTerminal::error) {
-      return unexpected(carried(FailureKind::refused, true, std::move(part)));
+      return unexpected(
+          carried(FailureKind::refused, DeliveryStatus::replied, std::move(part)));
     }
     body += part;
   }
@@ -78,12 +80,12 @@ expected<std::string, CommandFailure>
 inserted_command_reply(const ControlRequestResult& result,
                        std::optional<std::size_t> output_limit) {
   if (result.connection_error.has_value()) {
-    return unexpected(
-        carried(FailureKind::pipe, true, result.connection_error->message));
+    return unexpected(carried(FailureKind::pipe, result.connection_error->delivery,
+                              result.connection_error->message));
   }
   if (result.blocks.size() != 2U) {
     return unexpected(
-        carried(FailureKind::pipe, true,
+        carried(FailureKind::pipe, DeliveryStatus::replied,
                 "tmux returned " + std::to_string(result.blocks.size()) +
                     " reply blocks for a command and its inserted operation"));
   }
@@ -92,7 +94,7 @@ inserted_command_reply(const ControlRequestResult& result,
       [](const ControlBlock& block,
          std::string_view label) -> expected<const ControlBlock*, CommandFailure> {
     if (block.body_truncated) {
-      return unexpected(carried(FailureKind::truncated, true,
+      return unexpected(carried(FailureKind::truncated, DeliveryStatus::replied,
                                 std::string{label} + " produced " +
                                     std::to_string(block.body_bytes) +
                                     " bytes, more than this connection retains"));
@@ -105,10 +107,11 @@ inserted_command_reply(const ControlRequestResult& result,
     return unexpected(wrapper.error());
   }
   if ((*wrapper)->terminal == ControlTerminal::error) {
-    return unexpected(carried(FailureKind::refused, true, text((*wrapper)->body)));
+    return unexpected(
+        carried(FailureKind::refused, DeliveryStatus::replied, text((*wrapper)->body)));
   }
   if (!(*wrapper)->body.empty() || (*wrapper)->body_bytes != 0U) {
-    return unexpected(carried(FailureKind::pipe, true,
+    return unexpected(carried(FailureKind::pipe, DeliveryStatus::replied,
                               "if-shell returned output before its inserted command"));
   }
 
@@ -117,14 +120,15 @@ inserted_command_reply(const ControlRequestResult& result,
     return unexpected(inserted.error());
   }
   if (output_limit.has_value() && (*inserted)->body.size() > *output_limit) {
-    return unexpected(carried(FailureKind::truncated, true,
+    return unexpected(carried(FailureKind::truncated, DeliveryStatus::replied,
                               "tmux produced more output than the " +
                                   std::to_string(*output_limit) +
                                   " byte limit this call allowed for"));
   }
   std::string body = text((*inserted)->body);
   if ((*inserted)->terminal == ControlTerminal::error) {
-    return unexpected(carried(FailureKind::refused, true, std::move(body)));
+    return unexpected(
+        carried(FailureKind::refused, DeliveryStatus::replied, std::move(body)));
   }
   return body;
 }
@@ -171,10 +175,10 @@ ControlBackend::run(const CommandRequest& command,
   ControlRequestResult result = connection_.execute(std::move(request), deadline);
 
   if (result.connection_error.has_value()) {
-    // The connection is what failed, so whether tmux acted is unknowable from
-    // here: reported as dispatched, which is the answer that does not invite
-    // a retry of something that may already have happened.
-    return reported(carried(FailureKind::pipe, true, result.connection_error->message));
+    // Preserve the connection's exact progress. In particular, only a failure
+    // before the writer started invites a blind retry.
+    return reported(carried(FailureKind::pipe, result.connection_error->delivery,
+                            result.connection_error->message));
   }
   auto reply = joined_reply(result.blocks, output_limit);
   if (!reply) {
@@ -221,7 +225,8 @@ ControlBackend::run_batch(const CommandBatch& batch,
   ControlRequestResult result = connection_.execute(std::move(request), deadline);
 
   if (result.connection_error.has_value()) {
-    return reported(carried(FailureKind::pipe, true, result.connection_error->message));
+    return reported(carried(FailureKind::pipe, result.connection_error->delivery,
+                            result.connection_error->message));
   }
   auto reply = joined_reply(result.blocks, output_limit);
   if (!reply) {
@@ -240,7 +245,7 @@ expected<Version, CommandFailure> ControlBackend::version() const {
   // The format reports the version alone, where `tmux -V` prefixes it.
   const auto parsed = parse_version("tmux " + *reported);
   if (!parsed.has_value()) {
-    return unexpected(carried(FailureKind::refused, true,
+    return unexpected(carried(FailureKind::refused, DeliveryStatus::replied,
                               "tmux reported the version as " + *reported));
   }
   return *parsed;

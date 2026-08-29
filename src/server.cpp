@@ -40,14 +40,14 @@ expected<void, CommandFailure> applied(expected<std::string, CommandFailure> rep
 
 [[nodiscard]] CommandFailure no_sessions() {
   return CommandFailure{.kind = FailureKind::refused,
-                        .dispatched = true,
+                        .delivery = DeliveryStatus::replied,
                         .exit_code = 0,
                         .diagnostic = "the server has no sessions"};
 }
 
 [[nodiscard]] CommandFailure unsupported_psmux_state(std::string_view operation) {
   return CommandFailure{.kind = FailureKind::unsupported,
-                        .dispatched = false,
+                        .delivery = DeliveryStatus::not_started,
                         .exit_code = 0,
                         .diagnostic = "psmux cannot provide " + std::string{operation} +
                                       " through the typed API"};
@@ -107,7 +107,7 @@ exact_psmux_sessions(const std::shared_ptr<const detail::Backend>& backend,
         })) {
       return unexpected(
           CommandFailure{.kind = FailureKind::refused,
-                         .dispatched = true,
+                         .delivery = DeliveryStatus::replied,
                          .exit_code = 0,
                          .diagnostic = "psmux reported one session ID more than once"});
     }
@@ -134,7 +134,7 @@ CommandFailure rejected_selector(std::string_view selector, SocketError error) {
   return CommandFailure{
       .kind = error == SocketError::path_unsupported ? FailureKind::unsupported
                                                      : FailureKind::validation,
-      .dispatched = false,
+      .delivery = DeliveryStatus::not_started,
       .exit_code = 0,
       .diagnostic = std::string{to_string(error)} + ": " + std::string{selector}};
 }
@@ -168,7 +168,7 @@ expected<Server, CommandFailure> Server::from_env(CommandObserver observer,
   if (!inherited.has_value()) {
     return unexpected(CommandFailure{
         .kind = FailureKind::validation,
-        .dispatched = false,
+        .delivery = DeliveryStatus::not_started,
         .exit_code = 0,
         .diagnostic = "TMUX is not set: this process is not running inside tmux"});
   }
@@ -181,7 +181,7 @@ expected<Server, CommandFailure> Server::from_env(CommandObserver observer,
       pid_start == std::string_view::npos ? value : value.substr(0, pid_start);
   if (socket.empty()) {
     return unexpected(CommandFailure{.kind = FailureKind::validation,
-                                     .dispatched = false,
+                                     .delivery = DeliveryStatus::not_started,
                                      .exit_code = 0,
                                      .diagnostic = "TMUX names no socket path"});
   }
@@ -211,7 +211,7 @@ expected<Server, CommandFailure> Server::at_socket_name(std::string_view name,
                                                         ExecutionPolicy policy) {
   if (auto invalid = libtmux_psmux::invalid_socket_name(name); invalid.has_value()) {
     return unexpected(CommandFailure{.kind = FailureKind::validation,
-                                     .dispatched = false,
+                                     .delivery = DeliveryStatus::not_started,
                                      .exit_code = 0,
                                      .diagnostic = std::move(*invalid)});
   }
@@ -242,7 +242,7 @@ expected<std::string, CommandFailure>
 Server::run_batch(const CommandBatch& batch) const {
   if (batch.empty()) {
     return unexpected(CommandFailure{.kind = FailureKind::validation,
-                                     .dispatched = false,
+                                     .delivery = DeliveryStatus::not_started,
                                      .exit_code = 0,
                                      .diagnostic = "empty batch"});
   }
@@ -253,7 +253,7 @@ Server::run_batch(const CommandBatch& batch) const {
 expected<std::string, CommandFailure> Server::run_chain(const Chain& chain) const {
   if (!chain.valid()) {
     return unexpected(CommandFailure{.kind = FailureKind::validation,
-                                     .dispatched = false,
+                                     .delivery = DeliveryStatus::not_started,
                                      .exit_code = 0,
                                      .diagnostic = chain.error()});
   }
@@ -270,14 +270,17 @@ Server::control_with_options(std::string_view session,
   const ServerCapabilities available = capabilities();
   if (!available.supports(ServerFeature::control_mode)) {
     return unexpected(
-        ProtocolError{std::string{to_string(available.implementation)} +
-                      " backend does not support persistent control mode"});
+        ProtocolError{.message = std::string{to_string(available.implementation)} +
+                                 " backend does not support persistent control mode",
+                      .delivery = DeliveryStatus::not_started});
   }
   // The route is not the identity: a pinned POSIX handle identifies an inode
   // incarnation while connecting through its private alias.
   const std::string_view socket_path = backend_->socket_path();
   if (socket_path.empty()) {
-    return unexpected(ProtocolError{"this server has no socket to connect to"});
+    return unexpected(
+        ProtocolError{.message = "this server has no socket to connect to",
+                      .delivery = DeliveryStatus::not_started});
   }
   return Connection::connect(detail::routed_control_options(
       std::move(options), std::string{socket_path}, std::string{session}));
@@ -315,7 +318,7 @@ Server::check_alive(std::chrono::milliseconds timeout) const {
   // A successful empty listing still describes no live server.
   if (sessions->find_first_not_of(" \t\r\n") == std::string::npos) {
     return unexpected(CommandFailure{.kind = FailureKind::refused,
-                                     .dispatched = true,
+                                     .delivery = DeliveryStatus::replied,
                                      .exit_code = 0,
                                      .diagnostic = "the server has no sessions"});
   }
@@ -351,7 +354,7 @@ expected<void, CommandFailure> Server::kill() const {
     if (candidates == nullptr) {
       return unexpected(CommandFailure{
           .kind = FailureKind::refused,
-          .dispatched = true,
+          .delivery = DeliveryStatus::replied,
           .exit_code = 0,
           .diagnostic = "tmux output did not match the fields asked for"});
     }
@@ -430,7 +433,7 @@ Server::over_control_with_options(std::string_view session,
   if (!available.supports(ServerFeature::control_mode)) {
     return unexpected(
         CommandFailure{.kind = FailureKind::unsupported,
-                       .dispatched = false,
+                       .delivery = DeliveryStatus::not_started,
                        .exit_code = 0,
                        .diagnostic = std::string{to_string(available.implementation)} +
                                      " backend does not support control mode"});
@@ -440,7 +443,7 @@ Server::over_control_with_options(std::string_view session,
   if (socket_path.empty() || backend_->identity().empty()) {
     return unexpected(
         CommandFailure{.kind = FailureKind::validation,
-                       .dispatched = false,
+                       .delivery = DeliveryStatus::not_started,
                        .exit_code = 0,
                        .diagnostic = "this server has no socket to connect to"});
   }
@@ -453,7 +456,7 @@ Server::over_control_with_options(std::string_view session,
     // because it is the same thing failing. Not dispatched: no command ran,
     // and a connection that never came up left nothing for a retry to repeat.
     return unexpected(CommandFailure{.kind = FailureKind::pipe,
-                                     .dispatched = false,
+                                     .delivery = DeliveryStatus::not_started,
                                      .exit_code = 0,
                                      .diagnostic = backend.error().message});
   }
@@ -536,7 +539,7 @@ Server::wait_for(std::string_view channel,
                  std::optional<std::chrono::milliseconds> timeout) const {
   if (channel.empty()) {
     return unexpected(CommandFailure{.kind = FailureKind::validation,
-                                     .dispatched = false,
+                                     .delivery = DeliveryStatus::not_started,
                                      .exit_code = 0,
                                      .diagnostic = "a channel needs a name"});
   }
@@ -557,7 +560,7 @@ Server::wait_for(std::string_view channel,
   if (!is_alive()) {
     return unexpected(CommandFailure{
         .kind = FailureKind::pipe,
-        .dispatched = true,
+        .delivery = DeliveryStatus::replied,
         .exit_code = 0,
         .diagnostic = "the server ended while waiting on " + std::string{channel}});
   }
@@ -568,7 +571,7 @@ Server::wait_for(std::string_view channel,
 expected<void, CommandFailure> Server::signal(std::string_view channel) const {
   if (channel.empty()) {
     return unexpected(CommandFailure{.kind = FailureKind::validation,
-                                     .dispatched = false,
+                                     .delivery = DeliveryStatus::not_started,
                                      .exit_code = 0,
                                      .diagnostic = "a channel needs a name"});
   }
@@ -599,7 +602,7 @@ expected<void, CommandFailure>
 Server::load_buffer(std::string_view name, const std::filesystem::path& from) const {
   if (name.empty()) {
     return unexpected(CommandFailure{.kind = FailureKind::validation,
-                                     .dispatched = false,
+                                     .delivery = DeliveryStatus::not_started,
                                      .exit_code = 0,
                                      .diagnostic = "a buffer needs a name"});
   }
@@ -616,7 +619,7 @@ expected<void, CommandFailure>
 Server::save_buffer(std::string_view name, const std::filesystem::path& to) const {
   if (name.empty()) {
     return unexpected(CommandFailure{.kind = FailureKind::validation,
-                                     .dispatched = false,
+                                     .delivery = DeliveryStatus::not_started,
                                      .exit_code = 0,
                                      .diagnostic = "a buffer needs a name"});
   }
@@ -640,7 +643,7 @@ namespace {
 expected<void, CommandFailure> usable_table(std::string_view table) {
   const auto refuse = [](std::string diagnostic) {
     return unexpected(CommandFailure{.kind = FailureKind::validation,
-                                     .dispatched = false,
+                                     .delivery = DeliveryStatus::not_started,
                                      .exit_code = 0,
                                      .diagnostic = std::move(diagnostic)});
   };
@@ -665,7 +668,7 @@ expected<void, CommandFailure> Server::bind_key(std::string_view table,
   }
   if (command.empty()) {
     return unexpected(CommandFailure{.kind = FailureKind::validation,
-                                     .dispatched = false,
+                                     .delivery = DeliveryStatus::not_started,
                                      .exit_code = 0,
                                      .diagnostic = "a binding needs a command to run"});
   }
@@ -707,7 +710,7 @@ expected<void, CommandFailure> Server::run_shell(std::string_view command,
                                                  bool background) const {
   if (command.empty()) {
     return unexpected(CommandFailure{.kind = FailureKind::validation,
-                                     .dispatched = false,
+                                     .delivery = DeliveryStatus::not_started,
                                      .exit_code = 0,
                                      .diagnostic = "a shell command cannot be empty"});
   }
@@ -741,7 +744,7 @@ Server::check_file(const std::filesystem::path& file) const {
   static_cast<void>(file);
   return unexpected(CommandFailure{
       .kind = FailureKind::unsupported,
-      .dispatched = false,
+      .delivery = DeliveryStatus::not_started,
       .exit_code = 0,
       .diagnostic = "psmux cannot check a source file without executing its commands"});
 #else
@@ -810,7 +813,7 @@ expected<Session, CommandFailure> Server::session(std::string_view target) const
       if (found.has_value()) {
         return unexpected(CommandFailure{
             .kind = FailureKind::validation,
-            .dispatched = false,
+            .delivery = DeliveryStatus::not_started,
             .exit_code = 0,
             .diagnostic = "psmux session target is ambiguous: " + std::string{target}});
       }
@@ -820,7 +823,7 @@ expected<Session, CommandFailure> Server::session(std::string_view target) const
   if (!found.has_value()) {
     return unexpected(
         CommandFailure{.kind = FailureKind::missing,
-                       .dispatched = true,
+                       .delivery = DeliveryStatus::replied,
                        .exit_code = 0,
                        .diagnostic = "tmux has no session " + std::string{target}});
   }
@@ -834,7 +837,7 @@ expected<Window, CommandFailure> Server::window(std::string_view target) const {
 #if defined(_WIN32)
   return unexpected(
       CommandFailure{.kind = FailureKind::unsupported,
-                     .dispatched = false,
+                     .delivery = DeliveryStatus::not_started,
                      .exit_code = 0,
                      .diagnostic = "psmux window targets need an owning Session: " +
                                    std::string{target}});
@@ -847,7 +850,7 @@ expected<Pane, CommandFailure> Server::pane(std::string_view target) const {
 #if defined(_WIN32)
   return unexpected(
       CommandFailure{.kind = FailureKind::unsupported,
-                     .dispatched = false,
+                     .delivery = DeliveryStatus::not_started,
                      .exit_code = 0,
                      .diagnostic = "psmux pane targets need an owning Session: " +
                                    std::string{target}});
@@ -863,14 +866,14 @@ expected<Session, CommandFailure> Server::new_session(std::string_view name) con
 expected<Session, CommandFailure> Server::new_session(NewSessionOptions options) const {
   if (options.name.empty()) {
     return unexpected(CommandFailure{.kind = FailureKind::validation,
-                                     .dispatched = false,
+                                     .delivery = DeliveryStatus::not_started,
                                      .exit_code = 0,
                                      .diagnostic = "session name is empty"});
   }
   if (auto invalid = libtmux_psmux::invalid_session_name(options.name);
       invalid.has_value()) {
     return unexpected(CommandFailure{.kind = FailureKind::validation,
-                                     .dispatched = false,
+                                     .delivery = DeliveryStatus::not_started,
                                      .exit_code = 0,
                                      .diagnostic = std::move(*invalid)});
   }
@@ -878,7 +881,7 @@ expected<Session, CommandFailure> Server::new_session(NewSessionOptions options)
   static_cast<void>(options);
   return unexpected(CommandFailure{
       .kind = FailureKind::unsupported,
-      .dispatched = false,
+      .delivery = DeliveryStatus::not_started,
       .exit_code = 0,
       .diagnostic = "psmux cannot prove ownership of a concurrently created session; "
                     "create it with the psmux CLI and reacquire it from this Server"});

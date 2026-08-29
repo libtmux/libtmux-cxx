@@ -68,7 +68,7 @@ TEST(ServerIdentity, SwappingPanesAcrossServersIsRefusedRatherThanMisdirected) {
   const auto refused = mine->front().swap_with(theirs->front());
   ASSERT_FALSE(refused.has_value());
   EXPECT_EQ(refused.error().kind, libtmux::FailureKind::validation);
-  EXPECT_FALSE(refused.error().dispatched)
+  EXPECT_EQ(refused.error().delivery, libtmux::DeliveryStatus::not_started)
       << "a refusal before dispatch is what makes it safe to report";
   EXPECT_NE(refused.error().diagnostic.find("different tmux servers"),
             std::string::npos)
@@ -100,7 +100,7 @@ TEST(ServerIdentity, EveryCommandCombiningTwoValuesChecksTheirServers) {
   const auto refuses = [](const auto& outcome, std::string_view what) {
     ASSERT_FALSE(outcome.has_value()) << what << " should have been refused";
     EXPECT_EQ(outcome.error().kind, libtmux::FailureKind::validation) << what;
-    EXPECT_FALSE(outcome.error().dispatched) << what;
+    EXPECT_EQ(outcome.error().delivery, libtmux::DeliveryStatus::not_started) << what;
   };
 
   refuses(my_windows->front().link_to(their_sessions->front()), "link_to");
@@ -200,7 +200,7 @@ TEST(ServerIdentity, RestartAtTheSameSocketIsANewServer) {
   const auto crossed = stale_windows->front().link_to(*destination);
   ASSERT_FALSE(crossed.has_value());
   EXPECT_EQ(crossed.error().kind, libtmux::FailureKind::validation);
-  EXPECT_FALSE(crossed.error().dispatched);
+  EXPECT_EQ(crossed.error().delivery, libtmux::DeliveryStatus::not_started);
 }
 
 TEST(ServerIdentity, AHandleOpenedBeforeTheSocketExistsNeverAcquiresAServer) {
@@ -214,7 +214,7 @@ TEST(ServerIdentity, AHandleOpenedBeforeTheSocketExistsNeverAcquiresAServer) {
   const auto creation = stale->new_session("must-not-start");
   ASSERT_FALSE(creation.has_value());
   EXPECT_EQ(creation.error().kind, libtmux::FailureKind::missing);
-  EXPECT_FALSE(creation.error().dispatched);
+  EXPECT_EQ(creation.error().delivery, libtmux::DeliveryStatus::not_started);
   EXPECT_FALSE(stale->is_alive());
 
   const auto direct_control = stale->control("must-not-start");
@@ -223,7 +223,7 @@ TEST(ServerIdentity, AHandleOpenedBeforeTheSocketExistsNeverAcquiresAServer) {
   const auto controlled = stale->over_control("must-not-start");
   ASSERT_FALSE(controlled.has_value());
   EXPECT_EQ(controlled.error().kind, libtmux::FailureKind::validation);
-  EXPECT_FALSE(controlled.error().dispatched);
+  EXPECT_EQ(controlled.error().delivery, libtmux::DeliveryStatus::not_started);
 
   std::error_code linked;
   std::filesystem::create_hard_link(fixture->socket_path(), late_socket, linked);
@@ -232,7 +232,7 @@ TEST(ServerIdentity, AHandleOpenedBeforeTheSocketExistsNeverAcquiresAServer) {
   const auto refused = stale->sessions();
   ASSERT_FALSE(refused.has_value());
   EXPECT_EQ(refused.error().kind, libtmux::FailureKind::missing);
-  EXPECT_FALSE(refused.error().dispatched);
+  EXPECT_EQ(refused.error().delivery, libtmux::DeliveryStatus::not_started);
   EXPECT_NE(refused.error().diagnostic.find("reopen it after the server starts"),
             std::string::npos)
       << refused.error().diagnostic;
@@ -329,7 +329,7 @@ TEST(ServerFromEnvironment, RefusesWhenNotRunningInsideTmux) {
   const auto server = Server::from_env();
   ASSERT_FALSE(server.has_value());
   EXPECT_EQ(server.error().kind, libtmux::FailureKind::validation);
-  EXPECT_FALSE(server.error().dispatched);
+  EXPECT_EQ(server.error().delivery, libtmux::DeliveryStatus::not_started);
   EXPECT_NE(server.error().diagnostic.find("not running inside tmux"),
             std::string::npos)
       << server.error().diagnostic;

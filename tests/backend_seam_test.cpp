@@ -59,7 +59,7 @@ public:
     std::this_thread::sleep_for(delay);
     if (replies_.empty()) {
       return unexpected(CommandFailure{.kind = FailureKind::refused,
-                                       .dispatched = true,
+                                       .delivery = libtmux::DeliveryStatus::replied,
                                        .exit_code = 1,
                                        .diagnostic = "the script ran out"});
     }
@@ -386,7 +386,7 @@ TEST(BackendSeam, RawTmux37NameRepairReportsTheMovedPane) {
 
   ASSERT_FALSE(broken.has_value());
   EXPECT_EQ(broken.error().kind, FailureKind::refused);
-  EXPECT_TRUE(broken.error().dispatched);
+  EXPECT_NE(broken.error().delivery, libtmux::DeliveryStatus::not_started);
   EXPECT_NE(broken.error().diagnostic.find("moved pane %7 into window @9"),
             std::string::npos)
       << broken.error().diagnostic;
@@ -485,7 +485,7 @@ TEST(BackendSeam, NamedBreakRejectsMalformedPostMutationMetadata) {
 
     ASSERT_FALSE(broken.has_value());
     EXPECT_EQ(broken.error().kind, FailureKind::refused);
-    EXPECT_TRUE(broken.error().dispatched);
+    EXPECT_NE(broken.error().delivery, libtmux::DeliveryStatus::not_started);
     EXPECT_NE(broken.error().diagnostic.find("version or automatic-rename"),
               std::string::npos)
         << broken.error().diagnostic;
@@ -511,7 +511,7 @@ TEST(BackendSeam, RawTmux37RepairRequiresTheSameWindowAndDurableNamePolicy) {
 
     ASSERT_FALSE(broken.has_value());
     EXPECT_EQ(broken.error().kind, FailureKind::refused);
-    EXPECT_TRUE(broken.error().dispatched);
+    EXPECT_NE(broken.error().delivery, libtmux::DeliveryStatus::not_started);
   }
 }
 
@@ -553,7 +553,7 @@ TEST(BackendSeam, AFailedInsertedBreakHasNoMaskingFollowup) {
 
   ASSERT_FALSE(broken.has_value());
   EXPECT_EQ(broken.error().kind, FailureKind::refused);
-  EXPECT_TRUE(broken.error().dispatched);
+  EXPECT_NE(broken.error().delivery, libtmux::DeliveryStatus::not_started);
   EXPECT_EQ(broken.error().diagnostic, "the script ran out");
   EXPECT_EQ(backend->issued.size(), 2U);
 }
@@ -577,7 +577,7 @@ TEST(BackendSeam, UnnamedBreakRejectsMalformedOrNoncanonicalWindowRows) {
 
     ASSERT_FALSE(broken.has_value());
     EXPECT_EQ(broken.error().kind, FailureKind::refused);
-    EXPECT_TRUE(broken.error().dispatched);
+    EXPECT_NE(broken.error().delivery, libtmux::DeliveryStatus::not_started);
     EXPECT_NE(broken.error().diagnostic.find("break-pane completed for pane %7"),
               std::string::npos)
         << broken.error().diagnostic;
@@ -597,7 +597,7 @@ TEST(BackendSeam, UnnamedBreakPreservesMissingForAReportWithoutOneWindow) {
 
   ASSERT_FALSE(broken.has_value());
   EXPECT_EQ(broken.error().kind, FailureKind::missing);
-  EXPECT_TRUE(broken.error().dispatched);
+  EXPECT_NE(broken.error().delivery, libtmux::DeliveryStatus::not_started);
   EXPECT_EQ(broken.error().diagnostic, "tmux has no window %7");
   EXPECT_EQ(backend->issued.size(), 2U);
 }
@@ -637,7 +637,7 @@ TEST(BackendSeam, RawTmux37RejectsAnUnsafeIdBeforeBuildingACommandString) {
 
     ASSERT_FALSE(broken.has_value());
     EXPECT_EQ(broken.error().kind, FailureKind::validation);
-    EXPECT_FALSE(broken.error().dispatched);
+    EXPECT_EQ(broken.error().delivery, libtmux::DeliveryStatus::not_started);
     EXPECT_NE(broken.error().diagnostic.find("stable numeric pane id"),
               std::string::npos)
         << broken.error().diagnostic;
@@ -684,7 +684,7 @@ TEST(BackendSeam, AnEmptySuccessfulListingIsNotAlive) {
   const auto alive = server.check_alive();
   ASSERT_FALSE(alive.has_value());
   EXPECT_EQ(alive.error().kind, FailureKind::refused);
-  EXPECT_TRUE(alive.error().dispatched);
+  EXPECT_NE(alive.error().delivery, libtmux::DeliveryStatus::not_started);
   EXPECT_EQ(backend->issued.front(),
             (std::vector<std::string>{"list-sessions", "-F", "#{session_id}"}));
 }
@@ -779,7 +779,7 @@ TEST(BackendSeam, ExpansionRejectsAReplyFromAnotherTarget) {
 
   ASSERT_FALSE(expanded.has_value());
   EXPECT_EQ(expanded.error().kind, FailureKind::missing);
-  EXPECT_TRUE(expanded.error().dispatched);
+  EXPECT_NE(expanded.error().delivery, libtmux::DeliveryStatus::not_started);
 }
 
 TEST(BackendSeam, ExpansionRemovesOnlyTheNewlineTmuxAdds) {
@@ -818,7 +818,7 @@ TEST(BackendSeam, InvalidEnvironmentNamesFailBeforeDispatch) {
     const auto appended =
         libtmux::detail::append_environment(command, {{name, "value"}});
     ASSERT_FALSE(appended.has_value());
-    EXPECT_FALSE(appended.error().dispatched);
+    EXPECT_EQ(appended.error().delivery, libtmux::DeliveryStatus::not_started);
     EXPECT_EQ(command.argv(), (std::vector<std::string>{"new-session"}));
   }
 }
@@ -875,7 +875,7 @@ TEST(BackendSeam, UnreadableKeyTablesFailBeforeDispatch) {
   const auto bound = server.bind_key("bad table", "x", {"display-message"});
 
   ASSERT_FALSE(bound.has_value());
-  EXPECT_FALSE(bound.error().dispatched);
+  EXPECT_EQ(bound.error().delivery, libtmux::DeliveryStatus::not_started);
   EXPECT_TRUE(backend->issued.empty());
 }
 
@@ -925,7 +925,7 @@ TEST(BackendSeam, AnInsertedControlFailureCannotBeMaskedByWrapperSuccess) {
 
   ASSERT_FALSE(reply.has_value());
   EXPECT_EQ(reply.error().kind, FailureKind::refused);
-  EXPECT_TRUE(reply.error().dispatched);
+  EXPECT_NE(reply.error().delivery, libtmux::DeliveryStatus::not_started);
   EXPECT_EQ(reply.error().diagnostic, "break failed\n");
 
   const auto wrapper_failure =

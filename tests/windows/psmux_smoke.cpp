@@ -37,6 +37,10 @@ using libtmux::detail::ProcessRequest;
 
 constexpr std::string_view kNamespacePrefix{"libtmux-cxx-smoke-"};
 
+[[nodiscard]] bool not_started(const CommandFailure& failure) noexcept {
+  return failure.delivery == libtmux::DeliveryStatus::not_started;
+}
+
 [[nodiscard]] bool contains_case_insensitive(std::string_view text,
                                              std::string_view needle) {
   const auto fold = [](char value) {
@@ -718,7 +722,7 @@ public:
       std::optional<std::size_t>) const override {
     return libtmux::unexpected(
         CommandFailure{.kind = libtmux::FailureKind::refused,
-                       .dispatched = false,
+                       .delivery = libtmux::DeliveryStatus::not_started,
                        .exit_code = 0,
                        .diagnostic = "the routed snapshot must use run_in_session"});
   }
@@ -752,7 +756,7 @@ private:
       std::move(backend), libtmux::Window::kFields, {"list-windows"},
       libtmux::FormatArgument::flag, "$1", "captured");
   return !snapshot && snapshot.error().kind == libtmux::FailureKind::missing &&
-         snapshot.error().dispatched;
+         snapshot.error().delivery == libtmux::DeliveryStatus::replied;
 }
 
 } // namespace
@@ -907,7 +911,7 @@ int main() {
   const auto typed_creation = server.new_session("must-not-create");
   if (!require(!typed_creation &&
                    typed_creation.error().kind == libtmux::FailureKind::unsupported &&
-                   !typed_creation.error().dispatched,
+                   not_started(typed_creation.error()),
                "racy psmux session creation must fail before dispatch")) {
     return EXIT_FAILURE;
   }
@@ -1018,7 +1022,7 @@ int main() {
   const auto unsafe_session = server.new_session("safe ; kill-session");
   if (!require(!unsafe_session &&
                    unsafe_session.error().kind == libtmux::FailureKind::validation &&
-                   !unsafe_session.error().dispatched,
+                   not_started(unsafe_session.error()),
                "a psmux command separator in a session name must not dispatch")) {
     return EXIT_FAILURE;
   }
@@ -1026,7 +1030,7 @@ int main() {
   if (!require(!unsafe_inherited_path &&
                    unsafe_inherited_path.error().kind ==
                        libtmux::FailureKind::unsupported &&
-                   !unsafe_inherited_path.error().dispatched,
+                   not_started(unsafe_inherited_path.error()),
                "typed psmux new-window must fail before dispatch")) {
     return EXIT_FAILURE;
   }
@@ -1064,28 +1068,28 @@ int main() {
   const auto server_expansion = server.expand("server-expand-ok");
   if (!require(!server_expansion &&
                    server_expansion.error().kind == libtmux::FailureKind::unsupported &&
-                   !server_expansion.error().dispatched,
+                   not_started(server_expansion.error()),
                "unscoped psmux format state must fail before dispatch")) {
     return EXIT_FAILURE;
   }
   const auto shell_ran = server.run_shell("cmd /c exit 0");
   if (!require(!shell_ran &&
                    shell_ran.error().kind == libtmux::FailureKind::unsupported &&
-                   !shell_ran.error().dispatched,
+                   not_started(shell_ran.error()),
                "unscoped psmux run-shell state must fail before dispatch")) {
     return EXIT_FAILURE;
   }
   const auto bound =
       server.bind_key("prefix", "F12", {"display-message", "psmux-binding"});
   if (!require(!bound && bound.error().kind == libtmux::FailureKind::unsupported &&
-                   !bound.error().dispatched,
+                   not_started(bound.error()),
                "unscoped psmux key bindings must fail before dispatch")) {
     return EXIT_FAILURE;
   }
   const auto commands = server.commands();
   if (!require(!commands &&
                    commands.error().kind == libtmux::FailureKind::unsupported &&
-                   !commands.error().dispatched,
+                   not_started(commands.error()),
                "psmux command metadata must fail before dispatch")) {
     return EXIT_FAILURE;
   }
@@ -1094,15 +1098,15 @@ int main() {
   if (!require(!scoped_options && !scoped_hooks &&
                    scoped_options.error().kind == libtmux::FailureKind::unsupported &&
                    scoped_hooks.error().kind == libtmux::FailureKind::unsupported &&
-                   !scoped_options.error().dispatched &&
-                   !scoped_hooks.error().dispatched,
+                   not_started(scoped_options.error()) &&
+                   not_started(scoped_hooks.error()),
                "psmux session-scoped server state must fail before dispatch")) {
     return EXIT_FAILURE;
   }
   const auto checked = server.check_file(L"libtmux-psmux-must-not-run.conf");
   if (!require(!checked, "psmux check_file must be rejected") ||
       !require(checked.error().kind == libtmux::FailureKind::unsupported &&
-                   !checked.error().dispatched,
+                   not_started(checked.error()),
                "check_file must be rejected before psmux can execute it")) {
     return EXIT_FAILURE;
   }
@@ -1129,7 +1133,7 @@ int main() {
     const auto rejected_format = first_session->expand(unsafe_format);
     if (!require(!rejected_format &&
                      rejected_format.error().kind == libtmux::FailureKind::validation &&
-                     !rejected_format.error().dispatched,
+                     not_started(rejected_format.error()),
                  "psmux command delimiters must fail before typed dispatch")) {
       return EXIT_FAILURE;
     }
@@ -1137,14 +1141,14 @@ int main() {
   const auto detached_clients = first_session->detach_clients();
   if (!require(!detached_clients &&
                    detached_clients.error().kind == libtmux::FailureKind::unsupported &&
-                   !detached_clients.error().dispatched,
+                   not_started(detached_clients.error()),
                "unsafe psmux detach-client must fail before dispatch")) {
     return EXIT_FAILURE;
   }
   const auto session_message = first_session->show_message("must-not-dispatch");
   if (!require(!session_message &&
                    session_message.error().kind == libtmux::FailureKind::unsupported &&
-                   !session_message.error().dispatched,
+                   not_started(session_message.error()),
                "unsafe psmux session messages must fail before dispatch")) {
     return EXIT_FAILURE;
   }
@@ -1231,9 +1235,9 @@ int main() {
                    no_previous_window.error().kind ==
                        libtmux::FailureKind::unsupported &&
                    no_last_window.error().kind == libtmux::FailureKind::unsupported &&
-                   !no_next_window.error().dispatched &&
-                   !no_previous_window.error().dispatched &&
-                   !no_last_window.error().dispatched,
+                   not_started(no_next_window.error()) &&
+                   not_started(no_previous_window.error()) &&
+                   not_started(no_last_window.error()),
                "psmux session navigation must fail before dispatch")) {
     return EXIT_FAILURE;
   }
@@ -1241,14 +1245,14 @@ int main() {
   if (!require(!unsupported_new_window &&
                    unsupported_new_window.error().kind ==
                        libtmux::FailureKind::unsupported &&
-                   !unsupported_new_window.error().dispatched,
+                   not_started(unsupported_new_window.error()),
                "untruthful psmux new-window must fail before dispatch")) {
     return EXIT_FAILURE;
   }
   const auto ignored_split = first_window->split(libtmux::SplitOptions{.before = true});
   if (!require(!ignored_split &&
                    ignored_split.error().kind == libtmux::FailureKind::unsupported &&
-                   !ignored_split.error().dispatched,
+                   not_started(ignored_split.error()),
                "psmux-ignored split-window options must fail before dispatch")) {
     return EXIT_FAILURE;
   }
@@ -1285,7 +1289,7 @@ int main() {
   const auto renamed_window = first_window->rename("alpha-window");
   if (!require(!renamed_window &&
                    renamed_window.error().kind == libtmux::FailureKind::unsupported &&
-                   !renamed_window.error().dispatched,
+                   not_started(renamed_window.error()),
                "unsafe psmux rename-window must fail before dispatch")) {
     return EXIT_FAILURE;
   }
@@ -1305,15 +1309,15 @@ int main() {
   if (!require(!killed_window && !unlinked_window &&
                    killed_window.error().kind == libtmux::FailureKind::unsupported &&
                    unlinked_window.error().kind == libtmux::FailureKind::unsupported &&
-                   !killed_window.error().dispatched &&
-                   !unlinked_window.error().dispatched,
+                   not_started(killed_window.error()) &&
+                   not_started(unlinked_window.error()),
                "destructive active-fallback window calls must fail before dispatch")) {
     return EXIT_FAILURE;
   }
   const auto resized_window = first_window->resize(100, 30);
   if (!require(!resized_window &&
                    resized_window.error().kind == libtmux::FailureKind::unsupported &&
-                   !resized_window.error().dispatched,
+                   not_started(resized_window.error()),
                "psmux resize-window no-op must fail before dispatch")) {
     return EXIT_FAILURE;
   }
@@ -1395,7 +1399,7 @@ int main() {
   const auto unsafe_text = first_pane->send_text("-psmux-would-drop-this");
   if (!require(!unsafe_text &&
                    unsafe_text.error().kind == libtmux::FailureKind::unsupported &&
-                   !unsafe_text.error().dispatched,
+                   not_started(unsafe_text.error()),
                "psmux-dropped leading-dash text must fail before dispatch")) {
     return EXIT_FAILURE;
   }
@@ -1403,40 +1407,40 @@ int main() {
       first_pane->capture(libtmux::CaptureOptions{.keep_trailing_spaces = true});
   if (!require(!trailing_capture &&
                    trailing_capture.error().kind == libtmux::FailureKind::unsupported &&
-                   !trailing_capture.error().dispatched,
+                   not_started(trailing_capture.error()),
                "psmux-ignored capture options must fail before dispatch")) {
     return EXIT_FAILURE;
   }
   const auto pane_options = first_pane->options();
   if (!require(!pane_options &&
                    pane_options.error().kind == libtmux::FailureKind::unsupported &&
-                   !pane_options.error().dispatched,
+                   not_started(pane_options.error()),
                "unsupported psmux pane options must fail before dispatch")) {
     return EXIT_FAILURE;
   }
   const auto respawned = first_pane->respawn(false);
   if (!require(!respawned &&
                    respawned.error().kind == libtmux::FailureKind::unsupported &&
-                   !respawned.error().dispatched,
+                   not_started(respawned.error()),
                "unsafe psmux respawn-pane must fail before dispatch")) {
     return EXIT_FAILURE;
   }
   const auto broken_out = first_pane->break_out("must-not-exist");
   if (!require(!broken_out &&
                    broken_out.error().kind == libtmux::FailureKind::unsupported &&
-                   !broken_out.error().dispatched,
+                   not_started(broken_out.error()),
                "unreportable psmux break-pane must fail before dispatch")) {
     return EXIT_FAILURE;
   }
   const auto joined = first_pane->join(*second_window);
   if (!require(!joined && joined.error().kind == libtmux::FailureKind::unsupported &&
-                   !joined.error().dispatched,
+                   not_started(joined.error()),
                "unsafe psmux join-pane must fail before dispatch")) {
     return EXIT_FAILURE;
   }
   const auto swapped = first_pane->swap_with(*second_pane);
   if (!require(!swapped && swapped.error().kind == libtmux::FailureKind::unsupported &&
-                   !swapped.error().dispatched,
+                   not_started(swapped.error()),
                "unsafe psmux swap-pane must fail before dispatch")) {
     return EXIT_FAILURE;
   }
@@ -1470,8 +1474,8 @@ int main() {
               session_options.error().kind == libtmux::FailureKind::unsupported &&
               position_set.error().kind == libtmux::FailureKind::unsupported &&
               position_unset.error().kind == libtmux::FailureKind::unsupported &&
-              !position.error().dispatched && !session_options.error().dispatched &&
-              !position_set.error().dispatched && !position_unset.error().dispatched,
+              not_started(position.error()) && not_started(session_options.error()) &&
+              not_started(position_set.error()) && not_started(position_unset.error()),
           "psmux session option state must fail before dispatch")) {
     return EXIT_FAILURE;
   }
@@ -1482,7 +1486,7 @@ int main() {
   if (!require(!hooks && !hook_set &&
                    hooks.error().kind == libtmux::FailureKind::unsupported &&
                    hook_set.error().kind == libtmux::FailureKind::unsupported &&
-                   !hooks.error().dispatched && !hook_set.error().dispatched,
+                   not_started(hooks.error()) && not_started(hook_set.error()),
                "psmux session hook state must fail before dispatch")) {
     return EXIT_FAILURE;
   }
@@ -1493,8 +1497,8 @@ int main() {
   if (!require(!selected_pane && !killed_pane &&
                    selected_pane.error().kind == libtmux::FailureKind::unsupported &&
                    killed_pane.error().kind == libtmux::FailureKind::unsupported &&
-                   !selected_pane.error().dispatched &&
-                   !killed_pane.error().dispatched && beta_after_pane_rejection &&
+                   not_started(selected_pane.error()) &&
+                   not_started(killed_pane.error()) && beta_after_pane_rejection &&
                    *beta_after_pane_rejection == "beta",
                "captured psmux pane mutations must fail before dispatch")) {
     return EXIT_FAILURE;
@@ -1507,8 +1511,8 @@ int main() {
                    sent.error().kind == libtmux::FailureKind::unsupported &&
                    entered.error().kind == libtmux::FailureKind::unsupported &&
                    captured.error().kind == libtmux::FailureKind::unsupported &&
-                   !sent.error().dispatched && !entered.error().dispatched &&
-                   !captured.error().dispatched,
+                   not_started(sent.error()) && not_started(entered.error()) &&
+                   not_started(captured.error()),
                "active-fallback pane I/O must fail before dispatch")) {
     return EXIT_FAILURE;
   }
@@ -1518,7 +1522,7 @@ int main() {
   if (!require(!attach && !checked_target && first_window->target().empty() &&
                    attach.error().kind == libtmux::FailureKind::unsupported &&
                    checked_target.error().kind == libtmux::FailureKind::unsupported &&
-                   !attach.error().dispatched && !checked_target.error().dispatched,
+                   not_started(attach.error()) && not_started(checked_target.error()),
                "checked psmux targets must explain the compatibility sentinel")) {
     return EXIT_FAILURE;
   }
@@ -1527,7 +1531,7 @@ int main() {
   if (!require(!clobbering_rename &&
                    clobbering_rename.error().kind ==
                        libtmux::FailureKind::unsupported &&
-                   !clobbering_rename.error().dispatched,
+                   not_started(clobbering_rename.error()),
                "psmux rename-session must fail before it can clobber beta")) {
     return EXIT_FAILURE;
   }
@@ -1614,7 +1618,7 @@ int main() {
   if (!require(!control_server, "psmux control backend must be rejected") ||
       !require(
           control_server.error().kind == libtmux::FailureKind::unsupported &&
-              !control_server.error().dispatched &&
+              not_started(control_server.error()) &&
               contains_case_insensitive(control_server.error().diagnostic, "control") &&
               contains_case_insensitive(control_server.error().diagnostic, "psmux"),
           "control-backend rejection must name control mode and psmux")) {
@@ -1640,7 +1644,7 @@ int main() {
       !require(!configured_control_server &&
                    configured_control_server.error().kind ==
                        libtmux::FailureKind::unsupported &&
-                   !configured_control_server.error().dispatched &&
+                   not_started(configured_control_server.error()) &&
                    contains_case_insensitive(
                        configured_control_server.error().diagnostic, "control") &&
                    contains_case_insensitive(

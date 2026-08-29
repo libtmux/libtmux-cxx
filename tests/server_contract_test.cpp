@@ -17,6 +17,7 @@
 
 namespace {
 
+using libtmux::DeliveryStatus;
 using libtmux::Server;
 
 Server connect(const libtmux::test::ScopedTmuxServer& fixture) {
@@ -57,7 +58,7 @@ TEST(ServerContract, ANonzeroExitIsAReplyNotACrash) {
 
   const auto refused = server.run({"kill-session", "-t", "absent"});
   ASSERT_FALSE(refused.has_value());
-  EXPECT_TRUE(refused.error().dispatched);
+  EXPECT_EQ(refused.error().delivery, DeliveryStatus::replied);
   EXPECT_GT(refused.error().exit_code, 0);
   EXPECT_FALSE(refused.error().diagnostic.empty());
 }
@@ -69,7 +70,7 @@ TEST(ServerContract, AnUnknownSubcommandIsRefusedNotDispatchedBlindly) {
 
   const auto refused = server.run({"no-such-tmux-command"});
   ASSERT_FALSE(refused.has_value());
-  EXPECT_TRUE(refused.error().dispatched);
+  EXPECT_EQ(refused.error().delivery, DeliveryStatus::replied);
   EXPECT_NE(refused.error().diagnostic.find("no-such-tmux-command"), std::string::npos);
 }
 
@@ -79,7 +80,7 @@ TEST(ServerContract, AnUnreachableSocketFailsWithoutHanging) {
   const auto refused = server->run({"list-sessions"});
   ASSERT_FALSE(refused.has_value());
   EXPECT_EQ(refused.error().kind, libtmux::FailureKind::missing);
-  EXPECT_FALSE(refused.error().dispatched);
+  EXPECT_EQ(refused.error().delivery, DeliveryStatus::not_started);
 }
 
 TEST(ServerContract, RepeatedRunsDoNotLeakDescriptors) {
@@ -107,8 +108,9 @@ TEST(ServerContract, ATimeoutIsItsOwnFailureNotARefusal) {
                                     std::chrono::milliseconds{300});
   ASSERT_FALSE(timed_out.has_value());
   EXPECT_EQ(timed_out.error().kind, libtmux::FailureKind::timeout);
-  // It reached tmux, so a caller must not assume nothing happened.
-  EXPECT_TRUE(timed_out.error().dispatched);
+  // The child started, but the transport cannot prove whether the command
+  // reached tmux before it was terminated.
+  EXPECT_EQ(timed_out.error().delivery, DeliveryStatus::indeterminate);
 }
 
 TEST(ServerContract, ARefusalIsDistinguishableFromNeverRunning) {
@@ -123,7 +125,7 @@ TEST(ServerContract, ARefusalIsDistinguishableFromNeverRunning) {
   const auto empty = server.run_batch(libtmux::CommandBatch{});
   ASSERT_FALSE(empty.has_value());
   EXPECT_EQ(empty.error().kind, libtmux::FailureKind::validation);
-  EXPECT_FALSE(empty.error().dispatched);
+  EXPECT_EQ(empty.error().delivery, libtmux::DeliveryStatus::not_started);
 }
 
 } // namespace
@@ -162,7 +164,7 @@ TEST(ServerContract, SubprocessVersionHonoursTheServersOutputBound) {
 
   ASSERT_FALSE(version.has_value());
   EXPECT_EQ(version.error().kind, libtmux::FailureKind::truncated);
-  EXPECT_TRUE(version.error().dispatched);
+  EXPECT_EQ(version.error().delivery, DeliveryStatus::replied);
 }
 
 TEST(ServerContract, LivenessIsAskedAndAnsweredWithoutThrowing) {
@@ -434,8 +436,7 @@ TEST(ServerContract, ATypedCallInheritsTheServersDeadline) {
 
   ASSERT_FALSE(slow.has_value()) << "a 150ms deadline should not have been met";
   EXPECT_EQ(slow.error().kind, libtmux::FailureKind::timeout);
-  // Reported as dispatched: tmux ran it, and what it did is not yet known.
-  EXPECT_TRUE(slow.error().dispatched);
+  EXPECT_EQ(slow.error().delivery, DeliveryStatus::indeterminate);
   EXPECT_LT(elapsed, std::chrono::seconds{3})
       << "the call outlived the deadline it was given";
 

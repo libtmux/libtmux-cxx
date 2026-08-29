@@ -50,6 +50,7 @@ using libtmux::ControlCommand;
 using libtmux::ControlRequest;
 using libtmux::ControlRequestResult;
 using libtmux::ControlTerminal;
+using libtmux::DeliveryStatus;
 using libtmux::Notification;
 using libtmux::ProtocolError;
 using libtmux::test::ScopedTmuxServer;
@@ -873,7 +874,8 @@ TEST(ControlModeConnection, LargeSubmitVsShutdownReturnsNoFabricatedBlocks) {
   const auto& completed = required_value(result);
   EXPECT_EQ(completions.load(std::memory_order_relaxed), 1U);
   EXPECT_TRUE(completed.blocks.empty());
-  EXPECT_TRUE(completed.connection_error.has_value());
+  ASSERT_TRUE(completed.connection_error.has_value());
+  EXPECT_EQ(completed.connection_error->delivery, DeliveryStatus::indeterminate);
   int status = 0;
   errno = 0;
   EXPECT_EQ(::waitpid(static_cast<pid_t>(child_pid), &status, WNOHANG), -1);
@@ -941,7 +943,8 @@ TEST(ControlModeConnection, PartialWriteShutdownNeverDispatchesTruncatedCommand)
   ASSERT_TRUE(result.has_value());
   const auto& completed = required_value(result);
   EXPECT_TRUE(completed.blocks.empty());
-  EXPECT_TRUE(completed.connection_error.has_value());
+  ASSERT_TRUE(completed.connection_error.has_value());
+  EXPECT_EQ(completed.connection_error->delivery, DeliveryStatus::indeterminate);
   const auto marker_deadline = std::chrono::steady_clock::now() + 1s;
   while (!std::filesystem::exists(marker) &&
          std::chrono::steady_clock::now() < marker_deadline) {
@@ -1220,14 +1223,37 @@ TEST(ControlModeConnection, DeadlineReturnsOnlyReceivedBlocksAndPoisonsTheConnec
       group({{"run-shell", "sleep 5"}, {"display-message", "-p", "late-old-request"}}),
       std::chrono::steady_clock::now() + 200ms);
   EXPECT_LE(timed_out.blocks.size(), 1U);
-  EXPECT_TRUE(timed_out.connection_error.has_value());
+  ASSERT_TRUE(timed_out.connection_error.has_value());
+  EXPECT_EQ(timed_out.connection_error->delivery, timed_out.blocks.empty()
+                                                      ? DeliveryStatus::written
+                                                      : DeliveryStatus::replied);
 
   const auto later =
       connection.execute(group({{"display-message", "-p", "new-request"}}),
                          std::chrono::steady_clock::now() + 1s);
   EXPECT_TRUE(later.blocks.empty());
-  EXPECT_TRUE(later.connection_error.has_value());
+  ASSERT_TRUE(later.connection_error.has_value());
+  EXPECT_EQ(later.connection_error->delivery, DeliveryStatus::not_started);
   static_cast<void>(connection.shutdown(std::chrono::steady_clock::now() + 2s));
+}
+
+TEST(ControlModeConnection, ExpiredDeadlineDoesNotStartTheRequest) {
+  auto server = start_server(unique_name("control-expired-deadline"));
+  ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
+  auto connected = connect_to(*server);
+  ASSERT_TRUE(connected.has_value())
+      << (connected.has_value() ? "" : connected.error().message);
+  auto connection = std::move(*connected);
+
+  const auto expired =
+      connection.execute(group({{"display-message", "-p", "must-not-dispatch"}}),
+                         std::chrono::steady_clock::now() - 1ms);
+
+  EXPECT_TRUE(expired.blocks.empty());
+  ASSERT_TRUE(expired.connection_error.has_value());
+  EXPECT_EQ(expired.connection_error->delivery, DeliveryStatus::not_started);
+  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+  EXPECT_TRUE(server->is_alive());
 }
 
 // The build records which tmux binary the suite resolved, so a result can say

@@ -92,7 +92,7 @@ TEST(ControlDispatch, ControlVersionHonoursTheServersOutputBound) {
 
   ASSERT_FALSE(version.has_value());
   EXPECT_EQ(version.error().kind, libtmux::FailureKind::truncated);
-  EXPECT_TRUE(version.error().dispatched);
+  EXPECT_NE(version.error().delivery, libtmux::DeliveryStatus::not_started);
 }
 
 // The value of a socket name is where tmux resolves it to, and the library
@@ -279,7 +279,7 @@ TEST(ControlDispatch, RawTmux37HookRefusalKeepsReplyOwnership) {
   const auto broken = pane->break_out("roomy");
 
   ASSERT_FALSE(broken.has_value());
-  EXPECT_TRUE(broken.error().dispatched);
+  EXPECT_NE(broken.error().delivery, libtmux::DeliveryStatus::not_started);
   EXPECT_NE(broken.error().diagnostic.find("name repair failed"), std::string::npos)
       << broken.error().diagnostic;
   const auto marker = streamed->run({"display-message", "-p", "still-aligned"});
@@ -570,7 +570,7 @@ TEST(ControlDispatch, AFailureCarriesWhatTmuxSaid) {
 
   const auto refused = streamed->run({"kill-session", "-t", "absent"});
   ASSERT_FALSE(refused.has_value());
-  EXPECT_TRUE(refused.error().dispatched);
+  EXPECT_NE(refused.error().delivery, libtmux::DeliveryStatus::not_started);
   EXPECT_NE(refused.error().diagnostic.find("absent"), std::string::npos);
 
   // A missing object is still a missing object over this transport.

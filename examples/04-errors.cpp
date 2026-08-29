@@ -1,5 +1,6 @@
 // What failure looks like. Nothing throws: every call hands back a value that
-// says whether tmux ran, what it said, and whether trying again is safe.
+// says how far the command got, what tmux said, and whether trying again is
+// safe.
 
 #include <chrono>
 #include <cstdio>
@@ -12,9 +13,10 @@
 namespace {
 
 void report(const char* attempt, const libtmux::CommandFailure& failure) {
-  std::printf("%-28s %-34s dispatched=%s exit=%d\n", attempt,
+  std::printf("%-28s %-34s delivery=%s exit=%d\n", attempt,
               std::string{libtmux::to_string(failure.kind)}.c_str(),
-              failure.dispatched ? "yes" : "no", failure.exit_code);
+              std::string{libtmux::to_string(failure.delivery)}.c_str(),
+              failure.exit_code);
   std::printf("%-28s %s\n", "", failure.diagnostic.c_str());
 }
 

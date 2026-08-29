@@ -283,7 +283,7 @@ TEST(Entity, AnAnswerThatDoesNotFitIsReportedNotCut) {
   ASSERT_FALSE(cut.has_value())
       << "a capture of " << cut->size() << " bytes fitted 1024";
   EXPECT_EQ(cut.error().kind, FailureKind::truncated);
-  EXPECT_TRUE(cut.error().dispatched);
+  EXPECT_NE(cut.error().delivery, libtmux::DeliveryStatus::not_started);
   EXPECT_NE(cut.error().diagnostic.find("1024"), std::string::npos);
 
   // Room enough, and the whole thing arrives.
@@ -544,7 +544,7 @@ TEST(Entity, RawTmux37RejectsHooksBeforeNameRepair) {
     const auto broken = pane->break_out("roomy");
 
     ASSERT_FALSE(broken.has_value());
-    EXPECT_TRUE(broken.error().dispatched);
+    EXPECT_NE(broken.error().delivery, libtmux::DeliveryStatus::not_started);
     EXPECT_NE(broken.error().diagnostic.find("name repair failed"), std::string::npos)
         << broken.error().diagnostic;
     const auto marker = server.run({"display-message", "-p", "still-alive"});
@@ -761,7 +761,7 @@ TEST(Entity, ARecordedSnapshotFiltersButCannotAct) {
   const auto killed = editing.kill();
   ASSERT_FALSE(killed.has_value());
   EXPECT_EQ(killed.error().kind, FailureKind::validation);
-  EXPECT_FALSE(killed.error().dispatched);
+  EXPECT_EQ(killed.error().delivery, libtmux::DeliveryStatus::not_started);
 }
 
 TEST(Entity, ANewSessionComesBackAsASession) {

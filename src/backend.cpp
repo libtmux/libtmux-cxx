@@ -180,7 +180,7 @@ Backend::prepare_attach(std::string_view target) const {
   static_cast<void>(target);
   return unexpected(CommandFailure{
       .kind = FailureKind::unsupported,
-      .dispatched = false,
+      .delivery = DeliveryStatus::not_started,
       .exit_code = 0,
       .diagnostic =
           "psmux cannot bind an attach command to a captured session safely"});
@@ -189,7 +189,7 @@ Backend::prepare_attach(std::string_view target) const {
   if (route == nullptr) {
     return unexpected(CommandFailure{
         .kind = FailureKind::unsupported,
-        .dispatched = false,
+        .delivery = DeliveryStatus::not_started,
         .exit_code = 0,
         .diagnostic = "this backend cannot retain an exact attach route"});
   }
@@ -218,7 +218,7 @@ SubprocessBackend::open(std::vector<std::string> connection, CommandObserver obs
   auto endpoint = bind_socket_endpoint(connection);
   if (!endpoint.has_value()) {
     return unexpected(CommandFailure{.kind = FailureKind::pipe,
-                                     .dispatched = false,
+                                     .delivery = DeliveryStatus::not_started,
                                      .exit_code = 0,
                                      .diagnostic = std::move(endpoint.error())});
   }
@@ -233,7 +233,7 @@ SubprocessBackend::prepare_attach(std::string_view target) const {
   if (socket_missing_) {
     return unexpected(CommandFailure{
         .kind = FailureKind::missing,
-        .dispatched = false,
+        .delivery = DeliveryStatus::not_started,
         .exit_code = 0,
         .diagnostic =
             "this handle predates the socket; reopen it after the server starts"});
@@ -260,7 +260,7 @@ expected<std::string, CommandFailure> SubprocessBackend::run_in_session(
     if (libtmux_psmux::unsafe_command_argument(argument.value())) {
       CommandFailure failure{
           .kind = FailureKind::validation,
-          .dispatched = false,
+          .delivery = DeliveryStatus::not_started,
           .exit_code = 0,
           .diagnostic =
               "psmux cannot preserve semicolons or newlines in typed arguments"};
@@ -269,7 +269,7 @@ expected<std::string, CommandFailure> SubprocessBackend::run_in_session(
   }
   if (session_id.empty() || session_name.empty()) {
     CommandFailure failure{.kind = FailureKind::validation,
-                           .dispatched = false,
+                           .delivery = DeliveryStatus::not_started,
                            .exit_code = 0,
                            .diagnostic =
                                "psmux cannot route an entity without its session"};
@@ -283,7 +283,7 @@ expected<std::string, CommandFailure> SubprocessBackend::run_in_session(
   }
   if (!*belongs) {
     CommandFailure failure{.kind = FailureKind::missing,
-                           .dispatched = true,
+                           .delivery = DeliveryStatus::replied,
                            .exit_code = 0,
                            .diagnostic =
                                "tmux has no session " + std::string{session_name}};
@@ -294,7 +294,7 @@ expected<std::string, CommandFailure> SubprocessBackend::run_in_session(
         std::chrono::steady_clock::now() - started);
     if (elapsed >= *timeout) {
       CommandFailure failure{.kind = FailureKind::timeout,
-                             .dispatched = false,
+                             .delivery = DeliveryStatus::not_started,
                              .exit_code = 0,
                              .diagnostic = "psmux session validation exhausted the "
                                            "command deadline"};
@@ -348,7 +348,7 @@ SubprocessBackend::run_scoped(const CommandRequest& command,
         command,
         CommandFailure{
             .kind = FailureKind::missing,
-            .dispatched = false,
+            .delivery = DeliveryStatus::not_started,
             .exit_code = 0,
             .diagnostic =
                 "this handle predates the socket; reopen it after the server starts"});
@@ -398,8 +398,7 @@ SubprocessBackend::run_scoped(const CommandRequest& command,
   const auto reply = run_process(request);
   if (!reply.has_value()) {
     return reported(CommandFailure{.kind = kind_of(reply.error().kind),
-                                   .dispatched = reply.error().dispatch_phase !=
-                                                 DispatchPhase::not_dispatched,
+                                   .delivery = reply.error().delivery,
                                    .exit_code = -1,
                                    .diagnostic = reply.error().diagnostic});
   }
@@ -409,7 +408,7 @@ SubprocessBackend::run_scoped(const CommandRequest& command,
     // answer is the one outcome a caller cannot detect: the last line is cut
     // mid-way and looks like data.
     return reported(CommandFailure{.kind = FailureKind::truncated,
-                                   .dispatched = true,
+                                   .delivery = DeliveryStatus::replied,
                                    .exit_code = 0,
                                    .diagnostic = "tmux produced more output than the " +
                                                  std::to_string(request.capture_limit) +
@@ -436,7 +435,7 @@ SubprocessBackend::run_scoped(const CommandRequest& command,
     // the reader to work out where in their program it came from.
     diagnostic += " (running: " + rendered_command(command) + ")";
     return reported(CommandFailure{.kind = FailureKind::refused,
-                                   .dispatched = true,
+                                   .delivery = DeliveryStatus::replied,
                                    .exit_code = exited == nullptr ? -1 : exited->code,
                                    .diagnostic = std::move(diagnostic)});
   }
@@ -452,7 +451,7 @@ expected<Version, CommandFailure> SubprocessBackend::version() const {
   const auto version = parse_version(*output);
   if (!version.has_value()) {
     return unexpected(CommandFailure{.kind = FailureKind::refused,
-                                     .dispatched = true,
+                                     .delivery = DeliveryStatus::replied,
                                      .exit_code = 0,
                                      .diagnostic = "tmux -V printed " + *output});
   }
