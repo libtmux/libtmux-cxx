@@ -91,7 +91,7 @@ struct Pipe final {
 [[nodiscard]] expected<Pipe, int> create_pipe() {
   std::array<int, 2> descriptors{-1, -1};
 #if defined(__linux__) && !defined(LIBTMUX_FORCE_PORTABLE_SYSCALLS)
-  if (::pipe2(descriptors.data(), O_CLOEXEC | O_NONBLOCK) != 0) {
+  if (::pipe2(descriptors.data(), O_CLOEXEC) != 0) {
     return unexpected(errno);
   }
 #else
@@ -100,10 +100,8 @@ struct Pipe final {
   }
   for (const int descriptor : descriptors) {
     const auto descriptor_flags = ::fcntl(descriptor, F_GETFD);
-    const auto status_flags = ::fcntl(descriptor, F_GETFL);
-    if (descriptor_flags < 0 || status_flags < 0 ||
-        ::fcntl(descriptor, F_SETFD, descriptor_flags | FD_CLOEXEC) != 0 ||
-        ::fcntl(descriptor, F_SETFL, status_flags | O_NONBLOCK) != 0) {
+    if (descriptor_flags < 0 ||
+        ::fcntl(descriptor, F_SETFD, descriptor_flags | FD_CLOEXEC) != 0) {
       const auto error_number = errno;
       static_cast<void>(::close(descriptors[0]));
       static_cast<void>(::close(descriptors[1]));
@@ -111,6 +109,17 @@ struct Pipe final {
     }
   }
 #endif
+  // This end only. The other becomes the child's stdout or stderr, and a child
+  // that finds it non-blocking is told to try again rather than waited for: it
+  // reports a write error and loses everything past the pipe buffer.
+  const auto status_flags = ::fcntl(descriptors[0], F_GETFL);
+  if (status_flags < 0 ||
+      ::fcntl(descriptors[0], F_SETFL, status_flags | O_NONBLOCK) != 0) {
+    const auto error_number = errno;
+    static_cast<void>(::close(descriptors[0]));
+    static_cast<void>(::close(descriptors[1]));
+    return unexpected(error_number);
+  }
   return Pipe{OwnedFd{descriptors[0]}, OwnedFd{descriptors[1]}};
 }
 

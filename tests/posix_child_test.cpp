@@ -7,6 +7,7 @@
 #include <array>
 #include <csignal>
 #include <string>
+#include <thread>
 #include <variant>
 
 #include <poll.h>
@@ -91,6 +92,24 @@ TEST(PosixChild, KeepsDrainingPastItsCaptureLimit) {
   auto capture = launched->take_capture();
   EXPECT_EQ(capture.stdout_bytes.size(), 64U);
   EXPECT_TRUE(capture.truncated);
+}
+
+// The write end becomes the child's stdout. A child that finds it non-blocking
+// gets EAGAIN on a burst larger than the pipe buffer, which it reports as a
+// write error rather than waiting for the reader.
+TEST(PosixChild, DoesNotHandTheChildANonBlockingStdout) {
+  auto request = shell("seq 1 40000");
+  request.capture_limit = 1024U * 1024U;
+  auto launched = PosixChild::launch(std::move(request));
+  ASSERT_TRUE(launched.has_value()) << launched.error().diagnostic;
+  // Let the pipe fill first, which is what any delayed reader does.
+  std::this_thread::sleep_for(std::chrono::milliseconds{150});
+  run_to_completion(*launched);
+
+  ASSERT_EQ(launched->status(), ChildStatus::exited);
+  ASSERT_TRUE(std::holds_alternative<Exited>(launched->termination()));
+  EXPECT_EQ(std::get<Exited>(launched->termination()).code, 0);
+  EXPECT_GT(launched->take_capture().stdout_bytes.size(), 200000U);
 }
 
 TEST(PosixChild, SignalsTheWholeGroupAndKeepsTheSignalStatus) {
