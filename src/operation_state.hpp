@@ -6,6 +6,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <type_traits>
 #include <utility>
 
 #include "completion_queue.hpp"
@@ -16,6 +17,59 @@ LIBTMUX_NAMESPACE_BEGIN
 namespace detail {
 
 template <typename T> using OperationResult = expected<T, CommandFailure>;
+
+template <typename T>
+[[nodiscard]] OperationResult<T> move_result_alternative(OperationResult<T>& result) {
+  if (!result.has_value()) {
+    return unexpected(std::move(result.error()));
+  }
+  if constexpr (std::is_void_v<T>) {
+    return {};
+  } else {
+    return OperationResult<T>{std::move(*result)};
+  }
+}
+
+// tl::expected 1.1.0 marks active-value construction noexcept, so construct the
+// callback argument directly from the selected alternative.
+template <typename Result, typename T>
+struct MoveOnlyFunctionInvoker<Result, OperationResult<T>> final {
+  template <typename Callable>
+  static Result invoke(Callable& callable, OperationResult<T>& result) {
+    auto make_result = [&result] { return move_result_alternative(result); };
+    if constexpr (MoveOnlyFunctionReferenceWrapper<Callable>::value) {
+      using Target = typename MoveOnlyFunctionReferenceWrapper<Callable>::target_type;
+      if constexpr (std::is_member_pointer_v<Target>) {
+        return invoke_member(callable.get(), make_result);
+      } else {
+        return invoke_direct(callable.get(), make_result);
+      }
+    } else if constexpr (std::is_member_pointer_v<Callable>) {
+      return invoke_member(callable, make_result);
+    } else {
+      return invoke_direct(callable, make_result);
+    }
+  }
+
+private:
+  template <typename Callable, typename Factory>
+  static Result invoke_direct(Callable& callable, Factory& make_result) {
+    if constexpr (std::is_void_v<Result>) {
+      callable(make_result());
+    } else {
+      return callable(make_result());
+    }
+  }
+
+  template <typename Callable, typename Factory>
+  static Result invoke_member(Callable& callable, Factory& make_result) {
+    if constexpr (std::is_void_v<Result>) {
+      std::invoke(callable, make_result());
+    } else {
+      return std::invoke(callable, make_result());
+    }
+  }
+};
 
 template <typename T>
 using OperationCallback = MoveOnlyFunction<void(OperationResult<T>)>;
@@ -140,7 +194,7 @@ public:
     if (release) {
       release->release_admission();
     }
-    return std::move(*outcome_);
+    return move_result_alternative(*outcome_);
   }
 
   [[nodiscard]] OperationResult<T> take_callback(CompletionToken token) {
@@ -158,7 +212,7 @@ public:
     if (release) {
       release->release_admission();
     }
-    return std::move(*outcome_);
+    return move_result_alternative(*outcome_);
   }
 
   [[nodiscard]] bool observing_callback(CompletionToken token) const {
@@ -325,7 +379,7 @@ public:
 
   void operator()() {
     auto result = lease_.take();
-    callback_(std::move(result));
+    callback_(move_result_alternative(result));
   }
 
 private:

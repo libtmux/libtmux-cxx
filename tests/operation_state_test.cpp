@@ -533,6 +533,24 @@ struct ThrowingMove final {
   std::shared_ptr<bool> fail;
 };
 
+struct CountedThrowingMove final {
+  CountedThrowingMove(std::shared_ptr<int> moves, std::shared_ptr<int> throw_on)
+      : moves{std::move(moves)}, throw_on{std::move(throw_on)} {}
+  CountedThrowingMove(const CountedThrowingMove&) = delete;
+  CountedThrowingMove& operator=(const CountedThrowingMove&) = delete;
+  CountedThrowingMove(CountedThrowingMove&& other)
+      : moves{other.moves}, throw_on{other.throw_on} {
+    const int move = ++*moves;
+    if (move == *throw_on) {
+      throw std::runtime_error{"result move"};
+    }
+  }
+  CountedThrowingMove& operator=(CountedThrowingMove&&) = delete;
+
+  std::shared_ptr<int> moves;
+  std::shared_ptr<int> throw_on;
+};
+
 TEST(OperationState, AThrowingResultMoveStillReleasesAdmission) {
   auto hooks = std::make_shared<RecordingHooks>();
   auto fail = std::make_shared<bool>(false);
@@ -544,6 +562,28 @@ TEST(OperationState, AThrowingResultMoveStillReleasesAdmission) {
 
   EXPECT_THROW(static_cast<void>(sync_wait(std::move(started.operation))),
                std::runtime_error);
+  EXPECT_EQ(hooks->releases.load(std::memory_order_relaxed), 1);
+}
+
+TEST(OperationCallback, DoesNotMoveTheWholeResultAtTheFinalCallBoundary) {
+  CompletionQueue queue;
+  auto hooks = std::make_shared<RecordingHooks>();
+  auto moves = std::make_shared<int>(0);
+  auto throw_on = std::make_shared<int>(0);
+  auto started = make_operation<CountedThrowingMove>(hooks);
+  int calls = 0;
+  auto subscription =
+      std::move(started.operation)
+          .subscribe(queue, [&](OperationResult<CountedThrowingMove>) { ++calls; });
+  ASSERT_TRUE(started.source.publish(
+      OperationResult<CountedThrowingMove>{CountedThrowingMove{moves, throw_on}}));
+  started.source.retire();
+  *throw_on = *moves + 4;
+
+  EXPECT_NO_THROW(static_cast<void>(queue.run_ready()));
+  EXPECT_EQ(calls, 1);
+  EXPECT_EQ(queue.run_ready(), 0U);
+  EXPECT_FALSE(subscription.observing());
   EXPECT_EQ(hooks->releases.load(std::memory_order_relaxed), 1);
 }
 
