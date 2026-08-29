@@ -60,6 +60,8 @@ struct EngineLive final {
   bool killed{false};
   // Ended because the caller withdrew, not because a deadline passed.
   bool withdrawn{false};
+  // Ended because the engine is closing, which is neither.
+  bool abandoned{false};
 };
 
 class ProcessEngine final : public std::enable_shared_from_this<ProcessEngine> {

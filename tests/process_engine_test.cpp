@@ -108,6 +108,27 @@ TEST(ProcessEngine, EndsAChildThatOutlivesItsDeadline) {
   EXPECT_LT(took, std::chrono::seconds{10});
 }
 
+// Shutdown ends outstanding work; it does not wait for it. An engine that
+// waits is an engine whose teardown takes as long as the slowest tmux command
+// anyone happened to have running.
+TEST(ProcessEngine, ShutdownEndsOutstandingWorkRatherThanWaitingForIt) {
+  auto engine = ProcessEngine::start();
+  ASSERT_TRUE(engine.has_value()) << engine.error().diagnostic;
+  auto running = (*engine)->submit(shell("sleep 30"));
+  std::this_thread::sleep_for(std::chrono::milliseconds{200});
+
+  const auto started = std::chrono::steady_clock::now();
+  const auto report = (*engine)->close();
+  const auto took = std::chrono::steady_clock::now() - started;
+
+  EXPECT_LT(took, std::chrono::seconds{3});
+  EXPECT_TRUE(report.complete);
+  // Every accepted operation is answered, rather than left for a caller that
+  // would wait for a reply nobody is going to send.
+  auto reply = sync_wait(std::move(running));
+  EXPECT_FALSE(reply.has_value());
+}
+
 // A cancelled call is not a call that ran out of time. Reporting one as the
 // other tells a caller their deadline was too short when they withdrew it.
 TEST(ProcessEngine, ReportsACancelledCallAsCancelled) {

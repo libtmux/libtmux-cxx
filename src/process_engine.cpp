@@ -222,6 +222,7 @@ void ProcessEngine::launch_loop() {
 
 void ProcessEngine::reactor_loop() {
   std::vector<EngineLive> live;
+  bool shutting_down = false;
   for (;;) {
     {
       std::lock_guard lock{mutex_};
@@ -232,6 +233,7 @@ void ProcessEngine::reactor_loop() {
       if (closing_ && live.empty() && pending_.empty()) {
         return;
       }
+      shutting_down = closing_;
     }
 
     std::vector<pollfd> watched;
@@ -280,10 +282,14 @@ void ProcessEngine::reactor_loop() {
       }
       const bool expired = one.deadline.has_value() && Clock::now() >= *one.deadline;
       const bool cancelled = one.source.cancel_requested();
-      if (!finished && (expired || cancelled) && !one.terminate_deadline.has_value()) {
+      // Closing ends what is running rather than waiting for it: a teardown
+      // that waits takes as long as the slowest command anyone had in flight.
+      if (!finished && (expired || cancelled || shutting_down) &&
+          !one.terminate_deadline.has_value()) {
         one.child.signal_group(SIGTERM);
         one.terminate_deadline = Clock::now() + terminate_grace;
         one.withdrawn = cancelled && !expired;
+        one.abandoned = shutting_down && !cancelled && !expired;
       }
       if (!finished && one.terminate_deadline.has_value() && !one.killed &&
           Clock::now() >= *one.terminate_deadline) {
@@ -306,6 +312,12 @@ void ProcessEngine::reactor_loop() {
             process_error(ProcessError::Kind::pipe, DeliveryStatus::written, "waitpid",
                           one.child.rendered_request(),
                           std::make_error_code(std::errc::no_child_process))))));
+      } else if (one.abandoned) {
+        static_cast<void>(one.source.publish(unexpected(CommandFailure{
+            .kind = FailureKind::cancelled,
+            .delivery = DeliveryStatus::indeterminate,
+            .exit_code = 0,
+            .diagnostic = "the process engine closed while this was running"})));
       } else if (one.withdrawn) {
         static_cast<void>(one.source.publish(unexpected(CommandFailure{
             .kind = FailureKind::cancelled,
