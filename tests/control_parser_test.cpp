@@ -287,6 +287,18 @@ TEST(ControlModeParser, FailsAndReleasesOnALineThatNeverEnds) {
   EXPECT_FALSE(parser.finish().has_value());
 }
 
+TEST(ControlModeParser, RejectsAnOversizedLineEvenWhenItsNewlineArrives) {
+  Parser parser{4096U, 64U};
+  auto line = bytes(std::string(65U, 'x'));
+  line.push_back(std::byte{'\n'});
+
+  const auto parsed = parser.feed(line);
+
+  ASSERT_FALSE(parsed.has_value());
+  EXPECT_NE(parsed.error().message.find("control line exceeded"), std::string::npos);
+  EXPECT_FALSE(parser.finish().has_value());
+}
+
 // Zero is the escape hatch, and a test that owns both ends of the stream is
 // the only caller entitled to it.
 TEST(ControlModeParser, TreatsZeroAsUnbounded) {
