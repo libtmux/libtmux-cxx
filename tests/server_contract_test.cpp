@@ -4,7 +4,9 @@
 // the transport spikes.
 #include <chrono>
 #include <filesystem>
+#include <latch>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -24,6 +26,40 @@ Server connect(const libtmux::test::ScopedTmuxServer& fixture) {
   auto server = Server::at_socket_path(fixture.socket_path().string());
   EXPECT_TRUE(server.has_value());
   return server.value();
+}
+
+// Every typed call now crosses the engine's threads, so a Server shared
+// between callers is a Server whose commands are interleaved rather than
+// serialised behind one another. Each answer must still be the answer to the
+// question that caller asked.
+TEST(ServerContract, ConcurrentCallersEachGetTheirOwnAnswer) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+
+  constexpr int callers = 12;
+  std::vector<std::string> answers(callers);
+  std::vector<std::thread> asking;
+  asking.reserve(callers);
+  std::latch ready{callers};
+  for (int index = 0; index < callers; ++index) {
+    asking.emplace_back([&, index] {
+      const std::string mine = "caller-" + std::to_string(index);
+      ready.arrive_and_wait();
+      const auto printed = server.run({"display-message", "-p", mine});
+      if (printed.has_value()) {
+        answers[static_cast<std::size_t>(index)] = *printed;
+      }
+    });
+  }
+  for (auto& thread : asking) {
+    thread.join();
+  }
+
+  for (int index = 0; index < callers; ++index) {
+    EXPECT_EQ(answers[static_cast<std::size_t>(index)],
+              "caller-" + std::to_string(index) + "\n");
+  }
 }
 
 TEST(ServerContract, ArgumentsReachTmuxWithoutAShell) {
