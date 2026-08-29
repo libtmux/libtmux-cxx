@@ -154,10 +154,11 @@ Operation<ProcessReply> ProcessEngine::submit(ProcessRequest request) {
   auto hooks = std::make_shared<Hooks>(weak_from_this());
   auto started = make_operation<ProcessReply>(hooks);
   if (!admit()) {
-    static_cast<void>(started.source.publish(unexpected(reported(process_error(
-        ProcessError::Kind::validation, DeliveryStatus::not_started, "admission",
-        "process engine",
-        std::make_error_code(std::errc::resource_unavailable_try_again))))));
+    static_cast<void>(started.source.publish(unexpected(CommandFailure{
+        .kind = FailureKind::overloaded,
+        .delivery = DeliveryStatus::not_started,
+        .exit_code = 0,
+        .diagnostic = "the process engine has more work in flight than it accepts"})));
     started.source.retire();
     return std::move(started.operation);
   }

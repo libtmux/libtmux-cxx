@@ -38,6 +38,10 @@ enum class FailureKind {
   // The backend cannot provide this operation without weakening its contract;
   // nothing was dispatched.
   unsupported,
+  // More work is in flight than the engine accepts. Nothing was dispatched, so
+  // this is the one refusal a caller may simply try again later — appended
+  // rather than grouped, because the values before it are an installed ABI.
+  overloaded,
 };
 
 [[nodiscard]] constexpr std::string_view to_string(FailureKind kind) noexcept {
@@ -60,6 +64,8 @@ enum class FailureKind {
     return "the answer did not fit";
   case FailureKind::unsupported:
     return "the backend does not support this operation";
+  case FailureKind::overloaded:
+    return "the engine has more work in flight than it accepts";
   }
   return "unknown failure";
 }

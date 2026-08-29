@@ -4116,6 +4116,7 @@ Why a tmux command produced no answer.  `refused` means tmux ran and said no; `m
   - [`FailureKind::missing`](#libtmux-command-hpp-failurekind-missing)
   - [`FailureKind::truncated`](#libtmux-command-hpp-failurekind-truncated)
   - [`FailureKind::unsupported`](#libtmux-command-hpp-failurekind-unsupported)
+  - [`FailureKind::overloaded`](#libtmux-command-hpp-failurekind-overloaded)
 - [`CommandFailure`](#libtmux-command-hpp-commandfailure)
   - [`CommandFailure::kind`](#libtmux-command-hpp-commandfailure-kind)
   - [`CommandFailure::delivery`](#libtmux-command-hpp-commandfailure-delivery)
@@ -4190,6 +4191,11 @@ tmux ran and answered, and the answer did not fit. Reported rather than returned
 #### `FailureKind::unsupported` — `unsupported,`
 
 The backend cannot provide this operation without weakening its contract; nothing was dispatched.
+
+<a id="libtmux-command-hpp-failurekind-overloaded"></a>
+#### `FailureKind::overloaded` — `overloaded,`
+
+More work is in flight than the engine accepts. Nothing was dispatched, so this is the one refusal a caller may simply try again later — appended rather than grouped, because the values before it are an installed ABI.
 
 <a id="libtmux-command-hpp-commandfailure"></a>
 ### `CommandFailure`

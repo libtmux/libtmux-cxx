@@ -67,6 +67,30 @@ TEST(ProcessEngine, RunsManyWithoutAThreadForEach) {
   EXPECT_EQ(answered, 24);
 }
 
+// Accepted work is bounded, and submission past the bound answers at once
+// rather than queueing behind a limit the caller cannot see.
+TEST(ProcessEngine, RefusesWorkPastItsBoundWithoutWaiting) {
+  auto engine =
+      ProcessEngine::start(libtmux::detail::EngineConfig{.operation_limit = 2U});
+  ASSERT_TRUE(engine.has_value()) << engine.error().diagnostic;
+
+  std::vector<Operation<ProcessReply>> held;
+  held.reserve(8);
+  for (int index = 0; index < 8; ++index) {
+    held.push_back((*engine)->submit(shell("sleep 2")));
+  }
+
+  int refused = 0;
+  for (auto& one : held) {
+    auto reply = sync_wait(std::move(one));
+    if (!reply.has_value() && reply.error().kind == libtmux::FailureKind::overloaded) {
+      EXPECT_EQ(reply.error().delivery, libtmux::DeliveryStatus::not_started);
+      ++refused;
+    }
+  }
+  EXPECT_GT(refused, 0) << "a bound nothing reaches is not a bound";
+}
+
 // A child that outlives its deadline is ended by the engine, not waited for.
 TEST(ProcessEngine, EndsAChildThatOutlivesItsDeadline) {
   auto engine = ProcessEngine::start();
