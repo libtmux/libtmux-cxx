@@ -326,6 +326,11 @@ private:
 
   friend Server detail::server_over(std::shared_ptr<const detail::Backend> backend);
 
+  // Whether this server is known to get `feature` wrong, which is what the
+  // typed surface refuses on. Distinct from `capabilities().supports`, which a
+  // caller asks about what it may rely on.
+  [[nodiscard]] bool refuses(ServerFeature feature) const noexcept;
+
   [[nodiscard]] expected<std::vector<OptionEntry>, CommandFailure>
   show(std::vector<std::string> request, std::string_view target) const;
 

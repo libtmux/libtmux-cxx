@@ -250,6 +250,24 @@ TEST(BackendSeam, APsmuxServerRefusesNavigationWithoutDispatching) {
   EXPECT_EQ(backend->issued.size(), listed) << "refused after dispatching";
 }
 
+// The server-scoped surface refuses the same way, and says which state it
+// cannot provide rather than failing at the wire.
+TEST(BackendSeam, APsmuxServerRefusesServerScopedState) {
+  auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{});
+  backend->declared = {.implementation = libtmux::ServerImplementation::psmux,
+                       .backend = libtmux::BackendKind::subprocess};
+  const Server server = libtmux::detail::server_over(backend);
+
+  const auto clients = server.clients();
+
+  ASSERT_FALSE(clients.has_value());
+  EXPECT_EQ(clients.error().kind, libtmux::FailureKind::unsupported);
+  EXPECT_EQ(clients.error().delivery, libtmux::DeliveryStatus::not_started);
+  EXPECT_EQ(clients.error().exit_code, 0);
+  EXPECT_NE(clients.error().diagnostic.find("clients"), std::string::npos);
+  EXPECT_TRUE(backend->issued.empty()) << "refused after dispatching";
+}
+
 // The same call over a backend nobody recognises still runs: unfamiliar is not
 // the same as known-broken.
 TEST(BackendSeam, AnUnrecognisedBackendIsNotRefused) {
