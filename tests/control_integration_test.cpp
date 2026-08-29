@@ -178,6 +178,35 @@ TEST(ControlModeConnection, ServerDoesNotInheritABlockedSignalMask) {
 }
 #endif
 
+// The other spawn: the server starts outside the block, so only the control
+// client this library launches is under it.
+TEST(ControlModeConnection, ControlClientDoesNotInheritABlockedSignalMask) {
+  auto server = start_server(unique_name("control-client-mask"));
+  ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
+
+  sigset_t blocked;
+  sigemptyset(&blocked);
+  sigaddset(&blocked, SIGTERM);
+  sigset_t previous;
+  ASSERT_EQ(::pthread_sigmask(SIG_BLOCK, &blocked, &previous), 0);
+  auto connected = connect_to(*server);
+  ASSERT_EQ(::pthread_sigmask(SIG_SETMASK, &previous, nullptr), 0);
+  ASSERT_TRUE(connected.has_value())
+      << (connected.has_value() ? "" : connected.error().message);
+  auto connection = std::move(*connected);
+
+  const auto reported =
+      connection.execute(group({{"display-message", "-p", "#{client_pid}"}}),
+                         std::chrono::steady_clock::now() + 2s);
+  ASSERT_FALSE(reported.connection_error.has_value());
+  ASSERT_EQ(reported.blocks.size(), 1U);
+  const auto client_pid = std::stoi(text(reported.blocks[0].body));
+
+  const auto mask = blocked_signals(client_pid);
+  ASSERT_TRUE(mask.has_value());
+  EXPECT_EQ(*mask, 0ULL);
+}
+
 TEST(ControlModeConnection, RejectsBoundsTooSmallForItsPrivateBoundary) {
   auto server = start_server(unique_name("control-boundary-bounds"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
