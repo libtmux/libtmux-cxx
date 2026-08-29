@@ -39,7 +39,6 @@ struct ProcessReply {
 struct ProcessError {
   enum class Kind { validation, spawn, pre_exec, pipe, timeout } kind;
   DeliveryStatus delivery;
-  std::error_code cause;
   std::string diagnostic;
   std::vector<std::byte> stdout_bytes;
   std::vector<std::byte> stderr_bytes;

@@ -217,7 +217,6 @@ ProcessError process_error(ProcessError::Kind kind, DeliveryStatus delivery,
   return {
       .kind = kind,
       .delivery = delivery,
-      .cause = cause,
       .diagnostic = std::move(message),
       .stdout_bytes = std::move(capture.stdout_bytes),
       .stderr_bytes = std::move(capture.stderr_bytes),

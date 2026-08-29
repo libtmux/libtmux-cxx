@@ -276,7 +276,6 @@ struct PreparedRequest final {
   return {
       .kind = kind,
       .delivery = delivery,
-      .cause = cause,
       .diagnostic = diagnostic(operation, request, cause),
       .stdout_bytes = std::move(capture.stdout_bytes),
       .stderr_bytes = std::move(capture.stderr_bytes),
