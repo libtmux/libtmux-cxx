@@ -495,6 +495,24 @@ gtest_discover_tests(
   TEST_PREFIX libtmux.psmux_rules.
   PROPERTIES LABELS "libtmux" TIMEOUT 30)
 
+# The asynchronous engine. White-box: it is private, and what it owns —
+# threads, pipes, a reap — is not observable through its result alone.
+if(NOT WIN32)
+  add_executable(libtmux_process_engine_test process_engine_test.cpp)
+  target_include_directories(
+    libtmux_process_engine_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
+  target_link_libraries(
+    libtmux_process_engine_test
+    PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+  target_compile_options(
+    libtmux_process_engine_test PRIVATE -fno-sanitize-recover=undefined)
+
+  gtest_discover_tests(
+    libtmux_process_engine_test
+    TEST_PREFIX libtmux.process_engine.
+    PROPERTIES LABELS "concurrency" TIMEOUT 60)
+endif()
+
 add_executable(libtmux_backend_seam_test backend_seam_test.cpp)
 target_include_directories(
   libtmux_backend_seam_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
