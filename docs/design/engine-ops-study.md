@@ -17,11 +17,14 @@ That distinction is load-bearing because the caller's next move differs. A
 skipped operation can be retried freely. An unknown one cannot: retrying may
 repeat something that already happened.
 
-The retry distinction survives in `CommandFailure::dispatched`. A timeout is
-reported as dispatched precisely because tmux may already have acted. It does
-not survive as per-operation control attribution: tmux's public guards omit the
-parse-group operation IDs, so assigning blocks to inputs by count would turn a
-guess into API data.
+The retry distinction survives in `CommandFailure::delivery`, and it went
+further than engine-ops did. Where the experiment answered whether an operation
+had been dispatched, `DeliveryStatus` answers how far it got:
+`not_started`, `written`, `replied`, and `indeterminate`. Only `not_started` is
+retry-safe on its own; a timeout reports `indeterminate` precisely because tmux
+may already have acted. It does not survive as per-operation control
+attribution: tmux's public guards omit the parse-group operation IDs, so
+assigning blocks to inputs by count would turn a guess into API data.
 
 ## Kept: one exit status cannot describe a group
 
