@@ -195,6 +195,88 @@ CATALOGUE: t.Final = (
         "of what was dropped",
     ),
     Mutation(
+        mutation_id="operation-single-publication",
+        path="src/operation_state.hpp",
+        find=(
+            "      if (outcome_) {\n"
+            "        return false;\n"
+            "      }\n"
+            "      outcome_.emplace(std::move(result));"
+        ),
+        replace=(
+            "      if (false) {\n"
+            "        return false;\n"
+            "      }\n"
+            "      outcome_.emplace(std::move(result));"
+        ),
+        target="libtmux_operation_state_test",
+        test_regex=(
+            r"^libtmux[.]operation_state[.]OperationState[.]"
+            r"ConcurrentPublicationChoosesOneImmutableOutcome$"
+        ),
+        guards="exactly one racing terminal event fixes the owning result",
+    ),
+    Mutation(
+        mutation_id="operation-cancellation-source-owned",
+        path="src/operation_state.hpp",
+        find=("      cancellation_requested_ = true;\n      hooks = hooks_;"),
+        replace=(
+            "      outcome_.emplace(unexpected(CommandFailure{\n"
+            "          .kind = FailureKind::cancelled,\n"
+            "          .delivery = DeliveryStatus::not_started,\n"
+            "          .diagnostic = {}}));\n"
+            "      cancellation_requested_ = true;\n"
+            "      hooks = hooks_;"
+        ),
+        target="libtmux_operation_state_test",
+        test_regex=(
+            r"^libtmux[.]operation_state[.]OperationState[.]"
+            r"CancellationIsOnlyARequestUntilTheSourcePublishes$"
+        ),
+        guards="caller cancellation wakes the source without publishing outcome",
+    ),
+    Mutation(
+        mutation_id="operation-registration-recheck",
+        path="src/operation_state.hpp",
+        find=(
+            "  if (registered && state->outcome_published()) {\n"
+            "    static_cast<void>(mailbox.enqueue(token));\n"
+            "  }\n"
+        ),
+        replace="  static_cast<void>(registered);\n",
+        target="libtmux_operation_state_test",
+        test_regex=(
+            r"^libtmux[.]operation_state[.]OperationCallback[.]"
+            r"PublicationBeforeSubscribeSurvivesTheRecheck$"
+        ),
+        guards="publication before callback registration still reaches its queue",
+    ),
+    Mutation(
+        mutation_id="operation-source-retention",
+        path="src/operation_state.hpp",
+        find=(
+            "  [[nodiscard]] bool publish(OperationResult<T> result) {\n"
+            "    return state_ && state_->publish(std::move(result));\n"
+            "  }"
+        ),
+        replace=(
+            "  [[nodiscard]] bool publish(OperationResult<T> result) {\n"
+            "    const bool published =\n"
+            "        state_ && state_->publish(std::move(result));\n"
+            "    if (published) {\n"
+            "      state_.reset();\n"
+            "    }\n"
+            "    return published;\n"
+            "  }"
+        ),
+        target="libtmux_operation_state_test",
+        test_regex=(
+            r"^libtmux[.]operation_state[.]OperationState[.]"
+            r"AdmissionReleasesAfterObserverAndTransportFinish$"
+        ),
+        guards="the source retains transport state through final retirement",
+    ),
+    Mutation(
         mutation_id="legacy-empty-lookup",
         path="include/libtmux/legacy_lookup.hpp",
         find="    if (lookup.empty()) {\n"
