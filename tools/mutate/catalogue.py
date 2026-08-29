@@ -91,8 +91,8 @@ CATALOGUE: t.Final = (
     Mutation(
         mutation_id="tmux37-unnamed-break-guard",
         path="src/entities.cpp",
-        find=(" " * 32) + "\" '#{==:#{version},3.7}' { \" + native +",
-        replace=(" " * 32) + "\" '#{==:#{version},3.7a}' { \" + native +",
+        find=(" " * 30) + "\" '#{==:#{version},3.7}' { \" + native +",
+        replace=(" " * 30) + "\" '#{==:#{version},3.7a}' { \" + native +",
         target="libtmux_backend_seam_test",
         test_regex=r"^libtmux[.]backend_seam$",
         guards="raw tmux 3.7 receives a name before an unnamed multi-pane "
@@ -102,11 +102,11 @@ CATALOGUE: t.Final = (
         mutation_id="unnamed-only-pane-stays-put",
         path="src/entities.cpp",
         find=(
-            '        "if-shell", "-F", "-t", target, '
+            '      "if-shell", "-F", "-t", target, '
             '"#{==:#{window_panes},1}", current, guarded};'
         ),
         replace=(
-            '        "if-shell", "-F", "-t", target, '
+            '      "if-shell", "-F", "-t", target, '
             '"#{==:#{window_panes},0}", current, guarded};'
         ),
         target="libtmux_backend_seam_test",
@@ -133,7 +133,7 @@ CATALOGUE: t.Final = (
     Mutation(
         mutation_id="unnamed-break-report-keeps-source-session",
         path="src/entities.cpp",
-        find="        created.session_id() != owner) {",
+        find="      created.session_id() != owner) {",
         replace="        false) {",
         target="libtmux_backend_seam_test",
         test_regex=r"^libtmux[.]backend_seam$",
@@ -144,11 +144,11 @@ CATALOGUE: t.Final = (
         mutation_id="named-break-report-keeps-source-session",
         path="src/entities.cpp",
         find=(
-            "  auto created = named_break_report(backend(), *std::move(broken), "
-            "id(), {}, owner);"
+            "  auto created = named_break_report(executor, *std::move(broken), "
+            "pane.id(), {}, owner);"
         ),
         replace=(
-            "  auto created = named_break_report(backend(), *std::move(broken), id());"
+            "  auto created = named_break_report(executor, *std::move(broken), pane.id());"
         ),
         target="libtmux_backend_seam_test",
         test_regex=r"^libtmux[.]backend_seam$",

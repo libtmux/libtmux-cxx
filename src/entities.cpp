@@ -1123,90 +1123,108 @@ expected<void, CommandFailure> Pane::swap_with(const Pane& other) const {
       run({"swap-pane", "-d", "-s", pane_target(*this), "-t", pane_target(other)}));
 }
 
-expected<Window, CommandFailure> Pane::break_out(std::string_view name) const {
-  if (backend() == nullptr) {
-    return unexpected(detail::disconnected());
-  }
-  if (auto refusal = refused(ServerFeature::window_creation,
-                             "psmux cannot report the window created by break-pane")) {
-    return unexpected(std::move(*refusal));
-  }
-  const auto started = std::chrono::steady_clock::now();
-  const ExecutionPolicy policy = backend()->policy();
-  if (name.empty()) {
-    const std::string target = pane_target(*this);
-    const std::string owner{session_id()};
-    const std::string home{window_id()};
-    if (!is_canonical_tmux_id(target, '%')) {
-      return unexpected(rejected("break-pane requires a stable numeric pane id"));
-    }
-    if (!is_canonical_tmux_id(owner, '$')) {
-      return unexpected(rejected("break-pane requires a stable numeric session id"));
-    }
-    if (!is_canonical_tmux_id(home, '@')) {
-      return unexpected(rejected("break-pane requires a stable numeric window id"));
-    }
+namespace {
 
-    // A one-pane window is already broken out. Report it in place rather than
-    // letting tmux choose an unrelated destination session. Raw tmux 3.7 also
-    // needs -n for a multi-pane break; both decisions stay server-side.
-    const std::string native = "break-pane -d -s " + target + " -t " + owner +
-                               ": -P -F '" + format_request(Window::kFields) + "'";
-    const std::string current = "display-message -p -t " + owner + ":" + home + " '" +
-                                format_request(Window::kFields) + "'";
-    const std::string guarded = "if-shell -F -t " + target +
-                                " '#{==:#{version},3.7}' { " + native +
-                                " -n libtmux } { " + native + " }";
-    const std::vector<std::string> command{
-        "if-shell", "-F", "-t", target, "#{==:#{window_panes},1}", current, guarded};
-    const auto break_policy = remaining_execution_policy(policy, started);
-    auto moved =
-        backend()->run(command, break_policy.timeout, break_policy.output_limit);
-    if (!moved.has_value()) {
-      return unexpected(moved.error());
-    }
+// break-pane names its source and destination itself rather than letting
+// tmux resolve them, so all three ids have to be the stable numeric form.
+[[nodiscard]] std::optional<CommandFailure> unstable_break_target(const Pane& pane) {
+  if (!is_canonical_tmux_id(pane_target(pane), '%')) {
+    return rejected("break-pane requires a stable numeric pane id");
+  }
+  if (!is_canonical_tmux_id(std::string{pane.session_id()}, '$')) {
+    return rejected("break-pane requires a stable numeric session id");
+  }
+  if (!is_canonical_tmux_id(std::string{pane.window_id()}, '@')) {
+    return rejected("break-pane requires a stable numeric window id");
+  }
+  return std::nullopt;
+}
 
-    auto snapshot = detail::SnapshotFactory::from_output(backend(), Window::kFields,
-                                                         *std::move(moved));
-    if (!snapshot.has_value()) {
-      CommandFailure failure = snapshot.error();
-      failure.diagnostic =
-          "break-pane completed for pane " + target +
-          ", but its window row was malformed: " + std::move(failure.diagnostic);
-      return unexpected(std::move(failure));
-    }
-    const auto& rows = (*snapshot)->rows();
-    if (rows.empty() || rows.front().front().empty()) {
-      return unexpected(CommandFailure{.kind = FailureKind::missing,
-                                       .delivery = DeliveryStatus::replied,
-                                       .exit_code = 0,
-                                       .diagnostic = "tmux has no window " + target});
-    }
-    if (rows.size() != 1U) {
-      return unexpected(CommandFailure{
-          .kind = FailureKind::refused,
-          .delivery = DeliveryStatus::replied,
-          .exit_code = 0,
-          .diagnostic = "break-pane completed for pane " + target +
-                        ", but did not report one exact connected window row"});
-    }
-    Window created{*snapshot, 0U};
-    if (!is_canonical_tmux_id(created.id(), '@') ||
-        !is_canonical_tmux_id(created.session_id(), '$') ||
-        created.session_id() != owner) {
-      return unexpected(CommandFailure{
-          .kind = FailureKind::refused,
-          .delivery = DeliveryStatus::replied,
-          .exit_code = 0,
-          .diagnostic = "break-pane completed for pane " + target +
-                        ", but did not report one exact connected window row"});
-    }
-    return created;
+// Without a name tmux chooses the destination session, so the break is
+// guarded by a check that the window still has more than one pane.
+[[nodiscard]] expected<Window, CommandFailure> break_out_unnamed(
+    const Pane& pane, const std::shared_ptr<const detail::Backend>& executor,
+    const ExecutionPolicy& policy, std::chrono::steady_clock::time_point started) {
+  const std::string target = pane_target(pane);
+  const std::string owner{pane.session_id()};
+  const std::string home{pane.window_id()};
+  if (!is_canonical_tmux_id(target, '%')) {
+    return unexpected(rejected("break-pane requires a stable numeric pane id"));
+  }
+  if (!is_canonical_tmux_id(owner, '$')) {
+    return unexpected(rejected("break-pane requires a stable numeric session id"));
+  }
+  if (!is_canonical_tmux_id(home, '@')) {
+    return unexpected(rejected("break-pane requires a stable numeric window id"));
   }
 
-  const std::string target = pane_target(*this);
-  const std::string owner{session_id()};
-  const std::string home{window_id()};
+  // A one-pane window is already broken out. Report it in place rather than
+  // letting tmux choose an unrelated destination session. Raw tmux 3.7 also
+  // needs -n for a multi-pane break; both decisions stay server-side.
+  const std::string native = "break-pane -d -s " + target + " -t " + owner +
+                             ": -P -F '" + format_request(Window::kFields) + "'";
+  const std::string current = "display-message -p -t " + owner + ":" + home + " '" +
+                              format_request(Window::kFields) + "'";
+  const std::string guarded = "if-shell -F -t " + target +
+                              " '#{==:#{version},3.7}' { " + native +
+                              " -n libtmux } { " + native + " }";
+  const std::vector<std::string> command{
+      "if-shell", "-F", "-t", target, "#{==:#{window_panes},1}", current, guarded};
+  const auto break_policy = remaining_execution_policy(policy, started);
+  auto moved = executor->run(command, break_policy.timeout, break_policy.output_limit);
+  if (!moved.has_value()) {
+    return unexpected(moved.error());
+  }
+
+  auto snapshot = detail::SnapshotFactory::from_output(executor, Window::kFields,
+                                                       *std::move(moved));
+  if (!snapshot.has_value()) {
+    CommandFailure failure = snapshot.error();
+    failure.diagnostic =
+        "break-pane completed for pane " + target +
+        ", but its window row was malformed: " + std::move(failure.diagnostic);
+    return unexpected(std::move(failure));
+  }
+  const auto& rows = (*snapshot)->rows();
+  if (rows.empty() || rows.front().front().empty()) {
+    return unexpected(CommandFailure{.kind = FailureKind::missing,
+                                     .delivery = DeliveryStatus::replied,
+                                     .exit_code = 0,
+                                     .diagnostic = "tmux has no window " + target});
+  }
+  if (rows.size() != 1U) {
+    return unexpected(CommandFailure{
+        .kind = FailureKind::refused,
+        .delivery = DeliveryStatus::replied,
+        .exit_code = 0,
+        .diagnostic = "break-pane completed for pane " + target +
+                      ", but did not report one exact connected window row"});
+  }
+  Window created{*snapshot, 0U};
+  if (!is_canonical_tmux_id(created.id(), '@') ||
+      !is_canonical_tmux_id(created.session_id(), '$') ||
+      created.session_id() != owner) {
+    return unexpected(CommandFailure{
+        .kind = FailureKind::refused,
+        .delivery = DeliveryStatus::replied,
+        .exit_code = 0,
+        .diagnostic = "break-pane completed for pane " + target +
+                      ", but did not report one exact connected window row"});
+  }
+  return created;
+}
+
+// A named break needs the name twice, because break-pane does not expand
+// formats in it and rename-window does, and raw tmux 3.7 needs its result
+// repaired afterwards.
+[[nodiscard]] expected<Window, CommandFailure>
+break_out_named(const Pane& pane, std::string_view name,
+                const std::shared_ptr<const detail::Backend>& executor,
+                const ExecutionPolicy& policy,
+                std::chrono::steady_clock::time_point started) {
+  const std::string target = pane_target(pane);
+  const std::string owner{pane.session_id()};
+  const std::string home{pane.window_id()};
   if (!is_canonical_tmux_id(target, '%')) {
     return unexpected(rejected("break-pane requires a stable numeric pane id"));
   }
@@ -1237,18 +1255,17 @@ expected<Window, CommandFailure> Pane::break_out(std::string_view name) const {
   const std::vector<std::string> command{
       "if-shell", "-F", "-t", target, "#{==:#{window_panes},1}", retained, native};
   const auto break_policy = remaining_execution_policy(policy, started);
-  auto broken =
-      backend()->run(command, break_policy.timeout, break_policy.output_limit);
+  auto broken = executor->run(command, break_policy.timeout, break_policy.output_limit);
   if (!broken.has_value()) {
     return unexpected(broken.error());
   }
-  auto created = named_break_report(backend(), *std::move(broken), id(), {}, owner);
+  auto created = named_break_report(executor, *std::move(broken), pane.id(), {}, owner);
   if (!created.has_value()) {
     return unexpected(created.error());
   }
 
   const bool raw_tmux_37 = created->version == Version{.major = 3, .minor = 7};
-  const bool retained_window = created->window.id() == window_id();
+  const bool retained_window = created->window.id() == pane.window_id();
   if (!raw_tmux_37 || (retained_window && !created->automatic_rename)) {
     return std::move(created->window);
   }
@@ -1268,7 +1285,7 @@ expected<Window, CommandFailure> Pane::break_out(std::string_view name) const {
 
   const auto repair_policy = remaining_execution_policy(policy, started);
   auto repaired =
-      backend()->run_batch(repair, repair_policy.timeout, repair_policy.output_limit);
+      executor->run_batch(repair, repair_policy.timeout, repair_policy.output_limit);
   if (!repaired.has_value()) {
     CommandFailure failure = repaired.error();
     if (failure.delivery == DeliveryStatus::not_started) {
@@ -1277,14 +1294,14 @@ expected<Window, CommandFailure> Pane::break_out(std::string_view name) const {
       failure.delivery = DeliveryStatus::replied;
     }
     failure.diagnostic =
-        "break-pane moved pane " + std::string{id()} + " into window " +
+        "break-pane moved pane " + std::string{pane.id()} + " into window " +
         created_window +
         ", but its raw tmux 3.7 name repair failed: " + std::move(failure.diagnostic);
     return unexpected(std::move(failure));
   }
 
-  auto final = named_break_report(backend(), *std::move(repaired), id(), created_window,
-                                  created_session);
+  auto final = named_break_report(executor, *std::move(repaired), pane.id(),
+                                  created_window, created_session);
   if (!final.has_value()) {
     return unexpected(final.error());
   }
@@ -1293,11 +1310,30 @@ expected<Window, CommandFailure> Pane::break_out(std::string_view name) const {
         .kind = FailureKind::refused,
         .delivery = DeliveryStatus::replied,
         .exit_code = 0,
-        .diagnostic = "break-pane moved pane " + std::string{id()} + " into window " +
-                      created_window +
+        .diagnostic = "break-pane moved pane " + std::string{pane.id()} +
+                      " into window " + created_window +
                       ", but its raw tmux 3.7 name repair was not durable"});
   }
   return std::move(final->window);
+}
+
+} // namespace
+
+expected<Window, CommandFailure> Pane::break_out(std::string_view name) const {
+  if (backend() == nullptr) {
+    return unexpected(detail::disconnected());
+  }
+  if (auto refusal = refused(ServerFeature::window_creation,
+                             "psmux cannot report the window created by break-pane")) {
+    return unexpected(std::move(*refusal));
+  }
+  if (auto unstable = unstable_break_target(*this)) {
+    return unexpected(std::move(*unstable));
+  }
+  const auto started = std::chrono::steady_clock::now();
+  const ExecutionPolicy policy = backend()->policy();
+  return name.empty() ? break_out_unnamed(*this, backend(), policy, started)
+                      : break_out_named(*this, name, backend(), policy, started);
 }
 
 expected<void, CommandFailure> Pane::join(const Window& target) const {
