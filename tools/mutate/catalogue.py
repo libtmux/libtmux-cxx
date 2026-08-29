@@ -251,11 +251,10 @@ CATALOGUE: t.Final = (
             "  }\n"
         ),
         replace="  static_cast<void>(registered);\n",
-        target="libtmux_operation_state_test",
+        target="libtmux_completion_queue_fault_test",
         test_regex=(
-            r"^libtmux[.]operation_state[.]OperationCallback[.]"
-            r"(PublicationBeforeSubscribeSurvivesTheRecheck|"
-            r"PublicationAndRegistrationOverlapDeliverOnce)$"
+            r"^libtmux[.]completion_queue[.]"
+            r"PublicationDuringRegistrationRechecks$"
         ),
         guards="publication before callback registration still reaches its queue",
     ),
@@ -311,11 +310,26 @@ CATALOGUE: t.Final = (
         replace="      if (false) {\n",
         target="libtmux_operation_state_test",
         test_regex=(
-            r"^libtmux[.]operation_state[.](OperationCallback[.]"
-            r"SourceDestructionPublishesTransportFailure|OperationState[.]"
-            r"RetirementPublishesFailureToBlockingObserver)$"
+            r"^libtmux[.]operation_state[.]OperationCallback[.]"
+            r"SourceDestructionPublishesTransportFailure$"
         ),
         guards="retirement leaves every observer with a terminal outcome",
+    ),
+    Mutation(
+        mutation_id="operation-retirement-notifies-blocking",
+        path="src/operation_state.hpp",
+        find=(
+            "    if (outcome_published) {\n"
+            "      outcome_changed_.notify_all();\n"
+            "    }\n"
+        ),
+        replace="    static_cast<void>(outcome_published);\n",
+        target="libtmux_operation_state_test",
+        test_regex=(
+            r"^libtmux[.]operation_state[.]OperationState[.]"
+            r"RetirementWakesABlockedObserver$"
+        ),
+        guards="retirement wakes an observer that is already blocked for its outcome",
     ),
     Mutation(
         mutation_id="completion-detach-unlinks-ready",
@@ -352,6 +366,18 @@ CATALOGUE: t.Final = (
             r"(CallbackReentry|CaptureDestruction)DoesNotOverlapDispatch$"
         ),
         guards="nested callback destruction cannot claim the active dispatcher",
+    ),
+    Mutation(
+        mutation_id="completion-run-ready-cutoff",
+        path="src/completion_queue.cpp",
+        find="    cutoff_generation = core->last_ready_generation;",
+        replace="    cutoff_generation = core->last_ready_generation + 1U;",
+        target="libtmux_operation_state_test",
+        test_regex=(
+            r"^libtmux[.]operation_state[.]CompletionQueue[.]"
+            r"RunReadyDefersWorkEnqueuedByTheCurrentBatch$"
+        ),
+        guards="one run_ready call dispatches only the records ready when it began",
     ),
     Mutation(
         mutation_id="legacy-empty-lookup",

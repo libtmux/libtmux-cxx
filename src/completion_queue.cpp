@@ -19,6 +19,7 @@ public:
 
     MoveOnlyFunction<void()> callback;
     bool enqueued{false};
+    std::uint64_t ready_generation{};
     std::optional<std::uint64_t> previous_ready;
     std::optional<std::uint64_t> next_ready;
   };
@@ -28,6 +29,7 @@ public:
   void link_ready(std::uint64_t token, Record& record) noexcept {
     assert(!record.enqueued);
     record.enqueued = true;
+    record.ready_generation = ++last_ready_generation;
     record.previous_ready = ready_tail;
     if (ready_tail) {
       const auto previous = records.find(*ready_tail);
@@ -82,6 +84,7 @@ public:
   std::optional<std::uint64_t> ready_head;
   std::optional<std::uint64_t> ready_tail;
   std::size_t ready_count{0U};
+  std::uint64_t last_ready_generation{};
   std::uint64_t next_token{1U};
   bool closed{false};
   std::atomic_bool dispatching{false};
@@ -223,9 +226,11 @@ std::size_t CompletionQueue::run_ready() {
   }
 
   std::size_t ready_count = 0U;
+  std::uint64_t cutoff_generation = 0U;
   {
     std::unique_lock lock{core->mutex};
     ready_count = core->ready_count;
+    cutoff_generation = core->last_ready_generation;
   }
 
   std::size_t dispatched = 0U;
@@ -234,6 +239,11 @@ std::size_t CompletionQueue::run_ready() {
     {
       std::unique_lock lock{core->mutex};
       if (core->ready_count == 0U) {
+        break;
+      }
+      const auto head = core->records.find(*core->ready_head);
+      assert(head != core->records.end());
+      if (head->second->ready_generation > cutoff_generation) {
         break;
       }
       claimed = core->claim_ready();

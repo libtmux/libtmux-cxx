@@ -100,6 +100,7 @@ enum class ObserverPhase : std::uint8_t {
   unselected,
   callback,
   blocking,
+  blocking_waiting,
   detached,
   delivered,
 };
@@ -193,6 +194,11 @@ public:
     return static_cast<bool>(outcome_);
   }
 
+  [[nodiscard]] bool blocking_observer_waiting() const {
+    std::lock_guard lock{mutex_};
+    return observer_ == ObserverPhase::blocking_waiting;
+  }
+
   void select_blocking() {
     std::lock_guard lock{mutex_};
     assert(observer_ == ObserverPhase::unselected);
@@ -211,8 +217,10 @@ public:
     std::shared_ptr<OperationHooks> release;
     {
       std::unique_lock lock{mutex_};
-      outcome_changed_.wait(lock, [this] { return static_cast<bool>(outcome_); });
       assert(observer_ == ObserverPhase::blocking);
+      observer_ = ObserverPhase::blocking_waiting;
+      outcome_changed_.wait(lock, [this] { return static_cast<bool>(outcome_); });
+      assert(observer_ == ObserverPhase::blocking_waiting);
       observer_ = ObserverPhase::delivered;
       release = release_hook_locked();
     }
@@ -534,6 +542,10 @@ public:
 
   [[nodiscard]] bool outcome_published() const {
     return state_ && state_->outcome_published();
+  }
+
+  [[nodiscard]] bool blocking_observer_waiting() const {
+    return state_ && state_->blocking_observer_waiting();
   }
 
   void mark_dispatching() {

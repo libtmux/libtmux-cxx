@@ -433,9 +433,13 @@ if(NOT LIBTMUX_ENABLE_THREAD_SANITIZER)
   add_test(
     NAME libtmux.completion_queue.InsertionFailureDestroysAfterUnlock
     COMMAND libtmux_completion_queue_fault_test insertion)
+  add_test(
+    NAME libtmux.completion_queue.PublicationDuringRegistrationRechecks
+    COMMAND libtmux_completion_queue_fault_test registration)
   set_tests_properties(
     libtmux.completion_queue.EnqueueDoesNotAllocate
     libtmux.completion_queue.InsertionFailureDestroysAfterUnlock
+    libtmux.completion_queue.PublicationDuringRegistrationRechecks
     PROPERTIES LABELS concurrency TIMEOUT 5)
 endif()
 

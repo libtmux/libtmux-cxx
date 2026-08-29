@@ -75,6 +75,29 @@ TEST(CompletionQueue, EnqueueIsIdempotentAndDispatchesOnce) {
   EXPECT_EQ(queue.run_ready(), 0U);
 }
 
+TEST(CompletionQueue, RunReadyDefersWorkEnqueuedByTheCurrentBatch) {
+  CompletionQueue queue;
+  const auto first = queue.next_token();
+  const auto removed = queue.next_token();
+  const auto deferred = queue.next_token();
+  const auto mailbox = queue.mailbox();
+  std::vector<int> calls;
+  ASSERT_TRUE(queue.register_record(first, [&] {
+    calls.push_back(1);
+    queue.detach(removed);
+    EXPECT_TRUE(mailbox.enqueue(deferred));
+  }));
+  ASSERT_TRUE(queue.register_record(removed, [&] { calls.push_back(2); }));
+  ASSERT_TRUE(queue.register_record(deferred, [&] { calls.push_back(3); }));
+  ASSERT_TRUE(mailbox.enqueue(first));
+  ASSERT_TRUE(mailbox.enqueue(removed));
+
+  EXPECT_EQ(queue.run_ready(), 1U);
+  EXPECT_EQ(calls, (std::vector<int>{1}));
+  EXPECT_EQ(queue.run_ready(), 1U);
+  EXPECT_EQ(calls, (std::vector<int>{1, 3}));
+}
+
 TEST(CompletionQueue, ATokenCanBeEnqueuedAfterItsRecordAppears) {
   CompletionQueue queue;
   const CompletionToken token = queue.next_token();
@@ -590,18 +613,15 @@ TEST(OperationState, AReplyCanBeatARequestedCancellation) {
 TEST(OperationState, SyncWaitBlocksUntilTheSourcePublishes) {
   auto hooks = std::make_shared<RecordingHooks>();
   auto started = make_operation<int>(hooks);
-  std::promise<void> entered;
-  auto waiter_entered = entered.get_future();
   std::promise<OperationResult<int>> answer;
   auto waited = answer.get_future();
-  std::thread waiter{
-      [operation = std::move(started.operation), &entered, &answer]() mutable {
-        entered.set_value();
-        answer.set_value(sync_wait(std::move(operation)));
-      }};
+  std::thread waiter{[operation = std::move(started.operation), &answer]() mutable {
+    answer.set_value(sync_wait(std::move(operation)));
+  }};
 
-  waiter_entered.get();
-  EXPECT_EQ(waited.wait_for(50ms), std::future_status::timeout);
+  while (!started.source.blocking_observer_waiting()) {
+    std::this_thread::yield();
+  }
   ASSERT_TRUE(started.source.publish(OperationResult<int>{45}));
   const auto result = waited.get();
   waiter.join();
@@ -665,14 +685,23 @@ TEST(OperationState, AdmissionReleasesAfterObserverAndTransportFinish) {
   EXPECT_EQ(hooks->releases.load(std::memory_order_relaxed), 1);
 }
 
-TEST(OperationState, RetirementPublishesFailureToBlockingObserver) {
+TEST(OperationState, RetirementWakesABlockedObserver) {
   auto hooks = std::make_shared<RecordingHooks>();
   auto started = make_operation<int>(hooks);
+  std::promise<OperationResult<int>> answer;
+  auto waited = answer.get_future();
+  std::thread waiter{[operation = std::move(started.operation), &answer]() mutable {
+    answer.set_value(sync_wait(std::move(operation)));
+  }};
 
+  while (!started.source.blocking_observer_waiting()) {
+    std::this_thread::yield();
+  }
   started.source.retire();
-  ASSERT_TRUE(started.source.outcome_published());
-  const auto result = sync_wait(std::move(started.operation));
+  const auto result = waited.get();
+  waiter.join();
 
+  EXPECT_TRUE(started.source.outcome_published());
   ASSERT_FALSE(result.has_value());
   EXPECT_EQ(result.error().kind, FailureKind::pipe);
   EXPECT_EQ(result.error().delivery, DeliveryStatus::not_started);

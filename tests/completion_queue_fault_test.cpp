@@ -1,20 +1,32 @@
+#include <atomic>
 #include <cstddef>
 #include <cstdlib>
 #include <limits>
 #include <memory>
 #include <new>
+#include <optional>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
 #include "completion_queue.hpp"
+#include "operation_state.hpp"
 
 namespace {
 
 thread_local std::size_t allocations_before_failure =
     std::numeric_limits<std::size_t>::max();
+thread_local bool block_next_allocation = false;
+std::atomic_bool allocation_blocked{false};
+std::atomic_bool release_allocation{false};
 
 [[nodiscard]] void* allocate(std::size_t size) {
+  if (std::exchange(block_next_allocation, false)) {
+    allocation_blocked.store(true, std::memory_order_release);
+    allocation_blocked.notify_one();
+    release_allocation.wait(false, std::memory_order_acquire);
+  }
   if (allocations_before_failure == 0U) {
     throw std::bad_alloc{};
   }
@@ -41,7 +53,27 @@ private:
   std::size_t previous_;
 };
 
+void block_this_threads_next_allocation() noexcept {
+  allocation_blocked.store(false, std::memory_order_relaxed);
+  release_allocation.store(false, std::memory_order_relaxed);
+  block_next_allocation = true;
+}
+
+void wait_until_allocation_blocks() noexcept {
+  while (!allocation_blocked.load(std::memory_order_acquire)) {
+    allocation_blocked.wait(false, std::memory_order_acquire);
+  }
+}
+
+void release_blocked_allocation() noexcept {
+  release_allocation.store(true, std::memory_order_release);
+  release_allocation.notify_one();
+}
+
 struct ReenterOnDestroy final {
+  ReenterOnDestroy(libtmux::detail::CompletionQueue* queue, bool* destroyed) noexcept
+      : queue{queue}, destroyed{destroyed} {}
+
   ~ReenterOnDestroy() {
     static_cast<void>(queue->next_token());
     *destroyed = true;
@@ -83,10 +115,10 @@ struct ReenterOnDestroy final {
   const auto token = queue.next_token();
   bool destroyed = false;
   libtmux::detail::MoveOnlyFunction<void()> callback{
-      [capture = std::make_unique<ReenterOnDestroy>(ReenterOnDestroy{
-           .queue = &queue,
-           .destroyed = &destroyed,
-       })] {}};
+      [capture = std::make_unique<ReenterOnDestroy>(&queue, &destroyed)] {}};
+  if (destroyed) {
+    return 5;
+  }
 
   bool failed = false;
   try {
@@ -96,6 +128,49 @@ struct ReenterOnDestroy final {
     failed = true;
   }
   return failed && destroyed ? 0 : 4;
+}
+
+class RecordingHooks final : public libtmux::detail::OperationHooks {
+public:
+  void wake_reactor() noexcept override {}
+  void release_admission() noexcept override { ++releases; }
+
+  std::atomic<int> releases{0};
+};
+
+[[nodiscard]] int publication_during_registration_rechecks() {
+  using libtmux::detail::OperationCallback;
+  using libtmux::detail::OperationResult;
+  using libtmux::detail::Subscription;
+
+  libtmux::detail::CompletionQueue queue;
+  auto hooks = std::make_shared<RecordingHooks>();
+  auto started = libtmux::detail::make_operation<int>(hooks);
+  std::optional<Subscription<int>> subscription;
+  std::atomic<int> observed{-1};
+  std::thread subscriber{[operation = std::move(started.operation), &queue,
+                          &subscription, &observed]() mutable {
+    OperationCallback<int> callback{[&observed](OperationResult<int> result) {
+      if (result) {
+        observed.store(*result, std::memory_order_relaxed);
+      }
+    }};
+    block_this_threads_next_allocation();
+    subscription.emplace(std::move(operation).subscribe(queue, std::move(callback)));
+  }};
+
+  wait_until_allocation_blocks();
+  const bool published = started.source.publish(OperationResult<int>{61});
+  release_blocked_allocation();
+  subscriber.join();
+
+  if (!published || queue.run_ready() != 1U ||
+      observed.load(std::memory_order_relaxed) != 61) {
+    return 6;
+  }
+  started.source.retire();
+  subscription.reset();
+  return hooks->releases.load(std::memory_order_relaxed) == 1 ? 0 : 7;
 }
 
 } // namespace
@@ -119,6 +194,9 @@ int main(int argc, char** argv) {
   }
   if (mode == "insertion") {
     return insertion_failure_destroys_after_unlock();
+  }
+  if (mode == "registration") {
+    return publication_during_registration_rechecks();
   }
   return 1;
 }
