@@ -79,28 +79,32 @@ bool CommandOperation::request_cancel() {
 }
 
 expected<CommandOperation, CommandFailure>
-Server::submit(CommandRequest command) const {
+Server::submit(CommandRequest command, std::optional<std::chrono::milliseconds> timeout,
+               std::optional<std::size_t> output_limit) const {
+  // The policy fills in what the call did not say, exactly as `run` does.
+  const ExecutionPolicy& policy = backend_->policy();
+  const auto deadline = timeout.has_value() ? timeout : policy.timeout;
+  const auto allowed = output_limit.has_value() ? output_limit : policy.output_limit;
+
   auto state = std::make_unique<CommandOperation::State>();
   state->backend = backend_;
   state->command = std::move(command);
-  const auto& policy = backend_->policy();
-  state->allowed_bytes = policy.output_limit.value_or(detail::default_capture_limit);
 #if !defined(_WIN32)
   const auto* subprocess =
       dynamic_cast<const detail::SubprocessBackend*>(backend_.get());
   if (subprocess != nullptr) {
-    auto started =
-        subprocess->start(state->command, policy.timeout, policy.output_limit);
+    auto started = subprocess->start(state->command, deadline, allowed);
     if (!started.has_value()) {
       return unexpected(std::move(started.error()));
     }
-    state->running = std::move(*started);
+    state->allowed_bytes = started->allowed_bytes;
+    state->running = std::move(started->running);
     return CommandOperation{std::move(state)};
   }
 #endif
   // A backend with no engine has nowhere to put the work, so it answers now
   // and the operation carries the answer rather than pretending to wait.
-  state->answered = backend_->run(state->command, policy.timeout, policy.output_limit);
+  state->answered = backend_->run(state->command, deadline, allowed);
   return CommandOperation{std::move(state)};
 }
 

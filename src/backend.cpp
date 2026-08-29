@@ -351,7 +351,7 @@ expected<bool, CommandFailure> SubprocessBackend::session_belongs(
 }
 
 #if !defined(_WIN32)
-expected<Operation<ProcessReply>, CommandFailure>
+expected<SubprocessBackend::Started, CommandFailure>
 SubprocessBackend::start(const CommandRequest& command,
                          std::optional<std::chrono::milliseconds> timeout,
                          std::optional<std::size_t> output_limit) const {
@@ -368,7 +368,11 @@ SubprocessBackend::start(const CommandRequest& command,
                 "this handle predates the socket; reopen it after the server starts"});
     return unexpected(std::move(refused.error()));
   }
-  return engine_->submit(build_request(command, std::nullopt, timeout, output_limit));
+  ProcessRequest request = build_request(command, std::nullopt, timeout, output_limit);
+  // Read before the request is handed over, because the engine takes it.
+  const auto allowed_bytes = request.capture_limit;
+  return Started{.running = engine_->submit(std::move(request)),
+                 .allowed_bytes = allowed_bytes};
 }
 #endif
 

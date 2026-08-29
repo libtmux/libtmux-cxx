@@ -55,8 +55,8 @@ The connection root.  A Server names which tmux server to talk to and how to rea
   - [`Server::from_env`](#libtmux-server-hpp-server-from-env)
   - [`Server::at_default`](#libtmux-server-hpp-server-at-default)
   - [`Server::capabilities`](#libtmux-server-hpp-server-capabilities)
-  - [`Server::submit`](#libtmux-server-hpp-server-submit)
   - [`Server::run`](#libtmux-server-hpp-server-run)
+  - [`Server::submit`](#libtmux-server-hpp-server-submit)
   - [`Server::run_batch`](#libtmux-server-hpp-server-run-batch)
   - [`Server::run_chain`](#libtmux-server-hpp-server-run-chain)
   - [`Server::control`](#libtmux-server-hpp-server-control)
@@ -144,20 +144,21 @@ The server tmux would talk to with no `-L` or `-S` at all, which is the one a pe
 ```
 The local backend contract; no command runs. `tmux_version()` separately queries the executable or the connected control server.
 
-<a id="libtmux-server-hpp-server-submit"></a>
-#### `Server::submit`
-
-```cpp
-[[nodiscard]] expected<CommandOperation, CommandFailure> submit(CommandRequest command) const;
-```
-Run one command and return its standard output.  The timeout still rides on the call: how long a caller will wait is a property of what they asked for, and listing sessions does not share a deadline with attaching a client. Unset takes the server's `ExecutionPolicy`, which is thirty seconds rather than forever — a floor, not a guess at what this particular command needs. `output_limit` bounds how much of tmux's answer this call will hold. Past it the command reports `truncated` rather than returning a prefix that reads like a complete answer. Unset uses the package default, which is ample for every listing and can be too small for a long scrollback. Send a command without waiting for it. The answer is the same one `run` gives; what differs is that a program with several questions can ask them all before collecting any. See `libtmux/async.hpp`.
-
 <a id="libtmux-server-hpp-server-run"></a>
 #### `Server::run`
 
 ```cpp
 [[nodiscard]] expected<std::string, CommandFailure> run(const CommandRequest& command, std::optional<std::chrono::milliseconds> timeout = {}, std::optional<std::size_t> output_limit = {}) const;
 ```
+Run one command and return its standard output.  The timeout still rides on the call: how long a caller will wait is a property of what they asked for, and listing sessions does not share a deadline with attaching a client. Unset takes the server's `ExecutionPolicy`, which is thirty seconds rather than forever — a floor, not a guess at what this particular command needs. `output_limit` bounds how much of tmux's answer this call will hold. Past it the command reports `truncated` rather than returning a prefix that reads like a complete answer. Unset uses the package default, which is ample for every listing and can be too small for a long scrollback.
+
+<a id="libtmux-server-hpp-server-submit"></a>
+#### `Server::submit`
+
+```cpp
+[[nodiscard]] expected<CommandOperation, CommandFailure> submit(CommandRequest command, std::optional<std::chrono::milliseconds> timeout = {}, std::optional<std::size_t> output_limit = {}) const;
+```
+Send a command without waiting for it. The answer is the same one `run` gives, bounded per call by the same two arguments; what differs is that a program with several questions can ask them all before collecting any. The bounds matter more here, not less: the one long question in a batch is exactly the one that needs its own. See `libtmux/async.hpp`.
 
 <a id="libtmux-server-hpp-server-run-batch"></a>
 #### `Server::run_batch`

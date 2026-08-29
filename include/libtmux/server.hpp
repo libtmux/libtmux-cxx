@@ -96,16 +96,20 @@ public:
   // it the command reports `truncated` rather than returning a prefix that
   // reads like a complete answer. Unset uses the package default, which is
   // ample for every listing and can be too small for a long scrollback.
-  // Send a command without waiting for it. The answer is the same one `run`
-  // gives; what differs is that a program with several questions can ask them
-  // all before collecting any. See `libtmux/async.hpp`.
-  [[nodiscard]] expected<CommandOperation, CommandFailure>
-  submit(CommandRequest command) const;
-
   [[nodiscard]] expected<std::string, CommandFailure>
   run(const CommandRequest& command,
       std::optional<std::chrono::milliseconds> timeout = {},
       std::optional<std::size_t> output_limit = {}) const;
+
+  // Send a command without waiting for it. The answer is the same one `run`
+  // gives, bounded per call by the same two arguments; what differs is that a
+  // program with several questions can ask them all before collecting any.
+  // The bounds matter more here, not less: the one long question in a batch
+  // is exactly the one that needs its own. See `libtmux/async.hpp`.
+  [[nodiscard]] expected<CommandOperation, CommandFailure>
+  submit(CommandRequest command,
+         std::optional<std::chrono::milliseconds> timeout = {},
+         std::optional<std::size_t> output_limit = {}) const;
 
   // Run several commands in one invocation. tmux runs a batch fail-fast, so a
   // failed batch is partially applied rather than rolled back, and one exit

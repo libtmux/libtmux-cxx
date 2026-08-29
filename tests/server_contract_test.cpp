@@ -57,6 +57,30 @@ TEST(ServerContract, SubmittedCommandsAreCollectedLater) {
   }
 }
 
+// What `run` bounds per call, `submit` bounds per call too. The one long
+// question in a batch is exactly the one needing a bound of its own, and a
+// submission that could only take the server-wide default would leave a
+// caller opening a second server to ask it.
+TEST(ServerContract, ASubmissionTakesTheBoundTheCallerGaveIt) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+
+  auto submitted = server.submit({"display-message", "-p", "longer than one byte"},
+                                 {}, std::size_t{1});
+  ASSERT_TRUE(submitted.has_value()) << submitted.error().diagnostic;
+  auto answer = std::move(*submitted).wait();
+
+  ASSERT_FALSE(answer.has_value()) << "the call's own bound was not applied";
+  EXPECT_EQ(answer.error().kind, libtmux::FailureKind::truncated);
+  EXPECT_EQ(answer.error().delivery, DeliveryStatus::replied);
+  // Which bound was passed, not merely that one was. The diagnostic names the
+  // number a caller has to change, so naming the server's instead sends them
+  // to a setting that was never in force.
+  EXPECT_NE(answer.error().diagnostic.find("the 1 byte limit"), std::string::npos)
+      << answer.error().diagnostic;
+}
+
 // A submitted command reports what tmux said about it, not merely that it ran.
 TEST(ServerContract, ASubmittedFailureCarriesWhatTmuxSaid) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();

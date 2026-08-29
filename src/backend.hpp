@@ -222,9 +222,17 @@ public:
   }
 
 #if !defined(_WIN32)
+  // What a started command still needs: the operation to wait on, and the
+  // bound its answer was captured against. Working that bound out again at
+  // the waiting end is how a caller's own limit goes missing from truncation.
+  struct Started final {
+    Operation<ProcessReply> running;
+    std::size_t allowed_bytes{0U};
+  };
+
   // Send a command and keep the operation. The half of running a command that
   // has to happen now; interpret is the half that can happen later.
-  [[nodiscard]] expected<Operation<ProcessReply>, CommandFailure>
+  [[nodiscard]] expected<Started, CommandFailure>
   start(const CommandRequest& command, std::optional<std::chrono::milliseconds> timeout,
         std::optional<std::size_t> output_limit) const;
 #endif
