@@ -60,6 +60,9 @@ public:
 
   [[nodiscard]] pid_t pid() const noexcept;
   [[nodiscard]] int descriptor(ChildStream stream) const noexcept;
+  // Readable exactly when the child has exited, where the platform can say so.
+  // Negative elsewhere, and a caller then has to ask on its own turn instead.
+  [[nodiscard]] int exit_descriptor() const noexcept;
   [[nodiscard]] ChildStatus status() const noexcept;
   [[nodiscard]] bool output_closed() const noexcept;
   [[nodiscard]] std::string_view rendered_request() const noexcept;
@@ -86,13 +89,14 @@ public:
   [[nodiscard]] Termination termination() const noexcept;
 
 private:
-  PosixChild(pid_t pid, int stdout_fd, int stderr_fd, std::size_t capture_limit,
-             std::string rendered) noexcept;
+  PosixChild(pid_t pid, int stdout_fd, int stderr_fd, int exit_fd,
+             std::size_t capture_limit, std::string rendered) noexcept;
   void close_descriptor(ChildStream stream) noexcept;
 
   pid_t pid_{-1};
   int stdout_fd_{-1};
   int stderr_fd_{-1};
+  int exit_fd_{-1};
   std::size_t capture_limit_{0U};
   std::string rendered_request_;
   Capture capture_;

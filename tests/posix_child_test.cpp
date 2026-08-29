@@ -11,6 +11,9 @@
 #include <variant>
 
 #include <poll.h>
+#if defined(__linux__)
+#include <sys/syscall.h>
+#endif
 #include <pthread.h>
 
 namespace {
@@ -121,6 +124,22 @@ TEST(PosixChild, SignalsTheWholeGroupAndKeepsTheSignalStatus) {
   ASSERT_EQ(launched->status(), ChildStatus::exited);
   ASSERT_TRUE(std::holds_alternative<Signaled>(launched->termination()));
   EXPECT_EQ(std::get<Signaled>(launched->termination()).signal, SIGKILL);
+}
+
+// Where the platform can make exit a readable descriptor, the child must
+// actually have one: a reactor that silently fell back to asking would still
+// pass every test that only checks the answer.
+TEST(PosixChild, WaitsOnExitWherePlatformAllows) {
+  auto launched = PosixChild::launch(shell("exit 0"));
+  ASSERT_TRUE(launched.has_value()) << launched.error().diagnostic;
+#if defined(__linux__) && defined(SYS_pidfd_open) &&                                   \
+    !defined(LIBTMUX_FORCE_PORTABLE_SYSCALLS)
+  EXPECT_GE(launched->exit_descriptor(), 0);
+#else
+  EXPECT_LT(launched->exit_descriptor(), 0);
+#endif
+  run_to_completion(*launched);
+  EXPECT_EQ(launched->status(), ChildStatus::exited);
 }
 
 TEST(PosixChild, ReportsAMissingExecutableWithoutStarting) {

@@ -42,6 +42,8 @@ using Clock = ChildClock;
 }
 
 constexpr auto poll_quantum = std::chrono::milliseconds{10};
+// Nothing left to ask after: the loop sleeps until something wakes it.
+constexpr auto idle_quantum = std::chrono::milliseconds{500};
 constexpr auto terminate_grace = std::chrono::milliseconds{100};
 constexpr auto post_exit_drain = std::chrono::milliseconds{100};
 
@@ -221,6 +223,7 @@ void ProcessEngine::reactor_loop() {
     }
 
     std::vector<pollfd> watched;
+    bool asks_after_exit = false;
     watched.push_back(pollfd{.fd = wake_read_, .events = POLLIN, .revents = 0});
     for (auto& one : live) {
       for (const auto stream :
@@ -230,8 +233,17 @@ void ProcessEngine::reactor_loop() {
               .fd = one.child.descriptor(stream), .events = POLLIN, .revents = 0});
         }
       }
+      // Where exit is a readable descriptor the loop waits for it. Where it
+      // is not, the loop has to keep asking, and only then does it need a
+      // turn of its own to ask on.
+      if (one.child.exit_descriptor() >= 0) {
+        watched.push_back(
+            pollfd{.fd = one.child.exit_descriptor(), .events = POLLIN, .revents = 0});
+      } else if (one.child.status() == ChildStatus::running) {
+        asks_after_exit = true;
+      }
     }
-    auto boundary = Clock::now() + poll_quantum;
+    auto boundary = Clock::now() + (asks_after_exit ? poll_quantum : idle_quantum);
     for (const auto& one : live) {
       if (one.deadline.has_value()) {
         boundary = std::min(boundary, *one.deadline);

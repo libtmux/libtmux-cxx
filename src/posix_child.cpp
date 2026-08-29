@@ -14,6 +14,9 @@
 
 #include <fcntl.h>
 #include <spawn.h>
+#if defined(__linux__) && !defined(LIBTMUX_FORCE_PORTABLE_SYSCALLS)
+#include <sys/syscall.h>
+#endif
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -58,6 +61,19 @@ struct Pipe final {
   OwnedFd read;
   OwnedFd write;
 };
+
+// Waiting for a child rather than asking after it. libuv reaches for the same
+// thing on the platforms that have it, so a library embedded in someone else's
+// process never installs a SIGCHLD handler of its own.
+[[nodiscard]] int open_exit_descriptor(pid_t pid) noexcept {
+#if defined(__linux__) && defined(SYS_pidfd_open) &&                                   \
+    !defined(LIBTMUX_FORCE_PORTABLE_SYSCALLS)
+  return static_cast<int>(::syscall(SYS_pidfd_open, pid, 0U));
+#else
+  static_cast<void>(pid);
+  return -1;
+#endif
+}
 
 [[nodiscard]] std::error_code generic_error(int error_number) {
   return {error_number, std::generic_category()};
@@ -331,8 +347,12 @@ expected<PosixChild, ProcessError> PosixChild::launch(const ProcessRequest& requ
                                     generic_error(spawn_result)));
   }
 
-  PosixChild launched{child, stdout_pipe.read.release(), stderr_pipe.read.release(),
-                      request.capture_limit, std::move(rendered)};
+  PosixChild launched{child,
+                      stdout_pipe.read.release(),
+                      stderr_pipe.read.release(),
+                      open_exit_descriptor(child),
+                      request.capture_limit,
+                      std::move(rendered)};
   launched.capture_.stdout_bytes.reserve(
       std::min(request.capture_limit, std::size_t{4096U}));
   launched.capture_.stderr_bytes.reserve(
@@ -347,22 +367,29 @@ expected<PosixChild, ProcessError> PosixChild::launch(const ProcessRequest& requ
   return launched;
 }
 
-PosixChild::PosixChild(pid_t pid, int stdout_fd, int stderr_fd,
+PosixChild::PosixChild(pid_t pid, int stdout_fd, int stderr_fd, int exit_fd,
                        std::size_t capture_limit, std::string rendered) noexcept
-    : pid_{pid}, stdout_fd_{stdout_fd}, stderr_fd_{stderr_fd},
+    : pid_{pid}, stdout_fd_{stdout_fd}, stderr_fd_{stderr_fd}, exit_fd_{exit_fd},
       capture_limit_{capture_limit}, rendered_request_{std::move(rendered)},
       status_{ChildStatus::running} {}
+
+int PosixChild::exit_descriptor() const noexcept { return exit_fd_; }
 
 PosixChild::~PosixChild() noexcept {
   assert(pid_ < 0 || status_ != ChildStatus::running);
   close_descriptor(ChildStream::stdout_stream);
   close_descriptor(ChildStream::stderr_stream);
+  if (exit_fd_ >= 0) {
+    static_cast<void>(::close(exit_fd_));
+    exit_fd_ = -1;
+  }
 }
 
 PosixChild::PosixChild(PosixChild&& other) noexcept
     : pid_{std::exchange(other.pid_, -1)},
       stdout_fd_{std::exchange(other.stdout_fd_, -1)},
       stderr_fd_{std::exchange(other.stderr_fd_, -1)},
+      exit_fd_{std::exchange(other.exit_fd_, -1)},
       capture_limit_{std::exchange(other.capture_limit_, 0U)},
       rendered_request_{std::move(other.rendered_request_)},
       capture_{std::move(other.capture_)},
@@ -375,9 +402,13 @@ PosixChild& PosixChild::operator=(PosixChild&& other) noexcept {
     assert(pid_ < 0 || status_ != ChildStatus::running);
     close_descriptor(ChildStream::stdout_stream);
     close_descriptor(ChildStream::stderr_stream);
+    if (exit_fd_ >= 0) {
+      static_cast<void>(::close(exit_fd_));
+    }
     pid_ = std::exchange(other.pid_, -1);
     stdout_fd_ = std::exchange(other.stdout_fd_, -1);
     stderr_fd_ = std::exchange(other.stderr_fd_, -1);
+    exit_fd_ = std::exchange(other.exit_fd_, -1);
     capture_limit_ = std::exchange(other.capture_limit_, 0U);
     rendered_request_ = std::move(other.rendered_request_);
     capture_ = std::move(other.capture_);
