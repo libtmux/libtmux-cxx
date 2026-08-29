@@ -4147,7 +4147,7 @@ enum class DeliveryStatus : std::uint8_t;
 <a id="libtmux-command-hpp"></a>
 ## `libtmux/command.hpp`
 
-Why a tmux command produced no answer.  `refused` means tmux ran and said no; `missing` means tmux ran, said yes, and the object asked about was not there; `truncated` means it answered at greater length than the caller allowed for. `unsupported` is a backend feature gap; `validation` is a bad request, so callers handle them differently.
+Why a tmux command produced no answer.  `refused` means tmux ran and said no; `missing` means tmux ran, said yes, and the object asked about was not there; `truncated` means it answered at greater length than the caller allowed for. `unsupported` is a backend feature gap; `cancelled` means the caller stopped the operation before it completed; `validation` is a bad request, so callers handle them differently.
 
 **Symbols:**
 
@@ -4161,6 +4161,7 @@ Why a tmux command produced no answer.  `refused` means tmux ran and said no; `m
   - [`FailureKind::missing`](#libtmux-command-hpp-failurekind-missing)
   - [`FailureKind::truncated`](#libtmux-command-hpp-failurekind-truncated)
   - [`FailureKind::unsupported`](#libtmux-command-hpp-failurekind-unsupported)
+  - [`FailureKind::cancelled`](#libtmux-command-hpp-failurekind-cancelled)
 - [`CommandFailure`](#libtmux-command-hpp-commandfailure)
   - [`CommandFailure::kind`](#libtmux-command-hpp-commandfailure-kind)
   - [`CommandFailure::delivery`](#libtmux-command-hpp-commandfailure-delivery)
@@ -4235,6 +4236,9 @@ tmux ran and answered, and the answer did not fit. Reported rather than returned
 #### `FailureKind::unsupported` — `unsupported,`
 
 The backend cannot provide this operation without weakening its contract; nothing was dispatched.
+
+<a id="libtmux-command-hpp-failurekind-cancelled"></a>
+#### `FailureKind::cancelled` — `cancelled,`
 
 <a id="libtmux-command-hpp-commandfailure"></a>
 ### `CommandFailure`
