@@ -21,6 +21,7 @@ is the prose there. Run it with `--check` to prove this page is current.
 - [`libtmux/command.hpp`](#libtmux-command-hpp)
 - [`libtmux/options.hpp`](#libtmux-options-hpp)
 - [`libtmux/control.hpp`](#libtmux-control-hpp)
+- [`libtmux/notification.hpp`](#libtmux-notification-hpp)
 - [`libtmux/batch.hpp`](#libtmux-batch-hpp)
 - [`libtmux/chain.hpp`](#libtmux-chain-hpp)
 - [`libtmux/keys.hpp`](#libtmux-keys-hpp)
@@ -59,6 +60,7 @@ The connection root.  A Server names which tmux server to talk to and how to rea
   - [`Server::control`](#libtmux-server-hpp-server-control)
   - [`Server::control_with_options`](#libtmux-server-hpp-server-control-with-options)
   - [`Server::take_notifications`](#libtmux-server-hpp-server-take-notifications)
+  - [`Server::watch_notifications`](#libtmux-server-hpp-server-watch-notifications)
   - [`Server::dropped_notifications`](#libtmux-server-hpp-server-dropped-notifications)
   - [`Server::over_control`](#libtmux-server-hpp-server-over-control)
   - [`Server::over_control_with_options`](#libtmux-server-hpp-server-over-control-with-options)
@@ -191,7 +193,15 @@ The Server supplies the socket and `session` supplies the session name; every ot
 ```cpp
 [[nodiscard]] std::vector<Notification> take_notifications() const;
 ```
-What tmux has said on its own initiative since the last call: a window renamed, a pane exited, a client attached. A Server that runs a process per command hears nothing between them and answers with nothing, so a caller that wants this opens one with `over_control`.  Taking drains: what comes back will not come back again, and an empty result means nothing has arrived yet rather than that none will.  The buffer is bounded; `dropped_notifications` says how many were discarded, which distinguishes a quiet server from one that outran a caller who was not collecting.
+What tmux has said on its own initiative since the last call: a window renamed, a pane exited, a client attached. A Server that runs a process per command hears nothing between them and answers with nothing, so a caller that wants this opens one with `over_control`.  Taking drains: what comes back will not come back again, and an empty result means nothing has arrived yet rather than that none will.  The log is bounded; `dropped_notifications` says how many this Server's legacy taking cursor missed. Each watch reports its own loss instead.
+
+<a id="libtmux-server-hpp-server-watch-notifications"></a>
+#### `Server::watch_notifications`
+
+```cpp
+[[nodiscard]] NotificationWatch watch_notifications() const;
+```
+An independent cursor over notifications emitted after this call. On a subprocess Server it is an empty, already-closed watch.
 
 <a id="libtmux-server-hpp-server-dropped-notifications"></a>
 #### `Server::dropped_notifications`
@@ -4575,44 +4585,6 @@ Decode tmux's control protocol.  A control-mode stream interleaves command reply
   - [`ControlBlock::body`](#libtmux-control-hpp-controlblock-body)
   - [`ControlBlock::body_truncated`](#libtmux-control-hpp-controlblock-body-truncated)
   - [`ControlBlock::body_bytes`](#libtmux-control-hpp-controlblock-body-bytes)
-- [`Notification`](#libtmux-control-hpp-notification)
-  - [`Notification::body`](#libtmux-control-hpp-notification-body)
-- [`NotificationKind`](#libtmux-control-hpp-notificationkind)
-  - [`NotificationKind::unknown`](#libtmux-control-hpp-notificationkind-unknown)
-  - [`NotificationKind::output`](#libtmux-control-hpp-notificationkind-output)
-  - [`NotificationKind::extended_output`](#libtmux-control-hpp-notificationkind-extended-output)
-  - [`NotificationKind::paused`](#libtmux-control-hpp-notificationkind-paused)
-  - [`NotificationKind::resumed`](#libtmux-control-hpp-notificationkind-resumed)
-  - [`NotificationKind::sessions_changed`](#libtmux-control-hpp-notificationkind-sessions-changed)
-  - [`NotificationKind::session_changed`](#libtmux-control-hpp-notificationkind-session-changed)
-  - [`NotificationKind::session_renamed`](#libtmux-control-hpp-notificationkind-session-renamed)
-  - [`NotificationKind::session_window_changed`](#libtmux-control-hpp-notificationkind-session-window-changed)
-  - [`NotificationKind::client_detached`](#libtmux-control-hpp-notificationkind-client-detached)
-  - [`NotificationKind::client_session_changed`](#libtmux-control-hpp-notificationkind-client-session-changed)
-  - [`NotificationKind::window_add`](#libtmux-control-hpp-notificationkind-window-add)
-  - [`NotificationKind::window_close`](#libtmux-control-hpp-notificationkind-window-close)
-  - [`NotificationKind::window_renamed`](#libtmux-control-hpp-notificationkind-window-renamed)
-  - [`NotificationKind::window_pane_changed`](#libtmux-control-hpp-notificationkind-window-pane-changed)
-  - [`NotificationKind::unlinked_window_add`](#libtmux-control-hpp-notificationkind-unlinked-window-add)
-  - [`NotificationKind::unlinked_window_close`](#libtmux-control-hpp-notificationkind-unlinked-window-close)
-  - [`NotificationKind::unlinked_window_renamed`](#libtmux-control-hpp-notificationkind-unlinked-window-renamed)
-  - [`NotificationKind::pane_mode_changed`](#libtmux-control-hpp-notificationkind-pane-mode-changed)
-  - [`NotificationKind::paste_buffer_changed`](#libtmux-control-hpp-notificationkind-paste-buffer-changed)
-  - [`NotificationKind::paste_buffer_deleted`](#libtmux-control-hpp-notificationkind-paste-buffer-deleted)
-  - [`NotificationKind::subscription_changed`](#libtmux-control-hpp-notificationkind-subscription-changed)
-  - [`NotificationKind::config_error`](#libtmux-control-hpp-notificationkind-config-error)
-  - [`NotificationKind::exit`](#libtmux-control-hpp-notificationkind-exit)
-  - [`NotificationKind::layout_change`](#libtmux-control-hpp-notificationkind-layout-change)
-  - [`NotificationKind::message`](#libtmux-control-hpp-notificationkind-message)
-- [`ParsedNotification`](#libtmux-control-hpp-parsednotification)
-  - [`ParsedNotification::kind`](#libtmux-control-hpp-parsednotification-kind)
-  - [`ParsedNotification::name`](#libtmux-control-hpp-parsednotification-name)
-  - [`ParsedNotification::session`](#libtmux-control-hpp-parsednotification-session)
-  - [`ParsedNotification::window`](#libtmux-control-hpp-parsednotification-window)
-  - [`ParsedNotification::pane`](#libtmux-control-hpp-parsednotification-pane)
-  - [`ParsedNotification::text`](#libtmux-control-hpp-parsednotification-text)
-  - [`ParsedNotification::payload`](#libtmux-control-hpp-parsednotification-payload)
-  - [`ParsedNotification::age`](#libtmux-control-hpp-parsednotification-age)
 - [`Parser`](#libtmux-control-hpp-parser)
   - [`Parser::Parser`](#libtmux-control-hpp-parser-parser)
   - [`Parser::Parser`](#libtmux-control-hpp-parser-parser-2)
@@ -4658,6 +4630,7 @@ Decode tmux's control protocol.  A control-mode stream interleaves command reply
   - [`Connection::operator=`](#libtmux-control-hpp-connection-operator-2)
   - [`Connection::execute`](#libtmux-control-hpp-connection-execute)
   - [`Connection::take_notifications`](#libtmux-control-hpp-connection-take-notifications)
+  - [`Connection::watch_notifications`](#libtmux-control-hpp-connection-watch-notifications)
   - [`Connection::wait_for_notifications`](#libtmux-control-hpp-connection-wait-for-notifications)
   - [`Connection::notification_fd`](#libtmux-control-hpp-connection-notification-fd)
   - [`Connection::set_pane_output`](#libtmux-control-hpp-connection-set-pane-output)
@@ -4669,9 +4642,6 @@ Decode tmux's control protocol.  A control-mode stream interleaves command reply
   - [`kDefaultRetainedReplyBytes`](#libtmux-control-hpp-free-symbols-kdefaultretainedreplybytes)
   - [`kDefaultLineBytes`](#libtmux-control-hpp-free-symbols-kdefaultlinebytes)
   - [`Event`](#libtmux-control-hpp-free-symbols-event)
-  - [`to_string`](#libtmux-control-hpp-free-symbols-to-string)
-  - [`parse`](#libtmux-control-hpp-free-symbols-parse)
-  - [`parse`](#libtmux-control-hpp-free-symbols-parse-2)
 
 <a id="libtmux-control-hpp-protocolerror"></a>
 ### `ProtocolError`
@@ -4772,173 +4742,6 @@ bool body_truncated{false};
 ```cpp
 std::size_t body_bytes{0};
 ```
-
-<a id="libtmux-control-hpp-notification"></a>
-### `Notification`
-
-```cpp
-struct Notification;
-```
-
-<a id="libtmux-control-hpp-notification-body"></a>
-#### `Notification::body`
-
-```cpp
-std::vector<std::byte> body;
-```
-
-<a id="libtmux-control-hpp-notificationkind"></a>
-### `NotificationKind`
-
-What a notification is, once its name and arguments have been read.  `unknown` is not a failure. tmux adds notification names over time, so a name this build does not know may be from a newer tmux, and the body is still there to read. A kind and fields keep such additions from breaking an exhaustive `std::visit` in caller code.
-
-```cpp
-enum class NotificationKind : std::uint8_t;
-```
-
-<a id="libtmux-control-hpp-notificationkind-unknown"></a>
-#### `NotificationKind::unknown` — `unknown,`
-
-<a id="libtmux-control-hpp-notificationkind-output"></a>
-#### `NotificationKind::output` — `output,`
-
-<a id="libtmux-control-hpp-notificationkind-extended-output"></a>
-#### `NotificationKind::extended_output` — `extended_output,`
-
-<a id="libtmux-control-hpp-notificationkind-paused"></a>
-#### `NotificationKind::paused` — `paused,`
-
-<a id="libtmux-control-hpp-notificationkind-resumed"></a>
-#### `NotificationKind::resumed` — `resumed,`
-
-<a id="libtmux-control-hpp-notificationkind-sessions-changed"></a>
-#### `NotificationKind::sessions_changed` — `sessions_changed,`
-
-<a id="libtmux-control-hpp-notificationkind-session-changed"></a>
-#### `NotificationKind::session_changed` — `session_changed,`
-
-<a id="libtmux-control-hpp-notificationkind-session-renamed"></a>
-#### `NotificationKind::session_renamed` — `session_renamed,`
-
-<a id="libtmux-control-hpp-notificationkind-session-window-changed"></a>
-#### `NotificationKind::session_window_changed` — `session_window_changed,`
-
-<a id="libtmux-control-hpp-notificationkind-client-detached"></a>
-#### `NotificationKind::client_detached` — `client_detached,`
-
-<a id="libtmux-control-hpp-notificationkind-client-session-changed"></a>
-#### `NotificationKind::client_session_changed` — `client_session_changed,`
-
-<a id="libtmux-control-hpp-notificationkind-window-add"></a>
-#### `NotificationKind::window_add` — `window_add,`
-
-<a id="libtmux-control-hpp-notificationkind-window-close"></a>
-#### `NotificationKind::window_close` — `window_close,`
-
-<a id="libtmux-control-hpp-notificationkind-window-renamed"></a>
-#### `NotificationKind::window_renamed` — `window_renamed,`
-
-<a id="libtmux-control-hpp-notificationkind-window-pane-changed"></a>
-#### `NotificationKind::window_pane_changed` — `window_pane_changed,`
-
-<a id="libtmux-control-hpp-notificationkind-unlinked-window-add"></a>
-#### `NotificationKind::unlinked_window_add` — `unlinked_window_add,`
-
-<a id="libtmux-control-hpp-notificationkind-unlinked-window-close"></a>
-#### `NotificationKind::unlinked_window_close` — `unlinked_window_close,`
-
-<a id="libtmux-control-hpp-notificationkind-unlinked-window-renamed"></a>
-#### `NotificationKind::unlinked_window_renamed` — `unlinked_window_renamed,`
-
-<a id="libtmux-control-hpp-notificationkind-pane-mode-changed"></a>
-#### `NotificationKind::pane_mode_changed` — `pane_mode_changed,`
-
-<a id="libtmux-control-hpp-notificationkind-paste-buffer-changed"></a>
-#### `NotificationKind::paste_buffer_changed` — `paste_buffer_changed,`
-
-<a id="libtmux-control-hpp-notificationkind-paste-buffer-deleted"></a>
-#### `NotificationKind::paste_buffer_deleted` — `paste_buffer_deleted,`
-
-<a id="libtmux-control-hpp-notificationkind-subscription-changed"></a>
-#### `NotificationKind::subscription_changed` — `subscription_changed,`
-
-<a id="libtmux-control-hpp-notificationkind-config-error"></a>
-#### `NotificationKind::config_error` — `config_error,`
-
-<a id="libtmux-control-hpp-notificationkind-exit"></a>
-#### `NotificationKind::exit` — `exit,`
-
-<a id="libtmux-control-hpp-notificationkind-layout-change"></a>
-#### `NotificationKind::layout_change` — `layout_change,`
-
-<a id="libtmux-control-hpp-notificationkind-message"></a>
-#### `NotificationKind::message` — `message,`
-
-<a id="libtmux-control-hpp-parsednotification"></a>
-### `ParsedNotification`
-
-A notification's arguments, as views into the notification it was read from.  tmux types its arguments by prefix — `$0` a session, `@1` a window, `%2` a pane — so each lands in the field it belongs to and the others stay empty. `payload` is the pane bytes of an output notification, already unescaped; it is empty for every other kind.  Everything here borrows. The notification must outlive it, which is why there is no overload taking a temporary.
-
-```cpp
-struct ParsedNotification;
-```
-
-<a id="libtmux-control-hpp-parsednotification-kind"></a>
-#### `ParsedNotification::kind`
-
-```cpp
-NotificationKind kind{NotificationKind::unknown};
-```
-
-<a id="libtmux-control-hpp-parsednotification-name"></a>
-#### `ParsedNotification::name`
-
-```cpp
-std::string_view name{};
-```
-
-<a id="libtmux-control-hpp-parsednotification-session"></a>
-#### `ParsedNotification::session`
-
-```cpp
-std::string_view session{};
-```
-
-<a id="libtmux-control-hpp-parsednotification-window"></a>
-#### `ParsedNotification::window`
-
-```cpp
-std::string_view window{};
-```
-
-<a id="libtmux-control-hpp-parsednotification-pane"></a>
-#### `ParsedNotification::pane`
-
-```cpp
-std::string_view pane{};
-```
-
-<a id="libtmux-control-hpp-parsednotification-text"></a>
-#### `ParsedNotification::text`
-
-```cpp
-std::string_view text{};
-```
-
-<a id="libtmux-control-hpp-parsednotification-payload"></a>
-#### `ParsedNotification::payload`
-
-```cpp
-std::span<const std::byte> payload{};
-```
-
-<a id="libtmux-control-hpp-parsednotification-age"></a>
-#### `ParsedNotification::age`
-
-```cpp
-std::optional<std::uint64_t> age{};
-```
-Milliseconds this output was behind when tmux wrote it. Only `extended_output` carries one.
 
 <a id="libtmux-control-hpp-parser"></a>
 ### `Parser`
@@ -5264,6 +5067,14 @@ Completes at this request's private protocol boundary and preserves every reply 
 ```
 Everything tmux has said since the last call, returned at once.  Taking drains: what comes back will not come back again. It says nothing about what happens next, so an empty result does not mean the stream has gone quiet, and a later one is new traffic rather than a repeat. Wait for the next event with `wait_for_notifications` rather than polling for one.
 
+<a id="libtmux-control-hpp-connection-watch-notifications"></a>
+#### `Connection::watch_notifications`
+
+```cpp
+[[nodiscard]] NotificationWatch watch_notifications();
+```
+Open an independent cursor at the next notification. Unlike the legacy taking methods above, watches do not steal events from each other.
+
 <a id="libtmux-control-hpp-connection-wait-for-notifications"></a>
 #### `Connection::wait_for_notifications`
 
@@ -5302,7 +5113,7 @@ Everything tmux says until the deadline, as one loop rather than two.  Borrows t
 ```cpp
 [[nodiscard]] std::size_t dropped_notifications() const noexcept;
 ```
-How many notifications were discarded to keep the buffer bounded, which is what distinguishes a quiet connection from one that outran its reader.
+How many notifications this Connection's legacy taking cursor missed to keep the shared log bounded. Each NotificationWatch has its own count.
 
 <a id="libtmux-control-hpp-connection-native-child-pid"></a>
 #### `Connection::native_child_pid`
@@ -5343,21 +5154,335 @@ inline constexpr std::size_t kDefaultLineBytes = 1024U * 1024U;
 using Event = std::variant<ControlBlock, Notification>;
 ```
 
-<a id="libtmux-control-hpp-free-symbols-to-string"></a>
+<a id="libtmux-notification-hpp"></a>
+## `libtmux/notification.hpp`
+
+Notifications tmux emits outside synchronous command replies.  Raw bytes stay available for forward compatibility. `parse` adds typed, borrowed views for known notification shapes, while `NotificationWatch` gives one consumer an independent cursor over a connection's bounded log.
+
+**Symbols:**
+
+- [`Notification`](#libtmux-notification-hpp-notification)
+  - [`Notification::body`](#libtmux-notification-hpp-notification-body)
+- [`NotificationKind`](#libtmux-notification-hpp-notificationkind)
+  - [`NotificationKind::unknown`](#libtmux-notification-hpp-notificationkind-unknown)
+  - [`NotificationKind::output`](#libtmux-notification-hpp-notificationkind-output)
+  - [`NotificationKind::extended_output`](#libtmux-notification-hpp-notificationkind-extended-output)
+  - [`NotificationKind::paused`](#libtmux-notification-hpp-notificationkind-paused)
+  - [`NotificationKind::resumed`](#libtmux-notification-hpp-notificationkind-resumed)
+  - [`NotificationKind::sessions_changed`](#libtmux-notification-hpp-notificationkind-sessions-changed)
+  - [`NotificationKind::session_changed`](#libtmux-notification-hpp-notificationkind-session-changed)
+  - [`NotificationKind::session_renamed`](#libtmux-notification-hpp-notificationkind-session-renamed)
+  - [`NotificationKind::session_window_changed`](#libtmux-notification-hpp-notificationkind-session-window-changed)
+  - [`NotificationKind::client_detached`](#libtmux-notification-hpp-notificationkind-client-detached)
+  - [`NotificationKind::client_session_changed`](#libtmux-notification-hpp-notificationkind-client-session-changed)
+  - [`NotificationKind::window_add`](#libtmux-notification-hpp-notificationkind-window-add)
+  - [`NotificationKind::window_close`](#libtmux-notification-hpp-notificationkind-window-close)
+  - [`NotificationKind::window_renamed`](#libtmux-notification-hpp-notificationkind-window-renamed)
+  - [`NotificationKind::window_pane_changed`](#libtmux-notification-hpp-notificationkind-window-pane-changed)
+  - [`NotificationKind::unlinked_window_add`](#libtmux-notification-hpp-notificationkind-unlinked-window-add)
+  - [`NotificationKind::unlinked_window_close`](#libtmux-notification-hpp-notificationkind-unlinked-window-close)
+  - [`NotificationKind::unlinked_window_renamed`](#libtmux-notification-hpp-notificationkind-unlinked-window-renamed)
+  - [`NotificationKind::pane_mode_changed`](#libtmux-notification-hpp-notificationkind-pane-mode-changed)
+  - [`NotificationKind::paste_buffer_changed`](#libtmux-notification-hpp-notificationkind-paste-buffer-changed)
+  - [`NotificationKind::paste_buffer_deleted`](#libtmux-notification-hpp-notificationkind-paste-buffer-deleted)
+  - [`NotificationKind::subscription_changed`](#libtmux-notification-hpp-notificationkind-subscription-changed)
+  - [`NotificationKind::config_error`](#libtmux-notification-hpp-notificationkind-config-error)
+  - [`NotificationKind::exit`](#libtmux-notification-hpp-notificationkind-exit)
+  - [`NotificationKind::layout_change`](#libtmux-notification-hpp-notificationkind-layout-change)
+  - [`NotificationKind::message`](#libtmux-notification-hpp-notificationkind-message)
+- [`ParsedNotification`](#libtmux-notification-hpp-parsednotification)
+  - [`ParsedNotification::kind`](#libtmux-notification-hpp-parsednotification-kind)
+  - [`ParsedNotification::name`](#libtmux-notification-hpp-parsednotification-name)
+  - [`ParsedNotification::session`](#libtmux-notification-hpp-parsednotification-session)
+  - [`ParsedNotification::window`](#libtmux-notification-hpp-parsednotification-window)
+  - [`ParsedNotification::pane`](#libtmux-notification-hpp-parsednotification-pane)
+  - [`ParsedNotification::text`](#libtmux-notification-hpp-parsednotification-text)
+  - [`ParsedNotification::payload`](#libtmux-notification-hpp-parsednotification-payload)
+  - [`ParsedNotification::age`](#libtmux-notification-hpp-parsednotification-age)
+- [`NotificationWatch`](#libtmux-notification-hpp-notificationwatch)
+  - [`NotificationWatch::NotificationWatch`](#libtmux-notification-hpp-notificationwatch-notificationwatch)
+  - [`NotificationWatch::~NotificationWatch`](#libtmux-notification-hpp-notificationwatch-notificationwatch-2)
+  - [`NotificationWatch::NotificationWatch`](#libtmux-notification-hpp-notificationwatch-notificationwatch-3)
+  - [`NotificationWatch::operator=`](#libtmux-notification-hpp-notificationwatch-operator)
+  - [`NotificationWatch::NotificationWatch`](#libtmux-notification-hpp-notificationwatch-notificationwatch-4)
+  - [`NotificationWatch::operator=`](#libtmux-notification-hpp-notificationwatch-operator-2)
+  - [`NotificationWatch::take_notifications`](#libtmux-notification-hpp-notificationwatch-take-notifications)
+  - [`NotificationWatch::wait_for_notifications`](#libtmux-notification-hpp-notificationwatch-wait-for-notifications)
+  - [`NotificationWatch::notification_fd`](#libtmux-notification-hpp-notificationwatch-notification-fd)
+  - [`NotificationWatch::dropped_notifications`](#libtmux-notification-hpp-notificationwatch-dropped-notifications)
+- [`Free symbols`](#libtmux-notification-hpp-free-symbols)
+  - [`to_string`](#libtmux-notification-hpp-free-symbols-to-string)
+  - [`parse`](#libtmux-notification-hpp-free-symbols-parse)
+  - [`parse`](#libtmux-notification-hpp-free-symbols-parse-2)
+
+<a id="libtmux-notification-hpp-notification"></a>
+### `Notification`
+
+```cpp
+struct Notification;
+```
+
+<a id="libtmux-notification-hpp-notification-body"></a>
+#### `Notification::body`
+
+```cpp
+std::vector<std::byte> body;
+```
+
+<a id="libtmux-notification-hpp-notificationkind"></a>
+### `NotificationKind`
+
+What a notification is, once its name and arguments have been read.  `unknown` is not a failure. tmux adds notification names over time, so a name this build does not know may be from a newer tmux, and the body is still there to read. A kind and fields keep such additions from breaking an exhaustive `std::visit` in caller code.
+
+```cpp
+enum class NotificationKind : std::uint8_t;
+```
+
+<a id="libtmux-notification-hpp-notificationkind-unknown"></a>
+#### `NotificationKind::unknown` — `unknown,`
+
+<a id="libtmux-notification-hpp-notificationkind-output"></a>
+#### `NotificationKind::output` — `output,`
+
+<a id="libtmux-notification-hpp-notificationkind-extended-output"></a>
+#### `NotificationKind::extended_output` — `extended_output,`
+
+<a id="libtmux-notification-hpp-notificationkind-paused"></a>
+#### `NotificationKind::paused` — `paused,`
+
+<a id="libtmux-notification-hpp-notificationkind-resumed"></a>
+#### `NotificationKind::resumed` — `resumed,`
+
+<a id="libtmux-notification-hpp-notificationkind-sessions-changed"></a>
+#### `NotificationKind::sessions_changed` — `sessions_changed,`
+
+<a id="libtmux-notification-hpp-notificationkind-session-changed"></a>
+#### `NotificationKind::session_changed` — `session_changed,`
+
+<a id="libtmux-notification-hpp-notificationkind-session-renamed"></a>
+#### `NotificationKind::session_renamed` — `session_renamed,`
+
+<a id="libtmux-notification-hpp-notificationkind-session-window-changed"></a>
+#### `NotificationKind::session_window_changed` — `session_window_changed,`
+
+<a id="libtmux-notification-hpp-notificationkind-client-detached"></a>
+#### `NotificationKind::client_detached` — `client_detached,`
+
+<a id="libtmux-notification-hpp-notificationkind-client-session-changed"></a>
+#### `NotificationKind::client_session_changed` — `client_session_changed,`
+
+<a id="libtmux-notification-hpp-notificationkind-window-add"></a>
+#### `NotificationKind::window_add` — `window_add,`
+
+<a id="libtmux-notification-hpp-notificationkind-window-close"></a>
+#### `NotificationKind::window_close` — `window_close,`
+
+<a id="libtmux-notification-hpp-notificationkind-window-renamed"></a>
+#### `NotificationKind::window_renamed` — `window_renamed,`
+
+<a id="libtmux-notification-hpp-notificationkind-window-pane-changed"></a>
+#### `NotificationKind::window_pane_changed` — `window_pane_changed,`
+
+<a id="libtmux-notification-hpp-notificationkind-unlinked-window-add"></a>
+#### `NotificationKind::unlinked_window_add` — `unlinked_window_add,`
+
+<a id="libtmux-notification-hpp-notificationkind-unlinked-window-close"></a>
+#### `NotificationKind::unlinked_window_close` — `unlinked_window_close,`
+
+<a id="libtmux-notification-hpp-notificationkind-unlinked-window-renamed"></a>
+#### `NotificationKind::unlinked_window_renamed` — `unlinked_window_renamed,`
+
+<a id="libtmux-notification-hpp-notificationkind-pane-mode-changed"></a>
+#### `NotificationKind::pane_mode_changed` — `pane_mode_changed,`
+
+<a id="libtmux-notification-hpp-notificationkind-paste-buffer-changed"></a>
+#### `NotificationKind::paste_buffer_changed` — `paste_buffer_changed,`
+
+<a id="libtmux-notification-hpp-notificationkind-paste-buffer-deleted"></a>
+#### `NotificationKind::paste_buffer_deleted` — `paste_buffer_deleted,`
+
+<a id="libtmux-notification-hpp-notificationkind-subscription-changed"></a>
+#### `NotificationKind::subscription_changed` — `subscription_changed,`
+
+<a id="libtmux-notification-hpp-notificationkind-config-error"></a>
+#### `NotificationKind::config_error` — `config_error,`
+
+<a id="libtmux-notification-hpp-notificationkind-exit"></a>
+#### `NotificationKind::exit` — `exit,`
+
+<a id="libtmux-notification-hpp-notificationkind-layout-change"></a>
+#### `NotificationKind::layout_change` — `layout_change,`
+
+<a id="libtmux-notification-hpp-notificationkind-message"></a>
+#### `NotificationKind::message` — `message,`
+
+<a id="libtmux-notification-hpp-parsednotification"></a>
+### `ParsedNotification`
+
+A notification's arguments, as views into the notification it was read from.  tmux types its arguments by prefix — `$0` a session, `@1` a window, `%2` a pane — so each lands in the field it belongs to and the others stay empty. `payload` is the pane bytes of an output notification, already unescaped; it is empty for every other kind.  Everything here borrows. The notification must outlive it, which is why there is no overload taking a temporary.
+
+```cpp
+struct ParsedNotification;
+```
+
+<a id="libtmux-notification-hpp-parsednotification-kind"></a>
+#### `ParsedNotification::kind`
+
+```cpp
+NotificationKind kind{NotificationKind::unknown};
+```
+
+<a id="libtmux-notification-hpp-parsednotification-name"></a>
+#### `ParsedNotification::name`
+
+```cpp
+std::string_view name{};
+```
+
+<a id="libtmux-notification-hpp-parsednotification-session"></a>
+#### `ParsedNotification::session`
+
+```cpp
+std::string_view session{};
+```
+
+<a id="libtmux-notification-hpp-parsednotification-window"></a>
+#### `ParsedNotification::window`
+
+```cpp
+std::string_view window{};
+```
+
+<a id="libtmux-notification-hpp-parsednotification-pane"></a>
+#### `ParsedNotification::pane`
+
+```cpp
+std::string_view pane{};
+```
+
+<a id="libtmux-notification-hpp-parsednotification-text"></a>
+#### `ParsedNotification::text`
+
+```cpp
+std::string_view text{};
+```
+
+<a id="libtmux-notification-hpp-parsednotification-payload"></a>
+#### `ParsedNotification::payload`
+
+```cpp
+std::span<const std::byte> payload{};
+```
+
+<a id="libtmux-notification-hpp-parsednotification-age"></a>
+#### `ParsedNotification::age`
+
+```cpp
+std::optional<std::uint64_t> age{};
+```
+Milliseconds this output was behind when tmux wrote it. Only `extended_output` carries one.
+
+<a id="libtmux-notification-hpp-notificationwatch"></a>
+### `NotificationWatch`
+
+One independent view of notifications emitted after the watch was opened.  Taking from one watch never drains another watch or the Connection's legacy notification queue. The retained log is shared and bounded; this watch's dropped count reports only events this watch actually missed.  A watch retains the stream state. It can drain already-buffered events after its Connection is moved or destroyed; waits then wake as a closed stream.
+
+```cpp
+class NotificationWatch final;
+```
+
+<a id="libtmux-notification-hpp-notificationwatch-notificationwatch"></a>
+#### `NotificationWatch::NotificationWatch`
+
+```cpp
+NotificationWatch() noexcept;
+```
+
+<a id="libtmux-notification-hpp-notificationwatch-notificationwatch-2"></a>
+#### `NotificationWatch::~NotificationWatch`
+
+```cpp
+~NotificationWatch() noexcept;
+```
+
+<a id="libtmux-notification-hpp-notificationwatch-notificationwatch-3"></a>
+#### `NotificationWatch::NotificationWatch`
+
+```cpp
+NotificationWatch(NotificationWatch&&) noexcept;
+```
+
+<a id="libtmux-notification-hpp-notificationwatch-operator"></a>
+#### `NotificationWatch::operator=`
+
+```cpp
+NotificationWatch& operator=(NotificationWatch&&) noexcept;
+```
+
+<a id="libtmux-notification-hpp-notificationwatch-notificationwatch-4"></a>
+#### `NotificationWatch::NotificationWatch`
+
+```cpp
+NotificationWatch(const NotificationWatch&) = delete;
+```
+
+<a id="libtmux-notification-hpp-notificationwatch-operator-2"></a>
+#### `NotificationWatch::operator=`
+
+```cpp
+NotificationWatch& operator=(const NotificationWatch&) = delete;
+```
+
+<a id="libtmux-notification-hpp-notificationwatch-take-notifications"></a>
+#### `NotificationWatch::take_notifications`
+
+```cpp
+[[nodiscard]] std::vector<Notification> take_notifications();
+```
+Everything this watch has not taken yet, returned without waiting.
+
+<a id="libtmux-notification-hpp-notificationwatch-wait-for-notifications"></a>
+#### `NotificationWatch::wait_for_notifications`
+
+```cpp
+[[nodiscard]] std::vector<Notification> wait_for_notifications(std::chrono::steady_clock::time_point deadline);
+```
+Wait for this watch to have an event, for the stream to close, or for the deadline. An empty result means one of the latter two happened.
+
+<a id="libtmux-notification-hpp-notificationwatch-notification-fd"></a>
+#### `NotificationWatch::notification_fd`
+
+```cpp
+[[nodiscard]] int notification_fd() const noexcept;
+```
+Readable when this watch has something to take or its stream has closed. Do not read it; taking all available events clears this watch's byte while the stream is open, and closure remains readable. `-1` means the pipe could not be created or the watch is empty/moved from.
+
+<a id="libtmux-notification-hpp-notificationwatch-dropped-notifications"></a>
+#### `NotificationWatch::dropped_notifications`
+
+```cpp
+[[nodiscard]] std::size_t dropped_notifications() const noexcept;
+```
+Events evicted before this watch took them, excluding events consumed by other cursors and events emitted before this watch opened.
+
+<a id="libtmux-notification-hpp-free-symbols"></a>
+### `Free symbols`
+
+<a id="libtmux-notification-hpp-free-symbols-to-string"></a>
 #### `to_string`
 
 ```cpp
 [[nodiscard]] std::string_view to_string(NotificationKind kind) noexcept;
 ```
 
-<a id="libtmux-control-hpp-free-symbols-parse"></a>
+<a id="libtmux-notification-hpp-free-symbols-parse"></a>
 #### `parse`
 
 ```cpp
 [[nodiscard]] ParsedNotification parse(const Notification& notification);
 ```
 
-<a id="libtmux-control-hpp-free-symbols-parse-2"></a>
+<a id="libtmux-notification-hpp-free-symbols-parse-2"></a>
 #### `parse`
 
 ```cpp

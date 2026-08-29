@@ -418,6 +418,10 @@ std::vector<Notification> Server::take_notifications() const {
   return backend_->take_notifications();
 }
 
+NotificationWatch Server::watch_notifications() const {
+  return backend_->watch_notifications();
+}
+
 std::size_t Server::dropped_notifications() const noexcept {
   return backend_->dropped_notifications();
 }

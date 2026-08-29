@@ -131,7 +131,7 @@ CATALOGUE: t.Final = (
     ),
     Mutation(
         mutation_id="notification-bound",
-        path="src/notification_buffer.hpp",
+        path="src/notification_stream.hpp",
         find="inline constexpr std::size_t kMaximumNotifications = 4096U;",
         replace="inline constexpr std::size_t kMaximumNotifications = 100000000U;",
         target="libtmux_backend_seam_test",

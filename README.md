@@ -537,6 +537,11 @@ name; the caller-selected executable, deadlines, limits, and pane-output policy
 are preserved. Windows psmux rejects both forms as unsupported before launching
 a control client.
 
+`take_notifications` remains a single draining cursor. For two independent
+consumers, open a `NotificationWatch` from either `Connection` or a streaming
+`Server`; every watch has its own wait, dropped-event count, and readiness
+descriptor over one shared bounded log.
+
 ## Core concepts
 
 | C++ type | tmux concept | Notes |
@@ -548,6 +553,7 @@ a control client.
 | [`Client`](include/libtmux/entities.hpp) | an attached terminal | Read-only |
 | [`Buffer`](include/libtmux/entities.hpp) | the server's clipboard | Named text outliving its pane |
 | [`Connection`](include/libtmux/control.hpp) | a control-mode session | Reply blocks, notifications |
+| [`NotificationWatch`](include/libtmux/notification.hpp) | one notification consumer | Independent cursor, wait, and readiness descriptor |
 
 ## tmux, libtmux, and tmuxp
 

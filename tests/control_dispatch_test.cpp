@@ -47,6 +47,23 @@ Server connect(const libtmux::test::ScopedTmuxServer& fixture) {
   return server.value();
 }
 
+bool wait_for_window_add(libtmux::NotificationWatch& watch,
+                         std::chrono::steady_clock::time_point deadline) {
+  while (std::chrono::steady_clock::now() < deadline) {
+    const auto batch = watch.wait_for_notifications(deadline);
+    if (std::ranges::any_of(batch, [](const auto& notification) {
+          return libtmux::parse(notification).kind ==
+                 libtmux::NotificationKind::window_add;
+        })) {
+      return true;
+    }
+    if (batch.empty()) {
+      return false;
+    }
+  }
+  return false;
+}
+
 // One function that opens a streaming Server and then uses it, propagating
 // either failure with a bare `return unexpected(...)`.
 //
@@ -76,6 +93,24 @@ TEST(ControlDispatch, OpeningAndUsingAStreamingServerShareOneErrorType) {
       count_windows_over_control(connect(*fixture), fixture->session_name());
   ASSERT_TRUE(counted.has_value()) << counted.error().diagnostic;
   EXPECT_GE(*counted, 1U);
+}
+
+TEST(ControlDispatch, ServerNotificationWatchesDoNotStealFromEachOther) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server subprocess = connect(*fixture);
+  auto streamed = subprocess.over_control(fixture->session_name());
+  ASSERT_TRUE(streamed.has_value()) << streamed.error().diagnostic;
+  static_cast<void>(streamed->take_notifications());
+
+  auto first = streamed->watch_notifications();
+  auto second = streamed->watch_notifications();
+  const auto created = streamed->run({"new-window", "-d", "-n", "server-watch"});
+  ASSERT_TRUE(created.has_value()) << created.error().diagnostic;
+
+  const auto deadline = std::chrono::steady_clock::now() + 2s;
+  EXPECT_TRUE(wait_for_window_add(first, deadline));
+  EXPECT_TRUE(wait_for_window_add(second, deadline));
 }
 
 TEST(ControlDispatch, ControlVersionHonoursTheServersOutputBound) {

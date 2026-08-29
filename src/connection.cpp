@@ -1,7 +1,7 @@
 #include "libtmux/control.hpp"
 
 #include "libtmux/expected.hpp"
-#include "notification_buffer.hpp"
+#include "notification_stream.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -539,6 +539,8 @@ struct Connection::State {
       : options(std::move(requested_options)), pid(client.pid), input(client.input),
         output(client.output), error(client.error),
         parser(options.retained_reply_bytes, options.line_bytes),
+        notifications(std::make_shared<detail::NotificationStream>()),
+        legacy_notifications(notifications->subscribe(true)),
         boundary_seed(requested_boundary_seed) {}
 
   ~State() noexcept {
@@ -564,9 +566,7 @@ struct Connection::State {
     if (waiter.joinable()) {
       waiter.join();
     }
-    // After both threads are joined, so nothing can arm a closed descriptor.
-    close_fd(wake_write);
-    close_fd(wake_read);
+    notifications->close();
     if (!waiter_started) {
       int status = 0;
       pid_t waited = -1;
@@ -610,30 +610,8 @@ struct Connection::State {
       pending_request->complete = true;
     }
     pending.clear();
-    arm_locked();
+    notifications->close();
     condition.notify_all();
-  }
-
-  // Both halves hold `mutex`, which is what keeps the byte and the queue
-  // agreeing: readable if and only if a take would return something.
-  void arm_locked() noexcept {
-    if (wake_armed || wake_write < 0) {
-      return;
-    }
-    const char byte = 1;
-    if (::write(wake_write, &byte, 1) == 1) {
-      wake_armed = true;
-    }
-  }
-
-  void disarm_locked() noexcept {
-    if (!wake_armed || wake_read < 0) {
-      return;
-    }
-    char byte = 0;
-    if (::read(wake_read, &byte, 1) == 1) {
-      wake_armed = false;
-    }
   }
 
   void accept_event(Event event) {
@@ -643,9 +621,7 @@ struct Connection::State {
       if (text == "%exit" || text.starts_with("%exit ")) {
         saw_exit = true;
       }
-      notifications.push(std::move(*notification));
-      arm_locked();
-      condition.notify_all();
+      notifications->push(std::move(*notification));
       return;
     }
 
@@ -905,6 +881,7 @@ struct Connection::State {
       reader_done = true;
       condition.notify_all();
     }
+    notifications->close();
   }
 
   expected<void, ProtocolError>
@@ -991,13 +968,8 @@ struct Connection::State {
   std::timed_mutex lifecycle_mutex;
   std::condition_variable condition;
   std::deque<std::shared_ptr<PendingRequest>> pending;
-  detail::NotificationBuffer notifications;
-  // A pipe that holds one byte exactly when there is something to take, so a
-  // caller can `poll` on tmux beside their own descriptors. A pipe rather than
-  // an eventfd because macOS is supported.
-  int wake_read{-1};
-  int wake_write{-1};
-  bool wake_armed{false};
+  std::shared_ptr<detail::NotificationStream> notifications;
+  std::shared_ptr<detail::NotificationCursor> legacy_notifications;
   std::optional<ProtocolError> fatal_error;
   std::string stderr_tail;
   BoundarySeed boundary_seed{};
@@ -1081,27 +1053,6 @@ expected<Connection, ProtocolError> Connection::connect(ConnectionOptions option
     return unexpected(std::move(failure));
   }
   auto state = std::make_unique<State>(std::move(options), *spawned, std::move(*seed));
-  // Non-blocking on both ends: a caller polling this must never block on it,
-  // and the reader must never block writing to a caller who is not draining.
-  // At most one byte is ever outstanding, so the write cannot fill the pipe.
-  {
-    std::array<int, 2> wake{-1, -1};
-    if (::pipe(wake.data()) == 0) {
-      for (const int descriptor : wake) {
-        const int flags = ::fcntl(descriptor, F_GETFL, 0);
-        if (flags >= 0) {
-          static_cast<void>(::fcntl(descriptor, F_SETFL, flags | O_NONBLOCK));
-        }
-        const int descriptor_flags = ::fcntl(descriptor, F_GETFD, 0);
-        if (descriptor_flags >= 0) {
-          static_cast<void>(
-              ::fcntl(descriptor, F_SETFD, descriptor_flags | FD_CLOEXEC));
-        }
-      }
-      state->wake_read = wake[0];
-      state->wake_write = wake[1];
-    }
-  }
   try {
     state->waiter =
         std::thread{[raw_state = state.get()] { raw_state->waiter_main(); }};
@@ -1235,10 +1186,16 @@ std::vector<Notification> Connection::take_notifications() {
   if (!state_) {
     return {};
   }
-  std::lock_guard lock{state_->mutex};
-  auto available = state_->notifications.take();
-  state_->disarm_locked();
-  return available;
+  return state_->notifications->take(state_->legacy_notifications);
+}
+
+NotificationWatch Connection::watch_notifications() {
+  if (!state_) {
+    return {};
+  }
+  auto cursor = state_->notifications->subscribe(false);
+  return NotificationWatch{std::make_unique<detail::NotificationWatchState>(
+      state_->notifications, std::move(cursor))};
 }
 
 std::vector<Notification>
@@ -1246,16 +1203,7 @@ Connection::wait_for_notifications(std::chrono::steady_clock::time_point deadlin
   if (!state_) {
     return {};
   }
-  std::unique_lock lock{state_->mutex};
-  // The same condition the reader already signals for replies. Waiting on the
-  // failure too means a broken stream wakes the caller instead of holding them
-  // to the deadline for an answer that will never come.
-  state_->condition.wait_until(lock, deadline, [this] {
-    return !state_->notifications.empty() || state_->fatal_error.has_value();
-  });
-  auto available = state_->notifications.take();
-  state_->disarm_locked();
-  return available;
+  return state_->notifications->wait(state_->legacy_notifications, deadline);
 }
 
 expected<void, ProtocolError>
@@ -1329,15 +1277,15 @@ void NotificationRange::iterator::advance() {
 }
 
 int Connection::notification_fd() const noexcept {
-  return state_ ? state_->wake_read : -1;
+  return state_ ? state_->notifications->notification_fd(state_->legacy_notifications)
+                : -1;
 }
 
 std::size_t Connection::dropped_notifications() const noexcept {
   if (!state_) {
     return 0;
   }
-  std::lock_guard lock{state_->mutex};
-  return state_->notifications.dropped();
+  return state_->notifications->dropped(state_->legacy_notifications);
 }
 
 std::int64_t Connection::native_child_pid() const noexcept {

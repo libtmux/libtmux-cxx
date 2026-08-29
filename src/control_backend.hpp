@@ -77,6 +77,7 @@ public:
   [[nodiscard]] expected<Version, CommandFailure> version() const override;
 
   [[nodiscard]] std::vector<Notification> take_notifications() const override;
+  [[nodiscard]] NotificationWatch watch_notifications() const override;
   // Each command in the batch becomes one operation in the request, so the
   // separator is the protocol's rather than a literal argument.
   [[nodiscard]] expected<std::string, CommandFailure>

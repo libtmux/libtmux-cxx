@@ -19,6 +19,30 @@ ProtocolError control_unavailable() {
 
 } // namespace
 
+namespace detail {
+struct NotificationWatchState {};
+} // namespace detail
+
+NotificationWatch::NotificationWatch() noexcept = default;
+NotificationWatch::NotificationWatch(
+    std::unique_ptr<detail::NotificationWatchState> state) noexcept
+    : state_(std::move(state)) {}
+NotificationWatch::~NotificationWatch() noexcept = default;
+NotificationWatch::NotificationWatch(NotificationWatch&&) noexcept = default;
+NotificationWatch& NotificationWatch::operator=(NotificationWatch&&) noexcept = default;
+
+std::vector<Notification> NotificationWatch::take_notifications() { return {}; }
+
+std::vector<Notification> NotificationWatch::wait_for_notifications(
+    std::chrono::steady_clock::time_point deadline) {
+  static_cast<void>(deadline);
+  return {};
+}
+
+int NotificationWatch::notification_fd() const noexcept { return -1; }
+
+std::size_t NotificationWatch::dropped_notifications() const noexcept { return 0U; }
+
 struct Connection::State {};
 
 Connection::Connection(std::unique_ptr<State> state) noexcept
@@ -50,6 +74,8 @@ Connection::execute(ControlRequest request,
 }
 
 std::vector<Notification> Connection::take_notifications() { return {}; }
+
+NotificationWatch Connection::watch_notifications() { return {}; }
 
 std::vector<Notification>
 Connection::wait_for_notifications(std::chrono::steady_clock::time_point deadline) {

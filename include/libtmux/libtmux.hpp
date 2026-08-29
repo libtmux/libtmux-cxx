@@ -23,6 +23,7 @@
 #include "libtmux/keys.hpp"
 #include "libtmux/legacy_lookup.hpp"
 #include "libtmux/lowering.hpp"
+#include "libtmux/notification.hpp"
 #include "libtmux/options.hpp"
 #include "libtmux/relations.hpp"
 #include "libtmux/server.hpp"

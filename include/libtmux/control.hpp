@@ -28,6 +28,7 @@
 #include "libtmux/abi.hpp"
 #include "libtmux/delivery.hpp"
 #include "libtmux/expected.hpp"
+#include "libtmux/notification.hpp"
 
 LIBTMUX_NAMESPACE_BEGIN
 
@@ -69,73 +70,7 @@ struct ControlBlock {
   std::size_t body_bytes{0};
 };
 
-struct Notification {
-  std::vector<std::byte> body;
-};
-
 using Event = std::variant<ControlBlock, Notification>;
-
-// What a notification is, once its name and arguments have been read.
-//
-// `unknown` is not a failure. tmux adds notification names over time, so a
-// name this build does not know may be from a newer tmux, and the body is
-// still there to read. A kind and fields keep such additions from breaking an
-// exhaustive `std::visit` in caller code.
-enum class NotificationKind : std::uint8_t {
-  unknown,
-  output,
-  extended_output,
-  paused,
-  resumed,
-  sessions_changed,
-  session_changed,
-  session_renamed,
-  session_window_changed,
-  client_detached,
-  client_session_changed,
-  window_add,
-  window_close,
-  window_renamed,
-  window_pane_changed,
-  unlinked_window_add,
-  unlinked_window_close,
-  unlinked_window_renamed,
-  pane_mode_changed,
-  paste_buffer_changed,
-  paste_buffer_deleted,
-  subscription_changed,
-  config_error,
-  exit,
-  layout_change,
-  message,
-};
-
-[[nodiscard]] std::string_view to_string(NotificationKind kind) noexcept;
-
-// A notification's arguments, as views into the notification it was read from.
-//
-// tmux types its arguments by prefix — `$0` a session, `@1` a window, `%2` a
-// pane — so each lands in the field it belongs to and the others stay empty.
-// `payload` is the pane bytes of an output notification, already unescaped;
-// it is empty for every other kind.
-//
-// Everything here borrows. The notification must outlive it, which is why
-// there is no overload taking a temporary.
-struct ParsedNotification {
-  NotificationKind kind{NotificationKind::unknown};
-  std::string_view name{};
-  std::string_view session{};
-  std::string_view window{};
-  std::string_view pane{};
-  std::string_view text{};
-  std::span<const std::byte> payload{};
-  // Milliseconds this output was behind when tmux wrote it. Only
-  // `extended_output` carries one.
-  std::optional<std::uint64_t> age{};
-};
-
-[[nodiscard]] ParsedNotification parse(const Notification& notification);
-ParsedNotification parse(Notification&&) = delete;
 
 class Parser final {
 public:
@@ -293,6 +228,10 @@ public:
   // the next event with `wait_for_notifications` rather than polling for one.
   [[nodiscard]] std::vector<Notification> take_notifications();
 
+  // Open an independent cursor at the next notification. Unlike the legacy
+  // taking methods above, watches do not steal events from each other.
+  [[nodiscard]] NotificationWatch watch_notifications();
+
   // The same, but waits for something to arrive.
   //
   // `take_notifications` returns immediately, so a caller reacting to tmux had
@@ -342,8 +281,8 @@ public:
   [[nodiscard]] NotificationRange
   events(std::chrono::steady_clock::time_point deadline);
 
-  // How many notifications were discarded to keep the buffer bounded, which
-  // is what distinguishes a quiet connection from one that outran its reader.
+  // How many notifications this Connection's legacy taking cursor missed to
+  // keep the shared log bounded. Each NotificationWatch has its own count.
   [[nodiscard]] std::size_t dropped_notifications() const noexcept;
   [[nodiscard]] std::int64_t native_child_pid() const noexcept;
   expected<void, ProtocolError>

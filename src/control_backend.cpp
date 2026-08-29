@@ -255,6 +255,10 @@ std::vector<Notification> ControlBackend::take_notifications() const {
   return connection_.take_notifications();
 }
 
+NotificationWatch ControlBackend::watch_notifications() const {
+  return connection_.watch_notifications();
+}
+
 std::size_t ControlBackend::dropped_notifications() const noexcept {
   return connection_.dropped_notifications();
 }

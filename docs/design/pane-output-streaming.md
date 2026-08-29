@@ -73,7 +73,10 @@ forms the Server overrides `socket_path`, the argument overrides
 `parse(Notification)` turns every known notification into typed borrowed
 fields while preserving unknown additions. `NotificationRange` drains those
 events to a deadline, and `notification_fd()` lets an external POSIX event loop
-wake without polling.
+wake without polling. `watch_notifications` on a `Connection` or streaming
+`Server` gives each additional consumer its own cursor, wait, loss count, and
+readiness descriptor over the same bounded retained log, so one consumer
+cannot drain another's events.
 
 ## Related
 

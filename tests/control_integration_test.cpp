@@ -347,6 +347,68 @@ TEST(ControlModeConnection, WaitForNotificationsWakesOnTheEventNotTheDeadline) {
   EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
 }
 
+TEST(ControlModeConnection, NotificationWatchesDoNotStealFromEachOther) {
+  auto server = start_server(unique_name("control-watch"));
+  ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
+  auto connected = connect_to(*server);
+  ASSERT_TRUE(connected.has_value())
+      << (connected.has_value() ? "" : connected.error().message);
+  auto connection = std::move(*connected);
+
+  static_cast<void>(connection.take_notifications());
+  auto first = connection.watch_notifications();
+  auto second = connection.watch_notifications();
+
+  const auto created =
+      connection.execute(group({{"new-window", "-d", "-n", "watched"}}),
+                         std::chrono::steady_clock::now() + 2s);
+  ASSERT_FALSE(created.connection_error.has_value());
+
+  const auto deadline = std::chrono::steady_clock::now() + 2s;
+  const auto first_events = first.wait_for_notifications(deadline);
+  std::array<pollfd, 1> second_ready{
+      pollfd{.fd = second.notification_fd(), .events = POLLIN, .revents = 0}};
+  ASSERT_GE(second_ready.front().fd, 0);
+  ASSERT_EQ(::poll(second_ready.data(), second_ready.size(), 0), 1);
+  EXPECT_NE(second_ready.front().revents & POLLIN, 0);
+  const auto second_events = second.wait_for_notifications(deadline);
+  const auto legacy_events = connection.wait_for_notifications(deadline);
+
+  EXPECT_TRUE(has_notification(first_events, "%window-add "));
+  EXPECT_TRUE(has_notification(second_events, "%window-add "));
+  EXPECT_TRUE(has_notification(legacy_events, "%window-add "));
+  EXPECT_EQ(first.dropped_notifications(), 0U);
+  EXPECT_EQ(second.dropped_notifications(), 0U);
+  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+}
+
+TEST(ControlModeConnection, NotificationWatchDrainsAfterConnectionDestruction) {
+  auto server = start_server(unique_name("control-watch-lifetime"));
+  ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
+  libtmux::NotificationWatch watch;
+  {
+    auto connected = connect_to(*server);
+    ASSERT_TRUE(connected.has_value())
+        << (connected.has_value() ? "" : connected.error().message);
+    auto connection = std::move(*connected);
+    watch = connection.watch_notifications();
+
+    const auto created =
+        connection.execute(group({{"new-window", "-d", "-n", "retained"}}),
+                           std::chrono::steady_clock::now() + 2s);
+    ASSERT_FALSE(created.connection_error.has_value());
+    EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+  }
+
+  const auto retained = watch.take_notifications();
+  EXPECT_TRUE(has_notification(retained, "%window-add "));
+  std::array<pollfd, 1> closed{
+      pollfd{.fd = watch.notification_fd(), .events = POLLIN, .revents = 0}};
+  ASSERT_GE(closed.front().fd, 0);
+  ASSERT_EQ(::poll(closed.data(), closed.size(), 0), 1);
+  EXPECT_NE(closed.front().revents & POLLIN, 0);
+}
+
 // The other half: an empty answer must mean the deadline was reached.
 //
 // Stated as that implication rather than as "tmux says nothing for 300ms",

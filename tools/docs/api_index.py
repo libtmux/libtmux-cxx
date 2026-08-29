@@ -29,6 +29,7 @@ HEADER_ORDER = [
     "command.hpp",
     "options.hpp",
     "control.hpp",
+    "notification.hpp",
     "batch.hpp",
     "chain.hpp",
     "keys.hpp",

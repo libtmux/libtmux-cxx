@@ -138,10 +138,12 @@ public:
   // Taking drains: what comes back will not come back again, and an empty
   // result means nothing has arrived yet rather than that none will.
   //
-  // The buffer is bounded; `dropped_notifications` says how many were
-  // discarded, which distinguishes a quiet server from one that outran a
-  // caller who was not collecting.
+  // The log is bounded; `dropped_notifications` says how many this Server's
+  // legacy taking cursor missed. Each watch reports its own loss instead.
   [[nodiscard]] std::vector<Notification> take_notifications() const;
+  // An independent cursor over notifications emitted after this call. On a
+  // subprocess Server it is an empty, already-closed watch.
+  [[nodiscard]] NotificationWatch watch_notifications() const;
   [[nodiscard]] std::size_t dropped_notifications() const noexcept;
 
   // The same surface, dispatched over one open control connection instead of

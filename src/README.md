@@ -20,7 +20,8 @@ interface, and the rest of the library is written against that.
 | [`backend.cpp`](backend.cpp) | The default backend: one process per command |
 | [`control_backend.hpp`](control_backend.hpp), [`control_backend.cpp`](control_backend.cpp) | The other one: entity operations over a held-open control connection |
 | [`process.hpp`](process.hpp), [`process.cpp`](process.cpp) | Spawning, timeouts, capture limits. The only file that knows what a pipe is |
-| [`connection.cpp`](connection.cpp) | The control-mode protocol: reply blocks, notifications, the bounded buffer |
+| [`connection.cpp`](connection.cpp) | The control client lifecycle, request writes, and reply ownership |
+| [`notification_stream.cpp`](notification_stream.cpp) | One bounded notification log with independent consumer cursors |
 
 That seam is why the suite can run the entire public surface with **no tmux
 present**, against a scripted executor — and why the argv each operation sends

@@ -27,7 +27,7 @@
 #include "acquire.hpp"
 #include "backend.hpp"
 #include "control_backend.hpp"
-#include "notification_buffer.hpp"
+#include "notification_stream.hpp"
 
 namespace {
 
@@ -964,36 +964,58 @@ TEST(BackendSeam, AnInsertedControlReplyChecksBothFramesAndTheCallBound) {
 
 TEST(BackendSeam, NotificationRetentionDropsTheOldestAtItsBound) {
   constexpr std::size_t expected_bound = 4096U;
-  libtmux::detail::NotificationBuffer notifications;
+  libtmux::detail::NotificationStream notifications;
+  const auto cursor = notifications.subscribe(true);
   for (std::size_t index = 0U; index <= expected_bound; ++index) {
     libtmux::Notification notification;
     notification.body.push_back(static_cast<std::byte>(index & 0xffU));
     notifications.push(std::move(notification));
   }
 
-  ASSERT_EQ(notifications.size(), expected_bound);
-  EXPECT_EQ(notifications.dropped(), 1U);
-  auto held = notifications.take();
+  EXPECT_EQ(notifications.dropped(cursor), 1U);
+  auto held = notifications.take(cursor);
   ASSERT_EQ(held.size(), expected_bound);
   ASSERT_FALSE(held.front().body.empty());
   EXPECT_EQ(held.front().body.front(), std::byte{1});
-  EXPECT_TRUE(notifications.empty());
+  EXPECT_TRUE(notifications.take(cursor).empty());
 }
 
 TEST(BackendSeam, NotificationRetentionAlsoBoundsBytes) {
-  libtmux::detail::NotificationBuffer notifications{8U, 5U};
+  libtmux::detail::NotificationStream notifications{8U, 5U};
+  const auto cursor = notifications.subscribe(true);
   notifications.push(libtmux::Notification{.body = bytes("old")});
   notifications.push(libtmux::Notification{.body = bytes("new")});
 
-  auto held = notifications.take();
+  auto held = notifications.take(cursor);
 
   ASSERT_EQ(held.size(), 1U);
   EXPECT_EQ(held.front().body, bytes("new"));
-  EXPECT_EQ(notifications.dropped(), 1U);
+  EXPECT_EQ(notifications.dropped(cursor), 1U);
 
   notifications.push(libtmux::Notification{.body = bytes("oversized")});
-  EXPECT_TRUE(notifications.empty());
-  EXPECT_EQ(notifications.dropped(), 2U);
+  EXPECT_TRUE(notifications.take(cursor).empty());
+  EXPECT_EQ(notifications.dropped(cursor), 2U);
+}
+
+TEST(BackendSeam, NotificationDropsBelongToTheCursorThatFellBehind) {
+  libtmux::detail::NotificationStream notifications{2U, 1024U};
+  const auto fast = notifications.subscribe(true);
+  const auto slow = notifications.subscribe(true);
+
+  notifications.push(libtmux::Notification{.body = bytes("one")});
+  notifications.push(libtmux::Notification{.body = bytes("two")});
+  ASSERT_EQ(notifications.take(fast).size(), 2U);
+
+  notifications.push(libtmux::Notification{.body = bytes("three")});
+  const auto fast_tail = notifications.take(fast);
+  const auto slow_tail = notifications.take(slow);
+
+  ASSERT_EQ(fast_tail.size(), 1U);
+  EXPECT_EQ(fast_tail.front().body, bytes("three"));
+  EXPECT_EQ(notifications.dropped(fast), 0U);
+  ASSERT_EQ(slow_tail.size(), 2U);
+  EXPECT_EQ(slow_tail.front().body, bytes("two"));
+  EXPECT_EQ(notifications.dropped(slow), 1U);
 }
 
 } // namespace

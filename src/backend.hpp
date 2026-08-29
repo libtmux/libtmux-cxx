@@ -138,6 +138,7 @@ public:
   [[nodiscard]] virtual std::vector<Notification> take_notifications() const {
     return {};
   }
+  [[nodiscard]] virtual NotificationWatch watch_notifications() const { return {}; }
   [[nodiscard]] virtual std::size_t dropped_notifications() const noexcept { return 0; }
 
   // A synchronous tmux command inserted by this one writes to subprocess
