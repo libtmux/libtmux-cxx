@@ -38,10 +38,8 @@ CATALOGUE: t.Final = (
     Mutation(
         mutation_id="format-before-terminator",
         path="src/snapshot.cpp",
-        find='    const auto terminator = std::ranges::find(request, "--");\n'
-        '    request.insert(terminator, {"-F", format_request(fields)});',
-        replace='    request.emplace_back("-F");\n'
-        "    request.push_back(format_request(fields));",
+        find='      if (!inserted && argument.value() == "--") {',
+        replace="      if (false) {",
         target="libtmux_backend_seam_test",
         test_regex=r"^libtmux[.]backend_seam$",
         guards="a creation call carrying a shell command still answers with a "
@@ -71,8 +69,8 @@ CATALOGUE: t.Final = (
     Mutation(
         mutation_id="control-batch-keeps-its-shape",
         path="src/control_backend.cpp",
-        find="  for (const std::vector<std::string>& command : batch.commands()) {\n"
-        "    request.group.push_back(ControlCommand{command});\n"
+        find="  for (const CommandRequest& command : batch.commands()) {\n"
+        "    request.group.push_back(ControlCommand{command.argv()});\n"
         "  }",
         replace="  request.group.push_back(ControlCommand{batch.argv()});",
         target="libtmux_backend_seam_test",
@@ -106,8 +104,8 @@ CATALOGUE: t.Final = (
     Mutation(
         mutation_id="tmux37-unnamed-break-guard",
         path="src/entities.cpp",
-        find='                                " \'#{==:#{version},3.7}\' { " + native +',
-        replace='                                " \'#{==:#{version},3.7a}\' { " + native +',
+        find=(" " * 32) + "\" '#{==:#{version},3.7}' { \" + native +",
+        replace=(" " * 32) + "\" '#{==:#{version},3.7a}' { \" + native +",
         target="libtmux_backend_seam_test",
         test_regex=r"^libtmux[.]backend_seam$",
         guards="raw tmux 3.7 receives a name before an unnamed multi-pane "
@@ -116,8 +114,14 @@ CATALOGUE: t.Final = (
     Mutation(
         mutation_id="unnamed-only-pane-stays-put",
         path="src/entities.cpp",
-        find='        "if-shell", "-F", "-t", target, "#{==:#{window_panes},1}", current, guarded};',
-        replace='        "if-shell", "-F", "-t", target, "#{==:#{window_panes},0}", current, guarded};',
+        find=(
+            '        "if-shell", "-F", "-t", target, '
+            '"#{==:#{window_panes},1}", current, guarded};'
+        ),
+        replace=(
+            '        "if-shell", "-F", "-t", target, '
+            '"#{==:#{window_panes},0}", current, guarded};'
+        ),
         target="libtmux_backend_seam_test",
         test_regex=r"^libtmux[.]backend_seam$",
         guards="an only-pane unnamed break returns its existing window rather than "
@@ -126,8 +130,14 @@ CATALOGUE: t.Final = (
     Mutation(
         mutation_id="named-only-pane-stays-put",
         path="src/entities.cpp",
-        find='      "if-shell", "-F", "-t", target, "#{==:#{window_panes},1}", retained, native};',
-        replace='      "if-shell", "-F", "-t", target, "#{==:#{window_panes},0}", retained, native};',
+        find=(
+            '      "if-shell", "-F", "-t", target, '
+            '"#{==:#{window_panes},1}", retained, native};'
+        ),
+        replace=(
+            '      "if-shell", "-F", "-t", target, '
+            '"#{==:#{window_panes},0}", retained, native};'
+        ),
         target="libtmux_backend_seam_test",
         test_regex=r"^libtmux[.]backend_seam$",
         guards="naming an only-pane window renames it in place rather than moving "
