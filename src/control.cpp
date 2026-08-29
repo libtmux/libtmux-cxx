@@ -279,9 +279,8 @@ struct KindName {
   NotificationKind kind;
 };
 
-// Every name tmux writes, across 3.2a to master. The two paste-buffer ones
-// arrived in 3.4; an older server simply never sends them.
-constexpr std::array<KindName, 21> kNotificationNames{{
+// Known notification names in the supported tmux range.
+constexpr auto kNotificationNames = std::to_array<KindName>({
     {"%output", NotificationKind::output},
     {"%extended-output", NotificationKind::extended_output},
     {"%pause", NotificationKind::paused},
@@ -303,7 +302,11 @@ constexpr std::array<KindName, 21> kNotificationNames{{
     {"%paste-buffer-changed", NotificationKind::paste_buffer_changed},
     {"%paste-buffer-deleted", NotificationKind::paste_buffer_deleted},
     {"%subscription-changed", NotificationKind::subscription_changed},
-}};
+    {"%config-error", NotificationKind::config_error},
+    {"%exit", NotificationKind::exit},
+    {"%layout-change", NotificationKind::layout_change},
+    {"%message", NotificationKind::message},
+});
 
 // The arguments before any free text or payload, split on single spaces. Only
 // the leading region is tokenised: an output payload is already unescaped, so
@@ -359,12 +362,9 @@ ParsedNotification parse(const Notification& notification) {
     return parsed;
   }
 
-  // Output kinds end in bytes rather than fields, so their prefix is fixed
-  // width and everything after it is payload.
-  if (parsed.kind == NotificationKind::output ||
-      parsed.kind == NotificationKind::extended_output) {
-    const std::size_t argument_count =
-        parsed.kind == NotificationKind::output ? 2U : 4U;
+  // `%output` has one field before its byte payload.
+  if (parsed.kind == NotificationKind::output) {
+    constexpr std::size_t argument_count = 2U;
     const auto fields = leading_fields(line, argument_count);
     if (fields.size() < argument_count) {
       return parsed;
@@ -374,16 +374,31 @@ ParsedNotification parse(const Notification& notification) {
     for (std::size_t index = 0; index < argument_count; ++index) {
       consumed += fields[index].size() + 1U;
     }
-    if (parsed.kind == NotificationKind::extended_output) {
-      std::uint64_t age = 0;
-      const auto& digits = fields[2];
-      if (std::from_chars(digits.data(), digits.data() + digits.size(), age).ec ==
-          std::errc{}) {
-        parsed.age = age;
-      }
-    }
     if (consumed <= notification.body.size()) {
       parsed.payload = std::span<const std::byte>{notification.body}.subspan(consumed);
+    }
+    return parsed;
+  }
+  // Extended output may grow fields before the delimiter; tmux requires
+  // callers to ignore them.
+  if (parsed.kind == NotificationKind::extended_output) {
+    const auto fields = leading_fields(line, 3U);
+    if (fields.size() < 3U) {
+      return parsed;
+    }
+    place_argument(parsed, fields[1]);
+    std::uint64_t age = 0;
+    const auto& digits = fields[2];
+    const auto converted =
+        std::from_chars(digits.data(), digits.data() + digits.size(), age);
+    if (converted.ec == std::errc{} && converted.ptr == digits.data() + digits.size()) {
+      parsed.age = age;
+    }
+    const auto delimiter = line.find(
+        " : ", static_cast<std::size_t>(digits.data() - line.data()) + digits.size());
+    if (delimiter != std::string_view::npos) {
+      parsed.payload =
+          std::span<const std::byte>{notification.body}.subspan(delimiter + 3U);
     }
     return parsed;
   }

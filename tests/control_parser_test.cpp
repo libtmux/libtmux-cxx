@@ -326,26 +326,50 @@ std::string as_text(std::span<const std::byte> bytes) {
 
 } // namespace
 
-TEST(NotificationParse, ReadsTheNameOfEveryShapeTmuxWrites) {
+TEST(NotificationParse, KnowsEveryNotificationInTheSupportedProtocol) {
   struct Case {
     std::string_view line;
     libtmux::NotificationKind kind;
   };
-  constexpr std::array<Case, 8> cases{{
+  constexpr auto cases = std::to_array<Case>({
+      {"%output %1 value", libtmux::NotificationKind::output},
+      {"%extended-output %1 0 : value", libtmux::NotificationKind::extended_output},
+      {"%pause %1", libtmux::NotificationKind::paused},
+      {"%continue %1", libtmux::NotificationKind::resumed},
       {"%sessions-changed", libtmux::NotificationKind::sessions_changed},
+      {"%session-changed $0 work", libtmux::NotificationKind::session_changed},
+      {"%session-renamed $0 work", libtmux::NotificationKind::session_renamed},
+      {"%session-window-changed $0 @1",
+       libtmux::NotificationKind::session_window_changed},
+      {"%client-detached tty", libtmux::NotificationKind::client_detached},
+      {"%client-session-changed tty $0 work",
+       libtmux::NotificationKind::client_session_changed},
       {"%window-add @1", libtmux::NotificationKind::window_add},
       {"%window-close @2", libtmux::NotificationKind::window_close},
-      {"%session-changed $0 work", libtmux::NotificationKind::session_changed},
+      {"%window-renamed @1 work", libtmux::NotificationKind::window_renamed},
       {"%window-pane-changed @1 %4", libtmux::NotificationKind::window_pane_changed},
+      {"%unlinked-window-add @1", libtmux::NotificationKind::unlinked_window_add},
+      {"%unlinked-window-close @1", libtmux::NotificationKind::unlinked_window_close},
+      {"%unlinked-window-renamed @1 work",
+       libtmux::NotificationKind::unlinked_window_renamed},
       {"%pane-mode-changed %3", libtmux::NotificationKind::pane_mode_changed},
       {"%paste-buffer-changed buffer0",
        libtmux::NotificationKind::paste_buffer_changed},
-      {"%client-detached tty", libtmux::NotificationKind::client_detached},
-  }};
+      {"%paste-buffer-deleted buffer0",
+       libtmux::NotificationKind::paste_buffer_deleted},
+      {"%subscription-changed sub $0 @1 0 %2 : value",
+       libtmux::NotificationKind::subscription_changed},
+      {"%config-error invalid option", libtmux::NotificationKind::config_error},
+      {"%exit server exited", libtmux::NotificationKind::exit},
+      {"%layout-change @1 layout visible flags",
+       libtmux::NotificationKind::layout_change},
+      {"%message hello", libtmux::NotificationKind::message},
+  });
   for (const Case& one : cases) {
     const auto held = notification_of(one.line);
     const auto parsed = libtmux::parse(held);
     EXPECT_EQ(parsed.kind, one.kind) << one.line;
+    EXPECT_EQ(libtmux::to_string(parsed.kind), parsed.name) << one.line;
     EXPECT_EQ(parsed.name, one.line.substr(0, one.line.find(' '))) << one.line;
   }
 }
@@ -393,6 +417,25 @@ TEST(NotificationParse, ReadsTheAgeOfExtendedOutput) {
   EXPECT_EQ(as_text(parsed.payload), "late bytes");
 }
 
+TEST(NotificationParse, IgnoresFutureExtendedOutputFieldsBeforeTheDelimiter) {
+  const auto held =
+      notification_of("%extended-output %5 1234 future fields : late bytes");
+  const auto parsed = libtmux::parse(held);
+  EXPECT_EQ(parsed.kind, libtmux::NotificationKind::extended_output);
+  EXPECT_EQ(parsed.pane, "%5");
+  ASSERT_TRUE(parsed.age.has_value());
+  EXPECT_EQ(*parsed.age, 1234U);
+  EXPECT_EQ(as_text(parsed.payload), "late bytes");
+}
+
+TEST(NotificationParse, RejectsAnExtendedOutputAgeWithTrailingText) {
+  const auto held = notification_of("%extended-output %5 1234ms : late bytes");
+  const auto parsed = libtmux::parse(held);
+  EXPECT_EQ(parsed.kind, libtmux::NotificationKind::extended_output);
+  EXPECT_FALSE(parsed.age.has_value());
+  EXPECT_EQ(as_text(parsed.payload), "late bytes");
+}
+
 // A name this build does not know is a newer tmux, not a failure: the set has
 // only ever grown across the supported range.
 TEST(NotificationParse, ReportsAnUnknownNameWithoutLosingIt) {
@@ -401,18 +444,5 @@ TEST(NotificationParse, ReportsAnUnknownNameWithoutLosingIt) {
   EXPECT_EQ(parsed.kind, libtmux::NotificationKind::unknown);
   EXPECT_EQ(parsed.name, "%something-tmux-added-later");
   EXPECT_EQ(parsed.window, "@9");
-}
-
-TEST(NotificationParse, NamesEveryKindItCanReport) {
-  // Round-trips the table, so a kind added without a name cannot pass.
-  constexpr std::array<libtmux::NotificationKind, 4> sample{
-      libtmux::NotificationKind::output, libtmux::NotificationKind::paused,
-      libtmux::NotificationKind::resumed,
-      libtmux::NotificationKind::subscription_changed};
-  for (const auto kind : sample) {
-    const auto name = libtmux::to_string(kind);
-    EXPECT_NE(name, "unknown");
-    EXPECT_EQ(name.front(), '%');
-  }
   EXPECT_EQ(libtmux::to_string(libtmux::NotificationKind::unknown), "unknown");
 }

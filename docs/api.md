@@ -4554,6 +4554,10 @@ Decode tmux's control protocol.  A control-mode stream interleaves command reply
   - [`NotificationKind::paste_buffer_changed`](#libtmux-control-hpp-notificationkind-paste-buffer-changed)
   - [`NotificationKind::paste_buffer_deleted`](#libtmux-control-hpp-notificationkind-paste-buffer-deleted)
   - [`NotificationKind::subscription_changed`](#libtmux-control-hpp-notificationkind-subscription-changed)
+  - [`NotificationKind::config_error`](#libtmux-control-hpp-notificationkind-config-error)
+  - [`NotificationKind::exit`](#libtmux-control-hpp-notificationkind-exit)
+  - [`NotificationKind::layout_change`](#libtmux-control-hpp-notificationkind-layout-change)
+  - [`NotificationKind::message`](#libtmux-control-hpp-notificationkind-message)
 - [`ParsedNotification`](#libtmux-control-hpp-parsednotification)
   - [`ParsedNotification::kind`](#libtmux-control-hpp-parsednotification-kind)
   - [`ParsedNotification::name`](#libtmux-control-hpp-parsednotification-name)
@@ -4741,7 +4745,7 @@ std::vector<std::byte> body;
 <a id="libtmux-control-hpp-notificationkind"></a>
 ### `NotificationKind`
 
-What a notification is, once its name and arguments have been read.  `unknown` is not a failure. tmux has only ever added notifications across the range this library supports — nineteen at 3.2a, twenty-one from 3.4 — so a name this build does not know is a newer tmux, and the body is still there to read. That is also why this is a kind and fields rather than a variant: an exhaustive `std::visit` would turn every such addition into a caller-breaking change.
+What a notification is, once its name and arguments have been read.  `unknown` is not a failure. tmux adds notification names over time, so a name this build does not know may be from a newer tmux, and the body is still there to read. A kind and fields keep such additions from breaking an exhaustive `std::visit` in caller code.
 
 ```cpp
 enum class NotificationKind : std::uint8_t;
@@ -4812,6 +4816,18 @@ enum class NotificationKind : std::uint8_t;
 
 <a id="libtmux-control-hpp-notificationkind-subscription-changed"></a>
 #### `NotificationKind::subscription_changed` — `subscription_changed,`
+
+<a id="libtmux-control-hpp-notificationkind-config-error"></a>
+#### `NotificationKind::config_error` — `config_error,`
+
+<a id="libtmux-control-hpp-notificationkind-exit"></a>
+#### `NotificationKind::exit` — `exit,`
+
+<a id="libtmux-control-hpp-notificationkind-layout-change"></a>
+#### `NotificationKind::layout_change` — `layout_change,`
+
+<a id="libtmux-control-hpp-notificationkind-message"></a>
+#### `NotificationKind::message` — `message,`
 
 <a id="libtmux-control-hpp-parsednotification"></a>
 ### `ParsedNotification`

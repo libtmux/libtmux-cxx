@@ -73,12 +73,10 @@ using Event = std::variant<ControlBlock, Notification>;
 
 // What a notification is, once its name and arguments have been read.
 //
-// `unknown` is not a failure. tmux has only ever added notifications across
-// the range this library supports — nineteen at 3.2a, twenty-one from 3.4 —
-// so a name this build does not know is a newer tmux, and the body is still
-// there to read. That is also why this is a kind and fields rather than a
-// variant: an exhaustive `std::visit` would turn every such addition into a
-// caller-breaking change.
+// `unknown` is not a failure. tmux adds notification names over time, so a
+// name this build does not know may be from a newer tmux, and the body is
+// still there to read. A kind and fields keep such additions from breaking an
+// exhaustive `std::visit` in caller code.
 enum class NotificationKind : std::uint8_t {
   unknown,
   output,
@@ -102,6 +100,10 @@ enum class NotificationKind : std::uint8_t {
   paste_buffer_changed,
   paste_buffer_deleted,
   subscription_changed,
+  config_error,
+  exit,
+  layout_change,
+  message,
 };
 
 [[nodiscard]] std::string_view to_string(NotificationKind kind) noexcept;
