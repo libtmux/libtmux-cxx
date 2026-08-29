@@ -7,12 +7,16 @@
 // A control-mode connection is a client without a terminal, which is what
 // makes these testable at all.
 
+#include <cerrno>
 #include <chrono>
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <vector>
+
+#include <sys/stat.h>
 
 #include <gtest/gtest.h>
 
@@ -26,6 +30,23 @@ namespace {
 using libtmux::Client;
 using libtmux::Server;
 using libtmux::Session;
+
+bool same_inode(const std::filesystem::path& left, const std::filesystem::path& right,
+                std::error_code& error) {
+  struct stat left_metadata {};
+  if (::lstat(left.c_str(), &left_metadata) != 0) {
+    error = {errno, std::generic_category()};
+    return false;
+  }
+  struct stat right_metadata {};
+  if (::lstat(right.c_str(), &right_metadata) != 0) {
+    error = {errno, std::generic_category()};
+    return false;
+  }
+  error.clear();
+  return left_metadata.st_dev == right_metadata.st_dev &&
+         left_metadata.st_ino == right_metadata.st_ino;
+}
 
 Server connect(const libtmux::test::ScopedTmuxServer& fixture) {
   auto server = Server::at_socket_path(fixture.socket_path().string());
@@ -150,8 +171,7 @@ TEST(Client, AttachingIsACommandLineRatherThanACall) {
   EXPECT_EQ(command.front(), "tmux");
   EXPECT_EQ(command[1], "-S");
   std::error_code compared;
-  EXPECT_TRUE(
-      std::filesystem::equivalent(command[2], fixture->socket_path(), compared));
+  EXPECT_TRUE(same_inode(command[2], fixture->socket_path(), compared));
   EXPECT_FALSE(compared) << compared.message();
   EXPECT_NE(command[2], fixture->socket_path().string())
       << "attach must use the incarnation-pinned alias";
