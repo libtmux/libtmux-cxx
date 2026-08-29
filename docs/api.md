@@ -59,11 +59,6 @@ The connection root.  A Server names which tmux server to talk to and how to rea
   - [`Server::run_chain`](#libtmux-server-hpp-server-run-chain)
   - [`Server::control`](#libtmux-server-hpp-server-control)
   - [`Server::control_with_options`](#libtmux-server-hpp-server-control-with-options)
-  - [`Server::take_notifications`](#libtmux-server-hpp-server-take-notifications)
-  - [`Server::watch_notifications`](#libtmux-server-hpp-server-watch-notifications)
-  - [`Server::dropped_notifications`](#libtmux-server-hpp-server-dropped-notifications)
-  - [`Server::over_control`](#libtmux-server-hpp-server-over-control)
-  - [`Server::over_control_with_options`](#libtmux-server-hpp-server-over-control-with-options)
   - [`Server::tmux_version`](#libtmux-server-hpp-server-tmux-version)
   - [`Server::is_alive`](#libtmux-server-hpp-server-is-alive)
   - [`Server::check_alive`](#libtmux-server-hpp-server-check-alive)
@@ -161,7 +156,7 @@ Run one command and return its standard output.  The timeout still rides on the 
 ```cpp
 [[nodiscard]] expected<std::string, CommandFailure> run_batch(const CommandBatch& batch) const;
 ```
-Run several commands in one invocation. tmux runs a batch fail-fast, so a failed batch is partially applied rather than rolled back, and one exit status covers the group: which member failed needs control mode.
+Run several commands in one invocation. tmux runs a batch fail-fast, so a failed batch is partially applied rather than rolled back, and one exit status covers the group, so tmux does not identify which member failed.
 
 <a id="libtmux-server-hpp-server-run-chain"></a>
 #### `Server::run_chain`
@@ -177,7 +172,7 @@ Run a chain. A chain that failed validation never reaches tmux, and says which s
 ```cpp
 [[nodiscard]] expected<Connection, ProtocolError> control(std::string_view session) const;
 ```
-Open a control-mode connection to one session.  This is the streaming half of the transport: a control connection stays open, gives each command its own reply block, and delivers asynchronous notifications between them. The synchronous surface above is unaffected — a caller who never opens one never pays for it.  Fails with `ProtocolError`, not `CommandFailure`, because that is what the `Connection` it returns speaks: an error type here that the value's own surface does not use would make the doorway disagree with the room. `over_control` returns an ordinary `Server` and so reports the ordinary failure.
+Open a control-mode connection to one session.  This is the streaming half of the transport: a control connection stays open, exposes guarded reply blocks in wire order, and delivers events outside those blocks. The synchronous surface above is unaffected — a caller who never opens one never pays for it. A guarded block is not a final result for commands whose work tmux completes asynchronously.  Fails with `ProtocolError`, not `CommandFailure`, because that is what the `Connection` it returns speaks: an error type here that the value's own surface does not use would make the doorway disagree with the room.
 
 <a id="libtmux-server-hpp-server-control-with-options"></a>
 #### `Server::control_with_options`
@@ -187,52 +182,13 @@ Open a control-mode connection to one session.  This is the streaming half of th
 ```
 The Server supplies the socket and `session` supplies the session name; every other connection option is kept, including pane output policy.
 
-<a id="libtmux-server-hpp-server-take-notifications"></a>
-#### `Server::take_notifications`
-
-```cpp
-[[nodiscard]] std::vector<Notification> take_notifications() const;
-```
-What tmux has said on its own initiative since the last call: a window renamed, a pane exited, a client attached. A Server that runs a process per command hears nothing between them and answers with nothing, so a caller that wants this opens one with `over_control`.  Taking drains: what comes back will not come back again, and an empty result means nothing has arrived yet rather than that none will.  The log is bounded; `dropped_notifications` says how many this Server's legacy taking cursor missed. Each watch reports its own loss instead.
-
-<a id="libtmux-server-hpp-server-watch-notifications"></a>
-#### `Server::watch_notifications`
-
-```cpp
-[[nodiscard]] NotificationWatch watch_notifications() const;
-```
-An independent cursor over notifications emitted after this call. On a subprocess Server it is an empty, already-closed watch.
-
-<a id="libtmux-server-hpp-server-dropped-notifications"></a>
-#### `Server::dropped_notifications`
-
-```cpp
-[[nodiscard]] std::size_t dropped_notifications() const noexcept;
-```
-
-<a id="libtmux-server-hpp-server-over-control"></a>
-#### `Server::over_control`
-
-```cpp
-[[nodiscard]] expected<Server, CommandFailure> over_control(std::string_view session) const;
-```
-The same surface, dispatched over one open control connection instead of a process per command. Entities taken from the result are ordinary entities; nothing above the transport knows the difference.  Complete writes are ordered on the shared stream; callers then wait for their own private request boundaries concurrently. Reply-inserting commands and live aliases preserve every block before that boundary.
-
-<a id="libtmux-server-hpp-server-over-control-with-options"></a>
-#### `Server::over_control_with_options`
-
-```cpp
-[[nodiscard]] expected<Server, CommandFailure> over_control_with_options(std::string_view session, ConnectionOptions options) const;
-```
-As above, with the connection's timeouts, limits, executable, and output policy selected by the caller rather than reconstructed from a route.
-
 <a id="libtmux-server-hpp-server-tmux-version"></a>
 #### `Server::tmux_version`
 
 ```cpp
 [[nodiscard]] expected<Version, CommandFailure> tmux_version() const;
 ```
-The subprocess backend asks `tmux -V` without touching a server; a control backend asks its connected server. Both use this Server's execution policy.
+Ask the selected subprocess executable with `tmux -V` without touching a server. The call uses this Server's execution policy.
 
 <a id="libtmux-server-hpp-server-is-alive"></a>
 #### `Server::is_alive`
@@ -509,7 +465,6 @@ What this Server can promise without probing tmux.  These describe the local bac
 - [`BackendKind`](#libtmux-capabilities-hpp-backendkind)
   - [`BackendKind::custom`](#libtmux-capabilities-hpp-backendkind-custom)
   - [`BackendKind::subprocess`](#libtmux-capabilities-hpp-backendkind-subprocess)
-  - [`BackendKind::control_mode`](#libtmux-capabilities-hpp-backendkind-control-mode)
 - [`ServerFeature`](#libtmux-capabilities-hpp-serverfeature)
   - [`ServerFeature::exact_inspection`](#libtmux-capabilities-hpp-serverfeature-exact-inspection)
   - [`ServerFeature::server_cleanup`](#libtmux-capabilities-hpp-serverfeature-server-cleanup)
@@ -523,7 +478,6 @@ What this Server can promise without probing tmux.  These describe the local bac
   - [`ServerFeature::server_state`](#libtmux-capabilities-hpp-serverfeature-server-state)
   - [`ServerFeature::wait_channels`](#libtmux-capabilities-hpp-serverfeature-wait-channels)
   - [`ServerFeature::control_mode`](#libtmux-capabilities-hpp-serverfeature-control-mode)
-  - [`ServerFeature::receives_asynchronous_notifications`](#libtmux-capabilities-hpp-serverfeature-receives-asynchronous-notifications)
 - [`ServerCapabilities`](#libtmux-capabilities-hpp-servercapabilities)
   - [`ServerCapabilities::implementation`](#libtmux-capabilities-hpp-servercapabilities-implementation)
   - [`ServerCapabilities::backend`](#libtmux-capabilities-hpp-servercapabilities-backend)
@@ -561,9 +515,6 @@ enum class BackendKind;
 
 <a id="libtmux-capabilities-hpp-backendkind-subprocess"></a>
 #### `BackendKind::subprocess` — `subprocess,`
-
-<a id="libtmux-capabilities-hpp-backendkind-control-mode"></a>
-#### `BackendKind::control_mode` — `control_mode,`
 
 <a id="libtmux-capabilities-hpp-serverfeature"></a>
 ### `ServerFeature`
@@ -633,11 +584,6 @@ Latched `wait-for` channels.
 #### `ServerFeature::control_mode` — `control_mode,`
 
 This Server can open a persistent control connection.
-
-<a id="libtmux-capabilities-hpp-serverfeature-receives-asynchronous-notifications"></a>
-#### `ServerFeature::receives_asynchronous_notifications` — `receives_asynchronous_notifications,`
-
-This Server itself is already backed by control mode and receives events.
 
 <a id="libtmux-capabilities-hpp-servercapabilities"></a>
 ### `ServerCapabilities`
@@ -5057,7 +5003,7 @@ Connection& operator=(const Connection&) = delete;
 ```cpp
 ControlRequestResult execute(ControlRequest request, std::chrono::steady_clock::time_point deadline);
 ```
-Completes at this request's private protocol boundary and preserves every reply before it. It does not invent per-operation attribution that tmux does not transmit.
+Completes at this request's private protocol boundary and preserves every guarded block before it. This is wire evidence, not a final command result: tmux may end a block before a waiting job or file operation later reports unguarded output or failure. Use `Server::run` when final success or failure is required.
 
 <a id="libtmux-control-hpp-connection-take-notifications"></a>
 #### `Connection::take_notifications`
@@ -5065,7 +5011,7 @@ Completes at this request's private protocol boundary and preserves every reply 
 ```cpp
 [[nodiscard]] std::vector<Notification> take_notifications();
 ```
-Everything tmux has said since the last call, returned at once.  Taking drains: what comes back will not come back again. It says nothing about what happens next, so an empty result does not mean the stream has gone quiet, and a later one is new traffic rather than a repeat. Wait for the next event with `wait_for_notifications` rather than polling for one.
+Every outside-block event tmux has written since the last call.  Taking drains: what comes back will not come back again. It says nothing about what happens next, so an empty result does not mean the stream has gone quiet, and a later one is new traffic rather than a repeat. Wait for the next event with `wait_for_notifications` rather than polling for one.
 
 <a id="libtmux-control-hpp-connection-watch-notifications"></a>
 #### `Connection::watch_notifications`
@@ -5073,7 +5019,7 @@ Everything tmux has said since the last call, returned at once.  Taking drains: 
 ```cpp
 [[nodiscard]] NotificationWatch watch_notifications();
 ```
-Open an independent cursor at the next notification. Unlike the legacy taking methods above, watches do not steal events from each other.
+Open an independent cursor at the next outside-block event. Unlike the legacy taking methods above, watches do not steal events from each other.
 
 <a id="libtmux-control-hpp-connection-wait-for-notifications"></a>
 #### `Connection::wait_for_notifications`
@@ -5081,7 +5027,7 @@ Open an independent cursor at the next notification. Unlike the legacy taking me
 ```cpp
 [[nodiscard]] std::vector<Notification> wait_for_notifications(std::chrono::steady_clock::time_point deadline);
 ```
-The same, but waits for something to arrive.  `take_notifications` returns immediately, so a caller reacting to tmux had to call it in a loop and sleep between — which either wakes too often or reacts too late, and picks that trade with no idea how long the next event will take. This blocks until at least one notification is available, the connection fails, or the deadline passes, and returns whatever it has.  An empty result means the deadline passed or the stream ended; the two are told apart by asking `execute` or `shutdown`, which report the failure. Notifications already buffered are returned without waiting at all.
+The same, but waits for something to arrive.  `take_notifications` returns immediately, so a caller reacting to tmux had to call it in a loop and sleep between — which either wakes too often or reacts too late, and picks that trade with no idea how long the next event will take. This blocks until at least one event is available, the connection fails, or the deadline passes, and returns whatever it has.  An empty result means the deadline passed or the stream ended; the two are told apart by asking `execute` or `shutdown`, which report the failure. Events already buffered are returned without waiting at all.
 
 <a id="libtmux-control-hpp-connection-notification-fd"></a>
 #### `Connection::notification_fd`
@@ -5113,7 +5059,7 @@ Everything tmux says until the deadline, as one loop rather than two.  Borrows t
 ```cpp
 [[nodiscard]] std::size_t dropped_notifications() const noexcept;
 ```
-How many notifications this Connection's legacy taking cursor missed to keep the shared log bounded. Each NotificationWatch has its own count.
+How many outside-block events this Connection's legacy taking cursor missed to keep the shared log bounded. Each watch has its own count.
 
 <a id="libtmux-control-hpp-connection-native-child-pid"></a>
 #### `Connection::native_child_pid`
@@ -5157,7 +5103,7 @@ using Event = std::variant<ControlBlock, Notification>;
 <a id="libtmux-notification-hpp"></a>
 ## `libtmux/notification.hpp`
 
-Notifications tmux emits outside synchronous command replies.  Raw bytes stay available for forward compatibility. `parse` adds typed, borrowed views for known notification shapes, while `NotificationWatch` gives one consumer an independent cursor over a connection's bounded log.
+Events tmux emits outside guarded control reply blocks.  Most are protocol notifications. A wait-capable command may also print delayed output or errors there, without a request identifier. Raw bytes preserve that ambiguity; `parse` adds borrowed views only for known notification shapes.
 
 **Symbols:**
 
@@ -5228,11 +5174,12 @@ struct Notification;
 ```cpp
 std::vector<std::byte> body;
 ```
+Compatibility name for one outside-block control event. Unknown content is not proof that tmux emitted a notification rather than delayed output.
 
 <a id="libtmux-notification-hpp-notificationkind"></a>
 ### `NotificationKind`
 
-What a notification is, once its name and arguments have been read.  `unknown` is not a failure. tmux adds notification names over time, so a name this build does not know may be from a newer tmux, and the body is still there to read. A kind and fields keep such additions from breaking an exhaustive `std::visit` in caller code.
+What a notification is, once its name and arguments have been read.  `unknown` is not a failure. The body may be a notification added by a newer tmux or unguarded delayed command output. A kind and fields keep additions from breaking an exhaustive `std::visit` in caller code.
 
 ```cpp
 enum class NotificationKind : std::uint8_t;
@@ -5385,7 +5332,7 @@ Milliseconds this output was behind when tmux wrote it. Only `extended_output` c
 <a id="libtmux-notification-hpp-notificationwatch"></a>
 ### `NotificationWatch`
 
-One independent view of notifications emitted after the watch was opened.  Taking from one watch never drains another watch or the Connection's legacy notification queue. The retained log is shared and bounded; this watch's dropped count reports only events this watch actually missed.  A watch retains the stream state. It can drain already-buffered events after its Connection is moved or destroyed; waits then wake as a closed stream.
+One independent view of outside-block events emitted after opening.  Taking from one watch never drains another watch or the Connection's legacy event queue. The retained log is shared and bounded; this watch's dropped count reports only events this watch actually missed.  A watch retains the stream state. It can drain already-buffered events after its Connection is moved or destroyed; waits then wake as a closed stream.
 
 ```cpp
 class NotificationWatch final;

@@ -21,8 +21,8 @@ The finished tree must provide:
 - Practical parity with the Python API and its tmux compatibility range.
 - Explicit owning snapshots, C++20 range composition, typed query
   expressions, relation predicates, and non-throwing cardinality helpers.
-- An opaque synchronous execution seam that can host subprocess or future
-  control-mode backends without changing entity types.
+- An opaque execution seam that can host a future asynchronous subprocess
+  reactor without changing entity types.
 - FetchContent, vcpkg, and installed-package consumption.
 - Real-tmux GoogleTest integration through `ScopedTmuxServer`.
 - Pinned formatting, curated static analysis, warnings-as-errors, and
@@ -219,11 +219,10 @@ strings remain available beside validated target and ID types.
 capability snapshot, diagnostic sink, and private synchronous backend. Those
 choices do not appear in entity template parameters or concrete member types.
 
-Calls through one shared connection are thread-safe. Each request completes
-exactly once and receives only its own result. A backend may run independent
-subprocess requests concurrently; a control-mode backend must serialize frame
-writes and demultiplex replies. No ordering is promised between independent
-mutations.
+Calls through one shared backend are thread-safe. Independent subprocess
+requests may run concurrently, and no ordering is promised between independent
+mutations. A raw control connection separately serializes frame writes and
+returns guarded blocks without claiming final status for waiting commands.
 
 Diagnostics use a per-connection FIFO queue with at most one active callback.
 Callbacks run after connection and backend locks are released; a reentrant

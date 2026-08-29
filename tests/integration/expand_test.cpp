@@ -163,8 +163,8 @@ TEST(ShowMessage, AMessageReachesAnAttachedControlClient) {
   // A control client is the only observer available to a test: a status line
   // needs a terminal, and tmux hands the same message to a control client as
   // `%message`.
-  auto watching = server.over_control(fixture->session_name());
-  ASSERT_TRUE(watching.has_value()) << watching.error().diagnostic;
+  auto watching = server.control(fixture->session_name());
+  ASSERT_TRUE(watching.has_value()) << watching.error().message;
   (void)watching->take_notifications();
 
   ASSERT_TRUE(server.show_message("marker-from-the-test").has_value());
@@ -200,8 +200,8 @@ TEST(ShowMessage, TheTargetIsTheContextTheTextExpandsIn) {
   ASSERT_TRUE(active.has_value()) << active.error().diagnostic;
   ASSERT_NE(active->id(), quiet->id());
 
-  auto watching = server.over_control(fixture->session_name());
-  ASSERT_TRUE(watching.has_value()) << watching.error().diagnostic;
+  auto watching = server.control(fixture->session_name());
+  ASSERT_TRUE(watching.has_value()) << watching.error().message;
   (void)watching->take_notifications();
 
   // Sent from the window that is not active: tmux expands the text against
@@ -243,8 +243,8 @@ TEST(ShowMessage, APaneNamesItselfRatherThanTheActiveOne) {
   const auto quiet = active->id() == second->id() ? window->panes()->front() : *second;
   ASSERT_NE(quiet.id(), active->id());
 
-  auto watching = server.over_control(fixture->session_name());
-  ASSERT_TRUE(watching.has_value()) << watching.error().diagnostic;
+  auto watching = server.control(fixture->session_name());
+  ASSERT_TRUE(watching.has_value()) << watching.error().message;
   (void)watching->take_notifications();
 
   ASSERT_TRUE(quiet.show_message("sent by #{pane_id}").has_value());

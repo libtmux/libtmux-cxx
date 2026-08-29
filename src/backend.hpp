@@ -15,7 +15,6 @@
 #include "libtmux/batch.hpp"
 #include "libtmux/capabilities.hpp"
 #include "libtmux/command.hpp"
-#include "libtmux/control.hpp"
 #include "libtmux/expected.hpp"
 #include "libtmux/version.hpp"
 #include <chrono>
@@ -89,12 +88,8 @@ public:
 
   // A batch, with its structure intact.
   //
-  // Flattening it to one argv is right for a transport that execs directly:
-  // tmux reads a bare `;` element as the separator. It is wrong for control
-  // mode, which writes a line and escapes every byte of every argument, so a
-  // flattened separator arrives as a literal semicolon and the whole batch
-  // collapses into one command with the rest as junk arguments. That reported
-  // success, which is why the transport is asked rather than told.
+  // tmux reads a bare `;` argv element as the separator. Keeping the batch
+  // virtual lets a custom executor preserve the same fail-fast contract.
   [[nodiscard]] virtual expected<std::string, CommandFailure>
   run_batch(const CommandBatch& batch, std::optional<std::chrono::milliseconds> timeout,
             std::optional<std::size_t> output_limit) const {
@@ -131,28 +126,6 @@ public:
   // Which tmux is behind this connection. How to ask depends on the executor,
   // so the executor answers.
   [[nodiscard]] virtual expected<Version, CommandFailure> version() const = 0;
-
-  // What tmux has said on its own initiative since the last call. A transport
-  // that runs a process per command hears nothing between them and answers
-  // with nothing; a connection that stays open hears everything.
-  [[nodiscard]] virtual std::vector<Notification> take_notifications() const {
-    return {};
-  }
-  [[nodiscard]] virtual NotificationWatch watch_notifications() const { return {}; }
-  [[nodiscard]] virtual std::size_t dropped_notifications() const noexcept { return 0; }
-
-  // A synchronous tmux command inserted by this one writes to subprocess
-  // stdout, but control mode frames it as the next reply block.
-  [[nodiscard]] virtual expected<std::string, CommandFailure>
-  run_inserted(const CommandRequest& command,
-               std::optional<std::chrono::milliseconds> timeout,
-               std::optional<std::size_t> output_limit) const {
-    return run(command, timeout, output_limit);
-  }
-
-  // The observer this backend was built with, so a Server that opens a
-  // connection over the same selector keeps watching the same way.
-  [[nodiscard]] const CommandObserver& observer() const noexcept { return observer_; }
 
   // What a call that names no timeout of its own gets. Applied where a caller
   // reaches the library, not here: this layer keeps taking `nullopt` to mean

@@ -3,7 +3,7 @@
 // The library talks to tmux through one private interface. This test supplies
 // a different implementation of it — one that launches nothing and answers
 // from a script — and drives the whole public surface over it. That proves two
-// things at once: an async or control-mode executor can be dropped in without
+// things at once: an async executor can be dropped in without
 // touching an installed header, and the exact argv every operation sends,
 // which a test against a live server can only observe indirectly.
 
@@ -27,7 +27,6 @@
 
 #include "acquire.hpp"
 #include "backend.hpp"
-#include "control_backend.hpp"
 #include "notification_stream.hpp"
 
 namespace {
@@ -173,30 +172,6 @@ std::vector<std::byte> bytes(std::string_view text) {
   for (const char byte : text) {
     result.push_back(static_cast<std::byte>(static_cast<unsigned char>(byte)));
   }
-  return result;
-}
-
-libtmux::ControlBlock control_block(std::uint64_t sequence,
-                                    libtmux::ControlTerminal terminal,
-                                    std::string_view body = {}) {
-  return {.sequence = sequence,
-          .command_number = sequence,
-          .terminal = terminal,
-          .begin_metadata = {},
-          .terminal_metadata = {},
-          .body = bytes(body),
-          .body_truncated = false,
-          .body_bytes = body.size()};
-}
-
-libtmux::ControlRequestResult inserted_result(
-    std::string_view wrapper_body, libtmux::ControlTerminal wrapper_terminal,
-    std::string_view inserted_body, libtmux::ControlTerminal inserted_terminal) {
-  libtmux::ControlRequestResult result;
-  result.blocks = {
-      control_block(1U, wrapper_terminal, wrapper_body),
-      control_block(2U, inserted_terminal, inserted_body),
-  };
   return result;
 }
 
@@ -791,7 +766,6 @@ TEST(BackendSeam, AnUnknownCustomBackendFailsCapabilitiesClosed) {
            libtmux::ServerFeature::exact_inspection,
            libtmux::ServerFeature::server_cleanup,
            libtmux::ServerFeature::control_mode,
-           libtmux::ServerFeature::receives_asynchronous_notifications,
        }) {
     EXPECT_FALSE(capabilities.supports(feature));
   }
@@ -811,8 +785,6 @@ TEST(BackendSeam, SubprocessCapabilitiesAreLocal) {
   EXPECT_EQ(capabilities.backend, libtmux::BackendKind::subprocess);
   EXPECT_TRUE(capabilities.supports(libtmux::ServerFeature::exact_inspection));
   EXPECT_TRUE(capabilities.supports(libtmux::ServerFeature::control_mode));
-  EXPECT_FALSE(capabilities.supports(
-      libtmux::ServerFeature::receives_asynchronous_notifications));
   EXPECT_EQ(observed_commands, 0U);
 }
 
@@ -831,33 +803,6 @@ TEST(BackendSeam, VersionDetectionInheritsTheBackendPolicy) {
   EXPECT_EQ(backend->version_timeouts.front(), std::chrono::milliseconds{123});
   ASSERT_EQ(backend->version_output_limits.size(), 1U);
   EXPECT_EQ(backend->version_output_limits.front(), 456U);
-}
-
-TEST(BackendSeam, ServerRoutingPreservesControlPolicy) {
-  libtmux::ConnectionOptions requested{
-      .tmux_binary = "/opt/libtmux/custom-tmux",
-      .socket_path = "/caller/must-not-select-this",
-      .session_name = "caller-must-not-select-this",
-      .startup_timeout = std::chrono::milliseconds{311},
-      .shutdown_timeout = std::chrono::milliseconds{733},
-      .retained_reply_bytes = 12345U,
-      .line_bytes = 4321U,
-      .pane_output = true,
-      .pause_after = std::chrono::seconds{17},
-  };
-
-  const auto routed = libtmux::detail::routed_control_options(
-      std::move(requested), "/server/selected/socket", "selected-session");
-
-  EXPECT_EQ(routed.tmux_binary, std::filesystem::path{"/opt/libtmux/custom-tmux"});
-  EXPECT_EQ(routed.socket_path, std::filesystem::path{"/server/selected/socket"});
-  EXPECT_EQ(routed.session_name, "selected-session");
-  EXPECT_EQ(routed.startup_timeout, std::chrono::milliseconds{311});
-  EXPECT_EQ(routed.shutdown_timeout, std::chrono::milliseconds{733});
-  EXPECT_EQ(routed.retained_reply_bytes, 12345U);
-  EXPECT_EQ(routed.line_bytes, 4321U);
-  EXPECT_TRUE(routed.pane_output);
-  EXPECT_EQ(routed.pause_after, std::chrono::seconds{17});
 }
 
 TEST(BackendSeam, ExpansionRejectsAReplyFromAnotherTarget) {
@@ -981,99 +926,6 @@ TEST(BackendSeam, BufferLoadingNamesTheDestination) {
   EXPECT_EQ(backend->issued.front(),
             (std::vector<std::string>{"load-buffer", "-b", "named", "--",
                                       "/tmp/libtmux-buffer"}));
-}
-
-TEST(BackendSeam, AControlBatchKeepsOneOperationPerCommand) {
-  libtmux::CommandBatch batch;
-  ASSERT_TRUE(batch.add({"display-message", "one"}));
-  ASSERT_TRUE(batch.add({"display-message", "two"}));
-
-  const libtmux::ControlRequest request = libtmux::detail::batch_request(batch);
-
-  ASSERT_EQ(request.group.size(), 2U);
-  EXPECT_EQ(request.group[0].argv,
-            (std::vector<std::string>{"display-message", "one"}));
-  EXPECT_EQ(request.group[1].argv,
-            (std::vector<std::string>{"display-message", "two"}));
-}
-
-TEST(BackendSeam, AnInsertedControlReplyReturnsOnlyTheSecondBlock) {
-  const auto result = inserted_result({}, libtmux::ControlTerminal::end, "window-row\n",
-                                      libtmux::ControlTerminal::end);
-
-  const auto reply = libtmux::detail::inserted_command_reply(result, std::nullopt);
-
-  ASSERT_TRUE(reply.has_value()) << reply.error().diagnostic;
-  EXPECT_EQ(*reply, "window-row\n");
-}
-
-TEST(BackendSeam, ANestedInsertedReplyReturnsTheFinalBlock) {
-  libtmux::ControlRequestResult result;
-  result.blocks = {control_block(1U, libtmux::ControlTerminal::end),
-                   control_block(2U, libtmux::ControlTerminal::end),
-                   control_block(3U, libtmux::ControlTerminal::end, "window-row\n")};
-
-  const auto reply = libtmux::detail::inserted_command_reply(result, std::nullopt);
-
-  ASSERT_TRUE(reply.has_value()) << reply.error().diagnostic;
-  EXPECT_EQ(*reply, "window-row\n");
-}
-
-TEST(BackendSeam, AnInsertedControlFailureCannotBeMaskedByWrapperSuccess) {
-  const auto result =
-      inserted_result({}, libtmux::ControlTerminal::end, "break failed\n",
-                      libtmux::ControlTerminal::error);
-
-  const auto reply = libtmux::detail::inserted_command_reply(result, std::nullopt);
-
-  ASSERT_FALSE(reply.has_value());
-  EXPECT_EQ(reply.error().kind, FailureKind::refused);
-  EXPECT_NE(reply.error().delivery, libtmux::DeliveryStatus::not_started);
-  EXPECT_EQ(reply.error().diagnostic, "break failed\n");
-
-  const auto wrapper_failure =
-      inserted_result("if-shell failed\n", libtmux::ControlTerminal::error, {},
-                      libtmux::ControlTerminal::end);
-  const auto wrapper_reply =
-      libtmux::detail::inserted_command_reply(wrapper_failure, std::nullopt);
-  ASSERT_FALSE(wrapper_reply.has_value());
-  EXPECT_EQ(wrapper_reply.error().kind, FailureKind::refused);
-  EXPECT_EQ(wrapper_reply.error().diagnostic, "if-shell failed\n");
-
-  libtmux::ControlRequestResult nested_failure;
-  nested_failure.blocks = {
-      control_block(1U, libtmux::ControlTerminal::end),
-      control_block(2U, libtmux::ControlTerminal::error, "nested if-shell failed\n"),
-      control_block(3U, libtmux::ControlTerminal::end, "window-row\n")};
-  const auto nested_reply =
-      libtmux::detail::inserted_command_reply(nested_failure, std::nullopt);
-  ASSERT_FALSE(nested_reply.has_value());
-  EXPECT_EQ(nested_reply.error().kind, FailureKind::refused);
-  EXPECT_EQ(nested_reply.error().diagnostic, "nested if-shell failed\n");
-}
-
-TEST(BackendSeam, AnInsertedControlReplyChecksBothFramesAndTheCallBound) {
-  auto wrapper_output = inserted_result("unexpected\n", libtmux::ControlTerminal::end,
-                                        "row\n", libtmux::ControlTerminal::end);
-  const auto rejected_wrapper =
-      libtmux::detail::inserted_command_reply(wrapper_output, std::nullopt);
-  ASSERT_FALSE(rejected_wrapper.has_value());
-  EXPECT_EQ(rejected_wrapper.error().kind, FailureKind::pipe);
-
-  auto truncated = inserted_result({}, libtmux::ControlTerminal::end, "row\n",
-                                   libtmux::ControlTerminal::end);
-  truncated.blocks[1].body_truncated = true;
-  truncated.blocks[1].body_bytes = 100U;
-  const auto rejected_capture =
-      libtmux::detail::inserted_command_reply(truncated, std::nullopt);
-  ASSERT_FALSE(rejected_capture.has_value());
-  EXPECT_EQ(rejected_capture.error().kind, FailureKind::truncated);
-
-  const auto bounded = inserted_result({}, libtmux::ControlTerminal::end, "row\n",
-                                       libtmux::ControlTerminal::end);
-  const auto rejected_bound = libtmux::detail::inserted_command_reply(bounded, 3U);
-  ASSERT_FALSE(rejected_bound.has_value());
-  EXPECT_EQ(rejected_bound.error().kind, FailureKind::truncated);
 }
 
 TEST(BackendSeam, NotificationRetentionDropsTheOldestAtItsBound) {

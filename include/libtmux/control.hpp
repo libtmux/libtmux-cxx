@@ -196,7 +196,7 @@ public:
 
 private:
   friend class iterator;
-  // The next notification, or nothing once the deadline has passed with none.
+  // The next outside-block event, or nothing after an empty deadline.
   [[nodiscard]] const Notification* next();
 
   Connection* connection_{nullptr};
@@ -216,11 +216,13 @@ public:
   Connection& operator=(const Connection&) = delete;
 
   // Completes at this request's private protocol boundary and preserves every
-  // reply before it. It does not invent per-operation attribution that tmux
-  // does not transmit.
+  // guarded block before it. This is wire evidence, not a final command
+  // result: tmux may end a block before a waiting job or file operation later
+  // reports unguarded output or failure. Use `Server::run` when final success
+  // or failure is required.
   ControlRequestResult execute(ControlRequest request,
                                std::chrono::steady_clock::time_point deadline);
-  // Everything tmux has said since the last call, returned at once.
+  // Every outside-block event tmux has written since the last call.
   //
   // Taking drains: what comes back will not come back again. It says nothing
   // about what happens next, so an empty result does not mean the stream has
@@ -228,8 +230,8 @@ public:
   // the next event with `wait_for_notifications` rather than polling for one.
   [[nodiscard]] std::vector<Notification> take_notifications();
 
-  // Open an independent cursor at the next notification. Unlike the legacy
-  // taking methods above, watches do not steal events from each other.
+  // Open an independent cursor at the next outside-block event. Unlike the
+  // legacy taking methods above, watches do not steal events from each other.
   [[nodiscard]] NotificationWatch watch_notifications();
 
   // The same, but waits for something to arrive.
@@ -237,12 +239,12 @@ public:
   // `take_notifications` returns immediately, so a caller reacting to tmux had
   // to call it in a loop and sleep between — which either wakes too often or
   // reacts too late, and picks that trade with no idea how long the next event
-  // will take. This blocks until at least one notification is available, the
+  // will take. This blocks until at least one event is available, the
   // connection fails, or the deadline passes, and returns whatever it has.
   //
   // An empty result means the deadline passed or the stream ended; the two are
   // told apart by asking `execute` or `shutdown`, which report the failure.
-  // Notifications already buffered are returned without waiting at all.
+  // Events already buffered are returned without waiting at all.
   [[nodiscard]] std::vector<Notification>
   wait_for_notifications(std::chrono::steady_clock::time_point deadline);
   // A descriptor that is readable exactly when a take would return something.
@@ -281,8 +283,8 @@ public:
   [[nodiscard]] NotificationRange
   events(std::chrono::steady_clock::time_point deadline);
 
-  // How many notifications this Connection's legacy taking cursor missed to
-  // keep the shared log bounded. Each NotificationWatch has its own count.
+  // How many outside-block events this Connection's legacy taking cursor
+  // missed to keep the shared log bounded. Each watch has its own count.
   [[nodiscard]] std::size_t dropped_notifications() const noexcept;
   [[nodiscard]] std::int64_t native_child_pid() const noexcept;
   expected<void, ProtocolError>

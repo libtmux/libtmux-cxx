@@ -1,10 +1,11 @@
 #pragma once
 
-// Notifications tmux emits outside synchronous command replies.
+// Events tmux emits outside guarded control reply blocks.
 //
-// Raw bytes stay available for forward compatibility. `parse` adds typed,
-// borrowed views for known notification shapes, while `NotificationWatch`
-// gives one consumer an independent cursor over a connection's bounded log.
+// Most are protocol notifications. A wait-capable command may also print
+// delayed output or errors there, without a request identifier. Raw bytes
+// preserve that ambiguity; `parse` adds borrowed views only for known
+// notification shapes.
 
 #include "libtmux/abi.hpp"
 
@@ -20,15 +21,16 @@
 LIBTMUX_NAMESPACE_BEGIN
 
 struct Notification {
+  // Compatibility name for one outside-block control event. Unknown content
+  // is not proof that tmux emitted a notification rather than delayed output.
   std::vector<std::byte> body;
 };
 
 // What a notification is, once its name and arguments have been read.
 //
-// `unknown` is not a failure. tmux adds notification names over time, so a
-// name this build does not know may be from a newer tmux, and the body is
-// still there to read. A kind and fields keep such additions from breaking an
-// exhaustive `std::visit` in caller code.
+// `unknown` is not a failure. The body may be a notification added by a newer
+// tmux or unguarded delayed command output. A kind and fields keep additions
+// from breaking an exhaustive `std::visit` in caller code.
 enum class NotificationKind : std::uint8_t {
   unknown,
   output,
@@ -89,11 +91,11 @@ namespace detail {
 struct NotificationWatchState;
 }
 
-// One independent view of notifications emitted after the watch was opened.
+// One independent view of outside-block events emitted after opening.
 //
 // Taking from one watch never drains another watch or the Connection's legacy
-// notification queue. The retained log is shared and bounded; this watch's
-// dropped count reports only events this watch actually missed.
+// event queue. The retained log is shared and bounded; this watch's dropped
+// count reports only events this watch actually missed.
 //
 // A watch retains the stream state. It can drain already-buffered events after
 // its Connection is moved or destroyed; waits then wake as a closed stream.

@@ -327,22 +327,12 @@ TEST(ServerContract, AnObserverNeverSeesAnEnvironmentValue) {
   const auto set_option = server->set_global_option("@secret", secret);
   ASSERT_TRUE(set_option.has_value()) << set_option.error().diagnostic;
 
-  const auto control = server->over_control(session->name());
-  ASSERT_TRUE(control.has_value()) << control.error().diagnostic;
-  const auto streamed = control->run(raw);
-  ASSERT_TRUE(streamed.has_value()) << streamed.error().diagnostic;
-  EXPECT_EQ(*streamed, std::string{secret} + "\n");
-
   libtmux::CommandBatch batch;
   ASSERT_TRUE(batch.add({"display-message", "-p", "public-prefix"}));
   ASSERT_TRUE(batch.add(raw));
   const auto batched = server->run_batch(batch);
   ASSERT_TRUE(batched.has_value()) << batched.error().diagnostic;
   EXPECT_EQ(*batched, "public-prefix\n" + std::string{secret} + "\n");
-  const auto streamed_batch = control->run_batch(batch);
-  ASSERT_TRUE(streamed_batch.has_value()) << streamed_batch.error().diagnostic;
-  EXPECT_EQ(*streamed_batch, "public-prefix\n" + std::string{secret} + "\n");
-
   const std::string shell_secret{"shell-secret with spaces"};
   const std::string shell_command =
       "tmux set-option -g @shell-secret '" + shell_secret + "'";
@@ -364,11 +354,6 @@ TEST(ServerContract, AnObserverNeverSeesAnEnvironmentValue) {
   ASSERT_FALSE(refused.has_value());
   EXPECT_EQ(refused.error().diagnostic.find(secret), std::string::npos)
       << refused.error().diagnostic;
-  const auto streamed_refused = control->run(failing);
-  ASSERT_FALSE(streamed_refused.has_value());
-  EXPECT_EQ(streamed_refused.error().diagnostic.find(secret), std::string::npos)
-      << streamed_refused.error().diagnostic;
-
   libtmux::CommandBatch failing_batch;
   ASSERT_TRUE(failing_batch.add({"display-message", "-p", "safe-before-failure"}));
   ASSERT_TRUE(failing_batch.add(failing));
@@ -376,11 +361,6 @@ TEST(ServerContract, AnObserverNeverSeesAnEnvironmentValue) {
   ASSERT_FALSE(refused_batch.has_value());
   EXPECT_EQ(refused_batch.error().diagnostic.find(secret), std::string::npos)
       << refused_batch.error().diagnostic;
-  const auto streamed_refused_batch = control->run_batch(failing_batch);
-  ASSERT_FALSE(streamed_refused_batch.has_value());
-  EXPECT_EQ(streamed_refused_batch.error().diagnostic.find(secret), std::string::npos)
-      << streamed_refused_batch.error().diagnostic;
-
   const auto value = server->run(
       {"show-environment", "-t", std::string{session->id()}, "LIBTMUX_SECRET"});
   ASSERT_TRUE(value.has_value()) << value.error().diagnostic;

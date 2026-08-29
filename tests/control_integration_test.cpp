@@ -783,6 +783,46 @@ TEST(ControlModeConnection, NotificationShapedCommandOutputRemainsBlockBody) {
   EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
 }
 
+TEST(ControlModeConnection, WaitCapableCommandsFinishAfterTheirGuardedBlocks) {
+  auto server = start_server(unique_name("control-delayed-result"));
+  ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
+  auto connected = connect_to(*server);
+  ASSERT_TRUE(connected.has_value())
+      << (connected.has_value() ? "" : connected.error().message);
+  auto connection = std::move(*connected);
+  static_cast<void>(connection.take_notifications());
+
+  const auto shell = connection.execute(group({{"run-shell", "exit 17"}}),
+                                        std::chrono::steady_clock::now() + 2s);
+  expect_exact_end(shell, "");
+
+  const std::string missing = (server->tmux_tmpdir() / "missing-buffer").string();
+  const auto load =
+      connection.execute(group({{"load-buffer", "-b", "missing", "--", missing}}),
+                         std::chrono::steady_clock::now() + 2s);
+  expect_exact_end(load, "");
+
+  // This block cannot arrive until the two waiting commands continue. The
+  // reader therefore observed all delayed lines before returning the marker.
+  const auto marker =
+      connection.execute(group({{"display-message", "-p", "after-delayed-work"}}),
+                         std::chrono::steady_clock::now() + 2s);
+  expect_exact_end(marker, "after-delayed-work\n");
+  const auto outside_blocks = connection.take_notifications();
+  const auto contains = [&outside_blocks](std::string_view wanted) {
+    return std::ranges::any_of(outside_blocks, [wanted](const Notification& event) {
+      return text(event.body).find(wanted) != std::string::npos;
+    });
+  };
+
+  // The initial `%end` blocks said only that tmux accepted each command. The
+  // actual failures are unguarded and have no request identifier, so this raw
+  // API exposes wire evidence rather than inventing a final command result.
+  EXPECT_TRUE(contains("returned 17"));
+  EXPECT_TRUE(contains(missing));
+  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+}
+
 TEST(ControlModeConnection, EncodesArgumentsWithoutCreatingAnotherCommand) {
   LIBTMUX_SKIP_TMUX_DEFECT(
       3, 4, 3, 5,

@@ -220,10 +220,6 @@ TEST(ServerIdentity, AHandleOpenedBeforeTheSocketExistsNeverAcquiresAServer) {
   const auto direct_control = stale->control("must-not-start");
   ASSERT_FALSE(direct_control.has_value());
   EXPECT_NE(direct_control.error().message.find("no socket"), std::string::npos);
-  const auto controlled = stale->over_control("must-not-start");
-  ASSERT_FALSE(controlled.has_value());
-  EXPECT_EQ(controlled.error().kind, libtmux::FailureKind::validation);
-  EXPECT_EQ(controlled.error().delivery, libtmux::DeliveryStatus::not_started);
 
   std::error_code linked;
   std::filesystem::create_hard_link(fixture->socket_path(), late_socket, linked);

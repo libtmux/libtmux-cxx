@@ -32,7 +32,6 @@ to_string(ServerImplementation implementation) noexcept {
 enum class BackendKind {
   custom,
   subprocess,
-  control_mode,
 };
 
 [[nodiscard]] constexpr std::string_view to_string(BackendKind backend) noexcept {
@@ -41,8 +40,6 @@ enum class BackendKind {
     return "custom";
   case BackendKind::subprocess:
     return "subprocess";
-  case BackendKind::control_mode:
-    return "control mode";
   }
   return "unknown";
 }
@@ -74,8 +71,6 @@ enum class ServerFeature {
   wait_channels,
   // This Server can open a persistent control connection.
   control_mode,
-  // This Server itself is already backed by control mode and receives events.
-  receives_asynchronous_notifications,
 };
 
 [[nodiscard]] constexpr std::string_view to_string(ServerFeature feature) noexcept {
@@ -104,8 +99,6 @@ enum class ServerFeature {
     return "wait channels";
   case ServerFeature::control_mode:
     return "control mode";
-  case ServerFeature::receives_asynchronous_notifications:
-    return "receives asynchronous notifications";
   }
   return "unknown feature";
 }
@@ -123,9 +116,6 @@ struct ServerCapabilities {
     case ServerFeature::exact_inspection:
     case ServerFeature::server_cleanup:
       return true;
-    case ServerFeature::receives_asynchronous_notifications:
-      return implementation == ServerImplementation::tmux &&
-             backend == BackendKind::control_mode;
     case ServerFeature::server_entity_lookup:
     case ServerFeature::session_creation:
     case ServerFeature::window_creation:

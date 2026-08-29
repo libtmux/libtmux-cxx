@@ -123,27 +123,19 @@ void a_channel_is_waited_on(const libtmux::Server& server) {
   (void)sent;
 }
 
-// Opening either control surface with defaults or caller-selected stream
-// policy, while the Server remains the only owner of its socket route.
+// Opening a control stream with defaults or caller-selected policy, while the
+// Server remains the only owner of its socket route.
 void control_streams_are_opened(const libtmux::Server& server) {
-  const auto legacy_control_pointer = &libtmux::Server::control;
-  const auto legacy_dispatch_pointer = &libtmux::Server::over_control;
+  const auto control_pointer = &libtmux::Server::control;
   libtmux::ConnectionOptions options{.pane_output = true,
                                      .pause_after = std::chrono::seconds{2}};
   const libtmux::expected<libtmux::Connection, libtmux::ProtocolError> direct =
       server.control_with_options("work", options);
   const libtmux::expected<libtmux::Connection, libtmux::ProtocolError> defaults =
       server.control("work");
-  const libtmux::expected<libtmux::Server, libtmux::CommandFailure> dispatched =
-      server.over_control_with_options("work", options);
-  const libtmux::expected<libtmux::Server, libtmux::CommandFailure>
-      dispatched_defaults = server.over_control("work");
   (void)direct;
   (void)defaults;
-  (void)dispatched;
-  (void)dispatched_defaults;
-  (void)legacy_control_pointer;
-  (void)legacy_dispatch_pointer;
+  (void)control_pointer;
 }
 
 // Asking tmux what it understands.

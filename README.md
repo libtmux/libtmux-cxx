@@ -512,7 +512,7 @@ chain.new_window("a:b", "unreachable");
 std::printf("chain valid: %s\n", chain.valid() ? "yes" : "no"); // no
 ```
 
-Three ways to send work, and the difference matters:
+Three ways to send typed work, plus a raw control stream:
 
 | | What it is | Failure |
 |---|---|---|
@@ -521,26 +521,21 @@ Three ways to send work, and the difference matters:
 | **Chain** | Validated as it is built | A bad target is caught before tmux is reached |
 | **Control** | One connection held open | Ordered reply blocks before a private request boundary |
 
-`Server::over_control(session)` returns a `Server` that dispatches every entity
-operation over a held-open connection — the same entity calls, without a
-process each, about 4.6× faster per listing. Each request ends with a private
-random boundary, so `source_file`, command aliases, and other synchronous reply
-inserters keep every block with the request that produced it. The low-level
-`Connection` exposes those blocks in wire order; the `Server` surface joins
-successful bodies to match subprocess output. See
-[`docs/design/control-transport.md`](docs/design/control-transport.md).
+`Server` uses ordinary tmux client processes because they remain alive through
+waiting jobs and file operations and return tmux's final exit status.
+`Server::control(session)` instead opens a low-level `Connection` for guarded
+reply blocks and outside-block events. A guard proves where tmux framed a
+request; it does not prove that a waiting command has finished. Use this raw
+surface for notification streams and protocol tooling, not as a faster typed
+executor. See [`docs/design/control-transport.md`](docs/design/control-transport.md).
 
-Streaming policy can enter through either Server doorway without rebuilding
-its socket route: use `control_with_options` or `over_control_with_options`.
-The Server supplies the socket and the first argument supplies the session
-name; the caller-selected executable, deadlines, limits, and pane-output policy
-are preserved. Windows psmux rejects both forms as unsupported before launching
-a control client.
+`control_with_options` keeps the Server's socket route while preserving the
+caller-selected executable, deadlines, limits, and pane-output policy. Windows
+psmux rejects control mode before launching a client.
 
-`take_notifications` remains a single draining cursor. For two independent
-consumers, open a `NotificationWatch` from either `Connection` or a streaming
-`Server`; every watch has its own wait, dropped-event count, and readiness
-descriptor over one shared bounded log.
+`take_notifications` is a single draining cursor on `Connection`. For two
+independent consumers, open a `NotificationWatch`; every watch has its own wait,
+dropped-event count, and readiness descriptor over one shared bounded log.
 
 ## Core concepts
 
@@ -552,8 +547,8 @@ descriptor over one shared bounded log.
 | [`Pane`](include/libtmux/entities.hpp) | pane (`%1`, `%2`, …) | Where commands run |
 | [`Client`](include/libtmux/entities.hpp) | an attached terminal | Read-only |
 | [`Buffer`](include/libtmux/entities.hpp) | the server's clipboard | Named text outliving its pane |
-| [`Connection`](include/libtmux/control.hpp) | a control-mode session | Reply blocks, notifications |
-| [`NotificationWatch`](include/libtmux/notification.hpp) | one notification consumer | Independent cursor, wait, and readiness descriptor |
+| [`Connection`](include/libtmux/control.hpp) | a control-mode session | Guarded blocks, outside-block events |
+| [`NotificationWatch`](include/libtmux/notification.hpp) | one outside-block event consumer | Independent cursor, wait, and readiness descriptor |
 
 ## tmux, libtmux, and tmuxp
 

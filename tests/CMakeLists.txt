@@ -456,21 +456,6 @@ add_test(NAME libtmux.backend_seam COMMAND libtmux_backend_seam_test)
 set_tests_properties(
   libtmux.backend_seam PROPERTIES LABELS "libtmux" TIMEOUT 30)
 
-add_executable(libtmux_control_dispatch_test control_dispatch_test.cpp)
-target_include_directories(
-  libtmux_control_dispatch_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
-target_link_libraries(
-  libtmux_control_dispatch_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
-          libtmux_test_support)
-target_compile_options(
-  libtmux_control_dispatch_test PRIVATE -fno-sanitize-recover=undefined)
-
-add_test(NAME libtmux.control_dispatch COMMAND libtmux_control_dispatch_test)
-set_tests_properties(
-  libtmux.control_dispatch
-  PROPERTIES LABELS "libtmux;real-tmux;concurrency" TIMEOUT 60)
-
 add_executable(libtmux_client_test integration/client_test.cpp)
 target_link_libraries(
   libtmux_client_test

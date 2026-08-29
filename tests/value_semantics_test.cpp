@@ -161,8 +161,7 @@ TEST(ValueSemantics, AFailureComposesAndCanBeNamed) {
     EXPECT_FALSE(libtmux::to_string(implementation).empty());
   }
   for (const auto backend :
-       {libtmux::BackendKind::custom, libtmux::BackendKind::subprocess,
-        libtmux::BackendKind::control_mode}) {
+       {libtmux::BackendKind::custom, libtmux::BackendKind::subprocess}) {
     EXPECT_FALSE(libtmux::to_string(backend).empty());
   }
   for (const auto feature : {
@@ -178,7 +177,6 @@ TEST(ValueSemantics, AFailureComposesAndCanBeNamed) {
            libtmux::ServerFeature::server_state,
            libtmux::ServerFeature::wait_channels,
            libtmux::ServerFeature::control_mode,
-           libtmux::ServerFeature::receives_asynchronous_notifications,
        }) {
     EXPECT_FALSE(libtmux::to_string(feature).empty());
   }
@@ -186,27 +184,16 @@ TEST(ValueSemantics, AFailureComposesAndCanBeNamed) {
   EXPECT_FALSE(libtmux::to_string(libtmux::SocketError::path_too_long).empty());
 }
 
-TEST(ValueSemantics, CapabilitiesDistinguishAvailableControlFromCurrentDelivery) {
+TEST(ValueSemantics, CapabilitiesReportWhetherControlCanBeOpened) {
   const libtmux::ServerCapabilities subprocess{
       .implementation = libtmux::ServerImplementation::tmux,
       .backend = libtmux::BackendKind::subprocess};
   EXPECT_TRUE(subprocess.supports(libtmux::ServerFeature::control_mode));
-  EXPECT_FALSE(
-      subprocess.supports(libtmux::ServerFeature::receives_asynchronous_notifications));
-
-  const libtmux::ServerCapabilities control{
-      .implementation = libtmux::ServerImplementation::tmux,
-      .backend = libtmux::BackendKind::control_mode};
-  EXPECT_TRUE(control.supports(libtmux::ServerFeature::control_mode));
-  EXPECT_TRUE(
-      control.supports(libtmux::ServerFeature::receives_asynchronous_notifications));
 
   const libtmux::ServerCapabilities psmux{.implementation =
                                               libtmux::ServerImplementation::psmux,
                                           .backend = libtmux::BackendKind::subprocess};
   EXPECT_FALSE(psmux.supports(libtmux::ServerFeature::control_mode));
-  EXPECT_FALSE(
-      psmux.supports(libtmux::ServerFeature::receives_asynchronous_notifications));
 }
 
 } // namespace

@@ -12,7 +12,6 @@
 
 #include "acquire.hpp"
 #include "backend.hpp"
-#include "control_backend.hpp"
 #include "environment.hpp"
 #include "path.hpp"
 #include "psmux.hpp"
@@ -20,6 +19,14 @@
 LIBTMUX_NAMESPACE_BEGIN
 
 namespace {
+
+[[nodiscard]] ConnectionOptions routed_control_options(ConnectionOptions options,
+                                                       std::string socket_path,
+                                                       std::string session) {
+  options.socket_path = std::move(socket_path);
+  options.session_name = std::move(session);
+  return options;
+}
 
 // A command run for its effect: its output is not a result.
 #if !defined(_WIN32)
@@ -282,7 +289,7 @@ Server::control_with_options(std::string_view session,
         ProtocolError{.message = "this server has no socket to connect to",
                       .delivery = DeliveryStatus::not_started});
   }
-  return Connection::connect(detail::routed_control_options(
+  return Connection::connect(routed_control_options(
       std::move(options), std::string{socket_path}, std::string{session}));
 }
 
@@ -412,59 +419,6 @@ expected<void, CommandFailure> Server::kill() const {
 #else
   return applied(run({"kill-server"}));
 #endif
-}
-
-std::vector<Notification> Server::take_notifications() const {
-  return backend_->take_notifications();
-}
-
-NotificationWatch Server::watch_notifications() const {
-  return backend_->watch_notifications();
-}
-
-std::size_t Server::dropped_notifications() const noexcept {
-  return backend_->dropped_notifications();
-}
-
-expected<Server, CommandFailure> Server::over_control(std::string_view session) const {
-  return over_control_with_options(session, {});
-}
-
-expected<Server, CommandFailure>
-Server::over_control_with_options(std::string_view session,
-                                  ConnectionOptions options) const {
-  const ServerCapabilities available = capabilities();
-  if (!available.supports(ServerFeature::control_mode)) {
-    return unexpected(
-        CommandFailure{.kind = FailureKind::unsupported,
-                       .delivery = DeliveryStatus::not_started,
-                       .exit_code = 0,
-                       .diagnostic = std::string{to_string(available.implementation)} +
-                                     " backend does not support control mode"});
-  }
-  const std::vector<std::string>& selector = backend_->connection();
-  const std::string_view socket_path = backend_->socket_path();
-  if (socket_path.empty() || backend_->identity().empty()) {
-    return unexpected(
-        CommandFailure{.kind = FailureKind::validation,
-                       .delivery = DeliveryStatus::not_started,
-                       .exit_code = 0,
-                       .diagnostic = "this server has no socket to connect to"});
-  }
-  auto backend = detail::ControlBackend::open(
-      selector, std::string{socket_path}, std::string{backend_->identity()},
-      std::string{session}, std::move(options), backend_->observer(),
-      backend_->policy(), backend_->socket_alias());
-  if (!backend.has_value()) {
-    // The same kind a control connection reports when it breaks mid-command,
-    // because it is the same thing failing. Not dispatched: no command ran,
-    // and a connection that never came up left nothing for a retry to repeat.
-    return unexpected(CommandFailure{.kind = FailureKind::pipe,
-                                     .delivery = DeliveryStatus::not_started,
-                                     .exit_code = 0,
-                                     .diagnostic = backend.error().message});
-  }
-  return detail::server_over(*std::move(backend));
 }
 
 expected<std::vector<Session>, CommandFailure> Server::sessions() const {

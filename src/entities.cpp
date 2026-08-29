@@ -1172,8 +1172,8 @@ expected<Window, CommandFailure> Pane::break_out(std::string_view name) const {
     const std::vector<std::string> command{
         "if-shell", "-F", "-t", target, "#{==:#{window_panes},1}", current, guarded};
     const auto break_policy = remaining_execution_policy(policy, started);
-    auto moved = backend()->run_inserted(command, break_policy.timeout,
-                                         break_policy.output_limit);
+    auto moved =
+        backend()->run(command, break_policy.timeout, break_policy.output_limit);
     if (!moved.has_value()) {
       return unexpected(moved.error());
     }
@@ -1250,7 +1250,7 @@ expected<Window, CommandFailure> Pane::break_out(std::string_view name) const {
       "if-shell", "-F", "-t", target, "#{==:#{window_panes},1}", retained, native};
   const auto break_policy = remaining_execution_policy(policy, started);
   auto broken =
-      backend()->run_inserted(command, break_policy.timeout, break_policy.output_limit);
+      backend()->run(command, break_policy.timeout, break_policy.output_limit);
   if (!broken.has_value()) {
     return unexpected(broken.error());
   }

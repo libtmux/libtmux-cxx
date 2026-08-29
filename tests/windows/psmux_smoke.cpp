@@ -876,7 +876,6 @@ int main() {
            libtmux::ServerFeature::server_state,
            libtmux::ServerFeature::wait_channels,
            libtmux::ServerFeature::control_mode,
-           libtmux::ServerFeature::receives_asynchronous_notifications,
        }) {
     if (!require(!capabilities.supports(feature),
                  "psmux must fail unsupported capability checks closed")) {
@@ -1614,16 +1613,6 @@ int main() {
                "control-mode rejection must name control mode and psmux")) {
     return EXIT_FAILURE;
   }
-  const auto control_server = server.over_control("alpha");
-  if (!require(!control_server, "psmux control backend must be rejected") ||
-      !require(
-          control_server.error().kind == libtmux::FailureKind::unsupported &&
-              not_started(control_server.error()) &&
-              contains_case_insensitive(control_server.error().diagnostic, "control") &&
-              contains_case_insensitive(control_server.error().diagnostic, "psmux"),
-          "control-backend rejection must name control mode and psmux")) {
-    return EXIT_FAILURE;
-  }
   const libtmux::ConnectionOptions unavailable_options{
       .tmux_binary = "Z:\\libtmux-must-not-launch\\tmux.exe",
       .socket_path = "Z:\\libtmux-must-not-use\\socket",
@@ -1633,23 +1622,12 @@ int main() {
   };
   const auto configured_control =
       server.control_with_options("alpha", unavailable_options);
-  const auto configured_control_server =
-      server.over_control_with_options("alpha", unavailable_options);
   if (!require(
           !configured_control &&
               contains_case_insensitive(configured_control.error().message,
                                         "control") &&
               contains_case_insensitive(configured_control.error().message, "psmux"),
-          "configured psmux control must fail closed before launch") ||
-      !require(!configured_control_server &&
-                   configured_control_server.error().kind ==
-                       libtmux::FailureKind::unsupported &&
-                   not_started(configured_control_server.error()) &&
-                   contains_case_insensitive(
-                       configured_control_server.error().diagnostic, "control") &&
-                   contains_case_insensitive(
-                       configured_control_server.error().diagnostic, "psmux"),
-               "configured psmux control backend must fail before launch")) {
+          "configured psmux control must fail closed before launch")) {
     return EXIT_FAILURE;
   }
 

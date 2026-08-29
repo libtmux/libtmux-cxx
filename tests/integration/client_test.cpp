@@ -235,27 +235,4 @@ TEST(Client, AttachCommandOwnsItsPinnedRoute) {
   EXPECT_FALSE(std::filesystem::exists(alias_directory));
 }
 
-TEST(Client, AControlSessionPreparesAnIndependentAttachCommand) {
-  auto fixture = libtmux::test::ScopedTmuxServer::start();
-  ASSERT_TRUE(fixture.has_value()) << fixture.error();
-
-  std::optional<libtmux::AttachCommand> attach;
-  {
-    const Server subprocess = connect(*fixture);
-    auto controlled = subprocess.over_control(fixture->session_name());
-    ASSERT_TRUE(controlled.has_value()) << controlled.error().diagnostic;
-    const auto sessions = controlled->sessions();
-    ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
-    auto prepared = sessions->front().attach_command();
-    ASSERT_TRUE(prepared.has_value()) << prepared.error().diagnostic;
-    attach.emplace(*std::move(prepared));
-  }
-
-  const auto through_alias = Server::at_socket_path(attach->argv()[2]);
-  ASSERT_TRUE(through_alias.has_value()) << through_alias.error().diagnostic;
-  const auto sessions = through_alias->sessions();
-  ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
-  EXPECT_EQ(sessions->front().name(), fixture->session_name());
-}
-
 } // namespace

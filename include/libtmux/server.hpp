@@ -102,7 +102,7 @@ public:
 
   // Run several commands in one invocation. tmux runs a batch fail-fast, so a
   // failed batch is partially applied rather than rolled back, and one exit
-  // status covers the group: which member failed needs control mode.
+  // status covers the group, so tmux does not identify which member failed.
   [[nodiscard]] expected<std::string, CommandFailure>
   run_batch(const CommandBatch& batch) const;
 
@@ -114,15 +114,14 @@ public:
   // Open a control-mode connection to one session.
   //
   // This is the streaming half of the transport: a control connection stays
-  // open, gives each command its own reply block, and delivers asynchronous
-  // notifications between them. The synchronous surface above is unaffected —
-  // a caller who never opens one never pays for it.
+  // open, exposes guarded reply blocks in wire order, and delivers events
+  // outside those blocks. The synchronous surface above is unaffected —
+  // a caller who never opens one never pays for it. A guarded block is not a
+  // final result for commands whose work tmux completes asynchronously.
   //
   // Fails with `ProtocolError`, not `CommandFailure`, because that is what
   // the `Connection` it returns speaks: an error type here that the value's
   // own surface does not use would make the doorway disagree with the room.
-  // `over_control` returns an ordinary `Server` and so reports the ordinary
-  // failure.
   [[nodiscard]] expected<Connection, ProtocolError>
   control(std::string_view session) const;
   // The Server supplies the socket and `session` supplies the session name;
@@ -130,38 +129,8 @@ public:
   [[nodiscard]] expected<Connection, ProtocolError>
   control_with_options(std::string_view session, ConnectionOptions options) const;
 
-  // What tmux has said on its own initiative since the last call: a window
-  // renamed, a pane exited, a client attached. A Server that runs a process
-  // per command hears nothing between them and answers with nothing, so a
-  // caller that wants this opens one with `over_control`.
-  //
-  // Taking drains: what comes back will not come back again, and an empty
-  // result means nothing has arrived yet rather than that none will.
-  //
-  // The log is bounded; `dropped_notifications` says how many this Server's
-  // legacy taking cursor missed. Each watch reports its own loss instead.
-  [[nodiscard]] std::vector<Notification> take_notifications() const;
-  // An independent cursor over notifications emitted after this call. On a
-  // subprocess Server it is an empty, already-closed watch.
-  [[nodiscard]] NotificationWatch watch_notifications() const;
-  [[nodiscard]] std::size_t dropped_notifications() const noexcept;
-
-  // The same surface, dispatched over one open control connection instead of
-  // a process per command. Entities taken from the result are ordinary
-  // entities; nothing above the transport knows the difference.
-  //
-  // Complete writes are ordered on the shared stream; callers then wait for
-  // their own private request boundaries concurrently. Reply-inserting
-  // commands and live aliases preserve every block before that boundary.
-  [[nodiscard]] expected<Server, CommandFailure>
-  over_control(std::string_view session) const;
-  // As above, with the connection's timeouts, limits, executable, and output
-  // policy selected by the caller rather than reconstructed from a route.
-  [[nodiscard]] expected<Server, CommandFailure>
-  over_control_with_options(std::string_view session, ConnectionOptions options) const;
-
-  // The subprocess backend asks `tmux -V` without touching a server; a control
-  // backend asks its connected server. Both use this Server's execution policy.
+  // Ask the selected subprocess executable with `tmux -V` without touching a
+  // server. The call uses this Server's execution policy.
   [[nodiscard]] expected<Version, CommandFailure> tmux_version() const;
 
   // Whether a server is answering on this socket. False covers every reason —
