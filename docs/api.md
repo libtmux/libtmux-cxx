@@ -4117,6 +4117,7 @@ Why a tmux command produced no answer.  `refused` means tmux ran and said no; `m
   - [`FailureKind::truncated`](#libtmux-command-hpp-failurekind-truncated)
   - [`FailureKind::unsupported`](#libtmux-command-hpp-failurekind-unsupported)
   - [`FailureKind::overloaded`](#libtmux-command-hpp-failurekind-overloaded)
+  - [`FailureKind::cancelled`](#libtmux-command-hpp-failurekind-cancelled)
 - [`CommandFailure`](#libtmux-command-hpp-commandfailure)
   - [`CommandFailure::kind`](#libtmux-command-hpp-commandfailure-kind)
   - [`CommandFailure::delivery`](#libtmux-command-hpp-commandfailure-delivery)
@@ -4196,6 +4197,11 @@ The backend cannot provide this operation without weakening its contract; nothin
 #### `FailureKind::overloaded` — `overloaded,`
 
 More work is in flight than the engine accepts. Nothing was dispatched, so this is the one refusal a caller may simply try again later — appended rather than grouped, because the values before it are an installed ABI.
+
+<a id="libtmux-command-hpp-failurekind-cancelled"></a>
+#### `FailureKind::cancelled` — `cancelled,`
+
+The caller withdrew the call. Whether tmux acted is a separate question, and `delivery` is what answers it: a cancellation accepted before dispatch is not_started, and one accepted after the command was written is not.
 
 <a id="libtmux-command-hpp-commandfailure"></a>
 ### `CommandFailure`

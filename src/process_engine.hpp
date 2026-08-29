@@ -58,6 +58,8 @@ struct EngineLive final {
   ChildClock::time_point exit_drain_deadline{ChildClock::time_point::max()};
   std::optional<ChildClock::time_point> terminate_deadline{};
   bool killed{false};
+  // Ended because the caller withdrew, not because a deadline passed.
+  bool withdrawn{false};
 };
 
 class ProcessEngine final : public std::enable_shared_from_this<ProcessEngine> {

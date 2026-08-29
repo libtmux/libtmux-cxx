@@ -6,6 +6,7 @@
 
 #include <chrono>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -105,6 +106,21 @@ TEST(ProcessEngine, EndsAChildThatOutlivesItsDeadline) {
   ASSERT_FALSE(reply.has_value());
   EXPECT_EQ(reply.error().kind, libtmux::FailureKind::timeout);
   EXPECT_LT(took, std::chrono::seconds{10});
+}
+
+// A cancelled call is not a call that ran out of time. Reporting one as the
+// other tells a caller their deadline was too short when they withdrew it.
+TEST(ProcessEngine, ReportsACancelledCallAsCancelled) {
+  auto engine = ProcessEngine::start();
+  ASSERT_TRUE(engine.has_value()) << engine.error().diagnostic;
+  auto running = (*engine)->submit(shell("sleep 30"));
+  std::this_thread::sleep_for(std::chrono::milliseconds{150});
+
+  EXPECT_TRUE(running.request_cancel());
+  auto reply = sync_wait(std::move(running));
+
+  ASSERT_FALSE(reply.has_value());
+  EXPECT_EQ(reply.error().kind, libtmux::FailureKind::cancelled);
 }
 
 // Output that outruns the reader still arrives whole, because the child's end

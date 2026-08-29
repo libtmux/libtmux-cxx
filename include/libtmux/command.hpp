@@ -42,6 +42,10 @@ enum class FailureKind {
   // this is the one refusal a caller may simply try again later — appended
   // rather than grouped, because the values before it are an installed ABI.
   overloaded,
+  // The caller withdrew the call. Whether tmux acted is a separate question,
+  // and `delivery` is what answers it: a cancellation accepted before dispatch
+  // is not_started, and one accepted after the command was written is not.
+  cancelled,
 };
 
 [[nodiscard]] constexpr std::string_view to_string(FailureKind kind) noexcept {
@@ -66,6 +70,8 @@ enum class FailureKind {
     return "the backend does not support this operation";
   case FailureKind::overloaded:
     return "the engine has more work in flight than it accepts";
+  case FailureKind::cancelled:
+    return "the caller withdrew the command";
   }
   return "unknown failure";
 }

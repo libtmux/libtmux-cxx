@@ -189,6 +189,17 @@ void ProcessEngine::launch_loop() {
       work = std::move(pending_.front());
       pending_.pop_front();
     }
+    // Withdrawn before anything started, so nothing starts. This is the one
+    // cancellation that costs a caller nothing to retry.
+    if (work.source.cancel_requested()) {
+      static_cast<void>(work.source.publish(unexpected(CommandFailure{
+          .kind = FailureKind::cancelled,
+          .delivery = DeliveryStatus::not_started,
+          .exit_code = 0,
+          .diagnostic = "the caller withdrew the command before it started"})));
+      work.source.retire();
+      continue;
+    }
     // Only creation happens here. Everything the child needs afterwards goes
     // with it to the reactor, so a launch that blocks stalls nothing else.
     auto launched = PosixChild::launch(work.request);
@@ -272,6 +283,7 @@ void ProcessEngine::reactor_loop() {
       if (!finished && (expired || cancelled) && !one.terminate_deadline.has_value()) {
         one.child.signal_group(SIGTERM);
         one.terminate_deadline = Clock::now() + terminate_grace;
+        one.withdrawn = cancelled && !expired;
       }
       if (!finished && one.terminate_deadline.has_value() && !one.killed &&
           Clock::now() >= *one.terminate_deadline) {
@@ -294,6 +306,12 @@ void ProcessEngine::reactor_loop() {
             process_error(ProcessError::Kind::pipe, DeliveryStatus::written, "waitpid",
                           one.child.rendered_request(),
                           std::make_error_code(std::errc::no_child_process))))));
+      } else if (one.withdrawn) {
+        static_cast<void>(one.source.publish(unexpected(CommandFailure{
+            .kind = FailureKind::cancelled,
+            .delivery = DeliveryStatus::indeterminate,
+            .exit_code = 0,
+            .diagnostic = "the caller withdrew the command after it started"})));
       } else if (one.terminate_deadline.has_value()) {
         static_cast<void>(one.source.publish(unexpected(reported(process_error(
             ProcessError::Kind::timeout, DeliveryStatus::indeterminate, "timeout",
