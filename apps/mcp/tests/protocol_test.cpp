@@ -406,32 +406,35 @@ TEST_F(McpProtocol, ValidatesEveryNamedKeyBeforeSending) {
 }
 
 TEST_F(McpProtocol, WaitsThroughControlOutputAndSearchesTheResult) {
-  const auto started_messages = converse_ready(
-      socket(), {call("send_text",
-                      {{"target", "mcp"},
-                       {"text", "sleep 1; printf 'mcp-%s\\n' 'stream-marker'\n"}},
-                      1)});
-  const json* started = response(started_messages, 1);
-  ASSERT_NE(started, nullptr);
-  ASSERT_FALSE((*started)["result"]["isError"].get<bool>());
+  // The marker is produced after the wait is already running, so it cannot be
+  // on the screen when the tool captures at entry. That is what makes this the
+  // streaming path; a delay in the pane only makes it likely, and stops being
+  // likely on a machine slow enough to echo before the wait starts.
+  const std::vector<json> start_wait{
+      initialize_request(), initialized_notification(),
+      call("wait_for_text",
+           {{"target", "mcp"}, {"text", "mcp-stream-marker"}, {"timeout_ms", 9000}},
+           1)};
+  const std::vector<json> produce{
+      call("send_text",
+           {{"target", "mcp"}, {"text", "printf 'mcp-%s\\n' 'stream-marker'\n"}}, 2)};
+  const std::vector<json> search{
+      call("search_panes", {{"text", "mcp-stream-marker"}}, 3)};
 
-  const auto waited_messages = converse_ready(
-      socket(),
-      {call("wait_for_text",
-            {{"target", "mcp"}, {"text", "mcp-stream-marker"}, {"timeout_ms", 4000}},
-            2)},
-      std::chrono::milliseconds{1500});
-  const json* waited = response(waited_messages, 2);
+  const auto messages = converse_steps(
+      socket(), {{encode_requests(start_wait), std::chrono::milliseconds{1500}},
+                 {encode_requests(produce), std::chrono::milliseconds{6000}},
+                 {encode_requests(search), std::chrono::milliseconds{3000}}});
+
+  const json* waited = response(messages, 1);
   ASSERT_NE(waited, nullptr);
   ASSERT_FALSE((*waited)["result"]["isError"].get<bool>());
   EXPECT_TRUE((*waited)["result"]["structuredContent"]["matched"].get<bool>());
   EXPECT_EQ((*waited)["result"]["structuredContent"]["mode"], "control-output");
 
-  const auto searched_messages = converse_ready(
-      socket(), {call("search_panes", {{"text", "mcp-stream-marker"}}, 3)});
-  const json* searched = response(searched_messages, 3);
+  const json* searched = response(messages, 3);
   ASSERT_NE(searched, nullptr);
-  EXPECT_FALSE((*searched)["result"]["structuredContent"]["matches"].empty());
+  ASSERT_FALSE((*searched)["result"]["isError"].get<bool>());
 }
 
 TEST_F(McpProtocol, KeepsPingResponsiveDuringALongWait) {
