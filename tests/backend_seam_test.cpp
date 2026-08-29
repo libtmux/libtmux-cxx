@@ -964,19 +964,36 @@ TEST(BackendSeam, AnInsertedControlReplyChecksBothFramesAndTheCallBound) {
 
 TEST(BackendSeam, NotificationRetentionDropsTheOldestAtItsBound) {
   constexpr std::size_t expected_bound = 4096U;
-  std::vector<libtmux::Notification> notifications;
-  std::size_t dropped = 0U;
+  libtmux::detail::NotificationBuffer notifications;
   for (std::size_t index = 0U; index <= expected_bound; ++index) {
     libtmux::Notification notification;
     notification.body.push_back(static_cast<std::byte>(index & 0xffU));
-    libtmux::detail::retain_notification(notifications, dropped,
-                                         std::move(notification));
+    notifications.push(std::move(notification));
   }
 
   ASSERT_EQ(notifications.size(), expected_bound);
-  EXPECT_EQ(dropped, 1U);
-  ASSERT_FALSE(notifications.front().body.empty());
-  EXPECT_EQ(notifications.front().body.front(), std::byte{1});
+  EXPECT_EQ(notifications.dropped(), 1U);
+  auto held = notifications.take();
+  ASSERT_EQ(held.size(), expected_bound);
+  ASSERT_FALSE(held.front().body.empty());
+  EXPECT_EQ(held.front().body.front(), std::byte{1});
+  EXPECT_TRUE(notifications.empty());
+}
+
+TEST(BackendSeam, NotificationRetentionAlsoBoundsBytes) {
+  libtmux::detail::NotificationBuffer notifications{8U, 5U};
+  notifications.push(libtmux::Notification{.body = bytes("old")});
+  notifications.push(libtmux::Notification{.body = bytes("new")});
+
+  auto held = notifications.take();
+
+  ASSERT_EQ(held.size(), 1U);
+  EXPECT_EQ(held.front().body, bytes("new"));
+  EXPECT_EQ(notifications.dropped(), 1U);
+
+  notifications.push(libtmux::Notification{.body = bytes("oversized")});
+  EXPECT_TRUE(notifications.empty());
+  EXPECT_EQ(notifications.dropped(), 2U);
 }
 
 } // namespace

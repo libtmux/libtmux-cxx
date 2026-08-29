@@ -635,8 +635,7 @@ struct Connection::State {
       if (text == "%exit" || text.starts_with("%exit ")) {
         saw_exit = true;
       }
-      detail::retain_notification(notifications, notifications_dropped,
-                                  std::move(*notification));
+      notifications.push(std::move(*notification));
       arm_locked();
       condition.notify_all();
       return;
@@ -966,10 +965,7 @@ struct Connection::State {
   std::timed_mutex lifecycle_mutex;
   std::condition_variable condition;
   std::deque<std::shared_ptr<PendingRequest>> pending;
-  std::vector<Notification> notifications;
-  // How many were discarded to keep the buffer bounded, so a caller can tell
-  // "nothing happened" from "more happened than I collected".
-  std::size_t notifications_dropped{0};
+  detail::NotificationBuffer notifications;
   // A pipe that holds one byte exactly when there is something to take, so a
   // caller can `poll` on tmux beside their own descriptors. A pipe rather than
   // an eventfd because macOS is supported.
@@ -1199,8 +1195,7 @@ std::vector<Notification> Connection::take_notifications() {
     return {};
   }
   std::lock_guard lock{state_->mutex};
-  std::vector<Notification> available;
-  available.swap(state_->notifications);
+  auto available = state_->notifications.take();
   state_->disarm_locked();
   return available;
 }
@@ -1217,8 +1212,7 @@ Connection::wait_for_notifications(std::chrono::steady_clock::time_point deadlin
   state_->condition.wait_until(lock, deadline, [this] {
     return !state_->notifications.empty() || state_->fatal_error.has_value();
   });
-  std::vector<Notification> available;
-  available.swap(state_->notifications);
+  auto available = state_->notifications.take();
   state_->disarm_locked();
   return available;
 }
@@ -1300,7 +1294,7 @@ std::size_t Connection::dropped_notifications() const noexcept {
     return 0;
   }
   std::lock_guard lock{state_->mutex};
-  return state_->notifications_dropped;
+  return state_->notifications.dropped();
 }
 
 std::int64_t Connection::native_child_pid() const noexcept {
