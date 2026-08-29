@@ -2,12 +2,12 @@
 #include <barrier>
 #include <chrono>
 #include <condition_variable>
+#include <exception>
 #include <functional>
 #include <future>
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <stdexcept>
 #include <thread>
 #include <type_traits>
 #include <utility>
@@ -20,6 +20,15 @@
 #include "operation_state.hpp"
 
 namespace {
+
+// Ubuntu's libc++abi frees a std::runtime_error message with free() after
+// libc++ allocated it with operator new, which AddressSanitizer reports as a
+// mismatch; examples/workspace/CMakeLists.txt describes the same system bug
+// where yaml-cpp forces the standard type. Nothing here forces it, and an
+// exception that allocates no message keeps the check on.
+struct CallerFailure final : std::exception {
+  [[nodiscard]] const char* what() const noexcept override { return "caller failure"; }
+};
 
 using libtmux::detail::MoveOnlyFunction;
 using namespace std::chrono_literals;
@@ -208,13 +217,13 @@ TEST(CompletionQueue, CallbackExceptionsLeaveLaterRecordsReady) {
   int calls = 0;
   ASSERT_TRUE(queue.register_record(first, [&] {
     ++calls;
-    throw std::runtime_error{"caller failure"};
+    throw CallerFailure{};
   }));
   ASSERT_TRUE(queue.register_record(second, [&] { ++calls; }));
   ASSERT_TRUE(queue.mailbox().enqueue(first));
   ASSERT_TRUE(queue.mailbox().enqueue(second));
 
-  EXPECT_THROW(static_cast<void>(queue.run_ready()), std::runtime_error);
+  EXPECT_THROW(static_cast<void>(queue.run_ready()), CallerFailure);
   EXPECT_EQ(calls, 1);
   EXPECT_EQ(queue.run_ready(), 1U);
   EXPECT_EQ(calls, 2);
@@ -538,12 +547,12 @@ TEST(OperationCallback, CallbackExceptionsKeepDeliveryTerminal) {
   auto started = make_operation<int>(hooks);
   [[maybe_unused]] auto subscription =
       std::move(started.operation).subscribe(queue, [](OperationResult<int>) {
-        throw std::runtime_error{"caller failure"};
+        throw CallerFailure{};
       });
   ASSERT_TRUE(started.source.publish(OperationResult<int>{73}));
   started.source.retire();
 
-  EXPECT_THROW(static_cast<void>(queue.run_ready()), std::runtime_error);
+  EXPECT_THROW(static_cast<void>(queue.run_ready()), CallerFailure);
   EXPECT_EQ(queue.run_ready(), 0U);
   EXPECT_FALSE(subscription.observing());
   EXPECT_EQ(hooks->releases.load(std::memory_order_relaxed), 1);
@@ -767,7 +776,7 @@ struct ThrowingMove final {
   ThrowingMove& operator=(const ThrowingMove&) = delete;
   ThrowingMove(ThrowingMove&& other) : fail{std::move(other.fail)} {
     if (fail && *fail) {
-      throw std::runtime_error{"result move"};
+      throw CallerFailure{};
     }
   }
   ThrowingMove& operator=(ThrowingMove&&) = delete;
@@ -784,7 +793,7 @@ struct CountedThrowingMove final {
       : moves{other.moves}, throw_on{other.throw_on} {
     const int move = ++*moves;
     if (move == *throw_on) {
-      throw std::runtime_error{"result move"};
+      throw CallerFailure{};
     }
   }
   CountedThrowingMove& operator=(CountedThrowingMove&&) = delete;
@@ -852,7 +861,7 @@ TEST(OperationState, AThrowingResultMoveStillReleasesAdmission) {
   *fail = true;
 
   EXPECT_THROW(static_cast<void>(sync_wait(std::move(started.operation))),
-               std::runtime_error);
+               CallerFailure);
   EXPECT_EQ(hooks->releases.load(std::memory_order_relaxed), 1);
 }
 
