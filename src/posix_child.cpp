@@ -379,10 +379,7 @@ PosixChild::~PosixChild() noexcept {
   assert(pid_ < 0 || status_ != ChildStatus::running);
   close_descriptor(ChildStream::stdout_stream);
   close_descriptor(ChildStream::stderr_stream);
-  if (exit_fd_ >= 0) {
-    static_cast<void>(::close(exit_fd_));
-    exit_fd_ = -1;
-  }
+  close_exit_descriptor();
 }
 
 PosixChild::PosixChild(PosixChild&& other) noexcept
@@ -402,9 +399,7 @@ PosixChild& PosixChild::operator=(PosixChild&& other) noexcept {
     assert(pid_ < 0 || status_ != ChildStatus::running);
     close_descriptor(ChildStream::stdout_stream);
     close_descriptor(ChildStream::stderr_stream);
-    if (exit_fd_ >= 0) {
-      static_cast<void>(::close(exit_fd_));
-    }
+    close_exit_descriptor();
     pid_ = std::exchange(other.pid_, -1);
     stdout_fd_ = std::exchange(other.stdout_fd_, -1);
     stderr_fd_ = std::exchange(other.stderr_fd_, -1);
@@ -436,6 +431,13 @@ std::string_view PosixChild::rendered_request() const noexcept {
 }
 
 int PosixChild::spawn_teardown_error() const noexcept { return spawn_teardown_error_; }
+
+void PosixChild::close_exit_descriptor() noexcept {
+  if (exit_fd_ >= 0) {
+    static_cast<void>(::close(exit_fd_));
+    exit_fd_ = -1;
+  }
+}
 
 void PosixChild::close_descriptor(ChildStream stream) noexcept {
   auto& descriptor = stream == ChildStream::stdout_stream ? stdout_fd_ : stderr_fd_;
@@ -498,6 +500,7 @@ PosixChild::update_status(DeliveryStatus delivery) noexcept {
     const auto result = ::waitpid(pid_, &wait_status_, WNOHANG);
     if (result == pid_) {
       status_ = ChildStatus::exited;
+      close_exit_descriptor();
       return std::nullopt;
     }
     if (result == 0) {
@@ -515,6 +518,7 @@ PosixChild::update_status(DeliveryStatus delivery) noexcept {
       // left to collect and waitpid answers ECHILD for every command run.
       // "No child processes" alone does not lead anyone to that.
       status_ = ChildStatus::unknowable;
+      close_exit_descriptor();
       lost.diagnostic +=
           " (SIGCHLD is ignored in this process, so the child was reaped before "
           "its exit status could be read)";
@@ -536,6 +540,7 @@ void PosixChild::wait_for_exit() noexcept {
     const auto result = ::waitpid(pid_, &wait_status_, 0);
     if (result == pid_) {
       status_ = ChildStatus::exited;
+      close_exit_descriptor();
       return;
     }
     if (result < 0 && errno == EINTR) {
@@ -543,6 +548,7 @@ void PosixChild::wait_for_exit() noexcept {
     }
     if (result < 0 && errno == ECHILD) {
       status_ = ChildStatus::unknowable;
+      close_exit_descriptor();
     }
     return;
   }

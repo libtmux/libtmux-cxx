@@ -92,6 +92,9 @@ private:
   PosixChild(pid_t pid, int stdout_fd, int stderr_fd, int exit_fd,
              std::size_t capture_limit, std::string rendered) noexcept;
   void close_descriptor(ChildStream stream) noexcept;
+  // Closed as soon as the status is known, so a caller woken by the
+  // answer is not still holding a descriptor for a finished child.
+  void close_exit_descriptor() noexcept;
 
   pid_t pid_{-1};
   int stdout_fd_{-1};
