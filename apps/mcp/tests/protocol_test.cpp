@@ -510,6 +510,18 @@ TEST_F(McpProtocol, CancelsAnInFlightWaitWithoutAReply) {
   EXPECT_NE(response(messages, 2), nullptr);
 }
 
+// A thread-sanitized build pays for every synchronising operation, so a
+// wall-clock budget written for an ordinary one measures the sanitizer.
+#if defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+inline constexpr bool sanitized_build = true;
+#else
+inline constexpr bool sanitized_build = false;
+#endif
+#else
+inline constexpr bool sanitized_build = false;
+#endif
+
 TEST_F(McpProtocol, CancelsOutstandingWorkAtEndOfInput) {
   const auto started = std::chrono::steady_clock::now();
   const std::vector<json> requests{initialize_request(), initialized_notification(),
@@ -527,7 +539,14 @@ TEST_F(McpProtocol, CancelsOutstandingWorkAtEndOfInput) {
   });
   EXPECT_NE(progress, messages.end());
   EXPECT_EQ(response(messages, 1), nullptr);
-  EXPECT_LT(elapsed, std::chrono::seconds{4});
+  // What this asserts is that end of input ends the wait rather than letting
+  // it run its sixty seconds. The wall clock it takes to do that is not the
+  // same under an instrumented build: ThreadSanitizer prices every atomic and
+  // every lock, and the same exchange measures the same on an ordinary build
+  // whichever transport runs it. So the bound is on promptness, and the number
+  // follows the build.
+  EXPECT_LT(elapsed,
+            sanitized_build ? std::chrono::seconds{8} : std::chrono::seconds{4});
 }
 
 TEST_F(McpProtocol, CancelsAModernCallAfterDiscovery) {
