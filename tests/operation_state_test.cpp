@@ -32,6 +32,7 @@ using libtmux::detail::make_operation;
 using libtmux::detail::Operation;
 using libtmux::detail::OperationHooks;
 using libtmux::detail::OperationResult;
+using libtmux::detail::Subscription;
 using libtmux::detail::sync_wait;
 
 static_assert(!std::is_copy_constructible_v<MoveOnlyFunction<void()>>);
@@ -208,6 +209,157 @@ public:
   std::atomic<int> wakes{0};
   std::atomic<int> releases{0};
 };
+
+TEST(OperationCallback, PublicationBeforeSubscribeSurvivesTheRecheck) {
+  CompletionQueue queue;
+  auto hooks = std::make_shared<RecordingHooks>();
+  auto started = make_operation<int>(hooks);
+  ASSERT_TRUE(started.source.publish(OperationResult<int>{53}));
+
+  std::optional<int> observed;
+  [[maybe_unused]] auto subscription =
+      std::move(started.operation).subscribe(queue, [&](OperationResult<int> result) {
+        ASSERT_TRUE(result.has_value());
+        observed = *result;
+      });
+
+  EXPECT_FALSE(observed.has_value());
+  EXPECT_EQ(queue.run_ready(), 1U);
+  EXPECT_EQ(observed, 53);
+  started.source.retire();
+  EXPECT_EQ(hooks->releases.load(std::memory_order_relaxed), 1);
+}
+
+TEST(OperationCallback, MovesOnePayloadIntoOneCallback) {
+  CompletionQueue queue;
+  auto hooks = std::make_shared<RecordingHooks>();
+  auto started = make_operation<std::unique_ptr<int>>(hooks);
+  std::unique_ptr<int> observed;
+  int calls = 0;
+  [[maybe_unused]] auto subscription =
+      std::move(started.operation)
+          .subscribe(queue, [owned = std::make_unique<int>(1), &observed,
+                             &calls](OperationResult<std::unique_ptr<int>> result) {
+            EXPECT_EQ(*owned, 1);
+            observed = std::move(*result);
+            ++calls;
+          });
+
+  ASSERT_TRUE(started.source.publish(
+      OperationResult<std::unique_ptr<int>>{std::make_unique<int>(59)}));
+  EXPECT_EQ(calls, 0);
+  EXPECT_EQ(queue.run_ready(), 1U);
+  ASSERT_NE(observed, nullptr);
+  EXPECT_EQ(*observed, 59);
+  EXPECT_EQ(calls, 1);
+  started.source.retire();
+}
+
+TEST(OperationCallback, DetachDoesNotRequestCancellation) {
+  CompletionQueue queue;
+  auto hooks = std::make_shared<RecordingHooks>();
+  auto started = make_operation<int>(hooks);
+  int calls = 0;
+  [[maybe_unused]] auto subscription =
+      std::move(started.operation).subscribe(queue, [&](OperationResult<int>) {
+        ++calls;
+      });
+
+  subscription.detach();
+  EXPECT_FALSE(started.source.cancel_requested());
+  ASSERT_TRUE(started.source.publish(OperationResult<int>{61}));
+  EXPECT_EQ(queue.run_ready(), 0U);
+  EXPECT_EQ(calls, 0);
+  started.source.retire();
+  EXPECT_EQ(hooks->releases.load(std::memory_order_relaxed), 1);
+}
+
+TEST(OperationCallback, MoveAssignmentDetachesThePreviousObserver) {
+  CompletionQueue queue;
+  auto first_hooks = std::make_shared<RecordingHooks>();
+  auto second_hooks = std::make_shared<RecordingHooks>();
+  auto first = make_operation<int>(first_hooks);
+  auto second = make_operation<int>(second_hooks);
+  int calls = 0;
+  auto subscription =
+      std::move(first.operation).subscribe(queue, [&](OperationResult<int>) {
+        ++calls;
+      });
+  auto replacement =
+      std::move(second.operation).subscribe(queue, [&](OperationResult<int>) {
+        ++calls;
+      });
+
+  subscription = std::move(replacement);
+  EXPECT_FALSE(replacement.observing());
+  ASSERT_TRUE(first.source.publish(OperationResult<int>{63}));
+  EXPECT_EQ(queue.run_ready(), 0U);
+  first.source.retire();
+  EXPECT_EQ(first_hooks->releases.load(std::memory_order_relaxed), 1);
+
+  ASSERT_TRUE(second.source.publish(OperationResult<int>{65}));
+  EXPECT_EQ(queue.run_ready(), 1U);
+  EXPECT_EQ(calls, 1);
+  second.source.retire();
+  EXPECT_EQ(second_hooks->releases.load(std::memory_order_relaxed), 1);
+}
+
+TEST(OperationCallback, QueueCloseDoesNotPublishCancellation) {
+  CompletionQueue queue;
+  auto hooks = std::make_shared<RecordingHooks>();
+  auto started = make_operation<int>(hooks);
+  int calls = 0;
+  auto subscription =
+      std::move(started.operation).subscribe(queue, [&](OperationResult<int>) {
+        ++calls;
+      });
+
+  queue.close();
+  EXPECT_FALSE(subscription.observing());
+  EXPECT_FALSE(started.source.cancel_requested());
+  EXPECT_FALSE(started.source.outcome_published());
+  ASSERT_TRUE(started.source.publish(OperationResult<int>{67}));
+  EXPECT_EQ(calls, 0);
+  started.source.retire();
+  EXPECT_EQ(hooks->releases.load(std::memory_order_relaxed), 1);
+}
+
+TEST(OperationCallback, CancellationRequestCanLoseToAReply) {
+  CompletionQueue queue;
+  auto hooks = std::make_shared<RecordingHooks>();
+  auto started = make_operation<int>(hooks);
+  std::optional<OperationResult<int>> observed;
+  auto subscription =
+      std::move(started.operation).subscribe(queue, [&](OperationResult<int> result) {
+        observed.emplace(std::move(result));
+      });
+
+  ASSERT_TRUE(subscription.request_cancel());
+  EXPECT_FALSE(started.source.outcome_published());
+  ASSERT_TRUE(started.source.publish(OperationResult<int>{71}));
+  ASSERT_EQ(queue.run_ready(), 1U);
+  ASSERT_TRUE(observed.has_value());
+  ASSERT_TRUE(observed->has_value());
+  EXPECT_EQ(**observed, 71);
+  started.source.retire();
+}
+
+TEST(OperationCallback, CallbackExceptionsKeepDeliveryTerminal) {
+  CompletionQueue queue;
+  auto hooks = std::make_shared<RecordingHooks>();
+  auto started = make_operation<int>(hooks);
+  [[maybe_unused]] auto subscription =
+      std::move(started.operation).subscribe(queue, [](OperationResult<int>) {
+        throw std::runtime_error{"caller failure"};
+      });
+  ASSERT_TRUE(started.source.publish(OperationResult<int>{73}));
+  started.source.retire();
+
+  EXPECT_THROW(static_cast<void>(queue.run_ready()), std::runtime_error);
+  EXPECT_EQ(queue.run_ready(), 0U);
+  EXPECT_FALSE(subscription.observing());
+  EXPECT_EQ(hooks->releases.load(std::memory_order_relaxed), 1);
+}
 
 TEST(OperationState, CancellationIsOnlyARequestUntilTheSourcePublishes) {
   auto hooks = std::make_shared<RecordingHooks>();
