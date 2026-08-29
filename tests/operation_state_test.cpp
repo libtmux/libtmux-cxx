@@ -196,6 +196,63 @@ TEST(CompletionQueue, CallbackExceptionsLeaveLaterRecordsReady) {
   EXPECT_EQ(calls, 2);
 }
 
+TEST(CompletionQueue, DetachingReadyRecordsDoesNotObstructLaterDispatch) {
+  CompletionQueue queue;
+  for (std::size_t index = 0U; index < 4096U; ++index) {
+    const auto token = queue.next_token();
+    ASSERT_TRUE(queue.register_record(token, [] {}));
+    ASSERT_TRUE(queue.mailbox().enqueue(token));
+    queue.detach(token);
+  }
+
+  int calls = 0;
+  const auto token = queue.next_token();
+  ASSERT_TRUE(queue.register_record(token, [&] { ++calls; }));
+  ASSERT_TRUE(queue.mailbox().enqueue(token));
+  EXPECT_TRUE(queue.run_one());
+  EXPECT_EQ(calls, 1);
+}
+
+TEST(CompletionQueue, CallbackReentryDoesNotOverlapDispatch) {
+  CompletionQueue queue;
+  const auto first = queue.next_token();
+  const auto second = queue.next_token();
+  std::size_t nested = 1U;
+  ASSERT_TRUE(queue.register_record(first, [&] { nested = queue.run_ready(); }));
+  ASSERT_TRUE(queue.register_record(second, [] {}));
+  ASSERT_TRUE(queue.mailbox().enqueue(first));
+  ASSERT_TRUE(queue.mailbox().enqueue(second));
+
+  EXPECT_TRUE(queue.run_one());
+  EXPECT_EQ(nested, 0U);
+  EXPECT_EQ(queue.run_ready(), 1U);
+}
+
+struct ReenterQueueOnDestroy final {
+  ~ReenterQueueOnDestroy() { *nested = queue->run_ready(); }
+
+  CompletionQueue* queue;
+  std::size_t* nested;
+};
+
+TEST(CompletionQueue, CaptureDestructionDoesNotOverlapDispatch) {
+  CompletionQueue queue;
+  const auto first = queue.next_token();
+  const auto second = queue.next_token();
+  std::size_t nested = 1U;
+  auto capture = std::make_shared<ReenterQueueOnDestroy>(
+      ReenterQueueOnDestroy{.queue = &queue, .nested = &nested});
+  ASSERT_TRUE(queue.register_record(first, [capture] {}));
+  capture.reset();
+  ASSERT_TRUE(queue.register_record(second, [] {}));
+  ASSERT_TRUE(queue.mailbox().enqueue(first));
+  ASSERT_TRUE(queue.mailbox().enqueue(second));
+
+  EXPECT_TRUE(queue.run_one());
+  EXPECT_EQ(nested, 0U);
+  EXPECT_EQ(queue.run_ready(), 1U);
+}
+
 class RecordingHooks final : public OperationHooks {
 public:
   void wake_reactor() noexcept override {

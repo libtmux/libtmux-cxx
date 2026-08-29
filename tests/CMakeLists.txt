@@ -414,6 +414,31 @@ gtest_discover_tests(
   TEST_PREFIX libtmux.operation_state.
   PROPERTIES LABELS concurrency TIMEOUT 30)
 
+# TSan supplies strong global allocation operators of its own. The dedicated
+# fault-injection executable overrides those operators, so its proofs run in
+# every other lane while the queue's concurrency tests remain instrumented.
+if(NOT LIBTMUX_ENABLE_THREAD_SANITIZER)
+  add_executable(libtmux_completion_queue_fault_test completion_queue_fault_test.cpp)
+  target_include_directories(
+    libtmux_completion_queue_fault_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
+  target_link_libraries(
+    libtmux_completion_queue_fault_test
+    PRIVATE libtmux_build_options libtmux::libtmux)
+  target_compile_options(
+    libtmux_completion_queue_fault_test PRIVATE -fno-sanitize-recover=undefined)
+
+  add_test(
+    NAME libtmux.completion_queue.EnqueueDoesNotAllocate
+    COMMAND libtmux_completion_queue_fault_test enqueue)
+  add_test(
+    NAME libtmux.completion_queue.InsertionFailureDestroysAfterUnlock
+    COMMAND libtmux_completion_queue_fault_test insertion)
+  set_tests_properties(
+    libtmux.completion_queue.EnqueueDoesNotAllocate
+    libtmux.completion_queue.InsertionFailureDestroysAfterUnlock
+    PROPERTIES LABELS concurrency TIMEOUT 5)
+endif()
+
 add_executable(libtmux_backend_seam_test backend_seam_test.cpp)
 target_include_directories(
   libtmux_backend_seam_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
