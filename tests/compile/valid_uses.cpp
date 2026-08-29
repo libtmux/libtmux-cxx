@@ -8,8 +8,14 @@
 
 #include <libtmux/libtmux.hpp>
 
-static_assert(std::is_same_v<decltype(&libtmux::Session::attach_command),
-                             std::vector<std::string> (libtmux::Session::*)() const>);
+static_assert(std::is_nothrow_copy_constructible_v<libtmux::AttachCommand>);
+static_assert(std::is_nothrow_move_constructible_v<libtmux::AttachCommand>);
+static_assert(std::is_nothrow_copy_assignable_v<libtmux::AttachCommand>);
+static_assert(std::is_nothrow_move_assignable_v<libtmux::AttachCommand>);
+static_assert(
+    std::is_same_v<decltype(&libtmux::Session::attach_command),
+                   libtmux::expected<libtmux::AttachCommand, libtmux::CommandFailure> (
+                       libtmux::Session::*)() const>);
 static_assert(std::is_same_v<decltype(&libtmux::Window::target),
                              std::string (libtmux::Window::*)() const>);
 static_assert(static_cast<int>(libtmux::FailureKind::truncated) == 7);
@@ -187,13 +193,11 @@ void creation_carries_an_environment(const libtmux::Server& server,
 // Attaching is a command line rather than a call, and sending clients away
 // is a call.
 void clients_come_and_go(const libtmux::Session& session) {
-  const std::vector<std::string> attach = session.attach_command();
-  const libtmux::expected<std::vector<std::string>, libtmux::CommandFailure>
-      checked_attach = session.checked_attach_command();
+  const libtmux::expected<libtmux::AttachCommand, libtmux::CommandFailure> attach =
+      session.attach_command();
   const libtmux::expected<void, libtmux::CommandFailure> sent =
       session.detach_clients();
   (void)attach;
-  (void)checked_attach;
   (void)sent;
 }
 

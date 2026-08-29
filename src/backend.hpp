@@ -32,6 +32,13 @@ class Server;
 
 namespace detail {
 
+class SocketAlias;
+
+struct PreparedAttach {
+  std::vector<std::string> argv;
+  std::shared_ptr<const SocketAlias> route;
+};
+
 // The command as one line, which is what a person reads in a log or in a
 // diagnostic. Bounded: a format request is long, and a caller wanting all of
 // it has the argv already.
@@ -97,12 +104,25 @@ public:
   // The `-L name` or `-S path` pair that selects the server.
   [[nodiscard]] virtual const std::vector<std::string>& connection() const noexcept = 0;
 
-  // Which server this talks to: a resolved socket path on POSIX and a logical
-  // psmux selector on Windows. Empty identifies no server, even itself.
+  // Which server this talks to: a device-and-inode incarnation on POSIX and a
+  // logical psmux selector on Windows. Empty identifies no server, even itself.
   //
   // On POSIX the selector cannot serve here: `-L work` and `-S <its path>`
   // select one server and must compare as one.
   [[nodiscard]] virtual std::string_view identity() const noexcept { return {}; }
+
+  // The route used to open a control client. POSIX identity names an inode,
+  // not this path.
+  [[nodiscard]] virtual std::string_view socket_path() const noexcept { return {}; }
+
+  // Retains the socket alias across backend handoff.
+  [[nodiscard]] virtual std::shared_ptr<const SocketAlias>
+  socket_alias() const noexcept {
+    return {};
+  }
+
+  [[nodiscard]] virtual expected<PreparedAttach, CommandFailure>
+  prepare_attach(std::string_view target) const;
 
   // Unknown custom executors fail capability checks closed. Concrete package
   // backends override this with the routing contract they implement.
@@ -174,9 +194,10 @@ private:
 // tmux in a child process: the only executor this library binds to.
 class SubprocessBackend final : public Backend {
 public:
-  explicit SubprocessBackend(std::vector<std::string> connection,
-                             CommandObserver observer = {},
-                             ExecutionPolicy policy = {});
+  [[nodiscard]] static expected<std::shared_ptr<const SubprocessBackend>,
+                                CommandFailure>
+  open(std::vector<std::string> connection, CommandObserver observer = {},
+       ExecutionPolicy policy = {});
 
   // Declaring an override hides the base's other overload, and the
   // one-argument form is how most callers spell "no timeout".
@@ -204,6 +225,15 @@ public:
     return identity_;
   }
 
+  [[nodiscard]] std::string_view socket_path() const noexcept override {
+    return socket_missing_ ? std::string_view{} : std::string_view{socket_path_};
+  }
+
+  [[nodiscard]] std::shared_ptr<const SocketAlias>
+  socket_alias() const noexcept override {
+    return socket_alias_;
+  }
+
   [[nodiscard]] ServerCapabilities capabilities() const noexcept override {
 #if defined(_WIN32)
     return {.implementation = ServerImplementation::psmux,
@@ -218,17 +248,28 @@ public:
   // no server on it.
   [[nodiscard]] expected<Version, CommandFailure> version() const override;
 
+  [[nodiscard]] expected<PreparedAttach, CommandFailure>
+  prepare_attach(std::string_view target) const override;
+
 private:
+  SubprocessBackend(std::vector<std::string> connection, std::string socket_path,
+                    std::string identity,
+                    std::shared_ptr<const SocketAlias> socket_alias,
+                    bool socket_missing, CommandObserver observer,
+                    ExecutionPolicy policy);
+
   [[nodiscard]] expected<std::string, CommandFailure>
   run_scoped(const CommandRequest& command, std::optional<std::string_view> session,
              std::optional<std::chrono::milliseconds> timeout,
              std::optional<std::size_t> output_limit) const;
 
   std::vector<std::string> connection_;
-  // Resolved once, at construction: the answer depends on `TMUX_TMPDIR` and on
-  // the filesystem, and a server that changed which tmux it meant partway
-  // through its life would be worse than one that cannot say.
+  // Captured once, at construction. Keeping the alias alive keeps the inode
+  // from being reused and prevents this handle from following a replacement.
   std::string identity_;
+  std::string socket_path_;
+  std::shared_ptr<const SocketAlias> socket_alias_;
+  bool socket_missing_{};
 };
 
 // Build a Server over any backend. The only way to reach the private

@@ -5,8 +5,10 @@
 // resolve — it resolves to something else, and tmux reports success. Every
 // assertion here rests on that: the fixtures deliberately collide.
 
+#include <chrono>
 #include <filesystem>
 #include <string>
+#include <thread>
 #include <unordered_set>
 
 #include <gtest/gtest.h>
@@ -143,6 +145,103 @@ TEST(ServerIdentity, TwoHandlesOnOneSocketDescribeTheSameObjects) {
   const auto other = second.new_session("elsewhere");
   ASSERT_TRUE(other.has_value()) << other.error().diagnostic;
   EXPECT_TRUE(windows->front().link_to(*other).has_value());
+}
+
+TEST(ServerIdentity, RestartAtTheSameSocketIsANewServer) {
+  auto original = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(original.has_value()) << original.error();
+  const std::filesystem::path socket = original->socket_path();
+
+  const Server stale = connect(*original);
+  const auto stale_sessions = stale.sessions();
+  ASSERT_TRUE(stale_sessions.has_value()) << stale_sessions.error().diagnostic;
+  const auto stale_windows = stale.windows();
+  ASSERT_TRUE(stale_windows.has_value()) << stale_windows.error().diagnostic;
+  ASSERT_FALSE(stale_sessions->empty());
+  ASSERT_FALSE(stale_windows->empty());
+
+  ASSERT_TRUE(stale.kill().has_value());
+  const auto stopped_by = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+  while (original->is_alive() && std::chrono::steady_clock::now() < stopped_by) {
+    std::this_thread::sleep_for(std::chrono::milliseconds{1});
+  }
+  ASSERT_FALSE(original->is_alive());
+  std::error_code removed;
+  ASSERT_TRUE(std::filesystem::remove(socket, removed));
+  ASSERT_FALSE(removed) << removed.message();
+
+  auto replacement = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(replacement.has_value()) << replacement.error();
+  std::error_code linked;
+  std::filesystem::create_hard_link(replacement->socket_path(), socket, linked);
+  ASSERT_FALSE(linked) << linked.message();
+
+  const auto current = Server::at_socket_path(socket.string());
+  ASSERT_TRUE(current.has_value()) << current.error().diagnostic;
+  const auto current_sessions = current->sessions();
+  ASSERT_TRUE(current_sessions.has_value()) << current_sessions.error().diagnostic;
+  ASSERT_FALSE(current_sessions->empty());
+  EXPECT_EQ(stale_sessions->front().id(), current_sessions->front().id());
+  EXPECT_NE(stale_sessions->front(), current_sessions->front());
+
+  std::unordered_set<libtmux::Session> sessions;
+  sessions.insert(stale_sessions->front());
+  sessions.insert(current_sessions->front());
+  EXPECT_EQ(sessions.size(), 2U);
+
+  const auto renamed = stale_sessions->front().rename("stale-write");
+  EXPECT_FALSE(renamed.has_value());
+  const auto after_rename = current->sessions();
+  ASSERT_TRUE(after_rename.has_value()) << after_rename.error().diagnostic;
+  EXPECT_EQ(after_rename->front().name(), replacement->session_name());
+
+  const auto destination = current->new_session("destination");
+  ASSERT_TRUE(destination.has_value()) << destination.error().diagnostic;
+  const auto crossed = stale_windows->front().link_to(*destination);
+  ASSERT_FALSE(crossed.has_value());
+  EXPECT_EQ(crossed.error().kind, libtmux::FailureKind::validation);
+  EXPECT_FALSE(crossed.error().dispatched);
+}
+
+TEST(ServerIdentity, AHandleOpenedBeforeTheSocketExistsNeverAcquiresAServer) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto late_socket = fixture->tmux_tmpdir() / "late-socket";
+
+  const auto stale = Server::at_socket_path(late_socket.string());
+  ASSERT_TRUE(stale.has_value()) << stale.error().diagnostic;
+
+  const auto creation = stale->new_session("must-not-start");
+  ASSERT_FALSE(creation.has_value());
+  EXPECT_EQ(creation.error().kind, libtmux::FailureKind::missing);
+  EXPECT_FALSE(creation.error().dispatched);
+  EXPECT_FALSE(stale->is_alive());
+
+  const auto direct_control = stale->control("must-not-start");
+  ASSERT_FALSE(direct_control.has_value());
+  EXPECT_NE(direct_control.error().message.find("no socket"), std::string::npos);
+  const auto controlled = stale->over_control("must-not-start");
+  ASSERT_FALSE(controlled.has_value());
+  EXPECT_EQ(controlled.error().kind, libtmux::FailureKind::validation);
+  EXPECT_FALSE(controlled.error().dispatched);
+
+  std::error_code linked;
+  std::filesystem::create_hard_link(fixture->socket_path(), late_socket, linked);
+  ASSERT_FALSE(linked) << linked.message();
+
+  const auto refused = stale->sessions();
+  ASSERT_FALSE(refused.has_value());
+  EXPECT_EQ(refused.error().kind, libtmux::FailureKind::missing);
+  EXPECT_FALSE(refused.error().dispatched);
+  EXPECT_NE(refused.error().diagnostic.find("reopen it after the server starts"),
+            std::string::npos)
+      << refused.error().diagnostic;
+
+  const auto current = Server::at_socket_path(late_socket.string());
+  ASSERT_TRUE(current.has_value()) << current.error().diagnostic;
+  const auto sessions = current->sessions();
+  ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
+  EXPECT_FALSE(sessions->empty());
 }
 
 // A path and the name that resolves to it select one server, so values from

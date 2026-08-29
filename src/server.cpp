@@ -139,6 +139,17 @@ CommandFailure rejected_selector(std::string_view selector, SocketError error) {
       .diagnostic = std::string{to_string(error)} + ": " + std::string{selector}};
 }
 
+expected<Server, CommandFailure> subprocess_server(std::vector<std::string> connection,
+                                                   CommandObserver observer,
+                                                   ExecutionPolicy policy) {
+  auto backend = detail::SubprocessBackend::open(std::move(connection),
+                                                 std::move(observer), policy);
+  if (!backend.has_value()) {
+    return unexpected(std::move(backend.error()));
+  }
+  return detail::server_over(*std::move(backend));
+}
+
 } // namespace
 
 expected<Server, CommandFailure> Server::at_socket_path(std::string_view path,
@@ -148,8 +159,7 @@ expected<Server, CommandFailure> Server::at_socket_path(std::string_view path,
   if (!arguments.has_value()) {
     return unexpected(rejected_selector(path, arguments.error()));
   }
-  return detail::server_over(std::make_shared<const detail::SubprocessBackend>(
-      *std::move(arguments), std::move(observer), policy));
+  return subprocess_server(*std::move(arguments), std::move(observer), policy);
 }
 
 expected<Server, CommandFailure> Server::from_env(CommandObserver observer,
@@ -193,8 +203,7 @@ expected<Server, CommandFailure> Server::at_default(CommandObserver observer,
                                                     ExecutionPolicy policy) {
   // No selector at all, which is what tmux itself does: the default socket
   // under the directory it chooses, honouring TMUX_TMPDIR as tmux does.
-  return detail::server_over(std::make_shared<const detail::SubprocessBackend>(
-      std::vector<std::string>{}, std::move(observer), policy));
+  return subprocess_server({}, std::move(observer), policy);
 }
 
 expected<Server, CommandFailure> Server::at_socket_name(std::string_view name,
@@ -210,8 +219,7 @@ expected<Server, CommandFailure> Server::at_socket_name(std::string_view name,
   if (!arguments.has_value()) {
     return unexpected(rejected_selector(name, arguments.error()));
   }
-  return detail::server_over(std::make_shared<const detail::SubprocessBackend>(
-      *std::move(arguments), std::move(observer), policy));
+  return subprocess_server(*std::move(arguments), std::move(observer), policy);
 }
 
 ServerCapabilities Server::capabilities() const noexcept {
@@ -265,14 +273,14 @@ Server::control_with_options(std::string_view session,
         ProtocolError{std::string{to_string(available.implementation)} +
                       " backend does not support persistent control mode"});
   }
-  // POSIX control uses the resolved socket path. The Windows implementation
-  // rejects psmux control mode before consuming its logical identity.
-  const std::string_view resolved = backend_->identity();
-  if (resolved.empty()) {
+  // The route is not the identity: a pinned POSIX handle identifies an inode
+  // incarnation while connecting through its private alias.
+  const std::string_view socket_path = backend_->socket_path();
+  if (socket_path.empty()) {
     return unexpected(ProtocolError{"this server has no socket to connect to"});
   }
   return Connection::connect(detail::routed_control_options(
-      std::move(options), std::string{resolved}, std::string{session}));
+      std::move(options), std::string{socket_path}, std::string{session}));
 }
 
 expected<Version, CommandFailure> Server::tmux_version() const {
@@ -428,10 +436,8 @@ Server::over_control_with_options(std::string_view session,
                                      " backend does not support control mode"});
   }
   const std::vector<std::string>& selector = backend_->connection();
-  // POSIX selectors resolve to paths; Windows selectors resolve only far
-  // enough for the control implementation to reject psmux explicitly.
-  const std::string_view resolved = backend_->identity();
-  if (resolved.empty()) {
+  const std::string_view socket_path = backend_->socket_path();
+  if (socket_path.empty() || backend_->identity().empty()) {
     return unexpected(
         CommandFailure{.kind = FailureKind::validation,
                        .dispatched = false,
@@ -439,8 +445,9 @@ Server::over_control_with_options(std::string_view session,
                        .diagnostic = "this server has no socket to connect to"});
   }
   auto backend = detail::ControlBackend::open(
-      selector, std::string{resolved}, std::string{resolved}, std::string{session},
-      std::move(options), backend_->observer(), backend_->policy());
+      selector, std::string{socket_path}, std::string{backend_->identity()},
+      std::string{session}, std::move(options), backend_->observer(),
+      backend_->policy(), backend_->socket_alias());
   if (!backend.has_value()) {
     // The same kind a control connection reports when it breaks mid-command,
     // because it is the same thing failing. Not dispatched: no command ran,

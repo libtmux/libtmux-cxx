@@ -125,10 +125,10 @@ would have failed a moment earlier.
 `Client::switch_to`, `Client::detach` and `Session::detach_clients` cover
 the per-client half. What is missing is the server-wide form, and locking.
 
-Attaching is not on the list. `Session::attach_command` hands back the argv
-to exec, because a library whose every command talks to tmux through pipes
-cannot attach a terminal it does not have — so the honest shape is to give
-the caller the command rather than a method that could only fail.
+Attaching is not on the list. `Session::attach_command` hands back an argv and
+retains its server route while the value lives. The caller spawns it because a
+library whose commands use pipes does not own the terminal an attached client
+needs.
 
 ## Scripting the server
 

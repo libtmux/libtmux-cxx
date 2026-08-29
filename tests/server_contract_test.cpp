@@ -78,8 +78,8 @@ TEST(ServerContract, AnUnreachableSocketFailsWithoutHanging) {
   ASSERT_TRUE(server.has_value());
   const auto refused = server->run({"list-sessions"});
   ASSERT_FALSE(refused.has_value());
-  // tmux ran and could not connect; the process itself was dispatched.
-  EXPECT_TRUE(refused.error().dispatched);
+  EXPECT_EQ(refused.error().kind, libtmux::FailureKind::missing);
+  EXPECT_FALSE(refused.error().dispatched);
 }
 
 TEST(ServerContract, RepeatedRunsDoNotLeakDescriptors) {
@@ -136,6 +136,13 @@ TEST(ServerContract, TheVersionIsReadableWithoutAServer) {
   const auto running = server.tmux_version();
   ASSERT_TRUE(running.has_value()) << running.error().diagnostic;
   EXPECT_TRUE(libtmux::is_supported(*running));
+
+  const auto absent =
+      Server::at_socket_path((fixture->tmux_tmpdir() / "absent-version").string());
+  ASSERT_TRUE(absent.has_value()) << absent.error().diagnostic;
+  const auto without_server = absent->tmux_version();
+  ASSERT_TRUE(without_server.has_value()) << without_server.error().diagnostic;
+  EXPECT_EQ(*without_server, *running);
 
   // `tmux -V` does not connect, so the answer survives the server's death.
   ASSERT_TRUE(server.kill().has_value());

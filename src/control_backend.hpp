@@ -39,15 +39,12 @@ inserted_command_reply(const ControlRequestResult& result,
 
 class ControlBackend final : public Backend {
 public:
-  // `socket_path` is where the client is launched; `identity` is which server
-  // that is. They are the same string today and are still two parameters,
-  // because a connection opened over a resolved path must keep identifying as
-  // the server the caller selected — otherwise a `-L` server and its own
-  // control connection would compare as two.
+  // The socket alias must outlive every control connection opened through it.
   [[nodiscard]] static expected<std::shared_ptr<const ControlBackend>, ProtocolError>
   open(std::vector<std::string> selector, std::string socket_path, std::string identity,
        std::string session, ConnectionOptions options, CommandObserver observer,
-       ExecutionPolicy policy = {});
+       ExecutionPolicy policy = {},
+       std::shared_ptr<const SocketAlias> socket_alias = {});
 
   using Backend::run;
 
@@ -61,6 +58,15 @@ public:
 
   [[nodiscard]] std::string_view identity() const noexcept override {
     return identity_;
+  }
+
+  [[nodiscard]] std::string_view socket_path() const noexcept override {
+    return socket_path_;
+  }
+
+  [[nodiscard]] std::shared_ptr<const SocketAlias>
+  socket_alias() const noexcept override {
+    return socket_alias_;
   }
 
   [[nodiscard]] ServerCapabilities capabilities() const noexcept override {
@@ -82,8 +88,9 @@ public:
   [[nodiscard]] std::size_t dropped_notifications() const noexcept override;
 
   ControlBackend(Connection connection, std::vector<std::string> selector,
-                 std::string identity, CommandObserver observer,
-                 ExecutionPolicy policy);
+                 std::string socket_path, std::string identity,
+                 CommandObserver observer, ExecutionPolicy policy,
+                 std::shared_ptr<const SocketAlias> socket_alias);
 
 private:
   [[nodiscard]] expected<std::string, CommandFailure>
@@ -91,9 +98,12 @@ private:
                std::optional<std::chrono::milliseconds> timeout,
                std::optional<std::size_t> output_limit) const override;
 
+  // Declared before the live connection so it is destroyed after it.
+  std::shared_ptr<const SocketAlias> socket_alias_;
   mutable std::mutex mutex_;
   mutable Connection connection_;
   std::vector<std::string> selector_;
+  std::string socket_path_;
   std::string identity_;
 };
 

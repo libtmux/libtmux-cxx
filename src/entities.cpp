@@ -21,6 +21,28 @@
 
 LIBTMUX_NAMESPACE_BEGIN
 
+struct AttachCommand::State {
+  State(std::vector<std::string> command,
+        std::shared_ptr<const detail::SocketAlias> route_lifetime)
+      : argv{std::move(command)}, route{std::move(route_lifetime)} {}
+
+  std::vector<std::string> argv;
+  std::shared_ptr<const detail::SocketAlias> route;
+};
+
+AttachCommand::AttachCommand(std::shared_ptr<const State> state) noexcept
+    : state_{std::move(state)} {}
+AttachCommand::AttachCommand(const AttachCommand&) noexcept = default;
+AttachCommand::AttachCommand(AttachCommand&&) noexcept = default;
+AttachCommand& AttachCommand::operator=(const AttachCommand&) noexcept = default;
+AttachCommand& AttachCommand::operator=(AttachCommand&&) noexcept = default;
+AttachCommand::~AttachCommand() = default;
+
+const std::vector<std::string>& AttachCommand::argv() const noexcept {
+  static const std::vector<std::string> empty;
+  return state_ == nullptr ? empty : state_->argv;
+}
+
 expected<std::string, CommandFailure>
 detail::Row::run(const CommandRequest& command,
                  std::optional<std::size_t> output_limit) const {
@@ -403,27 +425,17 @@ expected<void, CommandFailure> Session::show_message(std::string_view text) cons
 #endif
 }
 
-std::vector<std::string> Session::attach_command() const {
-  auto command = checked_attach_command();
-  return command.has_value() ? *std::move(command) : std::vector<std::string>{};
-}
-
-expected<std::vector<std::string>, CommandFailure>
-Session::checked_attach_command() const {
-#if defined(_WIN32)
-  return unexpected(
-      unsupported("psmux cannot bind an attach command to a captured session safely"));
-#else
-  std::vector<std::string> command{"tmux"};
-  if (backend() != nullptr) {
-    const std::vector<std::string>& connection = backend()->connection();
-    command.insert(command.end(), connection.begin(), connection.end());
+expected<AttachCommand, CommandFailure> Session::attach_command() const {
+  if (backend() == nullptr) {
+    return unexpected(detail::disconnected());
   }
-  command.emplace_back("attach-session");
-  command.emplace_back("-t");
-  command.emplace_back(id());
-  return command;
-#endif
+  auto prepared = backend()->prepare_attach(id());
+  if (!prepared.has_value()) {
+    return unexpected(std::move(prepared.error()));
+  }
+  auto state = std::make_shared<const AttachCommand::State>(std::move(prepared->argv),
+                                                            std::move(prepared->route));
+  return AttachCommand{std::move(state)};
 }
 
 expected<void, CommandFailure> Session::detach_clients() const {

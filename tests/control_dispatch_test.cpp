@@ -133,6 +133,21 @@ TEST(ControlDispatch, AServerSelectedByNameOpensAControlConnection) {
   EXPECT_EQ(over_subprocess->front(), sessions->front());
 }
 
+TEST(ControlDispatch, AControlHandoffKeepsThePinnedSocketAlive) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  auto subprocess = std::make_unique<Server>(connect(*fixture));
+  auto streamed = subprocess->over_control(fixture->session_name());
+  ASSERT_TRUE(streamed.has_value()) << streamed.error().diagnostic;
+
+  subprocess.reset();
+  const auto handed_again = streamed->over_control(fixture->session_name());
+  ASSERT_TRUE(handed_again.has_value()) << handed_again.error().diagnostic;
+  const auto sessions = handed_again->sessions();
+  ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
+  EXPECT_FALSE(sessions->empty());
+}
+
 TEST(ControlDispatch, EveryEntityOperationWorksOverAConnection) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();

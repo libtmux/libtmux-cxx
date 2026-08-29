@@ -106,24 +106,26 @@ inserted_command_reply(const ControlRequestResult& result,
 }
 
 ControlBackend::ControlBackend(Connection connection, std::vector<std::string> selector,
-                               std::string identity, CommandObserver observer,
-                               ExecutionPolicy policy)
-    : Backend{std::move(observer), policy}, connection_{std::move(connection)},
-      selector_{std::move(selector)}, identity_{std::move(identity)} {}
+                               std::string socket_path, std::string identity,
+                               CommandObserver observer, ExecutionPolicy policy,
+                               std::shared_ptr<const SocketAlias> socket_alias)
+    : Backend{std::move(observer), policy}, socket_alias_{std::move(socket_alias)},
+      connection_{std::move(connection)}, selector_{std::move(selector)},
+      socket_path_{std::move(socket_path)}, identity_{std::move(identity)} {}
 
-expected<std::shared_ptr<const ControlBackend>, ProtocolError>
-ControlBackend::open(std::vector<std::string> selector, std::string socket_path,
-                     std::string identity, std::string session,
-                     ConnectionOptions options, CommandObserver observer,
-                     ExecutionPolicy policy) {
+expected<std::shared_ptr<const ControlBackend>, ProtocolError> ControlBackend::open(
+    std::vector<std::string> selector, std::string socket_path, std::string identity,
+    std::string session, ConnectionOptions options, CommandObserver observer,
+    ExecutionPolicy policy, std::shared_ptr<const SocketAlias> socket_alias) {
+  std::string retained_socket_path = socket_path;
   auto connection = Connection::connect(routed_control_options(
       std::move(options), std::move(socket_path), std::move(session)));
   if (!connection.has_value()) {
     return unexpected(connection.error());
   }
   return std::make_shared<const ControlBackend>(
-      *std::move(connection), std::move(selector), std::move(identity),
-      std::move(observer), policy);
+      *std::move(connection), std::move(selector), std::move(retained_socket_path),
+      std::move(identity), std::move(observer), policy, std::move(socket_alias));
 }
 
 expected<std::string, CommandFailure>

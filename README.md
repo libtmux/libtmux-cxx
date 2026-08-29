@@ -728,12 +728,11 @@ The following capability boundaries fail before dispatch on Windows:
 - pane selection and killing, session option and hook reads, reusable attach
   commands, and window targets.
 
-The legacy `Session::attach_command()` and `Window::target()` keep their POSIX
-signatures and return empty values on Windows. New code should use
-`checked_attach_command()` and `checked_target()` to receive the explicit
-unsupported failure. Ambiguous `-L default`, unsafe registry names, and typed
-arguments containing psmux command separators or line breaks are malformed
-requests instead, so they report `FailureKind::validation`.
+`Session::attach_command()` and `Window::checked_target()` return an explicit
+unsupported failure on Windows. `Window::target()` retains its empty
+compatibility sentinel. Ambiguous `-L default`, unsafe registry names, and
+typed arguments containing psmux command separators or line breaks are
+malformed requests instead, so they report `FailureKind::validation`.
 
 With an intact psmux registry, captured handles fail closed after an external
 session rename. Reacquire the session from `Server::session()` before

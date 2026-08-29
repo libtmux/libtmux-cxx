@@ -721,6 +721,13 @@ The tmux object hierarchy.  A Session, Window, Pane or Client is one row of a sn
   - [`CaptureOptions::with_escape_sequences`](#libtmux-entities-hpp-captureoptions-with-escape-sequences)
   - [`CaptureOptions::keep_trailing_spaces`](#libtmux-entities-hpp-captureoptions-keep-trailing-spaces)
   - [`CaptureOptions::output_limit`](#libtmux-entities-hpp-captureoptions-output-limit)
+- [`AttachCommand`](#libtmux-entities-hpp-attachcommand)
+  - [`AttachCommand::AttachCommand`](#libtmux-entities-hpp-attachcommand-attachcommand)
+  - [`AttachCommand::AttachCommand`](#libtmux-entities-hpp-attachcommand-attachcommand-2)
+  - [`AttachCommand::operator=`](#libtmux-entities-hpp-attachcommand-operator)
+  - [`AttachCommand::operator=`](#libtmux-entities-hpp-attachcommand-operator-2)
+  - [`AttachCommand::~AttachCommand`](#libtmux-entities-hpp-attachcommand-attachcommand-3)
+  - [`AttachCommand::argv`](#libtmux-entities-hpp-attachcommand-argv)
 - [`Session`](#libtmux-entities-hpp-session)
   - [`Session::kNoun`](#libtmux-entities-hpp-session-knoun)
   - [`Session::kFields`](#libtmux-entities-hpp-session-kfields)
@@ -754,7 +761,6 @@ The tmux object hierarchy.  A Session, Window, Pane or Client is one row of a sn
   - [`Session::set_option`](#libtmux-entities-hpp-session-set-option)
   - [`Session::unset_option`](#libtmux-entities-hpp-session-unset-option)
   - [`Session::attach_command`](#libtmux-entities-hpp-session-attach-command)
-  - [`Session::checked_attach_command`](#libtmux-entities-hpp-session-checked-attach-command)
   - [`Session::detach_clients`](#libtmux-entities-hpp-session-detach-clients)
   - [`Session::expand`](#libtmux-entities-hpp-session-expand)
   - [`Session::show_message`](#libtmux-entities-hpp-session-show-message)
@@ -1218,6 +1224,58 @@ std::optional<std::size_t> output_limit{};
 ```
 How much of the answer this call is prepared to hold. A scrollback can be far larger than the default, and one that does not fit is reported.
 
+<a id="libtmux-entities-hpp-attachcommand"></a>
+### `AttachCommand`
+
+An attach argv and the private route selecting this server incarnation. Keep it alive until the client exits; same-process `exec` leaves the route on disk.
+
+```cpp
+class AttachCommand final;
+```
+
+<a id="libtmux-entities-hpp-attachcommand-attachcommand"></a>
+#### `AttachCommand::AttachCommand`
+
+```cpp
+AttachCommand(const AttachCommand&) noexcept;
+```
+
+<a id="libtmux-entities-hpp-attachcommand-attachcommand-2"></a>
+#### `AttachCommand::AttachCommand`
+
+```cpp
+AttachCommand(AttachCommand&&) noexcept;
+```
+
+<a id="libtmux-entities-hpp-attachcommand-operator"></a>
+#### `AttachCommand::operator=`
+
+```cpp
+AttachCommand& operator=(const AttachCommand&) noexcept;
+```
+
+<a id="libtmux-entities-hpp-attachcommand-operator-2"></a>
+#### `AttachCommand::operator=`
+
+```cpp
+AttachCommand& operator=(AttachCommand&&) noexcept;
+```
+
+<a id="libtmux-entities-hpp-attachcommand-attachcommand-3"></a>
+#### `AttachCommand::~AttachCommand`
+
+```cpp
+~AttachCommand();
+```
+
+<a id="libtmux-entities-hpp-attachcommand-argv"></a>
+#### `AttachCommand::argv`
+
+```cpp
+[[nodiscard]] const std::vector<std::string>& argv() const noexcept;
+```
+Exec-order arguments; empty after this value is moved from.
+
 <a id="libtmux-entities-hpp-session"></a>
 ### `Session`
 
@@ -1454,16 +1512,9 @@ Remove the value set here, so the wider scope shows through again.
 #### `Session::attach_command`
 
 ```cpp
-[[nodiscard]] std::vector<std::string> attach_command() const;
+[[nodiscard]] expected<AttachCommand, CommandFailure> attach_command() const;
 ```
-The command line that attaches a terminal to this session.  Not a method that attaches: a tmux client needs a terminal, and every command this library runs talks to it through pipes, so an attach it performed itself could only ever fail. A caller that owns a terminal execs this instead.  Prefer `checked_attach_command()`; this source-compatible form returns an empty vector when psmux cannot bind an attach target without a stale race.
-
-<a id="libtmux-entities-hpp-session-checked-attach-command"></a>
-#### `Session::checked_attach_command`
-
-```cpp
-[[nodiscard]] expected<std::vector<std::string>, CommandFailure> checked_attach_command() const;
-```
+A command line that attaches a terminal to this session.  Not a method that attaches: a tmux client needs a terminal, and every command this library runs talks to it through pipes, so an attach it performed itself could only ever fail. Spawn the returned argv and retain the value until that client exits.
 
 <a id="libtmux-entities-hpp-session-detach-clients"></a>
 #### `Session::detach_clients`
@@ -6345,7 +6396,7 @@ A factory rather than an alias: an alias template cannot deduce its argument, so
 <a id="libtmux-abi-hpp"></a>
 ## `libtmux/abi.hpp`
 
-Binary identity.  The C++20 and C++23 builds are not ABI-compatible: every type that carries a result differs in layout because the underlying expected differs. Linking objects from both produces a program that appears to build and then reads the wrong bytes.  An inline namespace whose name encodes the choice makes that a link error naming the missing symbol instead. Callers still write `libtmux::Server`; the namespace is inline, so it is invisible in source and decisive in the mangled name.
+Binary identity.  The C++20 and C++23 builds are not ABI-compatible: every type that carries a result differs in layout because the underlying expected differs. Linking objects from both produces a program that appears to build and then reads the wrong bytes.  An inline namespace whose name encodes the ABI revision and expected choice makes incompatibility a link error. Callers still write `libtmux::Server`; the namespace is inline in source and decisive in the mangled name.
 
 **Symbols:**
 
@@ -6361,7 +6412,7 @@ Binary identity.  The C++20 and C++23 builds are not ABI-compatible: every type 
 #### `LIBTMUX_ABI_NAMESPACE`
 
 ```cpp
-#define LIBTMUX_ABI_NAMESPACE v1_cxx20
+#define LIBTMUX_ABI_NAMESPACE v2_cxx20
 ```
 Available when `defined(LIBTMUX_USE_TL_EXPECTED)`.
 
@@ -6369,7 +6420,7 @@ Available when `defined(LIBTMUX_USE_TL_EXPECTED)`.
 #### `LIBTMUX_ABI_NAMESPACE`
 
 ```cpp
-#define LIBTMUX_ABI_NAMESPACE v1_cxx23
+#define LIBTMUX_ABI_NAMESPACE v2_cxx23
 ```
 Available when `!(defined(LIBTMUX_USE_TL_EXPECTED))`.
 

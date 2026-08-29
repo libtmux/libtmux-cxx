@@ -53,9 +53,9 @@ TEST(BuildSmoke, TheAbiNamespaceNamesTheBackend) {
   // fails to link against a library built the other rather than reading the
   // wrong bytes.
 #if defined(LIBTMUX_USE_TL_EXPECTED)
-  const libtmux::v1_cxx20::Version version{.major = 3, .minor = 4};
+  const libtmux::v2_cxx20::Version version{.major = 3, .minor = 4};
 #else
-  const libtmux::v1_cxx23::Version version{.major = 3, .minor = 4};
+  const libtmux::v2_cxx23::Version version{.major = 3, .minor = 4};
 #endif
   EXPECT_EQ(version.major, 3U);
   EXPECT_TRUE(libtmux::is_supported(version));

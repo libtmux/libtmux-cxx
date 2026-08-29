@@ -174,10 +174,72 @@ Backend::report_failure(const CommandRequest& command, CommandFailure failure) c
   return unexpected(std::move(failure));
 }
 
+expected<PreparedAttach, CommandFailure>
+Backend::prepare_attach(std::string_view target) const {
+#if defined(_WIN32)
+  static_cast<void>(target);
+  return unexpected(CommandFailure{
+      .kind = FailureKind::unsupported,
+      .dispatched = false,
+      .exit_code = 0,
+      .diagnostic =
+          "psmux cannot bind an attach command to a captured session safely"});
+#else
+  auto route = socket_alias();
+  if (route == nullptr) {
+    return unexpected(CommandFailure{
+        .kind = FailureKind::unsupported,
+        .dispatched = false,
+        .exit_code = 0,
+        .diagnostic = "this backend cannot retain an exact attach route"});
+  }
+  std::vector<std::string> command{"tmux"};
+  const auto& selector = connection();
+  command.insert(command.end(), selector.begin(), selector.end());
+  command.emplace_back("attach-session");
+  command.emplace_back("-t");
+  command.emplace_back(target);
+  return PreparedAttach{.argv = std::move(command), .route = std::move(route)};
+#endif
+}
+
 SubprocessBackend::SubprocessBackend(std::vector<std::string> connection,
-                                     CommandObserver observer, ExecutionPolicy policy)
+                                     std::string socket_path, std::string identity,
+                                     std::shared_ptr<const SocketAlias> socket_alias,
+                                     bool socket_missing, CommandObserver observer,
+                                     ExecutionPolicy policy)
     : Backend{std::move(observer), policy}, connection_{std::move(connection)},
-      identity_{resolved_socket_path(connection_).value_or(std::string{})} {}
+      identity_{std::move(identity)}, socket_path_{std::move(socket_path)},
+      socket_alias_{std::move(socket_alias)}, socket_missing_{socket_missing} {}
+
+expected<std::shared_ptr<const SubprocessBackend>, CommandFailure>
+SubprocessBackend::open(std::vector<std::string> connection, CommandObserver observer,
+                        ExecutionPolicy policy) {
+  auto endpoint = bind_socket_endpoint(connection);
+  if (!endpoint.has_value()) {
+    return unexpected(CommandFailure{.kind = FailureKind::pipe,
+                                     .dispatched = false,
+                                     .exit_code = 0,
+                                     .diagnostic = std::move(endpoint.error())});
+  }
+  return std::shared_ptr<const SubprocessBackend>{new SubprocessBackend{
+      std::move(endpoint->connection), std::move(endpoint->socket_path),
+      std::move(endpoint->identity), std::move(endpoint->alias), endpoint->missing,
+      std::move(observer), policy}};
+}
+
+expected<PreparedAttach, CommandFailure>
+SubprocessBackend::prepare_attach(std::string_view target) const {
+  if (socket_missing_) {
+    return unexpected(CommandFailure{
+        .kind = FailureKind::missing,
+        .dispatched = false,
+        .exit_code = 0,
+        .diagnostic =
+            "this handle predates the socket; reopen it after the server starts"});
+  }
+  return Backend::prepare_attach(target);
+}
 
 expected<std::string, CommandFailure>
 SubprocessBackend::run(const CommandRequest& command,
@@ -279,6 +341,18 @@ SubprocessBackend::run_scoped(const CommandRequest& command,
                               std::optional<std::string_view> session,
                               std::optional<std::chrono::milliseconds> timeout,
                               std::optional<std::size_t> output_limit) const {
+  const bool version_query =
+      command.size() == 1U && command.arguments().front().value() == "-V";
+  if (socket_missing_ && !version_query) {
+    return report_failure(
+        command,
+        CommandFailure{
+            .kind = FailureKind::missing,
+            .dispatched = false,
+            .exit_code = 0,
+            .diagnostic =
+                "this handle predates the socket; reopen it after the server starts"});
+  }
   ProcessRequest request;
   request.executable = "tmux";
   request.timeout = timeout;

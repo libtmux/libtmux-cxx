@@ -221,11 +221,9 @@ public:
   // the escape hatch should be able to see that they are back to raw argv.
   [[nodiscard]] expected<Server, CommandFailure> server() const;
 
-  // Which tmux server this came from: the socket path, resolved the way tmux
-  // resolves it. Equality and hashing are defined in terms of it, and it is
-  // the socket rather than the `Server` object on purpose — two handles opened
-  // on one socket describe one tmux, and a caller who built them separately
-  // still means the same thing by them.
+  // Which tmux server incarnation this came from. Equality and hashing are
+  // defined in terms of it, so two handles opened on one live socket agree but
+  // a handle kept across a restart does not become a handle to the replacement.
   //
   // Empty for a value read out of a recording, which is on no server at all.
   [[nodiscard]] std::string_view connection_identity() const noexcept;
@@ -241,6 +239,27 @@ private:
 };
 
 } // namespace detail
+
+// An attach argv and the private route selecting this server incarnation.
+// Keep it alive until the client exits; same-process `exec` leaves the route on disk.
+class AttachCommand final {
+public:
+  AttachCommand(const AttachCommand&) noexcept;
+  AttachCommand(AttachCommand&&) noexcept;
+  AttachCommand& operator=(const AttachCommand&) noexcept;
+  AttachCommand& operator=(AttachCommand&&) noexcept;
+  ~AttachCommand();
+
+  // Exec-order arguments; empty after this value is moved from.
+  [[nodiscard]] const std::vector<std::string>& argv() const noexcept;
+
+private:
+  struct State;
+  explicit AttachCommand(std::shared_ptr<const State> state) noexcept;
+
+  friend class Session;
+  std::shared_ptr<const State> state_;
+};
 
 class Session : private detail::Row {
 public:
@@ -327,18 +346,13 @@ public:
   [[nodiscard]] expected<void, CommandFailure>
   unset_option(std::string_view name) const;
 
-  // The command line that attaches a terminal to this session.
+  // A command line that attaches a terminal to this session.
   //
   // Not a method that attaches: a tmux client needs a terminal, and every
   // command this library runs talks to it through pipes, so an attach it
-  // performed itself could only ever fail. A caller that owns a terminal
-  // execs this instead.
-  //
-  // Prefer `checked_attach_command()`; this source-compatible form returns an
-  // empty vector when psmux cannot bind an attach target without a stale race.
-  [[nodiscard]] std::vector<std::string> attach_command() const;
-  [[nodiscard]] expected<std::vector<std::string>, CommandFailure>
-  checked_attach_command() const;
+  // performed itself could only ever fail. Spawn the returned argv and retain
+  // the value until that client exits.
+  [[nodiscard]] expected<AttachCommand, CommandFailure> attach_command() const;
 
   // Send every client here away, leaving the session running.
   [[nodiscard]] expected<void, CommandFailure> detach_clients() const;

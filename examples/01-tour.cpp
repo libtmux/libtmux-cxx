@@ -177,13 +177,15 @@ int main() {
   }
 
   // Attaching needs a terminal this library does not have, so it hands back
-  // the command to exec rather than a call that could only fail.
+  // the command to spawn rather than a call that could only fail.
   const auto attach = session.attach_command();
-  std::printf("attach with:");
-  for (const std::string& argument : attach) {
-    std::printf(" %s", argument.c_str());
+  if (attach.has_value()) {
+    std::printf("attach with:");
+    for (const std::string& argument : attach->argv()) {
+      std::printf(" %s", argument.c_str());
+    }
+    std::printf("\n");
   }
-  std::printf("\n");
 
   // And the other direction, which is an ordinary call. On a scratch server
   // nobody is attached, and tmux refuses rather than treating that as done:

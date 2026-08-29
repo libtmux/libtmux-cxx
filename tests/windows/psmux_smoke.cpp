@@ -1513,15 +1513,12 @@ int main() {
     return EXIT_FAILURE;
   }
 
-  const auto checked_attach = first_session->checked_attach_command();
-  const auto checked_target = first_window->checked_target();
   const auto attach = first_session->attach_command();
-  if (!require(!checked_attach && !checked_target && attach.empty() &&
-                   first_window->target().empty() &&
-                   checked_attach.error().kind == libtmux::FailureKind::unsupported &&
+  const auto checked_target = first_window->checked_target();
+  if (!require(!attach && !checked_target && first_window->target().empty() &&
+                   attach.error().kind == libtmux::FailureKind::unsupported &&
                    checked_target.error().kind == libtmux::FailureKind::unsupported &&
-                   !checked_attach.error().dispatched &&
-                   !checked_target.error().dispatched,
+                   !attach.error().dispatched && !checked_target.error().dispatched,
                "checked psmux targets must explain the compatibility sentinel")) {
     return EXIT_FAILURE;
   }
