@@ -350,23 +350,11 @@ expected<bool, CommandFailure> SubprocessBackend::session_belongs(
 #endif
 }
 
-expected<std::string, CommandFailure>
-SubprocessBackend::run_scoped(const CommandRequest& command,
-                              std::optional<std::string_view> session,
-                              std::optional<std::chrono::milliseconds> timeout,
-                              std::optional<std::size_t> output_limit) const {
-  const bool version_query =
-      command.size() == 1U && command.arguments().front().value() == "-V";
-  if (socket_missing_ && !version_query) {
-    return report_failure(
-        command,
-        CommandFailure{
-            .kind = FailureKind::missing,
-            .delivery = DeliveryStatus::not_started,
-            .exit_code = 0,
-            .diagnostic =
-                "this handle predates the socket; reopen it after the server starts"});
-  }
+ProcessRequest
+SubprocessBackend::build_request(const CommandRequest& command,
+                                 std::optional<std::string_view> session,
+                                 std::optional<std::chrono::milliseconds> timeout,
+                                 std::optional<std::size_t> output_limit) const {
   ProcessRequest request;
   request.executable = "tmux";
   request.timeout = timeout;
@@ -401,6 +389,28 @@ SubprocessBackend::run_scoped(const CommandRequest& command,
                  static_cast<Sensitivity>(argument.sensitivity())});
   }
 
+  return request;
+}
+
+expected<std::string, CommandFailure>
+SubprocessBackend::run_scoped(const CommandRequest& command,
+                              std::optional<std::string_view> session,
+                              std::optional<std::chrono::milliseconds> timeout,
+                              std::optional<std::size_t> output_limit) const {
+  const bool version_query =
+      command.size() == 1U && command.arguments().front().value() == "-V";
+  if (socket_missing_ && !version_query) {
+    return report_failure(
+        command,
+        CommandFailure{
+            .kind = FailureKind::missing,
+            .delivery = DeliveryStatus::not_started,
+            .exit_code = 0,
+            .diagnostic =
+                "this handle predates the socket; reopen it after the server starts"});
+  }
+  ProcessRequest request = build_request(command, session, timeout, output_limit);
+
   // `CommandObserver` is told about every command, and these two are the
   // commands most worth seeing: one where tmux never started, and one where
   // the answer was too big to keep. Returning without a word left exactly the
@@ -429,6 +439,12 @@ SubprocessBackend::run_scoped(const CommandRequest& command,
 #endif
 
   return interpret(command, allowed_bytes, *std::move(reply));
+}
+
+expected<std::string, CommandFailure>
+SubprocessBackend::interpret_failure(const CommandRequest& command,
+                                     CommandFailure failure) const {
+  return report_failure(command, std::move(failure));
 }
 
 expected<std::string, CommandFailure>

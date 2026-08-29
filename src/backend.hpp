@@ -221,6 +221,25 @@ public:
 #endif
   }
 
+  // The tmux invocation a command becomes: the connection, the UTF-8 flag
+  // every listing depends on, the argument escaping, and the capture bound.
+  [[nodiscard]] ProcessRequest
+  build_request(const CommandRequest& command, std::optional<std::string_view> session,
+                std::optional<std::chrono::milliseconds> timeout,
+                std::optional<std::size_t> output_limit) const;
+
+  // What a reply means: the capture bound, the exit status, the diagnostic
+  // tmux wrote, and the observer. All of it belongs to whoever is consuming
+  // the answer rather than to the thread that read the pipe, which is why an
+  // operation nobody has waited on yet can still carry it.
+  [[nodiscard]] expected<std::string, CommandFailure>
+  interpret(const CommandRequest& command, std::size_t allowed_bytes,
+            ProcessReply reply) const;
+
+  // The same, for a transport that failed before there was a reply.
+  [[nodiscard]] expected<std::string, CommandFailure>
+  interpret_failure(const CommandRequest& command, CommandFailure failure) const;
+
   // `tmux -V` answers without connecting, so this works against a socket with
   // no server on it.
   [[nodiscard]] expected<Version, CommandFailure> version() const override;
@@ -239,13 +258,6 @@ private:
   run_scoped(const CommandRequest& command, std::optional<std::string_view> session,
              std::optional<std::chrono::milliseconds> timeout,
              std::optional<std::size_t> output_limit) const;
-
-  // What a reply means: the capture bound, the exit status, the diagnostic
-  // tmux wrote, and the observer. All of it belongs to whoever is consuming
-  // the answer rather than to the thread that read the pipe.
-  [[nodiscard]] expected<std::string, CommandFailure>
-  interpret(const CommandRequest& command, std::size_t allowed_bytes,
-            ProcessReply reply) const;
 
   std::vector<std::string> connection_;
   // Captured once, at construction. Keeping the alias alive keeps the inode
