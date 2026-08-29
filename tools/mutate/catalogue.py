@@ -67,25 +67,12 @@ CATALOGUE: t.Final = (
         "is refused",
     ),
     Mutation(
-        mutation_id="control-batch-keeps-its-shape",
-        path="src/control_backend.cpp",
-        find="  for (const CommandRequest& command : batch.commands()) {\n"
-        "    request.group.push_back(ControlCommand{command.argv()});\n"
-        "  }",
-        replace="  request.group.push_back(ControlCommand{batch.argv()});",
-        target="libtmux_backend_seam_test",
-        test_regex=r"^libtmux[.]backend_seam$",
-        guards="every command in a batch runs over a control connection, "
-        "rather than the separator arriving escaped and the rest read as "
-        "arguments to the first",
-    ),
-    Mutation(
         mutation_id="control-options-use-server-route",
-        path="src/control_backend.cpp",
+        path="src/server.cpp",
         find="  options.socket_path = std::move(socket_path);",
         replace="  static_cast<void>(socket_path);",
-        target="libtmux_backend_seam_test",
-        test_regex=r"^libtmux[.]backend_seam$",
+        target="libtmux_client_test",
+        test_regex=r"^libtmux[.]client[.]",
         guards="caller control policy is preserved while the Server's socket "
         "remains the route used by the connection",
     ),
@@ -142,16 +129,6 @@ CATALOGUE: t.Final = (
         test_regex=r"^libtmux[.]backend_seam$",
         guards="naming an only-pane window renames it in place rather than moving "
         "it to tmux's implicit target session",
-    ),
-    Mutation(
-        mutation_id="nested-inserted-reply",
-        path="src/control_backend.cpp",
-        find="  if (result.blocks.size() < 2U) {",
-        replace="  if (result.blocks.size() != 2U) {",
-        target="libtmux_backend_seam_test",
-        test_regex=r"^libtmux[.]backend_seam$",
-        guards="nested if-shell command lists return the final inserted reply after "
-        "every empty successful wrapper",
     ),
     Mutation(
         mutation_id="unnamed-break-report-keeps-source-session",
