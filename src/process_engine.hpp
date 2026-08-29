@@ -109,5 +109,13 @@ private:
   std::thread reactor_;
 };
 
+// One engine for the process, not one for each Server.
+//
+// It exists while some caller holds it and is gone when the last lets go, so
+// the two threads are the cost of using this library at all rather than a toll
+// on every connection opened. Nothing static owns it: the weak reference below
+// holds no engine, so there is no destruction order to get wrong.
+[[nodiscard]] expected<std::shared_ptr<ProcessEngine>, ProcessError> shared_engine();
+
 } // namespace detail
 LIBTMUX_NAMESPACE_END

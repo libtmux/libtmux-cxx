@@ -22,6 +22,7 @@ namespace detail {
 
 namespace {
 
+#if defined(_WIN32)
 FailureKind kind_of(ProcessError::Kind kind) noexcept {
   switch (kind) {
   case ProcessError::Kind::validation:
@@ -37,6 +38,7 @@ FailureKind kind_of(ProcessError::Kind kind) noexcept {
   }
   return FailureKind::spawn;
 }
+#endif
 
 // tmux reads a trailing `;` on an argument as a command separator, so an
 // argument that ends in one arrives truncated — and, in a batch, whatever
@@ -222,10 +224,22 @@ SubprocessBackend::open(std::vector<std::string> connection, CommandObserver obs
                                      .exit_code = 0,
                                      .diagnostic = std::move(endpoint.error())});
   }
-  return std::shared_ptr<const SubprocessBackend>{new SubprocessBackend{
+  auto backend = std::shared_ptr<SubprocessBackend>{new SubprocessBackend{
       std::move(endpoint->connection), std::move(endpoint->socket_path),
       std::move(endpoint->identity), std::move(endpoint->alias), endpoint->missing,
       std::move(observer), policy}};
+#if !defined(_WIN32)
+  auto engine = shared_engine();
+  if (!engine.has_value()) {
+    return unexpected(
+        CommandFailure{.kind = FailureKind::pipe,
+                       .delivery = DeliveryStatus::not_started,
+                       .exit_code = 0,
+                       .diagnostic = std::move(engine.error().diagnostic)});
+  }
+  backend->engine_ = std::move(*engine);
+#endif
+  return std::shared_ptr<const SubprocessBackend>{std::move(backend)};
 }
 
 expected<PreparedAttach, CommandFailure>
@@ -395,6 +409,11 @@ SubprocessBackend::run_scoped(const CommandRequest& command,
     return report_failure(command, std::move(failure));
   };
 
+  // Read before the request is handed over, because the engine takes it.
+  const auto allowed_bytes = request.capture_limit;
+#if defined(_WIN32)
+  // The engine is POSIX until the completion-port path exists, so this stays
+  // on the runner that blocks the calling thread.
   const auto reply = run_process(request);
   if (!reply.has_value()) {
     return reported(CommandFailure{.kind = kind_of(reply.error().kind),
@@ -402,6 +421,12 @@ SubprocessBackend::run_scoped(const CommandRequest& command,
                                    .exit_code = -1,
                                    .diagnostic = reply.error().diagnostic});
   }
+#else
+  const auto reply = sync_wait(engine_->submit(std::move(request)));
+  if (!reply.has_value()) {
+    return reported(reply.error());
+  }
+#endif
 
   if (reply->output_truncated) {
     // The runner bounds what it will hold. Returning the prefix as a complete
@@ -411,7 +436,7 @@ SubprocessBackend::run_scoped(const CommandRequest& command,
                                    .delivery = DeliveryStatus::replied,
                                    .exit_code = 0,
                                    .diagnostic = "tmux produced more output than the " +
-                                                 std::to_string(request.capture_limit) +
+                                                 std::to_string(allowed_bytes) +
                                                  " byte limit this call allowed for"});
   }
 

@@ -16,6 +16,9 @@
 #include "libtmux/capabilities.hpp"
 #include "libtmux/command.hpp"
 #include "libtmux/expected.hpp"
+#if !defined(_WIN32)
+#include "process_engine.hpp"
+#endif
 #include "libtmux/version.hpp"
 #include <chrono>
 #include <cstddef>
@@ -244,6 +247,11 @@ private:
   std::string socket_path_;
   std::shared_ptr<const SocketAlias> socket_alias_;
   bool socket_missing_{};
+#if !defined(_WIN32)
+  // Shared with every other backend in the process. Holding it is what keeps
+  // it alive; the last handle to let go is what shuts it down.
+  std::shared_ptr<ProcessEngine> engine_;
+#endif
 };
 
 // Build a Server over any backend. The only way to reach the private

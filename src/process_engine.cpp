@@ -379,5 +379,20 @@ EngineShutdown ProcessEngine::close() {
   return EngineShutdown{published_, reaped_, true};
 }
 
+expected<std::shared_ptr<ProcessEngine>, ProcessError> shared_engine() {
+  static std::mutex guard;
+  static std::weak_ptr<ProcessEngine> held;
+  std::lock_guard lock{guard};
+  if (auto engine = held.lock()) {
+    return engine;
+  }
+  auto started = ProcessEngine::start();
+  if (!started.has_value()) {
+    return unexpected(std::move(started.error()));
+  }
+  held = *started;
+  return started;
+}
+
 } // namespace detail
 LIBTMUX_NAMESPACE_END
