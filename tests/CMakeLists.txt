@@ -443,6 +443,24 @@ if(NOT LIBTMUX_ENABLE_THREAD_SANITIZER)
     PROPERTIES LABELS concurrency TIMEOUT 5)
 endif()
 
+# POSIX only: the child's signal mask and dispositions are what this proves,
+# and Windows starts its children through a different launcher entirely.
+if(NOT WIN32)
+  add_executable(libtmux_spawn_signals_test spawn_signals_test.cpp)
+  target_include_directories(
+    libtmux_spawn_signals_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
+  target_link_libraries(
+    libtmux_spawn_signals_test
+    PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+  target_compile_options(
+    libtmux_spawn_signals_test PRIVATE -fno-sanitize-recover=undefined)
+
+  gtest_discover_tests(
+    libtmux_spawn_signals_test
+    TEST_PREFIX libtmux.spawn_signals.
+    PROPERTIES LABELS "libtmux" TIMEOUT 30)
+endif()
+
 add_executable(libtmux_backend_seam_test backend_seam_test.cpp)
 target_include_directories(
   libtmux_backend_seam_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
