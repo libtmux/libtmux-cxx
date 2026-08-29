@@ -256,12 +256,23 @@ void ProcessEngine::reactor_loop() {
       } else if (one.child.status() == ChildStatus::running) {
         asks_after_exit = true;
       }
+      // A child being ended is checked on the short turn whatever else is in
+      // the set: it is about to be signalled again, reaped and published.
+      if (one.terminate_deadline.has_value()) {
+        asks_after_exit = true;
+      }
     }
     auto boundary = Clock::now() + (asks_after_exit ? poll_quantum : idle_quantum);
     for (const auto& one : live) {
       if (one.deadline.has_value()) {
         boundary = std::min(boundary, *one.deadline);
       }
+    }
+    // Children are signalled after this wait, so a closing engine must not
+    // enter it: the decision to end them is already made, and sleeping on it
+    // is what made teardown cost a whole quantum.
+    if (shutting_down) {
+      boundary = Clock::now();
     }
     static_cast<void>(::poll(watched.data(), watched.size(), poll_timeout(boundary)));
     drain_wake();
