@@ -66,8 +66,8 @@ TEST(ServerContract, ASubmissionTakesTheBoundTheCallerGaveIt) {
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
 
-  auto submitted = server.submit({"display-message", "-p", "longer than one byte"},
-                                 {}, std::size_t{1});
+  auto submitted = server.submit({"display-message", "-p", "longer than one byte"}, {},
+                                 std::size_t{1});
   ASSERT_TRUE(submitted.has_value()) << submitted.error().diagnostic;
   auto answer = std::move(*submitted).wait();
 

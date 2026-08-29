@@ -235,9 +235,8 @@ void ProcessEngine::launch_one(EnginePending work, bool closing) {
         .kind = FailureKind::cancelled,
         .delivery = DeliveryStatus::not_started,
         .exit_code = 0,
-        .diagnostic = withdrawn
-                          ? "the caller withdrew the command before it started"
-                          : "the process engine closed before this started"})));
+        .diagnostic = withdrawn ? "the caller withdrew the command before it started"
+                                : "the process engine closed before this started"})));
     work.source.retire();
     return;
   }

@@ -466,4 +466,54 @@ CATALOGUE: t.Final = (
         guards="exact cleanup succeeds after removing its sessions while preserving a "
         "nested prefix",
     ),
+    Mutation(
+        mutation_id="engine-refusal-holds-no-slot",
+        path="src/process_engine.cpp",
+        find="    auto refused = make_operation<ProcessReply>(std::make_shared<UnadmittedHooks>());",
+        replace="    auto refused = make_operation<ProcessReply>(std::make_shared<ChannelHooks>(channel_));",
+        target="libtmux_process_engine_test",
+        test_regex=r"^libtmux[.]process_engine[.]ProcessEngine[.]ARefusalDoesNotReturnASlotItNeverHeld$",
+        guards="a refused submission gives back no admission, so the bound does "
+        "not walk to zero under sustained overload",
+    ),
+    Mutation(
+        mutation_id="engine-threads-own-nothing",
+        path="src/process_engine.cpp",
+        find="  engine->launcher_ = std::thread{[owner = engine.get()] { owner->launch_loop(); }};",
+        replace="  engine->launcher_ = std::thread{[owner = engine] { owner->launch_loop(); }};",
+        target="libtmux_process_engine_test",
+        test_regex=r"^libtmux[.]process_engine[.]ProcessEngine[.]EndsWhenTheLastHolderLetsGo$",
+        guards="the engine's own threads hold no reference to it, so it is "
+        "destroyed when the last caller lets go",
+    ),
+    Mutation(
+        mutation_id="engine-waits-for-its-launches",
+        path="src/process_engine.cpp",
+        find="      if (closing_ && live.empty() && pending_.empty() && launching_ == 0U) {",
+        replace="      if (closing_ && live.empty() && pending_.empty()) {",
+        target="libtmux_process_engine_test",
+        test_regex=r"^libtmux[.]process_engine[.]ProcessEngine[.]ShutdownWaitsForALaunchAlreadyInFlight$",
+        guards="the reactor waits for a launch in flight rather than returning "
+        "and stranding the child it is about to be handed",
+    ),
+    Mutation(
+        mutation_id="engine-shutdown-starts-nothing",
+        path="src/process_engine.cpp",
+        find="  if (withdrawn || closing) {",
+        replace="  if (withdrawn && closing) {",
+        target="libtmux_process_engine_test",
+        test_regex=r"^libtmux[.]process_engine[.]ProcessEngine[.]ShutdownDoesNotStartWorkItIsAboutToEnd$",
+        guards="closing does not start the commands it is about to end, which "
+        "would run them against a real server for nothing",
+    ),
+    Mutation(
+        mutation_id="submitted-command-keeps-its-bound",
+        path="src/async.cpp",
+        find="    state->allowed_bytes = started->allowed_bytes;",
+        replace="    state->allowed_bytes = detail::default_capture_limit;",
+        target="libtmux_server_contract_test",
+        test_regex=r"^libtmux[.]server_contract[.]ServerContract[.]ASubmissionTakesTheBoundTheCallerGaveIt$",
+        guards="a truncation diagnostic names the bound the caller passed, not "
+        "the one that was never in force",
+    ),
 )

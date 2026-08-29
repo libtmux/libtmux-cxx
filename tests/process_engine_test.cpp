@@ -220,4 +220,23 @@ TEST(ProcessEngine, ShutdownDoesNotStartWorkItIsAboutToEnd) {
   EXPECT_GT(never_started, 0) << "every queued command was started, then ended";
 }
 
+// Work being launched is in neither queue: the launch lane has taken it and
+// the reactor has not been handed it yet. A reactor that reads that gap as
+// nothing left returns, and the child it was about to own is never waited for
+// by anyone. Repeated because the window is the width of one process
+// creation.
+TEST(ProcessEngine, ShutdownWaitsForALaunchAlreadyInFlight) {
+  for (int attempt = 0; attempt < 32; ++attempt) {
+    Operation<ProcessReply> running;
+    {
+      auto engine = ProcessEngine::start();
+      ASSERT_TRUE(engine.has_value()) << engine.error().diagnostic;
+      running = (*engine)->submit(shell("sleep 5"));
+      static_cast<void>((*engine)->close());
+    }
+    auto reply = sync_wait(std::move(running));
+    EXPECT_FALSE(reply.has_value());
+  }
+}
+
 } // namespace

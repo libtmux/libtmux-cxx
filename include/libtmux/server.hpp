@@ -107,8 +107,7 @@ public:
   // The bounds matter more here, not less: the one long question in a batch
   // is exactly the one that needs its own. See `libtmux/async.hpp`.
   [[nodiscard]] expected<CommandOperation, CommandFailure>
-  submit(CommandRequest command,
-         std::optional<std::chrono::milliseconds> timeout = {},
+  submit(CommandRequest command, std::optional<std::chrono::milliseconds> timeout = {},
          std::optional<std::size_t> output_limit = {}) const;
 
   // Run several commands in one invocation. tmux runs a batch fail-fast, so a
