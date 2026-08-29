@@ -5,8 +5,8 @@
 // `refused` means tmux ran and said no; `missing` means tmux ran, said yes,
 // and the object asked about was not there; `truncated` means it answered at
 // greater length than the caller allowed for. `unsupported` is a backend
-// feature gap; `cancelled` means the caller stopped the operation before it
-// completed; `validation` is a bad request, so callers handle them differently.
+// feature gap; `validation` is a bad request, so callers handle them
+// differently.
 
 #include "libtmux/abi.hpp"
 #include "libtmux/delivery.hpp"
@@ -38,7 +38,6 @@ enum class FailureKind {
   // The backend cannot provide this operation without weakening its contract;
   // nothing was dispatched.
   unsupported,
-  cancelled,
 };
 
 [[nodiscard]] constexpr std::string_view to_string(FailureKind kind) noexcept {
@@ -61,8 +60,6 @@ enum class FailureKind {
     return "the answer did not fit";
   case FailureKind::unsupported:
     return "the backend does not support this operation";
-  case FailureKind::cancelled:
-    return "the operation was cancelled";
   }
   return "unknown failure";
 }

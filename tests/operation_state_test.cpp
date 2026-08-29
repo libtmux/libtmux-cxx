@@ -452,14 +452,14 @@ TEST(OperationState, CancellationIsOnlyARequestUntilTheSourcePublishes) {
   EXPECT_FALSE(started.source.outcome_published());
 
   ASSERT_TRUE(started.source.publish(
-      unexpected(libtmux::CommandFailure{.kind = FailureKind::cancelled,
+      unexpected(libtmux::CommandFailure{.kind = FailureKind::timeout,
                                          .delivery = DeliveryStatus::not_started,
                                          .diagnostic = {}})));
   started.source.retire();
   EXPECT_EQ(hooks->releases.load(std::memory_order_relaxed), 0);
   const auto result = sync_wait(std::move(started.operation));
   ASSERT_FALSE(result.has_value());
-  EXPECT_EQ(result.error().kind, FailureKind::cancelled);
+  EXPECT_EQ(result.error().kind, FailureKind::timeout);
   EXPECT_EQ(hooks->releases.load(std::memory_order_relaxed), 1);
 }
 
@@ -470,7 +470,7 @@ TEST(OperationState, AReplyCanBeatARequestedCancellation) {
 
   EXPECT_TRUE(started.source.publish(OperationResult<int>{43}));
   EXPECT_FALSE(started.source.publish(
-      unexpected(libtmux::CommandFailure{.kind = FailureKind::cancelled,
+      unexpected(libtmux::CommandFailure{.kind = FailureKind::timeout,
                                          .delivery = DeliveryStatus::not_started,
                                          .diagnostic = {}})));
   started.source.retire();

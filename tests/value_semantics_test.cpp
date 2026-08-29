@@ -150,11 +150,9 @@ TEST(ValueSemantics, AFailureComposesAndCanBeNamed) {
   for (const FailureKind kind :
        {FailureKind::validation, FailureKind::spawn, FailureKind::pre_exec,
         FailureKind::pipe, FailureKind::timeout, FailureKind::refused,
-        FailureKind::missing, FailureKind::truncated, FailureKind::unsupported,
-        FailureKind::cancelled}) {
+        FailureKind::missing, FailureKind::truncated, FailureKind::unsupported}) {
     EXPECT_FALSE(libtmux::to_string(kind).empty());
   }
-  EXPECT_EQ(libtmux::to_string(FailureKind::cancelled), "the operation was cancelled");
   EXPECT_EQ(static_cast<int>(FailureKind::truncated), 7);
   EXPECT_EQ(static_cast<int>(FailureKind::unsupported), 8);
   for (const auto implementation :
