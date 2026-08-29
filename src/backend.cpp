@@ -350,6 +350,28 @@ expected<bool, CommandFailure> SubprocessBackend::session_belongs(
 #endif
 }
 
+#if !defined(_WIN32)
+expected<Operation<ProcessReply>, CommandFailure>
+SubprocessBackend::start(const CommandRequest& command,
+                         std::optional<std::chrono::milliseconds> timeout,
+                         std::optional<std::size_t> output_limit) const {
+  const bool version_query =
+      command.size() == 1U && command.arguments().front().value() == "-V";
+  if (socket_missing_ && !version_query) {
+    auto refused = interpret_failure(
+        command,
+        CommandFailure{
+            .kind = FailureKind::missing,
+            .delivery = DeliveryStatus::not_started,
+            .exit_code = 0,
+            .diagnostic =
+                "this handle predates the socket; reopen it after the server starts"});
+    return unexpected(std::move(refused.error()));
+  }
+  return engine_->submit(build_request(command, std::nullopt, timeout, output_limit));
+}
+#endif
+
 ProcessRequest
 SubprocessBackend::build_request(const CommandRequest& command,
                                  std::optional<std::string_view> session,

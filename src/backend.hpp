@@ -221,6 +221,14 @@ public:
 #endif
   }
 
+#if !defined(_WIN32)
+  // Send a command and keep the operation. The half of running a command that
+  // has to happen now; interpret is the half that can happen later.
+  [[nodiscard]] expected<Operation<ProcessReply>, CommandFailure>
+  start(const CommandRequest& command, std::optional<std::chrono::milliseconds> timeout,
+        std::optional<std::size_t> output_limit) const;
+#endif
+
   // The tmux invocation a command becomes: the connection, the UTF-8 flag
   // every listing depends on, the argument escaping, and the capture bound.
   [[nodiscard]] ProcessRequest

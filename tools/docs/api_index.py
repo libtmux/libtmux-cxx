@@ -19,6 +19,7 @@ import typing as t
 HEADER_ORDER = [
     "libtmux.hpp",  # first, because it is what a reader includes first
     "server.hpp",
+    "async.hpp",
     "capabilities.hpp",
     "entities.hpp",
     "snapshot.hpp",

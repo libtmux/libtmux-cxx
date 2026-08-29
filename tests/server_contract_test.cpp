@@ -32,6 +32,46 @@ Server connect(const libtmux::test::ScopedTmuxServer& fixture) {
 // between callers is a Server whose commands are interleaved rather than
 // serialised behind one another. Each answer must still be the answer to the
 // question that caller asked.
+// Submitting sends the command and keeps the answer for later, so a program
+// with several questions asks them all before collecting any. Each answer must
+// still belong to the question it was asked for.
+TEST(ServerContract, SubmittedCommandsAreCollectedLater) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+
+  constexpr int asked = 8;
+  std::vector<libtmux::CommandOperation> sent;
+  sent.reserve(asked);
+  for (int index = 0; index < asked; ++index) {
+    auto submitted =
+        server.submit({"display-message", "-p", "asked-" + std::to_string(index)});
+    ASSERT_TRUE(submitted.has_value()) << submitted.error().diagnostic;
+    sent.push_back(*std::move(submitted));
+  }
+
+  for (int index = 0; index < asked; ++index) {
+    auto answer = std::move(sent[static_cast<std::size_t>(index)]).wait();
+    ASSERT_TRUE(answer.has_value()) << answer.error().diagnostic;
+    EXPECT_EQ(*answer, "asked-" + std::to_string(index) + "\n");
+  }
+}
+
+// A submitted command reports what tmux said about it, not merely that it ran.
+TEST(ServerContract, ASubmittedFailureCarriesWhatTmuxSaid) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+
+  auto submitted = server.submit({"kill-session", "-t", "no-such-session"});
+  ASSERT_TRUE(submitted.has_value()) << submitted.error().diagnostic;
+  const auto answer = (*std::move(submitted)).wait();
+
+  ASSERT_FALSE(answer.has_value());
+  EXPECT_EQ(answer.error().kind, libtmux::FailureKind::refused);
+  EXPECT_NE(answer.error().diagnostic.find("no-such-session"), std::string::npos);
+}
+
 TEST(ServerContract, ConcurrentCallersEachGetTheirOwnAnswer) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();

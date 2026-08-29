@@ -23,6 +23,7 @@
 #include <string_view>
 #include <vector>
 
+#include "libtmux/async.hpp"
 #include "libtmux/batch.hpp"
 #include "libtmux/capabilities.hpp"
 #include "libtmux/chain.hpp"
@@ -95,6 +96,12 @@ public:
   // it the command reports `truncated` rather than returning a prefix that
   // reads like a complete answer. Unset uses the package default, which is
   // ample for every listing and can be too small for a long scrollback.
+  // Send a command without waiting for it. The answer is the same one `run`
+  // gives; what differs is that a program with several questions can ask them
+  // all before collecting any. See `libtmux/async.hpp`.
+  [[nodiscard]] expected<CommandOperation, CommandFailure>
+  submit(CommandRequest command) const;
+
   [[nodiscard]] expected<std::string, CommandFailure>
   run(const CommandRequest& command,
       std::optional<std::chrono::milliseconds> timeout = {},

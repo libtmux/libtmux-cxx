@@ -8,6 +8,7 @@
 // Nothing here spawns a process; execution belongs to the connection type.
 
 #include "libtmux/abi.hpp"
+#include "libtmux/async.hpp"
 #include "libtmux/batch.hpp"
 #include "libtmux/capabilities.hpp"
 #include "libtmux/capture.hpp"

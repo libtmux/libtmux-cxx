@@ -11,6 +11,7 @@ is the prose there. Run it with `--check` to prove this page is current.
 
 - [`libtmux/libtmux.hpp`](#libtmux-libtmux-hpp)
 - [`libtmux/server.hpp`](#libtmux-server-hpp)
+- [`libtmux/async.hpp`](#libtmux-async-hpp)
 - [`libtmux/capabilities.hpp`](#libtmux-capabilities-hpp)
 - [`libtmux/entities.hpp`](#libtmux-entities-hpp)
 - [`libtmux/snapshot.hpp`](#libtmux-snapshot-hpp)
@@ -54,6 +55,7 @@ The connection root.  A Server names which tmux server to talk to and how to rea
   - [`Server::from_env`](#libtmux-server-hpp-server-from-env)
   - [`Server::at_default`](#libtmux-server-hpp-server-at-default)
   - [`Server::capabilities`](#libtmux-server-hpp-server-capabilities)
+  - [`Server::submit`](#libtmux-server-hpp-server-submit)
   - [`Server::run`](#libtmux-server-hpp-server-run)
   - [`Server::run_batch`](#libtmux-server-hpp-server-run-batch)
   - [`Server::run_chain`](#libtmux-server-hpp-server-run-chain)
@@ -142,13 +144,20 @@ The server tmux would talk to with no `-L` or `-S` at all, which is the one a pe
 ```
 The local backend contract; no command runs. `tmux_version()` separately queries the executable or the connected control server.
 
+<a id="libtmux-server-hpp-server-submit"></a>
+#### `Server::submit`
+
+```cpp
+[[nodiscard]] expected<CommandOperation, CommandFailure> submit(CommandRequest command) const;
+```
+Run one command and return its standard output.  The timeout still rides on the call: how long a caller will wait is a property of what they asked for, and listing sessions does not share a deadline with attaching a client. Unset takes the server's `ExecutionPolicy`, which is thirty seconds rather than forever — a floor, not a guess at what this particular command needs. `output_limit` bounds how much of tmux's answer this call will hold. Past it the command reports `truncated` rather than returning a prefix that reads like a complete answer. Unset uses the package default, which is ample for every listing and can be too small for a long scrollback. Send a command without waiting for it. The answer is the same one `run` gives; what differs is that a program with several questions can ask them all before collecting any. See `libtmux/async.hpp`.
+
 <a id="libtmux-server-hpp-server-run"></a>
 #### `Server::run`
 
 ```cpp
 [[nodiscard]] expected<std::string, CommandFailure> run(const CommandRequest& command, std::optional<std::chrono::milliseconds> timeout = {}, std::optional<std::size_t> output_limit = {}) const;
 ```
-Run one command and return its standard output.  The timeout still rides on the call: how long a caller will wait is a property of what they asked for, and listing sessions does not share a deadline with attaching a client. Unset takes the server's `ExecutionPolicy`, which is thirty seconds rather than forever — a floor, not a guess at what this particular command needs. `output_limit` bounds how much of tmux's answer this call will hold. Past it the command reports `truncated` rather than returning a prefix that reads like a complete answer. Unset uses the package default, which is ample for every listing and can be too small for a long scrollback.
 
 <a id="libtmux-server-hpp-server-run-batch"></a>
 #### `Server::run_batch`
@@ -450,6 +459,80 @@ A hook set globally is not reported by the unscoped listing, so reading it back 
 ```cpp
 [[nodiscard]] expected<void, CommandFailure> set_global_hook(std::string_view name, std::string_view command) const;
 ```
+
+<a id="libtmux-async-hpp"></a>
+## `libtmux/async.hpp`
+
+A command that has been sent and not yet answered.  `Server::submit` returns one instead of blocking, so a program with several questions for tmux asks them all and then collects. The waiting is the caller's to do and to order; the engine underneath runs them at once on threads it owns, whatever number of them there are.  An operation is answered once. Dropping one without waiting stops observing it; it does not stop the command, which tmux may already have run.
+
+**Symbols:**
+
+- [`CommandOperation`](#libtmux-async-hpp-commandoperation)
+  - [`CommandOperation::CommandOperation`](#libtmux-async-hpp-commandoperation-commandoperation)
+  - [`CommandOperation::operator=`](#libtmux-async-hpp-commandoperation-operator)
+  - [`CommandOperation::CommandOperation`](#libtmux-async-hpp-commandoperation-commandoperation-2)
+  - [`CommandOperation::operator=`](#libtmux-async-hpp-commandoperation-operator-2)
+  - [`CommandOperation::~CommandOperation`](#libtmux-async-hpp-commandoperation-commandoperation-3)
+  - [`CommandOperation::wait`](#libtmux-async-hpp-commandoperation-wait)
+  - [`CommandOperation::request_cancel`](#libtmux-async-hpp-commandoperation-request-cancel)
+
+<a id="libtmux-async-hpp-commandoperation"></a>
+### `CommandOperation`
+
+```cpp
+class CommandOperation final;
+```
+
+<a id="libtmux-async-hpp-commandoperation-commandoperation"></a>
+#### `CommandOperation::CommandOperation`
+
+```cpp
+CommandOperation(CommandOperation&& other) noexcept;
+```
+
+<a id="libtmux-async-hpp-commandoperation-operator"></a>
+#### `CommandOperation::operator=`
+
+```cpp
+CommandOperation& operator=(CommandOperation&& other) noexcept;
+```
+
+<a id="libtmux-async-hpp-commandoperation-commandoperation-2"></a>
+#### `CommandOperation::CommandOperation`
+
+```cpp
+CommandOperation(const CommandOperation&) = delete;
+```
+
+<a id="libtmux-async-hpp-commandoperation-operator-2"></a>
+#### `CommandOperation::operator=`
+
+```cpp
+CommandOperation& operator=(const CommandOperation&) = delete;
+```
+
+<a id="libtmux-async-hpp-commandoperation-commandoperation-3"></a>
+#### `CommandOperation::~CommandOperation`
+
+```cpp
+~CommandOperation();
+```
+
+<a id="libtmux-async-hpp-commandoperation-wait"></a>
+#### `CommandOperation::wait`
+
+```cpp
+[[nodiscard]] expected<std::string, CommandFailure> wait() &&;
+```
+What tmux said, once it has said it. The same answer `Server::run` gives, including the bound on how much of it is kept and what a non-zero exit means. Consumed once: the operation is spent afterwards.
+
+<a id="libtmux-async-hpp-commandoperation-request-cancel"></a>
+#### `CommandOperation::request_cancel`
+
+```cpp
+[[nodiscard]] bool request_cancel();
+```
+Ask for the command to be withdrawn. A request rather than an outcome: tmux may answer first, and whether it acted is reported by the failure's delivery rather than guessed at here.
 
 <a id="libtmux-capabilities-hpp"></a>
 ## `libtmux/capabilities.hpp`
