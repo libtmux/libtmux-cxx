@@ -114,7 +114,7 @@ std::optional<CommandFailure> detail::Row::refused(ServerFeature feature,
   }
   return CommandFailure{.kind = FailureKind::unsupported,
                         .delivery = DeliveryStatus::not_started,
-                        .exit_code = -1,
+                        .exit_code = 0,
                         .diagnostic = std::string{why}};
 }
 

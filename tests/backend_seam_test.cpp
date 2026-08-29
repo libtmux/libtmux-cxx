@@ -243,6 +243,9 @@ TEST(BackendSeam, APsmuxServerRefusesNavigationWithoutDispatching) {
   ASSERT_FALSE(moved.has_value());
   EXPECT_EQ(moved.error().kind, libtmux::FailureKind::unsupported);
   EXPECT_EQ(moved.error().delivery, libtmux::DeliveryStatus::not_started);
+  // Nothing ran, so there is no status to report: the exit code every other
+  // refusal in this library carries.
+  EXPECT_EQ(moved.error().exit_code, 0);
   EXPECT_NE(moved.error().diagnostic.find("session navigation"), std::string::npos);
   EXPECT_EQ(backend->issued.size(), listed) << "refused after dispatching";
 }
