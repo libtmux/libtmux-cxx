@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
@@ -177,6 +178,21 @@ TEST(ProcessEngine, ARefusalDoesNotReturnASlotItNeverHeld) {
 
   ASSERT_FALSE(again.has_value()) << "the one slot is still occupied";
   EXPECT_EQ(again.error().kind, libtmux::FailureKind::overloaded);
+}
+
+// The engine is gone once the last caller lets go. Threads that held a
+// reference of their own kept it alive for the life of the process, so its
+// shutdown only ever ran in a test that called it by hand.
+TEST(ProcessEngine, EndsWhenTheLastHolderLetsGo) {
+  std::weak_ptr<ProcessEngine> watched;
+  {
+    auto engine = ProcessEngine::start();
+    ASSERT_TRUE(engine.has_value()) << engine.error().diagnostic;
+    watched = *engine;
+    auto reply = sync_wait((*engine)->submit(shell("true")));
+    ASSERT_TRUE(reply.has_value()) << reply.error().diagnostic;
+  }
+  EXPECT_TRUE(watched.expired()) << "the engine's own threads still hold it";
 }
 
 } // namespace

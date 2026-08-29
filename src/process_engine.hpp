@@ -64,7 +64,38 @@ struct EngineLive final {
   bool abandoned{false};
 };
 
-class ProcessEngine final : public std::enable_shared_from_this<ProcessEngine> {
+// What a hook may still be holding once the engine is gone.
+//
+// The engine's threads must not own the engine, or its shutdown never runs.
+// Nor may a hook revive it: `release_admission` is reached from the reactor,
+// and reviving the engine there would leave the reactor joining itself. So
+// the two things a hook reaches for -- the wake pipe and the admission count
+// -- live here, where holding them keeps no thread alive and revives nothing.
+class EngineChannel final {
+public:
+  EngineChannel(std::size_t operation_limit, int wake_read, int wake_write) noexcept;
+  ~EngineChannel();
+  EngineChannel(const EngineChannel&) = delete;
+  EngineChannel& operator=(const EngineChannel&) = delete;
+
+  // Accepted work in flight, against the bound. A refused caller is told at
+  // once rather than queued behind a limit it cannot see.
+  [[nodiscard]] bool admit() noexcept;
+  void release() noexcept;
+
+  void wake() noexcept;
+  void drain() noexcept;
+  [[nodiscard]] int wake_descriptor() const noexcept { return wake_read_; }
+
+private:
+  std::mutex mutex_;
+  std::size_t operation_limit_;
+  std::size_t in_flight_{0U};
+  int wake_read_{-1};
+  int wake_write_{-1};
+};
+
+class ProcessEngine final {
 public:
   [[nodiscard]] static expected<std::shared_ptr<ProcessEngine>, ProcessError>
   start(EngineConfig config = {});
@@ -80,26 +111,22 @@ public:
   [[nodiscard]] EngineShutdown close();
 
 private:
-  class Hooks;
-
-  explicit ProcessEngine(EngineConfig config, int wake_read, int wake_write) noexcept;
+  explicit ProcessEngine(std::shared_ptr<EngineChannel> channel) noexcept;
 
   void launch_loop();
+  void launch_one(EnginePending work);
   void reactor_loop();
-  void wake() noexcept;
-  void drain_wake() noexcept;
-  [[nodiscard]] bool admit() noexcept;
-  void release_admission() noexcept;
 
-  EngineConfig config_;
-  int wake_read_{-1};
-  int wake_write_{-1};
+  std::shared_ptr<EngineChannel> channel_;
 
   std::mutex mutex_;
   std::condition_variable launch_ready_;
   std::deque<EnginePending> pending_;
   std::vector<EngineLive> arrived_;
-  std::size_t in_flight_{0U};
+  // Work the launch lane has taken but not yet handed over. It is in neither
+  // queue while the platform creates the process, and a reactor that read
+  // that gap as "nothing left" would return and strand a live child.
+  std::size_t launching_{0U};
   bool closing_{false};
 
   std::size_t published_{0U};

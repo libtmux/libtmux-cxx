@@ -56,6 +56,20 @@ public:
   void release_admission() noexcept override {}
 };
 
+// The reactor is woken rather than polled: a cancellation or a detach has to
+// reach it without waiting for the next turn.
+class ChannelHooks final : public OperationHooks {
+public:
+  explicit ChannelHooks(std::shared_ptr<EngineChannel> channel) noexcept
+      : channel_{std::move(channel)} {}
+
+  void wake_reactor() noexcept override { channel_->wake(); }
+  void release_admission() noexcept override { channel_->release(); }
+
+private:
+  std::shared_ptr<EngineChannel> channel_;
+};
+
 [[nodiscard]] int poll_timeout(Clock::time_point boundary) {
   const auto now = Clock::now();
   if (now >= boundary) {
@@ -67,29 +81,6 @@ public:
 }
 
 } // namespace
-
-// The reactor is woken rather than polled: a cancellation or a detach has to
-// reach it without waiting for the next turn.
-class ProcessEngine::Hooks final : public OperationHooks {
-public:
-  explicit Hooks(std::weak_ptr<ProcessEngine> engine) noexcept
-      : engine_{std::move(engine)} {}
-
-  void wake_reactor() noexcept override {
-    if (auto engine = engine_.lock()) {
-      engine->wake();
-    }
-  }
-
-  void release_admission() noexcept override {
-    if (auto engine = engine_.lock()) {
-      engine->release_admission();
-    }
-  }
-
-private:
-  std::weak_ptr<ProcessEngine> engine_;
-};
 
 expected<std::shared_ptr<ProcessEngine>, ProcessError>
 ProcessEngine::start(EngineConfig config) {
@@ -111,18 +102,22 @@ ProcessEngine::start(EngineConfig config) {
     static_cast<void>(::fcntl(descriptor, F_SETFL, status_flags | O_NONBLOCK));
   }
 #endif
-  std::shared_ptr<ProcessEngine> engine{new ProcessEngine{config, wake[0], wake[1]}};
-  engine->launcher_ = std::thread{[engine] { engine->launch_loop(); }};
-  engine->reactor_ = std::thread{[engine] { engine->reactor_loop(); }};
+  auto channel =
+      std::make_shared<EngineChannel>(config.operation_limit, wake[0], wake[1]);
+  // The threads hold a raw reference on purpose. Owning the engine would keep
+  // it alive for as long as they run, which is until it is destroyed.
+  std::shared_ptr<ProcessEngine> engine{new ProcessEngine{std::move(channel)}};
+  engine->launcher_ = std::thread{[owner = engine.get()] { owner->launch_loop(); }};
+  engine->reactor_ = std::thread{[owner = engine.get()] { owner->reactor_loop(); }};
   return engine;
 }
 
-ProcessEngine::ProcessEngine(EngineConfig config, int wake_read,
+EngineChannel::EngineChannel(std::size_t operation_limit, int wake_read,
                              int wake_write) noexcept
-    : config_{config}, wake_read_{wake_read}, wake_write_{wake_write} {}
+    : operation_limit_{operation_limit}, wake_read_{wake_read},
+      wake_write_{wake_write} {}
 
-ProcessEngine::~ProcessEngine() {
-  static_cast<void>(close());
+EngineChannel::~EngineChannel() {
   if (wake_read_ >= 0) {
     static_cast<void>(::close(wake_read_));
   }
@@ -131,36 +126,41 @@ ProcessEngine::~ProcessEngine() {
   }
 }
 
-void ProcessEngine::wake() noexcept {
-  const char byte = 1;
-  while (::write(wake_write_, &byte, 1) < 0 && errno == EINTR) {
-  }
-}
-
-void ProcessEngine::drain_wake() noexcept {
-  std::array<char, 64> buffer{};
-  while (::read(wake_read_, buffer.data(), buffer.size()) > 0) {
-  }
-}
-
-bool ProcessEngine::admit() noexcept {
+bool EngineChannel::admit() noexcept {
   std::lock_guard lock{mutex_};
-  if (closing_ || in_flight_ >= config_.operation_limit) {
+  if (in_flight_ >= operation_limit_) {
     return false;
   }
   ++in_flight_;
   return true;
 }
 
-void ProcessEngine::release_admission() noexcept {
+void EngineChannel::release() noexcept {
   std::lock_guard lock{mutex_};
   if (in_flight_ > 0U) {
     --in_flight_;
   }
 }
 
+void EngineChannel::wake() noexcept {
+  const char byte = 1;
+  while (::write(wake_write_, &byte, 1) < 0 && errno == EINTR) {
+  }
+}
+
+void EngineChannel::drain() noexcept {
+  std::array<char, 64> buffer{};
+  while (::read(wake_read_, buffer.data(), buffer.size()) > 0) {
+  }
+}
+
+ProcessEngine::ProcessEngine(std::shared_ptr<EngineChannel> channel) noexcept
+    : channel_{std::move(channel)} {}
+
+ProcessEngine::~ProcessEngine() { static_cast<void>(close()); }
+
 Operation<ProcessReply> ProcessEngine::submit(ProcessRequest request) {
-  if (!admit()) {
+  if (!channel_->admit()) {
     auto refused = make_operation<ProcessReply>(std::make_shared<UnadmittedHooks>());
     static_cast<void>(refused.source.publish(unexpected(CommandFailure{
         .kind = FailureKind::overloaded,
@@ -170,19 +170,31 @@ Operation<ProcessReply> ProcessEngine::submit(ProcessRequest request) {
     refused.source.retire();
     return std::move(refused.operation);
   }
-  auto started = make_operation<ProcessReply>(std::make_shared<Hooks>(weak_from_this()));
-  started.source.mark_dispatching();
+  auto started = make_operation<ProcessReply>(std::make_shared<ChannelHooks>(channel_));
   std::optional<Clock::time_point> deadline;
   if (request.timeout.has_value()) {
     deadline = Clock::now() + *request.timeout;
   }
   {
     std::lock_guard lock{mutex_};
-    pending_.push_back(EnginePending{.request = std::move(request),
-                                     .source = std::move(started.source),
-                                     .deadline = deadline});
+    // Accepting under the lock the launch lane reads `closing_` under. Split
+    // apart, a submission that admitted a moment before shutdown lands in a
+    // queue nothing will ever read again.
+    if (!closing_) {
+      started.source.mark_dispatching();
+      pending_.push_back(EnginePending{.request = std::move(request),
+                                       .source = std::move(started.source),
+                                       .deadline = deadline});
+      launch_ready_.notify_one();
+      return std::move(started.operation);
+    }
   }
-  launch_ready_.notify_one();
+  static_cast<void>(started.source.publish(unexpected(CommandFailure{
+      .kind = FailureKind::cancelled,
+      .delivery = DeliveryStatus::not_started,
+      .exit_code = 0,
+      .diagnostic = "the process engine closed before this was accepted"})));
+  started.source.retire();
   return std::move(started.operation);
 }
 
@@ -197,36 +209,45 @@ void ProcessEngine::launch_loop() {
       }
       work = std::move(pending_.front());
       pending_.pop_front();
+      ++launching_;
     }
-    // Withdrawn before anything started, so nothing starts. This is the one
-    // cancellation that costs a caller nothing to retry.
-    if (work.source.cancel_requested()) {
-      static_cast<void>(work.source.publish(unexpected(CommandFailure{
-          .kind = FailureKind::cancelled,
-          .delivery = DeliveryStatus::not_started,
-          .exit_code = 0,
-          .diagnostic = "the caller withdrew the command before it started"})));
-      work.source.retire();
-      continue;
-    }
-    // Only creation happens here. Everything the child needs afterwards goes
-    // with it to the reactor, so a launch that blocks stalls nothing else.
-    auto launched = PosixChild::launch(work.request);
-    if (!launched.has_value()) {
-      static_cast<void>(
-          work.source.publish(unexpected(reported(std::move(launched.error())))));
-      work.source.retire();
-      continue;
-    }
-    work.source.mark_active();
+    launch_one(std::move(work));
     {
       std::lock_guard lock{mutex_};
-      arrived_.push_back(EngineLive{.child = std::move(*launched),
-                                    .source = std::move(work.source),
-                                    .deadline = work.deadline});
+      --launching_;
     }
-    wake();
+    // Whatever came of it, the reactor has a reason to look again: a child to
+    // own, or one fewer launch standing between it and being finished.
+    channel_->wake();
   }
+}
+
+void ProcessEngine::launch_one(EnginePending work) {
+  // Withdrawn before anything started, so nothing starts. This is the one
+  // cancellation that costs a caller nothing to retry.
+  if (work.source.cancel_requested()) {
+    static_cast<void>(work.source.publish(unexpected(CommandFailure{
+        .kind = FailureKind::cancelled,
+        .delivery = DeliveryStatus::not_started,
+        .exit_code = 0,
+        .diagnostic = "the caller withdrew the command before it started"})));
+    work.source.retire();
+    return;
+  }
+  // Only creation happens here. Everything the child needs afterwards goes
+  // with it to the reactor, so a launch that blocks stalls nothing else.
+  auto launched = PosixChild::launch(work.request);
+  if (!launched.has_value()) {
+    static_cast<void>(
+        work.source.publish(unexpected(reported(std::move(launched.error())))));
+    work.source.retire();
+    return;
+  }
+  work.source.mark_active();
+  std::lock_guard lock{mutex_};
+  arrived_.push_back(EngineLive{.child = std::move(*launched),
+                                .source = std::move(work.source),
+                                .deadline = work.deadline});
 }
 
 void ProcessEngine::reactor_loop() {
@@ -239,7 +260,7 @@ void ProcessEngine::reactor_loop() {
         live.push_back(std::move(arrival));
       }
       arrived_.clear();
-      if (closing_ && live.empty() && pending_.empty()) {
+      if (closing_ && live.empty() && pending_.empty() && launching_ == 0U) {
         return;
       }
       shutting_down = closing_;
@@ -247,7 +268,8 @@ void ProcessEngine::reactor_loop() {
 
     std::vector<pollfd> watched;
     bool asks_after_exit = false;
-    watched.push_back(pollfd{.fd = wake_read_, .events = POLLIN, .revents = 0});
+    watched.push_back(
+        pollfd{.fd = channel_->wake_descriptor(), .events = POLLIN, .revents = 0});
     for (auto& one : live) {
       for (const auto stream :
            {ChildStream::stdout_stream, ChildStream::stderr_stream}) {
@@ -284,7 +306,7 @@ void ProcessEngine::reactor_loop() {
       boundary = Clock::now();
     }
     static_cast<void>(::poll(watched.data(), watched.size(), poll_timeout(boundary)));
-    drain_wake();
+    channel_->drain();
 
     for (auto& one : live) {
       static_cast<void>(one.child.drain(ChildStream::stdout_stream, boundary,
@@ -377,7 +399,7 @@ EngineShutdown ProcessEngine::close() {
     closing_ = true;
   }
   launch_ready_.notify_all();
-  wake();
+  channel_->wake();
   if (launcher_.joinable()) {
     launcher_.join();
   }
