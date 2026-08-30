@@ -112,6 +112,26 @@ TEST(ProcessEngine, EndsAChildThatOutlivesItsDeadline) {
   EXPECT_LT(took, std::chrono::seconds{10});
 }
 
+TEST(ProcessEngine, AnExpiredRequestDoesNotStart) {
+  auto engine = ProcessEngine::start();
+  ASSERT_TRUE(engine.has_value()) << engine.error().diagnostic;
+
+  std::string marker_template = "/tmp/libtmux-process-engine-expired-XXXXXX";
+  const int marker_descriptor = ::mkstemp(marker_template.data());
+  ASSERT_GE(marker_descriptor, 0);
+  ASSERT_EQ(::close(marker_descriptor), 0);
+  ASSERT_TRUE(std::filesystem::remove(marker_template));
+  auto request = shell("printf started > " + marker_template);
+  request.timeout = std::chrono::milliseconds::zero();
+
+  auto reply = sync_wait((*engine)->submit(std::move(request)));
+
+  ASSERT_FALSE(reply.has_value());
+  EXPECT_EQ(reply.error().kind, libtmux::FailureKind::timeout);
+  EXPECT_EQ(reply.error().delivery, libtmux::DeliveryStatus::not_started);
+  EXPECT_FALSE(std::filesystem::exists(marker_template));
+}
+
 // Shutdown ends outstanding work; it does not wait for it. An engine that
 // waits is an engine whose teardown takes as long as the slowest tmux command
 // anyone happened to have running.

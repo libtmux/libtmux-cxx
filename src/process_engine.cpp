@@ -240,6 +240,13 @@ void ProcessEngine::launch_one(EnginePending work, bool closing) {
     work.source.retire();
     return;
   }
+  if (work.deadline.has_value() && Clock::now() >= *work.deadline) {
+    static_cast<void>(work.source.publish(unexpected(reported(process_error(
+        ProcessError::Kind::timeout, DeliveryStatus::not_started, "timeout",
+        render_request(work.request), std::make_error_code(std::errc::timed_out))))));
+    work.source.retire();
+    return;
+  }
   // Only creation happens here. Everything the child needs afterwards goes
   // with it to the reactor, so a launch that blocks stalls nothing else.
   auto launched = PosixChild::launch(work.request);
