@@ -196,18 +196,11 @@ void CommandEngine::close() {
 }
 
 expected<std::shared_ptr<CommandEngine>, CommandFailure> shared_command_engine() {
-  static std::mutex guard;
-  static std::weak_ptr<CommandEngine> held;
-  std::lock_guard lock{guard};
-  if (auto engine = held.lock()) {
-    return engine;
+  static const auto held = CommandEngine::start();
+  if (!held.has_value()) {
+    return unexpected(held.error());
   }
-  auto started = CommandEngine::start();
-  if (!started.has_value()) {
-    return unexpected(started.error());
-  }
-  held = *started;
-  return started;
+  return *held;
 }
 
 } // namespace detail

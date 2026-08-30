@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <semaphore>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -64,6 +65,10 @@ public:
     issued.push_back(command.argv());
     command_timeouts.push_back(timeout);
     command_output_limits.push_back(output_limit);
+    if (gate_run) {
+      run_started.release();
+      continue_run.acquire();
+    }
     std::this_thread::sleep_for(delay);
     if (replies_.empty()) {
       return unexpected(CommandFailure{.kind = FailureKind::refused,
@@ -114,6 +119,9 @@ public:
   mutable std::vector<std::optional<std::size_t>> version_output_limits;
   mutable std::size_t version_queries{};
   std::chrono::milliseconds delay{};
+  bool gate_run{false};
+  mutable std::binary_semaphore run_started{0};
+  mutable std::binary_semaphore continue_run{0};
 
 private:
   mutable std::vector<std::string> replies_;
@@ -218,6 +226,28 @@ TEST(BackendSeam, SubmissionReturnsBeforeAFallbackBackendAnswers) {
   auto answer = std::move(*submitted).wait();
   ASSERT_TRUE(answer.has_value()) << answer.error().diagnostic;
   EXPECT_EQ(*answer, "later");
+}
+
+TEST(BackendSeam, DroppingAnOperationDoesNotWaitForItsFallbackBackend) {
+  auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{"later"});
+  backend->gate_run = true;
+  const Server server = libtmux::detail::server_over(backend);
+
+  auto submitted = server.submit({"display-message", "-p", "later"});
+  ASSERT_TRUE(submitted.has_value()) << submitted.error().diagnostic;
+  ASSERT_TRUE(backend->run_started.try_acquire_for(std::chrono::seconds{1}));
+
+  std::binary_semaphore dropped{0};
+  std::thread dropper{[operation = std::move(*submitted), &dropped]() mutable {
+    std::optional<libtmux::CommandOperation> held{std::move(operation)};
+    held.reset();
+    dropped.release();
+  }};
+  const bool returned = dropped.try_acquire_for(std::chrono::milliseconds{100});
+  backend->continue_run.release();
+  dropper.join();
+
+  EXPECT_TRUE(returned);
 }
 
 TEST(BackendSeam, QueuedFallbackCancellationPreventsDispatch) {

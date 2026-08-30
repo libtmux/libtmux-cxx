@@ -20,7 +20,6 @@ struct CommandOperation::State final {
   std::shared_ptr<const detail::Backend> backend;
   CommandRequest command;
   std::size_t allowed_bytes{0U};
-  std::shared_ptr<detail::CommandEngine> command_engine;
   std::optional<detail::Operation<std::string>> command_running;
 #if !defined(_WIN32)
   std::optional<detail::Operation<detail::ProcessReply>> running;
@@ -110,7 +109,6 @@ Server::submit(CommandRequest command, std::optional<std::chrono::milliseconds> 
   if (!engine.has_value()) {
     return unexpected(std::move(engine.error()));
   }
-  state->command_engine = *engine;
   state->command_running =
       (*engine)->submit(backend_, state->command, deadline, allowed);
   return CommandOperation{std::move(state)};
