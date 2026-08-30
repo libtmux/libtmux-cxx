@@ -148,7 +148,8 @@ CATALOGUE: t.Final = (
             "pane.id(), {}, owner);"
         ),
         replace=(
-            "  auto created = named_break_report(executor, *std::move(broken), pane.id());"
+            "  auto created = named_break_report(executor, *std::move(broken), "
+            "pane.id());"
         ),
         target="libtmux_backend_seam_test",
         test_regex=r"^libtmux[.]backend_seam$",
@@ -469,8 +470,14 @@ CATALOGUE: t.Final = (
     Mutation(
         mutation_id="engine-refusal-holds-no-slot",
         path="src/process_engine.cpp",
-        find="    auto refused = make_operation<ProcessReply>(std::make_shared<UnadmittedHooks>());",
-        replace="    auto refused = make_operation<ProcessReply>(std::make_shared<ChannelHooks>(channel_));",
+        find=(
+            "    auto refused = make_operation<ProcessReply>("
+            "std::make_shared<UnadmittedHooks>());"
+        ),
+        replace=(
+            "    auto refused = make_operation<ProcessReply>("
+            "std::make_shared<ChannelHooks>(channel_));"
+        ),
         target="libtmux_process_engine_test",
         test_regex=r"^libtmux[.]process_engine[.]ProcessEngine[.]ARefusalDoesNotReturnASlotItNeverHeld$",
         guards="a refused submission gives back no admission, so the bound does "
@@ -479,8 +486,14 @@ CATALOGUE: t.Final = (
     Mutation(
         mutation_id="engine-threads-own-nothing",
         path="src/process_engine.cpp",
-        find="  engine->launcher_ = std::thread{[owner = engine.get()] { owner->launch_loop(); }};",
-        replace="  engine->launcher_ = std::thread{[owner = engine] { owner->launch_loop(); }};",
+        find=(
+            "  engine->launcher_ = std::thread{[owner = engine.get()] { "
+            "owner->launch_loop(); }};"
+        ),
+        replace=(
+            "  engine->launcher_ = std::thread{[owner = engine] { "
+            "owner->launch_loop(); }};"
+        ),
         target="libtmux_process_engine_test",
         test_regex=r"^libtmux[.]process_engine[.]ProcessEngine[.]EndsWhenTheLastHolderLetsGo$",
         guards="the engine's own threads hold no reference to it, so it is "
@@ -489,7 +502,10 @@ CATALOGUE: t.Final = (
     Mutation(
         mutation_id="engine-waits-for-its-launches",
         path="src/process_engine.cpp",
-        find="      if (closing_ && live.empty() && pending_.empty() && launching_ == 0U) {",
+        find=(
+            "      if (closing_ && live.empty() && pending_.empty() && "
+            "launching_ == 0U) {"
+        ),
         replace="      if (closing_ && live.empty() && pending_.empty()) {",
         target="libtmux_process_engine_test",
         test_regex=r"^libtmux[.]process_engine[.]ProcessEngine[.]ShutdownWaitsForALaunchAlreadyInFlight$",
