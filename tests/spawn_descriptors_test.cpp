@@ -28,7 +28,14 @@ void record_policy_error(int error) {
 
 extern "C" int __real_getrlimit(int resource, rlimit* limit);
 
-extern "C" int __wrap_getrlimit(int resource, rlimit* limit) {
+// Clang TSan reaches this interposer before its instrumentation is ready.
+extern "C" int __wrap_getrlimit(int resource, rlimit* limit)
+#if defined(__clang__)
+#if __has_attribute(disable_sanitizer_instrumentation)
+    __attribute__((disable_sanitizer_instrumentation))
+#endif
+#endif
+{
   if (resource == RLIMIT_NOFILE &&
       return_infinite_hard_limit.load(std::memory_order_acquire)) {
     limit->rlim_cur = 256U;
