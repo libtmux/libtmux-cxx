@@ -18,6 +18,8 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <string_view>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -57,11 +59,18 @@ struct EngineLive final {
   std::optional<ChildClock::time_point> deadline;
   ChildClock::time_point exit_drain_deadline{ChildClock::time_point::max()};
   std::optional<ChildClock::time_point> terminate_deadline{};
+  std::optional<ProcessError> failure{};
   bool killed{false};
+  bool final_reap_attempted{false};
   // Ended because the caller withdrew, not because a deadline passed.
   bool withdrawn{false};
   // Ended because the engine is closing, which is neither.
   bool abandoned{false};
+};
+
+struct EngineFailure final {
+  std::string_view operation;
+  std::error_code cause;
 };
 
 // What a hook may still be holding once the engine is gone.
@@ -85,14 +94,17 @@ public:
 
   void wake() noexcept;
   void drain() noexcept;
+  void fail(std::string_view operation, int error_number) noexcept;
+  [[nodiscard]] std::optional<EngineFailure> failure() const noexcept;
   [[nodiscard]] int wake_descriptor() const noexcept { return wake_read_; }
 
 private:
-  std::mutex mutex_;
+  mutable std::mutex mutex_;
   std::size_t operation_limit_;
   std::size_t in_flight_{0U};
   int wake_read_{-1};
   int wake_write_{-1};
+  std::optional<EngineFailure> failure_;
 };
 
 class ProcessEngine final {
@@ -114,8 +126,10 @@ private:
   explicit ProcessEngine(std::shared_ptr<EngineChannel> channel) noexcept;
 
   void launch_loop();
-  void launch_one(EnginePending work, bool closing);
+  void launch_one(EnginePending work, bool stopping,
+                  std::optional<EngineFailure> failure);
   void reactor_loop();
+  void fail(EngineFailure failure);
 
   std::shared_ptr<EngineChannel> channel_;
 
@@ -127,7 +141,12 @@ private:
   // queue while the platform creates the process, and a reactor that read
   // that gap as "nothing left" would return and strand a live child.
   std::size_t launching_{0U};
-  bool closing_{false};
+  bool stop_requested_{false};
+  bool close_joining_{false};
+  bool terminal_{false};
+  std::optional<EngineFailure> failure_;
+  std::condition_variable terminal_ready_;
+  EngineShutdown terminal_shutdown_{};
 
   std::size_t published_{0U};
   std::size_t reaped_{0U};

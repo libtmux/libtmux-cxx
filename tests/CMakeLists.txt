@@ -511,6 +511,33 @@ if(NOT WIN32)
     libtmux_process_engine_test
     TEST_PREFIX libtmux.process_engine.
     PROPERTIES LABELS "concurrency" TIMEOUT 60)
+
+  add_executable(
+    libtmux_process_engine_failure_test process_engine_failure_test.cpp)
+  target_include_directories(
+    libtmux_process_engine_failure_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
+  target_link_libraries(
+    libtmux_process_engine_failure_test
+    PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+  target_compile_options(
+    libtmux_process_engine_failure_test PRIVATE -fno-sanitize-recover=undefined)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(
+      libtmux_process_engine_failure_test
+      PRIVATE
+        "-Wl,--wrap=kill"
+        "-Wl,--wrap=poll"
+        "-Wl,--wrap=posix_spawn_file_actions_destroy"
+        "-Wl,--wrap=posix_spawnattr_destroy"
+        "-Wl,--wrap=read"
+        "-Wl,--wrap=waitpid"
+        "-Wl,--wrap=write")
+  endif()
+
+  gtest_discover_tests(
+    libtmux_process_engine_failure_test
+    TEST_PREFIX libtmux.process_engine_failure.
+    PROPERTIES LABELS "concurrency" TIMEOUT 60)
 endif()
 
 add_executable(libtmux_backend_seam_test backend_seam_test.cpp)

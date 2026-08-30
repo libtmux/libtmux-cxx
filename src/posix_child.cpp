@@ -553,31 +553,42 @@ PosixChild::update_status(DeliveryStatus delivery) noexcept {
   }
 }
 
-void PosixChild::signal_group(int signal_number) noexcept {
+std::optional<ProcessError> PosixChild::signal_group(int signal_number,
+                                                     DeliveryStatus delivery) noexcept {
   if (status_ != ChildStatus::running) {
-    return;
+    return std::nullopt;
   }
-  while (::kill(-pid_, signal_number) < 0 && errno == EINTR) {
+  for (;;) {
+    if (::kill(-pid_, signal_number) == 0) {
+      return std::nullopt;
+    }
+    if (errno == EINTR) {
+      continue;
+    }
+    return process_error(ProcessError::Kind::pipe, delivery, "kill", rendered_request_,
+                         generic_error(errno));
   }
 }
 
-void PosixChild::wait_for_exit() noexcept {
+std::optional<ProcessError>
+PosixChild::wait_for_exit(DeliveryStatus delivery) noexcept {
   while (status_ == ChildStatus::running) {
     const auto result = ::waitpid(pid_, &wait_status_, 0);
     if (result == pid_) {
       status_ = ChildStatus::exited;
       close_exit_descriptor();
-      return;
+      return std::nullopt;
     }
     if (result < 0 && errno == EINTR) {
       continue;
     }
-    if (result < 0 && errno == ECHILD) {
-      status_ = ChildStatus::unknowable;
-      close_exit_descriptor();
-    }
-    return;
+    const auto error_number = result < 0 ? errno : ECHILD;
+    status_ = ChildStatus::unknowable;
+    close_exit_descriptor();
+    return process_error(ProcessError::Kind::pipe, delivery, "waitpid pipe",
+                         rendered_request_, generic_error(error_number));
   }
+  return std::nullopt;
 }
 
 void PosixChild::close_stream(ChildStream stream) noexcept {
