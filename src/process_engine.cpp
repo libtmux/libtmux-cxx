@@ -82,6 +82,15 @@ private:
       std::min<std::chrono::milliseconds::rep>(remaining.count(), 1000));
 }
 
+void retire_transport(OperationSource<ProcessReply>& source,
+                      MoveOnlyFunction<void()>& retirement_hook) {
+  source.retire();
+  if (retirement_hook) {
+    auto hook = std::move(retirement_hook);
+    hook();
+  }
+}
+
 } // namespace
 
 expected<std::shared_ptr<ProcessEngine>, ProcessError>
@@ -221,7 +230,9 @@ ProcessEngine::ProcessEngine(std::shared_ptr<EngineChannel> channel,
 
 ProcessEngine::~ProcessEngine() { static_cast<void>(close()); }
 
-Operation<ProcessReply> ProcessEngine::submit(ProcessRequest request) {
+Operation<ProcessReply>
+ProcessEngine::submit(ProcessRequest request,
+                      MoveOnlyFunction<void()> retirement_hook) {
   const auto admission = channel_->admit();
   if (!admission.accepted) {
     auto refused = make_operation<ProcessReply>(std::make_shared<UnadmittedHooks>());
@@ -239,7 +250,7 @@ Operation<ProcessReply> ProcessEngine::submit(ProcessRequest request) {
           .diagnostic =
               "the process engine has more work in flight than it accepts"})));
     }
-    refused.source.retire();
+    retire_transport(refused.source, retirement_hook);
     return std::move(refused.operation);
   }
   // Test coordination belongs after admission: this is the interval a fatal
@@ -252,6 +263,7 @@ Operation<ProcessReply> ProcessEngine::submit(ProcessRequest request) {
   if (request.timeout.has_value()) {
     deadline = Clock::now() + *request.timeout;
   }
+  std::optional<EngineFailure> terminal_failure;
   {
     std::lock_guard lock{mutex_};
     // Admission and the stop request share this lock. Split apart, a submission
@@ -260,24 +272,27 @@ Operation<ProcessReply> ProcessEngine::submit(ProcessRequest request) {
       started.source.mark_dispatching();
       pending_.push_back(EnginePending{.request = std::move(request),
                                        .source = std::move(started.source),
-                                       .deadline = deadline});
+                                       .deadline = deadline,
+                                       .retirement_hook = std::move(retirement_hook)});
       launch_ready_.notify_one();
       return std::move(started.operation);
     }
-    if (failure_) {
-      static_cast<void>(started.source.publish(unexpected(reported(process_error(
-          ProcessError::Kind::pipe, DeliveryStatus::not_started, failure_->operation,
-          render_request(request), failure_->cause)))));
-      started.source.retire();
-      return std::move(started.operation);
-    }
+    terminal_failure = failure_;
+  }
+  if (terminal_failure) {
+    static_cast<void>(started.source.publish(unexpected(
+        reported(process_error(ProcessError::Kind::pipe, DeliveryStatus::not_started,
+                               terminal_failure->operation, render_request(request),
+                               terminal_failure->cause)))));
+    retire_transport(started.source, retirement_hook);
+    return std::move(started.operation);
   }
   static_cast<void>(started.source.publish(unexpected(CommandFailure{
       .kind = FailureKind::cancelled,
       .delivery = DeliveryStatus::not_started,
       .exit_code = 0,
       .diagnostic = "the process engine closed before this was accepted"})));
-  started.source.retire();
+  retire_transport(started.source, retirement_hook);
   return std::move(started.operation);
 }
 
@@ -324,7 +339,7 @@ void ProcessEngine::launch_one(EnginePending work, bool stopping,
     static_cast<void>(work.source.publish(unexpected(reported(process_error(
         ProcessError::Kind::pipe, DeliveryStatus::not_started, failure->operation,
         render_request(work.request), failure->cause)))));
-    work.source.retire();
+    retire_transport(work.source, work.retirement_hook);
     return;
   }
   if (withdrawn || stopping) {
@@ -334,14 +349,14 @@ void ProcessEngine::launch_one(EnginePending work, bool stopping,
         .exit_code = 0,
         .diagnostic = withdrawn ? "the caller withdrew the command before it started"
                                 : "the process engine closed before this started"})));
-    work.source.retire();
+    retire_transport(work.source, work.retirement_hook);
     return;
   }
   if (work.deadline.has_value() && Clock::now() >= *work.deadline) {
     static_cast<void>(work.source.publish(unexpected(reported(process_error(
         ProcessError::Kind::timeout, DeliveryStatus::not_started, "timeout",
         render_request(work.request), std::make_error_code(std::errc::timed_out))))));
-    work.source.retire();
+    retire_transport(work.source, work.retirement_hook);
     return;
   }
   auto launch_gate = channel_->gate_launch();
@@ -352,7 +367,7 @@ void ProcessEngine::launch_one(EnginePending work, bool stopping,
         reported(process_error(ProcessError::Kind::pipe, DeliveryStatus::not_started,
                                channel_failure.operation, render_request(work.request),
                                channel_failure.cause)))));
-    work.source.retire();
+    retire_transport(work.source, work.retirement_hook);
     return;
   }
   // Only creation happens here. Everything the child needs afterwards goes
@@ -362,7 +377,7 @@ void ProcessEngine::launch_one(EnginePending work, bool stopping,
   if (!launched.has_value()) {
     static_cast<void>(
         work.source.publish(unexpected(reported(std::move(launched.error())))));
-    work.source.retire();
+    retire_transport(work.source, work.retirement_hook);
     return;
   }
   work.source.mark_active();
@@ -377,7 +392,8 @@ void ProcessEngine::launch_one(EnginePending work, bool stopping,
   arrived_.push_back(EngineLive{.child = std::move(*launched),
                                 .source = std::move(work.source),
                                 .deadline = work.deadline,
-                                .failure = std::move(teardown_failure)});
+                                .failure = std::move(teardown_failure),
+                                .retirement_hook = std::move(work.retirement_hook)});
 }
 
 void ProcessEngine::fail(EngineFailure failure) {
@@ -588,7 +604,7 @@ void ProcessEngine::reactor_loop() {
                          .output_truncated = capture.truncated}));
       }
       one.source.begin_retirement();
-      one.source.retire();
+      retire_transport(one.source, one.retirement_hook);
       {
         std::lock_guard lock{mutex_};
         ++published_;

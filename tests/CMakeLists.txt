@@ -436,10 +436,14 @@ if(NOT LIBTMUX_ENABLE_THREAD_SANITIZER)
   add_test(
     NAME libtmux.completion_queue.PublicationDuringRegistrationRechecks
     COMMAND libtmux_completion_queue_fault_test registration)
+  add_test(
+    NAME libtmux.completion_queue.AtomicReadyInsertionDispatches
+    COMMAND libtmux_completion_queue_fault_test ready)
   set_tests_properties(
     libtmux.completion_queue.EnqueueDoesNotAllocate
     libtmux.completion_queue.InsertionFailureDestroysAfterUnlock
     libtmux.completion_queue.PublicationDuringRegistrationRechecks
+    libtmux.completion_queue.AtomicReadyInsertionDispatches
     PROPERTIES LABELS concurrency TIMEOUT 5)
 endif()
 

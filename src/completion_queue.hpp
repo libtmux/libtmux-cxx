@@ -42,8 +42,10 @@ public:
   [[nodiscard]] WeakCompletionMailbox mailbox() const noexcept;
   [[nodiscard]] bool register_record(CompletionToken token,
                                      MoveOnlyFunction<void()> callback);
+  [[nodiscard]] bool push_ready(MoveOnlyFunction<void()> callback);
   [[nodiscard]] bool run_one();
   [[nodiscard]] std::size_t run_ready();
+  [[nodiscard]] std::size_t discard_ready();
   void detach(CompletionToken token);
   void close();
 

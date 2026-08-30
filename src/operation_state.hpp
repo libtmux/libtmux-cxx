@@ -122,6 +122,7 @@ public:
 
 template <typename T> class OperationState;
 template <typename T> class Operation;
+template <typename T> class OperationCancellation;
 template <typename T> class OperationSource;
 template <typename T> class Subscription;
 
@@ -360,6 +361,31 @@ private:
   bool admission_released_{false};
 };
 
+template <typename T> class OperationCancellation final {
+public:
+  OperationCancellation() noexcept = default;
+
+  [[nodiscard]] bool request_cancel() const {
+    const auto state = state_.lock();
+    return state && state->request_cancel();
+  }
+
+private:
+  friend class Operation<T>;
+  friend class Subscription<T>;
+
+  explicit OperationCancellation(
+      const std::shared_ptr<OperationState<T>>& state) noexcept
+      : state_{state} {}
+
+  [[nodiscard]] bool observing(CompletionToken token) const {
+    const auto state = state_.lock();
+    return state && state->observing_callback(token);
+  }
+
+  std::weak_ptr<OperationState<T>> state_;
+};
+
 template <typename T> class Operation final {
 public:
   Operation() noexcept = default;
@@ -378,6 +404,10 @@ public:
   }
 
   [[nodiscard]] bool request_cancel() { return state_ && state_->request_cancel(); }
+
+  [[nodiscard]] OperationCancellation<T> cancellation() const noexcept {
+    return OperationCancellation<T>{state_};
+  }
 
   [[nodiscard]] Subscription<T> subscribe(CompletionQueue& queue,
                                           OperationCallback<T> callback) &&;
@@ -457,29 +487,27 @@ public:
   Subscription& operator=(const Subscription&) = delete;
 
   Subscription(Subscription&& other) noexcept
-      : state_{std::move(other.state_)}, mailbox_{std::move(other.mailbox_)},
-        token_{std::exchange(other.token_, {})} {}
+      : cancellation_{std::move(other.cancellation_)},
+        mailbox_{std::move(other.mailbox_)}, token_{std::exchange(other.token_, {})} {}
 
   Subscription& operator=(Subscription&& other) noexcept {
     if (this != &other) {
       detach();
-      state_ = std::move(other.state_);
+      cancellation_ = std::move(other.cancellation_);
       mailbox_ = std::move(other.mailbox_);
       token_ = std::exchange(other.token_, {});
     }
     return *this;
   }
 
-  [[nodiscard]] bool request_cancel() { return state_ && state_->request_cancel(); }
+  [[nodiscard]] bool request_cancel() const { return cancellation_.request_cancel(); }
 
-  [[nodiscard]] bool observing() const {
-    return state_ && state_->observing_callback(token_);
-  }
+  [[nodiscard]] bool observing() const { return cancellation_.observing(token_); }
 
   void detach() noexcept {
-    if (state_) {
+    if (token_.value != 0U) {
       mailbox_.detach(token_);
-      state_.reset();
+      cancellation_ = {};
       mailbox_ = {};
       token_ = {};
     }
@@ -488,11 +516,12 @@ public:
 private:
   friend class Operation<T>;
 
-  Subscription(std::shared_ptr<OperationState<T>> state, WeakCompletionMailbox mailbox,
+  Subscription(OperationCancellation<T> cancellation, WeakCompletionMailbox mailbox,
                CompletionToken token) noexcept
-      : state_{std::move(state)}, mailbox_{std::move(mailbox)}, token_{token} {}
+      : cancellation_{std::move(cancellation)}, mailbox_{std::move(mailbox)},
+        token_{token} {}
 
-  std::shared_ptr<OperationState<T>> state_;
+  OperationCancellation<T> cancellation_;
   WeakCompletionMailbox mailbox_;
   CompletionToken token_{};
 };
@@ -504,6 +533,7 @@ Subscription<T> Operation<T>::subscribe(CompletionQueue& queue,
   assert(state_);
   const auto token = queue.next_token();
   auto mailbox = queue.mailbox();
+  auto cancellation = this->cancellation();
   auto state = std::move(state_);
   state->select_callback(token, mailbox);
   ObserverLease<T> lease{state, token};
@@ -512,7 +542,7 @@ Subscription<T> Operation<T>::subscribe(CompletionQueue& queue,
   if (registered && state->outcome_published()) {
     static_cast<void>(mailbox.enqueue(token));
   }
-  return Subscription<T>{std::move(state), std::move(mailbox), token};
+  return Subscription<T>{std::move(cancellation), std::move(mailbox), token};
 }
 
 template <typename T> class OperationSource final {

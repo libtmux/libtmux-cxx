@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "libtmux/expected.hpp"
+#include "move_only_function.hpp"
 #include "operation_state.hpp"
 #include "posix_child.hpp"
 #include "process.hpp"
@@ -54,6 +55,7 @@ struct EnginePending final {
   ProcessRequest request;
   OperationSource<ProcessReply> source;
   std::optional<ChildClock::time_point> deadline;
+  MoveOnlyFunction<void()> retirement_hook;
 };
 
 // A child the reactor owns.
@@ -69,6 +71,7 @@ struct EngineLive final {
   bool withdrawn{false};
   // Ended because the engine is closing, which is neither.
   bool abandoned{false};
+  MoveOnlyFunction<void()> retirement_hook;
 };
 
 struct EngineFailure final {
@@ -152,7 +155,8 @@ public:
 
   // Never waits. A closed engine or a full admission bound answers at once
   // with an operation that is already published.
-  [[nodiscard]] Operation<ProcessReply> submit(ProcessRequest request);
+  [[nodiscard]] Operation<ProcessReply>
+  submit(ProcessRequest request, MoveOnlyFunction<void()> retirement_hook = {});
 
   [[nodiscard]] EngineShutdown close();
 

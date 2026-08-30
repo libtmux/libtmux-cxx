@@ -4,13 +4,17 @@
 
 #include <gtest/gtest.h>
 
+#include <cerrno>
 #include <chrono>
+#include <cstdio>
 #include <filesystem>
+#include <future>
 #include <memory>
 #include <string>
 #include <thread>
 #include <vector>
 
+#include <sys/wait.h>
 #include <unistd.h>
 
 namespace {
@@ -49,6 +53,66 @@ TEST(ProcessEngine, AnswersOneProcessThroughSyncWait) {
   EXPECT_EQ(text(reply->stderr_bytes), "err");
   ASSERT_TRUE(std::holds_alternative<Exited>(reply->termination));
   EXPECT_EQ(std::get<Exited>(reply->termination).code, 0);
+}
+
+TEST(ProcessEngine, TransportRetirementFiresOnceAfterPublishingAndReaping) {
+  auto engine = ProcessEngine::start();
+  ASSERT_TRUE(engine.has_value()) << engine.error().diagnostic;
+
+  std::string pid_template = "/tmp/libtmux-process-engine-retirement-XXXXXX";
+  const int pid_descriptor = ::mkstemp(pid_template.data());
+  ASSERT_GE(pid_descriptor, 0);
+  ASSERT_EQ(::close(pid_descriptor), 0);
+  std::promise<std::pair<int, int>> retired;
+  auto retired_result = retired.get_future();
+  auto calls = std::make_shared<int>(0);
+  auto running = (*engine)->submit(
+      shell("printf $$ > " + pid_template + "; printf retired"),
+      [pid_template, calls, &retired, owned = std::make_unique<int>(1)]() mutable {
+        *calls += *owned;
+        int child_pid = -1;
+        if (FILE* pid_file = std::fopen(pid_template.c_str(), "r")) {
+          static_cast<void>(std::fscanf(pid_file, "%d", &child_pid));
+          static_cast<void>(std::fclose(pid_file));
+        }
+        if (child_pid <= 0) {
+          retired.set_value({0, EINVAL});
+          return;
+        }
+        errno = 0;
+        const int status_result = ::waitpid(child_pid, nullptr, WNOHANG);
+        retired.set_value({status_result, errno});
+      });
+
+  auto reply = sync_wait(std::move(running));
+  ASSERT_TRUE(reply.has_value()) << reply.error().diagnostic;
+  EXPECT_EQ(text(reply->stdout_bytes), "retired");
+  ASSERT_EQ(retired_result.wait_for(std::chrono::seconds{1}),
+            std::future_status::ready);
+  const auto [status_result, status_error] = retired_result.get();
+  EXPECT_EQ(status_result, -1);
+  EXPECT_EQ(status_error, ECHILD);
+  EXPECT_EQ(*calls, 1);
+  static_cast<void>((*engine)->close());
+  EXPECT_EQ(*calls, 1);
+  EXPECT_TRUE(std::filesystem::remove(pid_template));
+}
+
+TEST(ProcessEngine, RefusedTransportRetirementFiresOnce) {
+  auto engine =
+      ProcessEngine::start(libtmux::detail::EngineConfig{.operation_limit = 0U});
+  ASSERT_TRUE(engine.has_value()) << engine.error().diagnostic;
+  int calls = 0;
+
+  auto refused = (*engine)->submit(
+      shell("true"), [owned = std::make_unique<int>(1), &calls] { calls += *owned; });
+
+  auto reply = sync_wait(std::move(refused));
+  ASSERT_FALSE(reply.has_value());
+  EXPECT_EQ(reply.error().kind, libtmux::FailureKind::overloaded);
+  EXPECT_EQ(calls, 1);
+  static_cast<void>((*engine)->close());
+  EXPECT_EQ(calls, 1);
 }
 
 // The whole point: many children, still two threads.
