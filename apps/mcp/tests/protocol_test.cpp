@@ -813,6 +813,7 @@ TEST_F(McpProtocol, RejectsEveryDuplicateBeforeBatchDispatch) {
   const json* captured = response(messages, 8);
   ASSERT_NE(first, nullptr);
   ASSERT_NE(captured, nullptr);
+  ASSERT_GE(messages.size(), 2U);
   ASSERT_TRUE(messages[1].is_array());
   ASSERT_EQ(messages[1].size(), 2U);
   EXPECT_EQ(messages[1][0]["error"]["message"], "duplicate request id in batch");
