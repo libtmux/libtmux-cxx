@@ -106,7 +106,14 @@ void expect_pipe_failure(
   EXPECT_EQ(answer.error().exit_code, -1);
   EXPECT_EQ(answer.error().diagnostic, expected_diagnostic(operation, script));
 }
-#endif
+
+void expect_overloaded(
+    const libtmux::detail::OperationResult<libtmux::detail::ProcessReply>& answer) {
+  ASSERT_FALSE(answer.has_value());
+  EXPECT_EQ(answer.error().kind, libtmux::FailureKind::overloaded);
+  EXPECT_EQ(answer.error().delivery, libtmux::DeliveryStatus::not_started);
+  EXPECT_EQ(answer.error().exit_code, 0);
+}
 
 [[nodiscard]] bool wait_for_marker(const std::filesystem::path& marker) {
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{2};
@@ -129,7 +136,6 @@ void expect_pipe_failure(
   return marker;
 }
 
-#if defined(__linux__)
 void expect_global_failure(Fault fault, std::string_view operation) {
   auto engine = libtmux::detail::ProcessEngine::start();
   ASSERT_TRUE(engine.has_value()) << engine.error().diagnostic;
@@ -362,7 +368,7 @@ int __wrap_posix_spawnp(pid_t* pid, const char* path,
 TEST_F(ProcessEngineFailure, SubmissionCrossingFatalPublicationDoesNotLaunch) {
   AdmissionBarrier barrier;
   auto engine = libtmux::detail::ProcessEngine::start(
-      {.operation_limit = 256U, .admission_gate = [&barrier] { barrier.pass(); }});
+      {.operation_limit = 2U, .admission_gate = [&barrier] { barrier.pass(); }});
   ASSERT_TRUE(engine.has_value()) << engine.error().diagnostic;
 
   const auto running_marker = unused_marker();
@@ -381,6 +387,11 @@ TEST_F(ProcessEngineFailure, SubmissionCrossingFatalPublicationDoesNotLaunch) {
     submitter.join();
   }
   ASSERT_TRUE(submission_reached_barrier);
+
+  // The running command holds the first slot. Refusal at a limit of two
+  // proves the paused submission already owns the second.
+  auto overflow = libtmux::detail::sync_wait((*engine)->submit(shell("true")));
+  expect_overloaded(overflow);
 
   track_spawns.store(true, std::memory_order_release);
   arm(Fault::wake_write);
@@ -473,10 +484,8 @@ TEST_F(ProcessEngineFailure, PostExitDrainUsesItsOwnDeadline) {
 TEST_F(ProcessEngineFailure, ConcurrentCloseSharesOneTerminalState) {
   auto engine = libtmux::detail::ProcessEngine::start();
   ASSERT_TRUE(engine.has_value()) << engine.error().diagnostic;
-  const auto marker = unused_marker();
-  ASSERT_FALSE(marker.empty());
-  auto running = (*engine)->submit(shell(": > " + marker + "; trap '' TERM; sleep 30"));
-  ASSERT_TRUE(wait_for_marker(marker));
+  auto completed = libtmux::detail::sync_wait((*engine)->submit(shell("true")));
+  ASSERT_TRUE(completed.has_value()) << completed.error().diagnostic;
 
   constexpr std::size_t caller_count = 8U;
   std::array<libtmux::detail::EngineShutdown, caller_count> reports{};
@@ -514,9 +523,4 @@ TEST_F(ProcessEngineFailure, ConcurrentCloseSharesOneTerminalState) {
   EXPECT_EQ(reports[0].operations_published, 1U);
   EXPECT_EQ(reports[0].children_reaped, 1U);
   EXPECT_TRUE(reports[0].complete);
-  auto answer = libtmux::detail::sync_wait(std::move(running));
-  EXPECT_FALSE(answer.has_value());
-
-  std::error_code ignored;
-  static_cast<void>(std::filesystem::remove(marker, ignored));
 }

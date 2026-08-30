@@ -222,9 +222,6 @@ ProcessEngine::ProcessEngine(std::shared_ptr<EngineChannel> channel,
 ProcessEngine::~ProcessEngine() { static_cast<void>(close()); }
 
 Operation<ProcessReply> ProcessEngine::submit(ProcessRequest request) {
-  if (admission_gate_) {
-    admission_gate_();
-  }
   const auto admission = channel_->admit();
   if (!admission.accepted) {
     auto refused = make_operation<ProcessReply>(std::make_shared<UnadmittedHooks>());
@@ -244,6 +241,11 @@ Operation<ProcessReply> ProcessEngine::submit(ProcessRequest request) {
     }
     refused.source.retire();
     return std::move(refused.operation);
+  }
+  // Test coordination belongs after admission: this is the interval a fatal
+  // wake may cross before the launch lane sees the queued request.
+  if (admission_gate_) {
+    admission_gate_();
   }
   auto started = make_operation<ProcessReply>(std::make_shared<ChannelHooks>(channel_));
   std::optional<Clock::time_point> deadline;
