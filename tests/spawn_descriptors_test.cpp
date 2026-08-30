@@ -5,6 +5,7 @@
 #include <array>
 #include <atomic>
 #include <cerrno>
+#include <csignal>
 
 #include <fcntl.h>
 #include <poll.h>
