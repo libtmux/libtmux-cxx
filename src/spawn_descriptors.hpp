@@ -3,14 +3,12 @@
 #include "libtmux/abi.hpp"
 #include "libtmux/expected.hpp"
 
-#include <cstdint>
-
 #include <spawn.h>
 
 LIBTMUX_NAMESPACE_BEGIN
 namespace detail {
 
-using SpawnDescriptorPolicyTestHook = void (*)();
+using SpawnDescriptorPolicyTestHook = void (*)(int);
 
 // Keeps descriptors supplied by spawn actions and, when requested, inherited
 // standard streams. Every other descriptor is closed in the child.
@@ -20,9 +18,9 @@ apply_spawn_descriptor_policy(posix_spawn_file_actions_t& actions,
                               bool inherit_standard_streams) noexcept;
 
 #if defined(LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
-void set_spawn_descriptor_policy_test_override(
-    std::uintmax_t numeric_ceiling,
-    SpawnDescriptorPolicyTestHook after_actions) noexcept;
+void force_numeric_spawn_descriptor_policy_for_test(
+    SpawnDescriptorPolicyTestHook after_policy) noexcept;
+void clear_spawn_descriptor_policy_test_override() noexcept;
 #endif
 
 } // namespace detail

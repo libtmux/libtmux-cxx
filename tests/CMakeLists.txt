@@ -458,6 +458,8 @@ if(NOT WIN32)
     target_compile_definitions(
       libtmux_spawn_descriptors_test
       PRIVATE LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
+    target_link_options(
+      libtmux_spawn_descriptors_test PRIVATE "-Wl,--wrap=getrlimit")
   endif()
 
   gtest_discover_tests(
