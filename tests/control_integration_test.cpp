@@ -176,7 +176,6 @@ TEST(ControlModeConnection, ServerDoesNotInheritABlockedSignalMask) {
   ASSERT_TRUE(mask.has_value());
   EXPECT_EQ(*mask, 0ULL);
 }
-#endif
 
 // The other spawn: the server starts outside the block, so only the control
 // client this library launches is under it.
@@ -206,6 +205,7 @@ TEST(ControlModeConnection, ControlClientDoesNotInheritABlockedSignalMask) {
   ASSERT_TRUE(mask.has_value());
   EXPECT_EQ(*mask, 0ULL);
 }
+#endif
 
 TEST(ControlModeConnection, RejectsBoundsTooSmallForItsPrivateBoundary) {
   auto server = start_server(unique_name("control-boundary-bounds"));
