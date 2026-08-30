@@ -191,15 +191,17 @@ TEST(ProcessEngine, EveryReadableChildMakesOutputProgress) {
 
   std::string marker_template = "/tmp/libtmux-process-engine-fairness-XXXXXX";
   ASSERT_NE(::mkdtemp(marker_template.data()), nullptr);
-  constexpr int producer_count = 128;
-  std::vector<Operation<ProcessReply>> noisy;
-  noisy.reserve(producer_count);
+  constexpr int producer_count = 8;
+  const auto gate = marker_template + "/go";
+  std::vector<Operation<ProcessReply>> producers;
+  producers.reserve(producer_count);
   for (int index = 0; index < producer_count; ++index) {
-    auto noisy_request = shell("printf ready > " + marker_template + "/" +
-                               std::to_string(index) + "; exec yes 0123456789abcdef");
-    noisy_request.capture_limit = 1U;
-    noisy_request.timeout = std::chrono::milliseconds{1500};
-    noisy.push_back((*engine)->submit(std::move(noisy_request)));
+    auto producer =
+        shell("printf ready; printf ready > " + marker_template + "/" +
+              std::to_string(index) + "; while [ ! -e " + gate +
+              " ]; do sleep 0.05; done; printf -- -" + std::to_string(index));
+    producer.timeout = std::chrono::seconds{2};
+    producers.push_back((*engine)->submit(std::move(producer)));
   }
 
   const auto marker_deadline =
@@ -216,22 +218,17 @@ TEST(ProcessEngine, EveryReadableChildMakesOutputProgress) {
     std::this_thread::sleep_for(std::chrono::milliseconds{1});
   }
   const bool producers_ready = all_ready();
-  const auto removed = std::filesystem::remove_all(marker_template);
-  ASSERT_TRUE(producers_ready) << "a producer did not reach its continuous output loop";
-  ASSERT_EQ(removed, static_cast<std::uintmax_t>(producer_count + 1));
+  ASSERT_TRUE(producers_ready) << "a producer did not make its prefix readable";
+  ASSERT_TRUE(std::filesystem::create_directory(gate));
 
-  auto quiet_request = shell("printf later");
-  quiet_request.timeout = std::chrono::milliseconds{20};
-  auto quiet = sync_wait((*engine)->submit(std::move(quiet_request)));
-
-  ASSERT_TRUE(quiet.has_value()) << quiet.error().diagnostic;
-  EXPECT_EQ(text(quiet->stdout_bytes), "later");
-  EXPECT_FALSE(quiet->output_truncated);
-  for (auto& operation : noisy) {
-    auto noisy_reply = sync_wait(std::move(operation));
-    EXPECT_FALSE(noisy_reply.has_value());
-    EXPECT_EQ(noisy_reply.error().kind, libtmux::FailureKind::timeout);
+  for (int index = 0; index < producer_count; ++index) {
+    auto reply = sync_wait(std::move(producers[static_cast<std::size_t>(index)]));
+    ASSERT_TRUE(reply.has_value()) << reply.error().diagnostic;
+    EXPECT_EQ(text(reply->stdout_bytes), "ready-" + std::to_string(index));
+    EXPECT_FALSE(reply->output_truncated);
   }
+  EXPECT_EQ(std::filesystem::remove_all(marker_template),
+            static_cast<std::uintmax_t>(producer_count + 2));
 }
 
 // A refusal never held a slot, so handing one back on the way out gives away

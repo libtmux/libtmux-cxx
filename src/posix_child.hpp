@@ -29,6 +29,9 @@ enum class ChildStream : std::uint8_t { stdout_stream, stderr_stream };
 // facts. Holding both in one bool let a lost status read as a clean exit.
 enum class ChildStatus : std::uint8_t { running, exited, unknowable, none };
 
+// The polling value exercises the same path platforms without pidfds use.
+enum class ExitReadiness : std::uint8_t { platform, poll };
+
 struct Capture final {
   std::vector<std::byte> stdout_bytes;
   std::vector<std::byte> stderr_bytes;
@@ -50,7 +53,8 @@ public:
   // Validates, opens the pipes the policy asks for, and spawns. A returned
   // child owns its process group and its descriptors.
   [[nodiscard]] static expected<PosixChild, ProcessError>
-  launch(const ProcessRequest& request);
+  launch(const ProcessRequest& request,
+         ExitReadiness exit_readiness = ExitReadiness::platform);
 
   ~PosixChild() noexcept;
   PosixChild(PosixChild&& other) noexcept;

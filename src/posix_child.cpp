@@ -65,7 +65,11 @@ struct Pipe final {
 // Waiting for a child rather than asking after it. libuv reaches for the same
 // thing on the platforms that have it, so a library embedded in someone else's
 // process never installs a SIGCHLD handler of its own.
-[[nodiscard]] int open_exit_descriptor(pid_t pid) noexcept {
+[[nodiscard]] int open_exit_descriptor(pid_t pid,
+                                       ExitReadiness exit_readiness) noexcept {
+  if (exit_readiness == ExitReadiness::poll) {
+    return -1;
+  }
 #if defined(__linux__) && defined(SYS_pidfd_open) &&                                   \
     !defined(LIBTMUX_FORCE_PORTABLE_SYSCALLS)
   return static_cast<int>(::syscall(SYS_pidfd_open, pid, 0U));
@@ -240,7 +244,8 @@ ProcessError process_error(ProcessError::Kind kind, DeliveryStatus delivery,
   };
 }
 
-expected<PosixChild, ProcessError> PosixChild::launch(const ProcessRequest& request) {
+expected<PosixChild, ProcessError> PosixChild::launch(const ProcessRequest& request,
+                                                      ExitReadiness exit_readiness) {
   auto rendered = render_request(request);
   const auto fail = [&rendered](ProcessError::Kind kind, std::string_view operation,
                                 int error_number) {
@@ -350,7 +355,7 @@ expected<PosixChild, ProcessError> PosixChild::launch(const ProcessRequest& requ
   PosixChild launched{child,
                       stdout_pipe.read.release(),
                       stderr_pipe.read.release(),
-                      open_exit_descriptor(child),
+                      open_exit_descriptor(child, exit_readiness),
                       request.capture_limit,
                       std::move(rendered)};
   launched.capture_.stdout_bytes.reserve(
@@ -471,7 +476,10 @@ std::optional<ProcessError> PosixChild::drain_impl(ChildStream stream,
                                                            : capture_.stderr_bytes;
   std::array<std::byte, 16384> buffer{};
   for (;;) {
-    if (ChildClock::now() >= boundary) {
+    // A bounded reactor turn still gives every ready stream one non-blocking
+    // attempt. The boundary only stops the unbounded drain mode from keeping
+    // the caller here while a child continues to write.
+    if (!one_read && ChildClock::now() >= boundary) {
       return std::nullopt;
     }
     const auto count = ::read(descriptor_value, buffer.data(), buffer.size());

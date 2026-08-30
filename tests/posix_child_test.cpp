@@ -22,6 +22,7 @@ using libtmux::detail::ChildClock;
 using libtmux::detail::ChildStatus;
 using libtmux::detail::ChildStream;
 using libtmux::detail::Exited;
+using libtmux::detail::ExitReadiness;
 using libtmux::detail::PosixChild;
 using libtmux::detail::ProcessError;
 using libtmux::detail::ProcessRequest;
@@ -140,6 +141,27 @@ TEST(PosixChild, WaitsOnExitWherePlatformAllows) {
 #endif
   run_to_completion(*launched);
   EXPECT_EQ(launched->status(), ChildStatus::exited);
+}
+
+TEST(PosixChild, APortableDrainTurnReadsAReadyChunkPastItsBoundary) {
+  auto launched =
+      PosixChild::launch(shell("printf prefix; sleep 30"), ExitReadiness::poll);
+  ASSERT_TRUE(launched.has_value()) << launched.error().diagnostic;
+  ASSERT_LT(launched->exit_descriptor(), 0);
+  pollfd watched{.fd = launched->descriptor(ChildStream::stdout_stream),
+                 .events = POLLIN,
+                 .revents = 0};
+  ASSERT_EQ(::poll(&watched, 1U, 1000), 1);
+  ASSERT_NE(watched.revents & POLLIN, 0);
+
+  static_cast<void>(launched->drain_once(
+      ChildStream::stdout_stream, ChildClock::now() - std::chrono::milliseconds{1},
+      libtmux::DeliveryStatus::indeterminate));
+  auto capture = launched->take_capture();
+
+  EXPECT_EQ(text(capture.stdout_bytes), "prefix");
+  launched->signal_group(SIGKILL);
+  run_to_completion(*launched);
 }
 
 TEST(PosixChild, ReportsAMissingExecutableWithoutStarting) {
