@@ -9,10 +9,14 @@ if(WIN32)
   list(APPEND LIBTMUX_SOURCES process_windows.cpp connection_windows.cpp)
 else()
   list(APPEND LIBTMUX_SOURCES process.cpp posix_child.cpp process_engine.cpp
-       connection.cpp notification_stream.cpp)
+       connection.cpp notification_stream.cpp spawn_descriptors.cpp)
 endif()
 add_library(libtmux STATIC ${LIBTMUX_SOURCES})
 add_library(libtmux::libtmux ALIAS libtmux)
+if(LIBTMUX_BUILD_TESTS AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_compile_definitions(
+    libtmux PRIVATE LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
+endif()
 
 # Two threads per control connection. This links on a glibc that folded
 # libpthread into libc, and fails to link on one that did not.

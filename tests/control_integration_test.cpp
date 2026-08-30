@@ -2,6 +2,8 @@
 #include "libtmux/expected.hpp"
 #include "libtmux/server.hpp"
 
+#include "spawn_descriptors.hpp"
+
 #include "libtmux/testing/capabilities.hpp"
 #include "libtmux/testing/scoped_server.hpp"
 #include "support/descriptors.hpp"
@@ -58,6 +60,22 @@ using libtmux::ProtocolError;
 using libtmux::test::ScopedTmuxServer;
 using libtmux::test::ScopedTmuxServerOptions;
 using libtmux::test::SocketMode;
+
+#if defined(__linux__)
+struct LateMarker final {
+  std::barrier<> policy_ready{2};
+  std::barrier<> marker_ready{2};
+  std::array<int, 2> descriptors{-1, -1};
+  int error{0};
+};
+
+LateMarker* pending_marker = nullptr;
+
+void open_marker_after_policy() {
+  pending_marker->policy_ready.arrive_and_wait();
+  pending_marker->marker_ready.arrive_and_wait();
+}
+#endif
 
 std::string unique_name(std::string_view prefix) {
   static std::atomic<unsigned int> sequence{0U};
@@ -204,6 +222,63 @@ TEST(ControlModeConnection, ControlClientDoesNotInheritABlockedSignalMask) {
   const auto mask = blocked_signals(client_pid);
   ASSERT_TRUE(mask.has_value());
   EXPECT_EQ(*mask, 0ULL);
+}
+
+TEST(ControlModeConnection, ForcedNumericPolicyClosesAMarkerOpenedAfterItsActions) {
+  auto server = start_server(unique_name("control-descriptor-policy"));
+  ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
+
+  LateMarker marker;
+  pending_marker = &marker;
+  std::thread opener{[&marker] {
+    marker.policy_ready.arrive_and_wait();
+    if (::pipe(marker.descriptors.data()) != 0) {
+      marker.error = errno;
+    }
+    marker.marker_ready.arrive_and_wait();
+  }};
+  libtmux::detail::set_spawn_descriptor_policy_test_override(256U,
+                                                             open_marker_after_policy);
+
+  auto connected = connect_to(*server);
+  libtmux::detail::set_spawn_descriptor_policy_test_override(0U, nullptr);
+  opener.join();
+  pending_marker = nullptr;
+
+  const bool setup_valid = marker.error == 0 && marker.descriptors[0] >= 3 &&
+                           marker.descriptors[1] >= 3 && marker.descriptors[1] < 256;
+  if (!setup_valid || !connected.has_value()) {
+    if (connected.has_value()) {
+      auto connection = std::move(*connected);
+      static_cast<void>(connection.shutdown(std::chrono::steady_clock::now() + 2s));
+    }
+    for (const auto descriptor : marker.descriptors) {
+      if (descriptor >= 0) {
+        static_cast<void>(::close(descriptor));
+      }
+    }
+    ASSERT_EQ(marker.error, 0);
+    ASSERT_GE(marker.descriptors[0], 3);
+    ASSERT_GE(marker.descriptors[1], 3);
+    ASSERT_LT(marker.descriptors[1], 256);
+    ASSERT_TRUE(connected.has_value())
+        << (connected.has_value() ? "" : connected.error().message);
+    return;
+  }
+  EXPECT_EQ(::close(marker.descriptors[0]), 0);
+  auto connection = std::move(*connected);
+
+  const auto reply = connection.execute(group({{"display-message", "-p", "intended"}}),
+                                        std::chrono::steady_clock::now() + 2s);
+  pollfd inherited{.fd = marker.descriptors[1], .events = POLLOUT, .revents = 0};
+  const auto marker_ready = ::poll(&inherited, 1, 1000);
+  static_cast<void>(::close(marker.descriptors[1]));
+  const auto stopped = connection.shutdown(std::chrono::steady_clock::now() + 2s);
+
+  expect_exact_end(reply, "intended\n");
+  ASSERT_EQ(marker_ready, 1);
+  EXPECT_NE(inherited.revents & POLLERR, 0);
+  EXPECT_TRUE(stopped.has_value());
 }
 #endif
 

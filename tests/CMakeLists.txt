@@ -446,6 +446,25 @@ endif()
 # POSIX only: the child's signal mask and dispositions are what this proves,
 # and Windows starts its children through a different launcher entirely.
 if(NOT WIN32)
+  add_executable(libtmux_spawn_descriptors_test spawn_descriptors_test.cpp)
+  target_include_directories(
+    libtmux_spawn_descriptors_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
+  target_link_libraries(
+    libtmux_spawn_descriptors_test
+    PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+  target_compile_options(
+    libtmux_spawn_descriptors_test PRIVATE -fno-sanitize-recover=undefined)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_compile_definitions(
+      libtmux_spawn_descriptors_test
+      PRIVATE LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
+  endif()
+
+  gtest_discover_tests(
+    libtmux_spawn_descriptors_test
+    TEST_PREFIX libtmux.spawn_descriptors.
+    PROPERTIES LABELS "libtmux" TIMEOUT 30)
+
   add_executable(libtmux_spawn_signals_test spawn_signals_test.cpp)
   target_include_directories(
     libtmux_spawn_signals_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
@@ -472,6 +491,10 @@ if(NOT WIN32)
     PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
   target_compile_options(
     libtmux_posix_child_test PRIVATE -fno-sanitize-recover=undefined)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_compile_definitions(
+      libtmux_posix_child_test PRIVATE LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
+  endif()
 
   gtest_discover_tests(
     libtmux_posix_child_test
@@ -676,6 +699,13 @@ foreach(control_case parser integration)
   target_compile_options(
     libtmux_control_${control_case}_test PRIVATE -fno-sanitize-recover=undefined)
 endforeach()
+target_include_directories(
+  libtmux_control_integration_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_compile_definitions(
+    libtmux_control_integration_test
+    PRIVATE LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
+endif()
 
 include(GoogleTest)
 gtest_discover_tests(

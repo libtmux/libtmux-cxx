@@ -1,10 +1,13 @@
 // The POSIX child owner, against real processes. Ownership is only proven by
 // actual pipe, signal and reap facts, so nothing here is scripted.
 #include "posix_child.hpp"
+#include "spawn_descriptors.hpp"
 
 #include <gtest/gtest.h>
 
 #include <array>
+#include <barrier>
+#include <cerrno>
 #include <csignal>
 #include <string>
 #include <thread>
@@ -27,6 +30,22 @@ using libtmux::detail::PosixChild;
 using libtmux::detail::ProcessError;
 using libtmux::detail::ProcessRequest;
 using libtmux::detail::Signaled;
+
+#if defined(__linux__)
+struct LateMarker final {
+  std::barrier<> policy_ready{2};
+  std::barrier<> marker_ready{2};
+  std::array<int, 2> descriptors{-1, -1};
+  int error{0};
+};
+
+LateMarker* pending_marker = nullptr;
+
+void open_marker_after_policy() {
+  pending_marker->policy_ready.arrive_and_wait();
+  pending_marker->marker_ready.arrive_and_wait();
+}
+#endif
 
 ProcessRequest shell(std::string script) {
   ProcessRequest request;
@@ -203,6 +222,70 @@ TEST(PosixChild, GivesTheChildAnUnblockedSignalMask) {
   ASSERT_EQ(launched->status(), ChildStatus::exited);
   EXPECT_TRUE(std::holds_alternative<Signaled>(launched->termination()));
 }
+
+#if defined(__linux__)
+TEST(PosixChild, ForcedNumericPolicyClosesAMarkerOpenedAfterItsActions) {
+  LateMarker marker;
+  pending_marker = &marker;
+  std::thread opener{[&marker] {
+    marker.policy_ready.arrive_and_wait();
+    if (::pipe(marker.descriptors.data()) != 0) {
+      marker.error = errno;
+    }
+    marker.marker_ready.arrive_and_wait();
+  }};
+  libtmux::detail::set_spawn_descriptor_policy_test_override(256U,
+                                                             open_marker_after_policy);
+
+  auto launched = PosixChild::launch(shell("printf intended; sleep 30"));
+  libtmux::detail::set_spawn_descriptor_policy_test_override(0U, nullptr);
+  opener.join();
+  pending_marker = nullptr;
+
+  const bool setup_valid = marker.error == 0 && marker.descriptors[0] >= 3 &&
+                           marker.descriptors[1] >= 3 && marker.descriptors[1] < 256;
+  if (!setup_valid || !launched.has_value()) {
+    if (launched.has_value()) {
+      launched->signal_group(SIGKILL);
+      run_to_completion(*launched);
+    }
+    for (const auto descriptor : marker.descriptors) {
+      if (descriptor >= 0) {
+        static_cast<void>(::close(descriptor));
+      }
+    }
+    ASSERT_EQ(marker.error, 0);
+    ASSERT_GE(marker.descriptors[0], 3);
+    ASSERT_GE(marker.descriptors[1], 3);
+    ASSERT_LT(marker.descriptors[1], 256);
+    ASSERT_TRUE(launched.has_value()) << launched.error().diagnostic;
+    return;
+  }
+  EXPECT_EQ(::close(marker.descriptors[0]), 0);
+
+  pollfd output{.fd = launched->descriptor(ChildStream::stdout_stream),
+                .events = POLLIN,
+                .revents = 0};
+  const auto output_ready = ::poll(&output, 1, 2000);
+  if (output_ready == 1) {
+    static_cast<void>(launched->drain_once(ChildStream::stdout_stream,
+                                           ChildClock::now() + std::chrono::seconds{1},
+                                           libtmux::DeliveryStatus::indeterminate));
+  }
+  pollfd inherited{.fd = marker.descriptors[1], .events = POLLOUT, .revents = 0};
+  const auto marker_ready = ::poll(&inherited, 1, 1000);
+
+  launched->signal_group(SIGKILL);
+  run_to_completion(*launched);
+  const auto capture = launched->take_capture();
+  static_cast<void>(::close(marker.descriptors[1]));
+
+  ASSERT_EQ(output_ready, 1);
+  EXPECT_EQ(text(capture.stdout_bytes), "intended");
+  ASSERT_EQ(marker_ready, 1);
+  EXPECT_NE(inherited.revents & POLLERR, 0);
+}
+#endif
 
 // Redaction is a property of the request as it is shown, so it has to hold
 // wherever a diagnostic is built from one.

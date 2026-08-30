@@ -2,6 +2,7 @@
 
 #include "libtmux/expected.hpp"
 #include "path.hpp"
+#include "spawn_descriptors.hpp"
 #include "spawn_signals.hpp"
 
 #include <algorithm>
@@ -292,19 +293,6 @@ expected<PosixChild, ProcessError> PosixChild::launch(const ProcessRequest& requ
       result = ::posix_spawn_file_actions_adddup2(&actions, stderr_pipe.write.get(),
                                                   STDERR_FILENO);
     }
-    if (result == 0) {
-#if defined(__GLIBC__)
-      result = ::posix_spawn_file_actions_addclosefrom_np(&actions, 3);
-#else
-      for (const int descriptor : {stdout_pipe.read.get(), stdout_pipe.write.get(),
-                                   stderr_pipe.read.get(), stderr_pipe.write.get()}) {
-        result = ::posix_spawn_file_actions_addclose(&actions, descriptor);
-        if (result != 0) {
-          break;
-        }
-      }
-#endif
-    }
     if (result != 0) {
       return action_failure(result);
     }
@@ -322,6 +310,13 @@ expected<PosixChild, ProcessError> PosixChild::launch(const ProcessRequest& requ
   result = apply_clean_signal_attributes(attributes, POSIX_SPAWN_SETPGROUP);
   if (result == 0) {
     result = ::posix_spawnattr_setpgroup(&attributes, 0);
+  }
+  if (result == 0) {
+    const auto descriptor_policy =
+        apply_spawn_descriptor_policy(actions, attributes, !capturing);
+    if (!descriptor_policy) {
+      result = descriptor_policy.error();
+    }
   }
   if (result != 0) {
     return attribute_failure(result);
