@@ -491,6 +491,20 @@ decimal_regular_file(const std::filesystem::path& path) {
   return parsed;
 }
 
+[[nodiscard]] bool wait_for_regular_file(const std::filesystem::path& path,
+                                         std::chrono::milliseconds timeout) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  do {
+    std::error_code inspected;
+    const auto status = std::filesystem::symlink_status(path, inspected);
+    if (!inspected && std::filesystem::is_regular_file(status)) {
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds{20});
+  } while (std::chrono::steady_clock::now() < deadline);
+  return false;
+}
+
 struct DurableSessionIdentity {
   std::size_t id;
   std::size_t next_id;
@@ -988,31 +1002,32 @@ int main() {
     return EXIT_FAILURE;
   }
 
-  const std::string cancellation_channel = socket_name + "-submit-cancellation";
-  const std::string cancellation_started_channel = cancellation_channel + "-started";
-  DelayedSignal cancellation_fallback{socket_name, cancellation_channel, 2s};
-  auto cancellable = server.submit({"wait-for", "-S", cancellation_started_channel, ";",
-                                    "wait-for", cancellation_channel},
-                                   10s);
+  const auto cancellation_marker = temporary / (socket_name + "-submit-started");
+  ScopedFile cancellation_marker_cleanup{cancellation_marker};
+  if (!require(SetEnvironmentVariableW(L"LIBTMUX_CXX_CANCELLATION_MARKER",
+                                       cancellation_marker.c_str()) != 0,
+               "could not configure the cancellation marker")) {
+    return EXIT_FAILURE;
+  }
+  auto cancellable = server.submit(
+      {"run-shell", "Set-Content -LiteralPath $env:LIBTMUX_CXX_CANCELLATION_MARKER "
+                    "-Value started; Start-Sleep -Seconds 30"},
+      10s);
   if (!cancellable.has_value()) {
     report_command("Server::submit rejected a cancellable psmux waiter",
                    cancellable.error());
     return EXIT_FAILURE;
   }
-  const auto cancellation_started =
-      raw_psmux(socket_name, {"wait-for", cancellation_started_channel}, 2s);
-  if (!require(cancellation_started && cancellation_started->exit_code == 0,
-               "the cancellable psmux waiter did not prove it started")) {
-    static_cast<void>(raw_psmux(socket_name, {"wait-for", "-S", cancellation_channel}));
-    cancellation_fallback.stop();
+  if (!require(wait_for_regular_file(cancellation_marker, 2s),
+               "the cancellable psmux command did not prove it started")) {
+    static_cast<void>(cancellable->request_cancel());
     static_cast<void>(std::move(*cancellable).wait());
     return EXIT_FAILURE;
   }
   const bool cancellation_requested = cancellable->request_cancel();
   auto cancelled = std::move(*cancellable).wait();
-  const auto cancellation_cleanup =
-      raw_psmux(socket_name, {"wait-for", "-S", cancellation_channel});
-  cancellation_fallback.stop();
+  const bool marker_unset =
+      SetEnvironmentVariableW(L"LIBTMUX_CXX_CANCELLATION_MARKER", nullptr) != 0;
   if (!require(cancellation_requested,
                "a running submitted psmux command must accept cancellation") ||
       !require(
@@ -1020,8 +1035,9 @@ int main() {
               cancelled.error().kind == libtmux::FailureKind::cancelled &&
               cancelled.error().delivery == libtmux::DeliveryStatus::indeterminate,
           "a cancelled submitted psmux command must report indeterminate delivery") ||
-      !require(cancellation_cleanup && cancellation_cleanup->exit_code == 0,
-               "could not release the cancelled psmux wait channel")) {
+      !require(marker_unset, "could not clear the cancellation marker") ||
+      !require(cancellation_marker_cleanup.finish(),
+               "could not remove the cancellation marker")) {
     return EXIT_FAILURE;
   }
 
