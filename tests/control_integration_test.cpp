@@ -895,7 +895,13 @@ TEST(ControlModeConnection, WaitCapableCommandsFinishAfterTheirGuardedBlocks) {
   // The initial `%end` blocks said only that tmux accepted each command. The
   // actual failures are unguarded and have no request identifier, so this raw
   // API exposes wire evidence rather than inventing a final command result.
-  EXPECT_TRUE(contains("returned 17"));
+  const auto running = libtmux::test::running_tmux(LIBTMUX_CONTROL_TMUX_PATH);
+  const bool reports_run_shell_failures =
+      running < libtmux::Version{.major = 3, .minor = 3, .revision = 1} ||
+      running >= libtmux::Version{.major = 3, .minor = 5};
+  if (reports_run_shell_failures) {
+    EXPECT_TRUE(contains("returned 17"));
+  }
   EXPECT_TRUE(contains(missing));
   EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
 }
