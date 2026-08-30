@@ -106,7 +106,8 @@ private:
 struct PinAttempt {
   explicit PinAttempt(PinStatus state, std::string failure = {})
       : status{state}, diagnostic{std::move(failure)} {}
-  PinAttempt(struct stat captured, std::shared_ptr<const SocketAlias> alias_lifetime)
+  PinAttempt(const struct stat& captured,
+             std::shared_ptr<const SocketAlias> alias_lifetime)
       : status{PinStatus::pinned}, metadata{captured},
         lifetime{std::move(alias_lifetime)} {}
   PinAttempt(PinStatus state, std::shared_ptr<const SocketAlias> alias_lifetime)

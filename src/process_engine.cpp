@@ -311,7 +311,8 @@ void ProcessEngine::reactor_loop() {
     if (shutting_down) {
       boundary = Clock::now();
     }
-    static_cast<void>(::poll(watched.data(), watched.size(), poll_timeout(boundary)));
+    static_cast<void>(::poll(watched.data(), static_cast<nfds_t>(watched.size()),
+                             poll_timeout(boundary)));
     channel_->drain();
 
     for (auto& one : live) {

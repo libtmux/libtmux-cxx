@@ -22,8 +22,8 @@ namespace detail {
                                                        short extra_flags) noexcept {
   sigset_t defaulted;
   sigset_t unblocked;
-  if (::sigfillset(&defaulted) != 0 || ::sigdelset(&defaulted, SIGKILL) != 0 ||
-      ::sigdelset(&defaulted, SIGSTOP) != 0 || ::sigemptyset(&unblocked) != 0) {
+  if (sigfillset(&defaulted) != 0 || sigdelset(&defaulted, SIGKILL) != 0 ||
+      sigdelset(&defaulted, SIGSTOP) != 0 || sigemptyset(&unblocked) != 0) {
     return errno;
   }
   const auto flags =

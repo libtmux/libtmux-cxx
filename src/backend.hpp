@@ -16,6 +16,7 @@
 #include "libtmux/capabilities.hpp"
 #include "libtmux/command.hpp"
 #include "libtmux/expected.hpp"
+#include "process.hpp"
 #if !defined(_WIN32)
 #include "process_engine.hpp"
 #endif
