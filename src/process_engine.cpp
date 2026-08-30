@@ -116,7 +116,8 @@ ProcessEngine::start(EngineConfig config) {
       std::make_shared<EngineChannel>(config.operation_limit, wake[0], wake[1]);
   // The threads hold a raw reference on purpose. Owning the engine would keep
   // it alive for as long as they run, which is until it is destroyed.
-  std::shared_ptr<ProcessEngine> engine{new ProcessEngine{std::move(channel)}};
+  std::shared_ptr<ProcessEngine> engine{
+      new ProcessEngine{std::move(channel), std::move(config.admission_gate)}};
   engine->launcher_ = std::thread{[owner = engine.get()] { owner->launch_loop(); }};
   engine->reactor_ = std::thread{[owner = engine.get()] { owner->reactor_loop(); }};
   return engine;
@@ -136,13 +137,16 @@ EngineChannel::~EngineChannel() {
   }
 }
 
-bool EngineChannel::admit() noexcept {
+EngineAdmission EngineChannel::admit() noexcept {
   std::lock_guard lock{mutex_};
+  if (failure_) {
+    return EngineAdmission{.failure = failure_};
+  }
   if (in_flight_ >= operation_limit_) {
-    return false;
+    return {};
   }
   ++in_flight_;
-  return true;
+  return EngineAdmission{.accepted = true};
 }
 
 void EngineChannel::release() noexcept {
@@ -150,6 +154,11 @@ void EngineChannel::release() noexcept {
   if (in_flight_ > 0U) {
     --in_flight_;
   }
+}
+
+EngineLaunchGate EngineChannel::gate_launch() noexcept {
+  std::unique_lock lock{mutex_};
+  return EngineLaunchGate{std::move(lock), failure_};
 }
 
 void EngineChannel::wake() noexcept {
@@ -206,24 +215,35 @@ std::optional<EngineFailure> EngineChannel::failure() const noexcept {
   return failure_;
 }
 
-ProcessEngine::ProcessEngine(std::shared_ptr<EngineChannel> channel) noexcept
-    : channel_{std::move(channel)} {}
+ProcessEngine::ProcessEngine(std::shared_ptr<EngineChannel> channel,
+                             std::function<void()> admission_gate) noexcept
+    : channel_{std::move(channel)}, admission_gate_{std::move(admission_gate)} {}
 
 ProcessEngine::~ProcessEngine() { static_cast<void>(close()); }
 
 Operation<ProcessReply> ProcessEngine::submit(ProcessRequest request) {
-  if (!channel_->admit()) {
+  if (admission_gate_) {
+    admission_gate_();
+  }
+  const auto admission = channel_->admit();
+  if (!admission.accepted) {
     auto refused = make_operation<ProcessReply>(std::make_shared<UnadmittedHooks>());
-    static_cast<void>(refused.source.publish(unexpected(CommandFailure{
-        .kind = FailureKind::overloaded,
-        .delivery = DeliveryStatus::not_started,
-        .exit_code = 0,
-        .diagnostic = "the process engine has more work in flight than it accepts"})));
+    if (admission.failure) {
+      fail(*admission.failure);
+      static_cast<void>(refused.source.publish(unexpected(
+          reported(process_error(ProcessError::Kind::pipe, DeliveryStatus::not_started,
+                                 admission.failure->operation, render_request(request),
+                                 admission.failure->cause)))));
+    } else {
+      static_cast<void>(refused.source.publish(unexpected(CommandFailure{
+          .kind = FailureKind::overloaded,
+          .delivery = DeliveryStatus::not_started,
+          .exit_code = 0,
+          .diagnostic =
+              "the process engine has more work in flight than it accepts"})));
+    }
     refused.source.retire();
     return std::move(refused.operation);
-  }
-  if (auto channel_failure = channel_->failure()) {
-    fail(*channel_failure);
   }
   auto started = make_operation<ProcessReply>(std::make_shared<ChannelHooks>(channel_));
   std::optional<Clock::time_point> deadline;
@@ -322,9 +342,21 @@ void ProcessEngine::launch_one(EnginePending work, bool stopping,
     work.source.retire();
     return;
   }
+  auto launch_gate = channel_->gate_launch();
+  if (launch_gate.failure()) {
+    const auto channel_failure = *launch_gate.failure();
+    launch_gate.unlock();
+    static_cast<void>(work.source.publish(unexpected(
+        reported(process_error(ProcessError::Kind::pipe, DeliveryStatus::not_started,
+                               channel_failure.operation, render_request(work.request),
+                               channel_failure.cause)))));
+    work.source.retire();
+    return;
+  }
   // Only creation happens here. Everything the child needs afterwards goes
   // with it to the reactor, so a launch that blocks stalls nothing else.
   auto launched = PosixChild::launch(work.request);
+  launch_gate.unlock();
   if (!launched.has_value()) {
     static_cast<void>(
         work.source.publish(unexpected(reported(std::move(launched.error())))));
@@ -496,8 +528,7 @@ void ProcessEngine::reactor_loop() {
         one.killed = !signal_failure;
         retain(std::move(signal_failure));
       }
-      if (!finished && one.killed && !one.final_reap_attempted) {
-        one.final_reap_attempted = true;
+      if (!finished && one.killed) {
         retain(one.child.wait_for_exit(DeliveryStatus::indeterminate));
       }
 
@@ -559,7 +590,9 @@ void ProcessEngine::reactor_loop() {
       {
         std::lock_guard lock{mutex_};
         ++published_;
-        ++reaped_;
+        if (one.child.status() == ChildStatus::exited) {
+          ++reaped_;
+        }
       }
       return true;
     });
@@ -590,7 +623,7 @@ EngineShutdown ProcessEngine::close() {
   EngineShutdown report;
   {
     std::lock_guard lock{mutex_};
-    terminal_shutdown_ = EngineShutdown{published_, reaped_, true};
+    terminal_shutdown_ = EngineShutdown{published_, reaped_, published_ == reaped_};
     terminal_ = true;
     report = terminal_shutdown_;
   }

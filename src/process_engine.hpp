@@ -15,12 +15,14 @@
 #include <condition_variable>
 #include <cstddef>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string_view>
 #include <system_error>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "libtmux/expected.hpp"
@@ -36,6 +38,8 @@ struct EngineConfig final {
   // queued, so a caller learns immediately instead of waiting behind a bound
   // it cannot see.
   std::size_t operation_limit{256U};
+  // A private scheduling seam for deterministic admission-race coverage.
+  std::function<void()> admission_gate{};
 };
 
 // What shutdown could not finish, so a caller is told rather than assured.
@@ -61,7 +65,6 @@ struct EngineLive final {
   std::optional<ChildClock::time_point> terminate_deadline{};
   std::optional<ProcessError> failure{};
   bool killed{false};
-  bool final_reap_attempted{false};
   // Ended because the caller withdrew, not because a deadline passed.
   bool withdrawn{false};
   // Ended because the engine is closing, which is neither.
@@ -71,6 +74,35 @@ struct EngineLive final {
 struct EngineFailure final {
   std::string_view operation;
   std::error_code cause;
+};
+
+struct EngineAdmission final {
+  bool accepted{false};
+  std::optional<EngineFailure> failure{};
+};
+
+// A launch and fatal publication share this lock. Once launch has crossed
+// this gate, its posix_spawn happens before a later fatal state can publish.
+class EngineLaunchGate final {
+public:
+  EngineLaunchGate(EngineLaunchGate&&) noexcept = default;
+  EngineLaunchGate& operator=(EngineLaunchGate&&) noexcept = default;
+  EngineLaunchGate(const EngineLaunchGate&) = delete;
+  EngineLaunchGate& operator=(const EngineLaunchGate&) = delete;
+
+  [[nodiscard]] const std::optional<EngineFailure>& failure() const noexcept {
+    return failure_;
+  }
+  void unlock() noexcept { lock_.unlock(); }
+
+private:
+  friend class EngineChannel;
+  EngineLaunchGate(std::unique_lock<std::mutex> lock,
+                   std::optional<EngineFailure> failure) noexcept
+      : lock_{std::move(lock)}, failure_{std::move(failure)} {}
+
+  std::unique_lock<std::mutex> lock_;
+  std::optional<EngineFailure> failure_;
 };
 
 // What a hook may still be holding once the engine is gone.
@@ -89,8 +121,10 @@ public:
 
   // Accepted work in flight, against the bound. A refused caller is told at
   // once rather than queued behind a limit it cannot see.
-  [[nodiscard]] bool admit() noexcept;
+  [[nodiscard]] EngineAdmission admit() noexcept;
   void release() noexcept;
+
+  [[nodiscard]] EngineLaunchGate gate_launch() noexcept;
 
   void wake() noexcept;
   void drain() noexcept;
@@ -123,7 +157,8 @@ public:
   [[nodiscard]] EngineShutdown close();
 
 private:
-  explicit ProcessEngine(std::shared_ptr<EngineChannel> channel) noexcept;
+  explicit ProcessEngine(std::shared_ptr<EngineChannel> channel,
+                         std::function<void()> admission_gate) noexcept;
 
   void launch_loop();
   void launch_one(EnginePending work, bool stopping,
@@ -132,6 +167,7 @@ private:
   void fail(EngineFailure failure);
 
   std::shared_ptr<EngineChannel> channel_;
+  std::function<void()> admission_gate_;
 
   std::mutex mutex_;
   std::condition_variable launch_ready_;

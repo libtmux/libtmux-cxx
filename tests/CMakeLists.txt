@@ -528,6 +528,7 @@ if(NOT WIN32)
         "-Wl,--wrap=kill"
         "-Wl,--wrap=poll"
         "-Wl,--wrap=posix_spawn_file_actions_destroy"
+        "-Wl,--wrap=posix_spawnp"
         "-Wl,--wrap=posix_spawnattr_destroy"
         "-Wl,--wrap=read"
         "-Wl,--wrap=waitpid"

@@ -22,7 +22,6 @@ using Clock = ChildClock;
 constexpr auto poll_quantum = std::chrono::milliseconds{10};
 constexpr auto terminate_grace = std::chrono::milliseconds{100};
 constexpr auto post_exit_drain = std::chrono::milliseconds{100};
-constexpr auto kill_reap_grace = std::chrono::milliseconds{500};
 
 [[nodiscard]] int poll_timeout(Clock::time_point boundary) {
   const auto now = Clock::now();
@@ -86,40 +85,49 @@ poll_and_drain(PosixChild& child, Clock::time_point boundary, DeliveryStatus del
   return ready(descriptors[1], ChildStream::stderr_stream);
 }
 
-// Ends the child and reads what it left. Every caller is already returning a
-// failure, so nothing here reports one of its own.
-void cleanup_group(PosixChild& child, bool allow_term) {
+// Ends the child and reads what it left. Cleanup still reports its first fault
+// so a provisional timeout can match the asynchronous runner.
+[[nodiscard]] std::optional<ProcessError> cleanup_group(PosixChild& child,
+                                                        bool allow_term) {
+  std::optional<ProcessError> failure;
+  const auto retain = [&failure](std::optional<ProcessError> candidate) {
+    if (candidate && !failure) {
+      failure = std::move(*candidate);
+    }
+  };
   const auto settle = [&](Clock::time_point until) {
     while (child.status() == ChildStatus::running && Clock::now() < until) {
-      if (child.update_status(DeliveryStatus::indeterminate).has_value()) {
-        break;
-      }
-      if (poll_and_drain(child, std::min(until, Clock::now() + poll_quantum),
-                         DeliveryStatus::indeterminate)) {
-        // Reading failed and this path is already returning an error, so
-        // stop reading and go on waiting for the child. Polling two closed
-        // descriptors is what paces the wait from here.
+      retain(child.update_status(DeliveryStatus::indeterminate));
+      auto drain = poll_and_drain(child, std::min(until, Clock::now() + poll_quantum),
+                                  DeliveryStatus::indeterminate);
+      if (drain) {
+        retain(std::move(drain));
         child.close_output();
       }
     }
   };
 
   if (allow_term) {
-    child.signal_group(SIGTERM);
+    retain(child.signal_group(SIGTERM));
     settle(Clock::now() + terminate_grace);
   }
-  child.signal_group(SIGKILL);
-  settle(Clock::now() + kill_reap_grace);
-  child.wait_for_exit();
+  retain(child.signal_group(SIGKILL));
+  while (child.status() == ChildStatus::running) {
+    retain(child.wait_for_exit());
+  }
 
   const auto drain_deadline = Clock::now() + post_exit_drain;
   while (!child.output_closed() && Clock::now() < drain_deadline) {
-    if (poll_and_drain(child, std::min(drain_deadline, Clock::now() + poll_quantum),
-                       DeliveryStatus::indeterminate)) {
+    auto drain =
+        poll_and_drain(child, std::min(drain_deadline, Clock::now() + poll_quantum),
+                       DeliveryStatus::indeterminate);
+    if (drain) {
+      retain(std::move(drain));
       break;
     }
   }
   child.close_output();
+  return failure;
 }
 
 // The capture is attached by the caller, after the cleanup that keeps
@@ -151,7 +159,12 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
   auto& child = *launched;
 
   const auto abandon = [&](ProcessError error, bool allow_term) {
-    cleanup_group(child, allow_term);
+    auto cleanup_failure = cleanup_group(child, allow_term);
+    // Timeout is provisional until termination, drain and reap finish. A
+    // concrete cleanup fault is the synchronous/asynchronous shared cause.
+    if (error.kind == ProcessError::Kind::timeout && cleanup_failure) {
+      error = std::move(*cleanup_failure);
+    }
     auto capture = child.take_capture();
     error.stdout_bytes = std::move(capture.stdout_bytes);
     error.stderr_bytes = std::move(capture.stderr_bytes);

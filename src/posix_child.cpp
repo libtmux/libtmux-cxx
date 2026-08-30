@@ -583,8 +583,12 @@ PosixChild::wait_for_exit(DeliveryStatus delivery) noexcept {
       continue;
     }
     const auto error_number = result < 0 ? errno : ECHILD;
-    status_ = ChildStatus::unknowable;
-    close_exit_descriptor();
+    // Only ECHILD proves that ownership is gone. A transient or injected
+    // failure leaves the child running and owned so cleanup can retry.
+    if (error_number == ECHILD) {
+      status_ = ChildStatus::unknowable;
+      close_exit_descriptor();
+    }
     return process_error(ProcessError::Kind::pipe, delivery, "waitpid pipe",
                          rendered_request_, generic_error(error_number));
   }
