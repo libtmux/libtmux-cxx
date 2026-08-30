@@ -49,6 +49,47 @@ bool wait_until(const std::function<bool()>& predicate,
   return predicate();
 }
 
+struct ObserverTeardownState final {
+  std::binary_semaphore started{0};
+  std::binary_semaphore release{0};
+  std::atomic_bool armed{};
+};
+
+struct BlockingObserverTeardown final {
+  std::shared_ptr<ObserverTeardownState> state;
+
+  void operator()(std::string_view, const libtmux::CommandFailure*) const {}
+
+  ~BlockingObserverTeardown() {
+    if (state && state->armed.exchange(false)) {
+      state->started.release();
+      state->release.acquire();
+    }
+  }
+};
+
+class ObserverTeardownRelease final {
+public:
+  explicit ObserverTeardownRelease(
+      std::shared_ptr<ObserverTeardownState> state) noexcept
+      : state_{std::move(state)} {}
+  ~ObserverTeardownRelease() { release(); }
+  ObserverTeardownRelease(const ObserverTeardownRelease&) = delete;
+  ObserverTeardownRelease& operator=(const ObserverTeardownRelease&) = delete;
+
+  void release() noexcept {
+    if (!released_) {
+      state_->armed.store(false);
+      state_->release.release();
+      released_ = true;
+    }
+  }
+
+private:
+  std::shared_ptr<ObserverTeardownState> state_;
+  bool released_{};
+};
+
 #if !defined(_WIN32)
 class RuntimeCompletionGate final {
 public:
@@ -782,6 +823,50 @@ TEST(ServerContract, CloseIsNotSafeToUnloadWhileAnObserverCallbackRuns) {
   EXPECT_FALSE(closed.safe_to_unload);
   release_callback.release();
   EXPECT_EQ(dispatcher.get(), 1U);
+}
+
+TEST(ServerContract, CloseIsNotSafeToUnloadWhileDiscardDestroysObserver) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  auto teardown = std::make_shared<ObserverTeardownState>();
+  auto observed = Server::at_socket_path(fixture->socket_path().string(),
+                                         BlockingObserverTeardown{teardown});
+  ASSERT_TRUE(observed.has_value()) << observed.error().diagnostic;
+  const Server quiet = connect(*fixture);
+  auto runtime = start_runtime();
+
+  auto first = observed->try_submit(runtime, {"display-message", "-p", "discarded"});
+  ASSERT_TRUE(first.has_value()) << first.error().diagnostic;
+  ASSERT_TRUE(std::move(*first).wait().has_value());
+  ASSERT_TRUE(wait_until([&runtime] { return runtime.snapshot().completed == 1U; }));
+
+  auto second = quiet.try_submit(runtime, {"display-message", "-p", "fence"});
+  ASSERT_TRUE(second.has_value()) << second.error().diagnostic;
+  ASSERT_TRUE(std::move(*second).wait().has_value());
+  ASSERT_TRUE(wait_until([&runtime] { return runtime.snapshot().completed == 2U; }));
+  ASSERT_EQ(runtime.snapshot().pending_observers, 1U);
+
+  std::future<std::size_t> discarder;
+  ObserverTeardownRelease release_teardown{teardown};
+  teardown->armed.store(true);
+  discarder =
+      std::async(std::launch::async, [&runtime] { return runtime.discard_ready(); });
+  const bool started = teardown->started.try_acquire_for(std::chrono::seconds{3});
+  const auto disposing = runtime.snapshot();
+  std::optional<libtmux::CommandRuntimeShutdown> closed;
+  if (started && disposing.pending_observers == 0U) {
+    closed = runtime.close();
+  }
+  release_teardown.release();
+  const auto discarded = discarder.get();
+
+  ASSERT_TRUE(started);
+  EXPECT_EQ(disposing.pending_results, 0U);
+  EXPECT_EQ(disposing.pending_observers, 0U);
+  ASSERT_TRUE(closed.has_value());
+  EXPECT_TRUE(closed->transports_stopped);
+  EXPECT_FALSE(closed->safe_to_unload);
+  EXPECT_EQ(discarded, 1U);
 }
 
 TEST(ServerContract, ConcurrentCloseCallersReceiveOneTerminalReport) {

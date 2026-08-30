@@ -231,6 +231,44 @@ struct Observation final {
   void dispatch() const { callback(command, failed ? &failure : nullptr); }
 };
 
+class ObserverRecord final {
+public:
+  ObserverRecord(std::shared_ptr<Observation> observation,
+                 std::shared_ptr<RuntimeLease> lease) noexcept
+      : observation_{std::move(observation)}, leg_{std::move(lease)} {}
+  ~ObserverRecord() {
+    leg_.release();
+    observation_.reset();
+  }
+  ObserverRecord(const ObserverRecord&) = delete;
+  ObserverRecord& operator=(const ObserverRecord&) = delete;
+  ObserverRecord(ObserverRecord&&) noexcept = default;
+  ObserverRecord& operator=(ObserverRecord&&) = delete;
+
+  void operator()() {
+    leg_.release();
+    observation_->dispatch();
+  }
+
+private:
+  std::shared_ptr<Observation> observation_;
+  ObserverLeg leg_;
+};
+
+class ActiveObserverDisposition final {
+public:
+  explicit ActiveObserverDisposition(std::atomic_size_t& active) noexcept
+      : active_{active} {
+    active_.fetch_add(1U);
+  }
+  ~ActiveObserverDisposition() { active_.fetch_sub(1U); }
+  ActiveObserverDisposition(const ActiveObserverDisposition&) = delete;
+  ActiveObserverDisposition& operator=(const ActiveObserverDisposition&) = delete;
+
+private:
+  std::atomic_size_t& active_;
+};
+
 #if !defined(_WIN32)
 std::mutex launch_observer_mutex;
 std::function<void(const detail::ProcessRequest&)> runtime_launch_observer;
@@ -489,10 +527,7 @@ struct CommandRuntime::State final {
 
     if (observation) {
       const bool registered = observers_.register_record(
-          *observer_token, [record = observation, leg = ObserverLeg{lease}]() mutable {
-            leg.release();
-            record->dispatch();
-          });
+          *observer_token, ObserverRecord{observation, lease});
       if (!registered) {
         return refuse(immediate_failure(
             FailureKind::cancelled,
@@ -626,7 +661,7 @@ struct CommandRuntime::State final {
           .safe_to_unload = transports_stopped &&
                             final_snapshot.pending_results == 0U &&
                             final_snapshot.pending_observers == 0U &&
-                            active_dispatchers_.load(std::memory_order_relaxed) == 0U,
+                            active_observer_dispositions_.load() == 0U,
           .failure = lifecycle_failure()};
       {
         std::lock_guard lifecycle_lock{lifecycle_mutex_};
@@ -651,18 +686,14 @@ struct CommandRuntime::State final {
   }
 
   [[nodiscard]] std::size_t dispatch_ready() {
-    active_dispatchers_.fetch_add(1U, std::memory_order_relaxed);
-    try {
-      const auto dispatched = observers_.run_ready();
-      active_dispatchers_.fetch_sub(1U, std::memory_order_relaxed);
-      return dispatched;
-    } catch (...) {
-      active_dispatchers_.fetch_sub(1U, std::memory_order_relaxed);
-      throw;
-    }
+    const ActiveObserverDisposition active{active_observer_dispositions_};
+    return observers_.run_ready();
   }
 
-  [[nodiscard]] std::size_t discard_ready() { return observers_.discard_ready(); }
+  [[nodiscard]] std::size_t discard_ready() {
+    const ActiveObserverDisposition active{active_observer_dispositions_};
+    return observers_.discard_ready();
+  }
 
 private:
   void notify_completion() noexcept {
@@ -814,7 +845,7 @@ private:
 
   mutable std::mutex failure_mutex_;
   std::optional<CommandFailure> lifecycle_failure_;
-  std::atomic_size_t active_dispatchers_{};
+  std::atomic_size_t active_observer_dispositions_{};
 
 #if !defined(_WIN32)
   std::shared_ptr<detail::ProcessEngine> engine_;
