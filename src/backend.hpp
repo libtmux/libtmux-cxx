@@ -185,6 +185,14 @@ public:
   run(const CommandRequest& command, std::optional<std::chrono::milliseconds> timeout,
       std::optional<std::size_t> output_limit) const override;
 
+#if defined(_WIN32)
+  [[nodiscard]] expected<std::string, CommandFailure>
+  run_cancellable(const CommandRequest& command,
+                  std::optional<std::chrono::milliseconds> timeout,
+                  std::optional<std::size_t> output_limit,
+                  const CancellationProbe& cancelled) const;
+#endif
+
   [[nodiscard]] expected<std::string, CommandFailure>
   run_in_session(const CommandRequest& command, std::string_view session_id,
                  std::string_view session_name,

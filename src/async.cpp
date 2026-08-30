@@ -1,6 +1,7 @@
 #include "libtmux/async.hpp"
 
 #include "backend.hpp"
+#include "command_engine.hpp"
 #include "process.hpp"
 #if !defined(_WIN32)
 #include "process_engine.hpp"
@@ -13,14 +14,14 @@
 
 LIBTMUX_NAMESPACE_BEGIN
 
-// Either a command still running, or the answer to one that has finished. A
-// backend with no engine answers at submission, and the caller cannot tell the
-// difference except by how long `wait` takes.
+// The owning engine outlives accepted work even when its operation is dropped;
+// dropping stops observation, not execution.
 struct CommandOperation::State final {
   std::shared_ptr<const detail::Backend> backend;
   CommandRequest command;
   std::size_t allowed_bytes{0U};
-  std::optional<expected<std::string, CommandFailure>> answered;
+  std::shared_ptr<detail::CommandEngine> command_engine;
+  std::optional<detail::Operation<std::string>> command_running;
 #if !defined(_WIN32)
   std::optional<detail::Operation<detail::ProcessReply>> running;
 #endif
@@ -42,8 +43,8 @@ expected<std::string, CommandFailure> CommandOperation::wait() && {
                        .diagnostic = "this operation has been waited on"});
   }
   auto state = std::move(state_);
-  if (state->answered.has_value()) {
-    return *std::move(state->answered);
+  if (state->command_running.has_value()) {
+    return detail::sync_wait(*std::move(state->command_running));
   }
 #if !defined(_WIN32)
   auto reply = detail::sync_wait(*std::move(state->running));
@@ -70,6 +71,9 @@ expected<std::string, CommandFailure> CommandOperation::wait() && {
 }
 
 bool CommandOperation::request_cancel() {
+  if (state_ && state_->command_running.has_value()) {
+    return state_->command_running->request_cancel();
+  }
 #if !defined(_WIN32)
   if (state_ && state_->running.has_value()) {
     return state_->running->request_cancel();
@@ -102,9 +106,13 @@ Server::submit(CommandRequest command, std::optional<std::chrono::milliseconds> 
     return CommandOperation{std::move(state)};
   }
 #endif
-  // A backend with no engine has nowhere to put the work, so it answers now
-  // and the operation carries the answer rather than pretending to wait.
-  state->answered = backend_->run(state->command, deadline, allowed);
+  auto engine = detail::shared_command_engine();
+  if (!engine.has_value()) {
+    return unexpected(std::move(engine.error()));
+  }
+  state->command_engine = *engine;
+  state->command_running =
+      (*engine)->submit(backend_, state->command, deadline, allowed);
   return CommandOperation{std::move(state)};
 }
 

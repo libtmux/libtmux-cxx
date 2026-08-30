@@ -751,6 +751,11 @@ void terminate_and_drain(HANDLE job, HANDLE process, OwnedHandle& stdout_read,
 } // namespace
 
 expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) {
+  return run_process(request, [] { return false; });
+}
+
+expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request,
+                                                 const CancellationProbe& cancelled) {
   if (auto validation = validate_request(request)) {
     return unexpected(std::move(*validation));
   }
@@ -759,6 +764,11 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
     return unexpected(make_error(ProcessError::Kind::timeout,
                                  DeliveryStatus::not_started, "timeout", request,
                                  std::make_error_code(std::errc::timed_out)));
+  }
+  if (cancelled()) {
+    return unexpected(make_error(ProcessError::Kind::cancelled,
+                                 DeliveryStatus::not_started, "cancellation", request,
+                                 std::make_error_code(std::errc::operation_canceled)));
   }
 
   std::optional<Clock::time_point> deadline;
@@ -805,6 +815,11 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
     return unexpected(make_error(ProcessError::Kind::timeout,
                                  DeliveryStatus::not_started, "timeout", request,
                                  std::make_error_code(std::errc::timed_out)));
+  }
+  if (cancelled()) {
+    return unexpected(make_error(ProcessError::Kind::cancelled,
+                                 DeliveryStatus::not_started, "cancellation", request,
+                                 std::make_error_code(std::errc::operation_canceled)));
   }
 
   STARTUPINFOEXW startup{};
@@ -853,6 +868,15 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
     return unexpected(make_error(
         ProcessError::Kind::timeout, DeliveryStatus::not_started, "timeout", request,
         std::make_error_code(std::errc::timed_out), std::move(capture)));
+  }
+  if (cancelled()) {
+    Capture capture;
+    terminate_and_drain(job.get(), process.get(), io->stdout_pipe.read,
+                        io->stderr_pipe.read, capture, request.capture_limit);
+    return unexpected(make_error(ProcessError::Kind::cancelled,
+                                 DeliveryStatus::not_started, "cancellation", request,
+                                 std::make_error_code(std::errc::operation_canceled),
+                                 std::move(capture)));
   }
 
   if (::ResumeThread(thread.get()) == static_cast<DWORD>(-1)) {
@@ -919,6 +943,14 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
       return unexpected(make_error(
           ProcessError::Kind::timeout, DeliveryStatus::indeterminate, "timeout",
           request, std::make_error_code(std::errc::timed_out), std::move(capture)));
+    }
+    if (!exited && cancelled()) {
+      terminate_and_drain(job.get(), process.get(), io->stdout_pipe.read,
+                          io->stderr_pipe.read, capture, request.capture_limit);
+      return unexpected(make_error(
+          ProcessError::Kind::cancelled, DeliveryStatus::indeterminate, "cancellation",
+          request, std::make_error_code(std::errc::operation_canceled),
+          std::move(capture)));
     }
     if (*drained) {
       continue;

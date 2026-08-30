@@ -35,6 +35,8 @@ FailureKind kind_of(ProcessError::Kind kind) noexcept {
     return FailureKind::pipe;
   case ProcessError::Kind::timeout:
     return FailureKind::timeout;
+  case ProcessError::Kind::cancelled:
+    return FailureKind::cancelled;
   }
   return FailureKind::spawn;
 }
@@ -261,6 +263,36 @@ SubprocessBackend::run(const CommandRequest& command,
                        std::optional<std::size_t> output_limit) const {
   return run_scoped(command, std::nullopt, timeout, output_limit);
 }
+
+#if defined(_WIN32)
+expected<std::string, CommandFailure> SubprocessBackend::run_cancellable(
+    const CommandRequest& command, std::optional<std::chrono::milliseconds> timeout,
+    std::optional<std::size_t> output_limit, const CancellationProbe& cancelled) const {
+  const bool version_query =
+      command.size() == 1U && command.arguments().front().value() == "-V";
+  if (socket_missing_ && !version_query) {
+    return report_failure(
+        command,
+        CommandFailure{
+            .kind = FailureKind::missing,
+            .delivery = DeliveryStatus::not_started,
+            .exit_code = 0,
+            .diagnostic =
+                "this handle predates the socket; reopen it after the server starts"});
+  }
+  ProcessRequest request = build_request(command, std::nullopt, timeout, output_limit);
+  const auto allowed_bytes = request.capture_limit;
+  auto reply = run_process(request, cancelled);
+  if (!reply.has_value()) {
+    return report_failure(command,
+                          CommandFailure{.kind = kind_of(reply.error().kind),
+                                         .delivery = reply.error().delivery,
+                                         .exit_code = -1,
+                                         .diagnostic = reply.error().diagnostic});
+  }
+  return interpret(command, allowed_bytes, *std::move(reply));
+}
+#endif
 
 expected<std::string, CommandFailure> SubprocessBackend::run_in_session(
     const CommandRequest& command, std::string_view session_id,

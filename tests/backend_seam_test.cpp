@@ -204,6 +204,53 @@ TEST(BackendSeam, TheWholeSurfaceRunsOverASubstitutedExecutor) {
   EXPECT_EQ(backend->issued.front().at(1), "-F");
 }
 
+TEST(BackendSeam, SubmissionReturnsBeforeAFallbackBackendAnswers) {
+  auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{"later"});
+  backend->delay = std::chrono::milliseconds{300};
+  const Server server = libtmux::detail::server_over(backend);
+
+  const auto started = std::chrono::steady_clock::now();
+  auto submitted = server.submit({"display-message", "-p", "later"});
+  const auto submit_took = std::chrono::steady_clock::now() - started;
+
+  ASSERT_TRUE(submitted.has_value()) << submitted.error().diagnostic;
+  EXPECT_LT(submit_took, std::chrono::milliseconds{100});
+  auto answer = std::move(*submitted).wait();
+  ASSERT_TRUE(answer.has_value()) << answer.error().diagnostic;
+  EXPECT_EQ(*answer, "later");
+}
+
+TEST(BackendSeam, QueuedFallbackCancellationPreventsDispatch) {
+  auto first_backend =
+      std::make_shared<ScriptedBackend>(std::vector<std::string>{"first"});
+  auto second_backend =
+      std::make_shared<ScriptedBackend>(std::vector<std::string>{"second"});
+  auto cancelled_backend =
+      std::make_shared<ScriptedBackend>(std::vector<std::string>{"must not run"});
+  first_backend->delay = std::chrono::milliseconds{300};
+  second_backend->delay = std::chrono::milliseconds{300};
+  const Server first_server = libtmux::detail::server_over(first_backend);
+  const Server second_server = libtmux::detail::server_over(second_backend);
+  const Server cancelled_server = libtmux::detail::server_over(cancelled_backend);
+
+  auto first = first_server.submit({"display-message", "-p", "first"});
+  auto second = second_server.submit({"display-message", "-p", "second"});
+  auto cancelled = cancelled_server.submit({"display-message", "-p", "must not run"});
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(second.has_value());
+  ASSERT_TRUE(cancelled.has_value());
+  EXPECT_TRUE(cancelled->request_cancel());
+
+  EXPECT_TRUE(std::move(*first).wait().has_value());
+  EXPECT_TRUE(std::move(*second).wait().has_value());
+  auto answer = std::move(*cancelled).wait();
+
+  ASSERT_FALSE(answer.has_value());
+  EXPECT_EQ(answer.error().kind, FailureKind::cancelled);
+  EXPECT_EQ(answer.error().delivery, libtmux::DeliveryStatus::not_started);
+  EXPECT_TRUE(cancelled_backend->issued.empty());
+}
+
 TEST(BackendSeam, EveryOperationSendsTheArgvItClaimsTo) {
   auto backend = std::make_shared<ScriptedBackend>(
       std::vector<std::string>{session_row("$0", "work"), "", "", ""});

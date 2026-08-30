@@ -12,12 +12,14 @@
 #include <cctype>
 #include <charconv>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -117,6 +119,44 @@ raw_psmux(std::string_view socket_name, const std::vector<std::string>& command,
   namespaced.insert(namespaced.end(), command.begin(), command.end());
   return raw_tmux(namespaced, timeout);
 }
+
+class DelayedSignal final {
+public:
+  DelayedSignal(std::string socket_name, std::string channel,
+                std::chrono::milliseconds delay)
+      : socket_name_{std::move(socket_name)}, channel_{std::move(channel)},
+        thread_{[this, delay] {
+          std::unique_lock lock{mutex_};
+          if (stopped_.wait_for(lock, delay, [this] { return stop_; })) {
+            return;
+          }
+          lock.unlock();
+          static_cast<void>(raw_psmux(socket_name_, {"wait-for", "-S", channel_}));
+        }} {}
+
+  ~DelayedSignal() { stop(); }
+  DelayedSignal(const DelayedSignal&) = delete;
+  DelayedSignal& operator=(const DelayedSignal&) = delete;
+
+  void stop() {
+    {
+      std::lock_guard lock{mutex_};
+      stop_ = true;
+    }
+    stopped_.notify_all();
+    if (thread_.joinable()) {
+      thread_.join();
+    }
+  }
+
+private:
+  std::string socket_name_;
+  std::string channel_;
+  std::mutex mutex_;
+  std::condition_variable stopped_;
+  bool stop_{false};
+  std::thread thread_;
+};
 
 [[nodiscard]] bool cleanup_registry_files(std::string_view socket_name, bool report);
 
@@ -925,6 +965,54 @@ int main() {
                "alpha identity did not become durable before its deadline")) {
     return EXIT_FAILURE;
   }
+
+  const std::string completion_channel = socket_name + "-submit-completion";
+  DelayedSignal completion_fallback{socket_name, completion_channel, 2s};
+  const auto submit_started = std::chrono::steady_clock::now();
+  auto submitted = server.submit({"wait-for", completion_channel}, 10s);
+  const auto submit_took = std::chrono::steady_clock::now() - submit_started;
+  const auto completion_signal =
+      raw_psmux(socket_name, {"wait-for", "-S", completion_channel});
+  completion_fallback.stop();
+  if (!submitted) {
+    report_command("Server::submit rejected a psmux waiter", submitted.error());
+    return EXIT_FAILURE;
+  }
+  auto completed = std::move(*submitted).wait();
+  if (!require(submit_took < 500ms,
+               "Server::submit must return before psmux completes") ||
+      !require(completion_signal && completion_signal->exit_code == 0,
+               "could not release the submitted psmux waiter") ||
+      !require(completed.has_value(),
+               "a released submitted psmux waiter must complete")) {
+    return EXIT_FAILURE;
+  }
+
+  const std::string cancellation_channel = socket_name + "-submit-cancellation";
+  DelayedSignal cancellation_fallback{socket_name, cancellation_channel, 2s};
+  auto cancellable = server.submit({"wait-for", cancellation_channel}, 10s);
+  std::this_thread::sleep_for(200ms);
+  const bool cancellation_requested =
+      cancellable.has_value() && cancellable->request_cancel();
+  std::optional<libtmux::expected<std::string, CommandFailure>> cancelled;
+  if (cancellable.has_value()) {
+    cancelled = std::move(*cancellable).wait();
+  }
+  const auto cancellation_cleanup =
+      raw_psmux(socket_name, {"wait-for", "-S", cancellation_channel});
+  cancellation_fallback.stop();
+  if (!require(cancellation_requested,
+               "a running submitted psmux command must accept cancellation") ||
+      !require(
+          cancelled.has_value() && !cancelled->has_value() &&
+              cancelled->error().kind == libtmux::FailureKind::cancelled &&
+              cancelled->error().delivery == libtmux::DeliveryStatus::indeterminate,
+          "a cancelled submitted psmux command must report indeterminate delivery") ||
+      !require(cancellation_cleanup && cancellation_cleanup->exit_code == 0,
+               "could not release the cancelled psmux wait channel")) {
+    return EXIT_FAILURE;
+  }
+
   config_cleanup.note_session_may_exist(socket_name, "beta");
   const auto beta_created = raw_psmux(
       socket_name, {"new-session", "-d", "-s", "beta", "-x", "117", "-y", "31"});

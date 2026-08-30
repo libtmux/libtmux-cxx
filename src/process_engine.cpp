@@ -28,6 +28,8 @@ using Clock = ChildClock;
     return FailureKind::pipe;
   case ProcessError::Kind::timeout:
     return FailureKind::timeout;
+  case ProcessError::Kind::cancelled:
+    return FailureKind::cancelled;
   }
   return FailureKind::spawn;
 }
