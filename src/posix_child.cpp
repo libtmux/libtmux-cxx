@@ -333,6 +333,7 @@ expected<PosixChild, ProcessError> PosixChild::launch(const ProcessRequest& requ
   for (const auto& argument : request.arguments) {
     arguments.push_back(argument.value);
   }
+  // Pointer arrays borrow these strings until posix_spawnp returns.
   auto argument_pointers = mutable_pointers(arguments);
   auto environment = environment_overlay(request.environment);
   auto environment_pointers = mutable_pointers(environment);
@@ -343,6 +344,7 @@ expected<PosixChild, ProcessError> PosixChild::launch(const ProcessRequest& requ
                      argument_pointers.data(), environment_pointers.data());
   const auto attributes_destroyed = ::posix_spawnattr_destroy(&attributes);
   const auto actions_destroyed = ::posix_spawn_file_actions_destroy(&actions);
+  // Dropping the parent's write ends lets capture readers observe EOF.
   stdout_pipe.write.reset();
   stderr_pipe.write.reset();
   if (spawn_result != 0) {
