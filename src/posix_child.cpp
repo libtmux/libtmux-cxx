@@ -450,6 +450,19 @@ void PosixChild::close_descriptor(ChildStream stream) noexcept {
 std::optional<ProcessError> PosixChild::drain(ChildStream stream,
                                               ChildClock::time_point boundary,
                                               DeliveryStatus delivery) noexcept {
+  return drain_impl(stream, boundary, delivery, false);
+}
+
+std::optional<ProcessError> PosixChild::drain_once(ChildStream stream,
+                                                   ChildClock::time_point boundary,
+                                                   DeliveryStatus delivery) noexcept {
+  return drain_impl(stream, boundary, delivery, true);
+}
+
+std::optional<ProcessError> PosixChild::drain_impl(ChildStream stream,
+                                                   ChildClock::time_point boundary,
+                                                   DeliveryStatus delivery,
+                                                   bool one_read) noexcept {
   const int descriptor_value = descriptor(stream);
   if (descriptor_value < 0) {
     return std::nullopt;
@@ -471,6 +484,9 @@ std::optional<ProcessError> PosixChild::drain(ChildStream stream,
       const std::span<const std::byte> kept{buffer.data(), retained};
       destination.insert(destination.end(), kept.begin(), kept.end());
       capture_.truncated = capture_.truncated || retained != size;
+      if (one_read) {
+        return std::nullopt;
+      }
       continue;
     }
     if (count == 0) {

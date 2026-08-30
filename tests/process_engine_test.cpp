@@ -5,10 +5,13 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <thread>
 #include <vector>
+
+#include <unistd.h>
 
 namespace {
 
@@ -160,6 +163,55 @@ TEST(ProcessEngine, DeliversOutputLargerThanAPipeBuffer) {
   EXPECT_EQ(std::get<Exited>(reply->termination).code, 0);
   EXPECT_GT(reply->stdout_bytes.size(), 200000U);
   EXPECT_FALSE(reply->output_truncated);
+}
+
+TEST(ProcessEngine, EveryReadableChildMakesOutputProgress) {
+  auto engine = ProcessEngine::start();
+  ASSERT_TRUE(engine.has_value()) << engine.error().diagnostic;
+
+  std::string marker_template = "/tmp/libtmux-process-engine-fairness-XXXXXX";
+  ASSERT_NE(::mkdtemp(marker_template.data()), nullptr);
+  constexpr int producer_count = 128;
+  std::vector<Operation<ProcessReply>> noisy;
+  noisy.reserve(producer_count);
+  for (int index = 0; index < producer_count; ++index) {
+    auto noisy_request = shell("printf ready > " + marker_template + "/" +
+                               std::to_string(index) + "; exec yes 0123456789abcdef");
+    noisy_request.capture_limit = 1U;
+    noisy_request.timeout = std::chrono::milliseconds{1500};
+    noisy.push_back((*engine)->submit(std::move(noisy_request)));
+  }
+
+  const auto marker_deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds{2};
+  const auto all_ready = [&] {
+    for (int index = 0; index < producer_count; ++index) {
+      if (!std::filesystem::exists(marker_template + "/" + std::to_string(index))) {
+        return false;
+      }
+    }
+    return true;
+  };
+  while (!all_ready() && std::chrono::steady_clock::now() < marker_deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds{1});
+  }
+  const bool producers_ready = all_ready();
+  const auto removed = std::filesystem::remove_all(marker_template);
+  ASSERT_TRUE(producers_ready) << "a producer did not reach its continuous output loop";
+  ASSERT_EQ(removed, static_cast<std::uintmax_t>(producer_count + 1));
+
+  auto quiet_request = shell("printf later");
+  quiet_request.timeout = std::chrono::milliseconds{20};
+  auto quiet = sync_wait((*engine)->submit(std::move(quiet_request)));
+
+  ASSERT_TRUE(quiet.has_value()) << quiet.error().diagnostic;
+  EXPECT_EQ(text(quiet->stdout_bytes), "later");
+  EXPECT_FALSE(quiet->output_truncated);
+  for (auto& operation : noisy) {
+    auto noisy_reply = sync_wait(std::move(operation));
+    EXPECT_FALSE(noisy_reply.has_value());
+    EXPECT_EQ(noisy_reply.error().kind, libtmux::FailureKind::timeout);
+  }
 }
 
 // A refusal never held a slot, so handing one back on the way out gives away

@@ -316,10 +316,10 @@ void ProcessEngine::reactor_loop() {
     channel_->drain();
 
     for (auto& one : live) {
-      static_cast<void>(one.child.drain(ChildStream::stdout_stream, boundary,
-                                        DeliveryStatus::indeterminate));
-      static_cast<void>(one.child.drain(ChildStream::stderr_stream, boundary,
-                                        DeliveryStatus::indeterminate));
+      static_cast<void>(one.child.drain_once(ChildStream::stdout_stream, boundary,
+                                             DeliveryStatus::indeterminate));
+      static_cast<void>(one.child.drain_once(ChildStream::stderr_stream, boundary,
+                                             DeliveryStatus::indeterminate));
       static_cast<void>(one.child.update_status(DeliveryStatus::indeterminate));
 
       const bool finished = one.child.status() != ChildStatus::running;
