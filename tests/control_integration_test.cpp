@@ -72,6 +72,10 @@ struct LateMarker final {
   std::array<int, 2> descriptors{-1, -1};
   int error{0};
   int policy_error{0};
+  rlimit raised_limit{};
+  rlimit restored_limit{};
+  int minimum_descriptor{3};
+  bool raise_soft_limit{false};
   bool policy_ready{false};
   bool marker_ready{false};
   bool cancelled{false};
@@ -83,7 +87,26 @@ struct LateMarker final {
       return;
     }
     lock.unlock();
-    if (::pipe(descriptors.data()) != 0) {
+    if (raise_soft_limit && ::setrlimit(RLIMIT_NOFILE, &raised_limit) != 0) {
+      error = errno;
+    }
+    if (error == 0 && ::pipe(descriptors.data()) != 0) {
+      error = errno;
+    }
+    if (error == 0 && descriptors[0] < minimum_descriptor) {
+      const auto high_descriptor = ::fcntl(descriptors[0], F_DUPFD, minimum_descriptor);
+      if (high_descriptor < minimum_descriptor) {
+        error = errno;
+      } else {
+        const auto low_descriptor = descriptors[0];
+        descriptors[0] = high_descriptor;
+        if (::close(low_descriptor) != 0) {
+          error = errno;
+        }
+      }
+    }
+    if (raise_soft_limit && ::setrlimit(RLIMIT_NOFILE, &restored_limit) != 0 &&
+        error == 0) {
       error = errno;
     }
     lock.lock();
@@ -260,22 +283,28 @@ TEST(ControlModeConnection, ControlClientDoesNotInheritABlockedSignalMask) {
   EXPECT_EQ(*mask, 0ULL);
 }
 
-TEST(ControlModeConnection, ForcedNumericPolicyClosesAMarkerOpenedAfterItsActions) {
+TEST(ControlModeConnection, ForcedNumericPolicyDoesNotLeakAConcurrentHighDescriptor) {
   auto server = start_server(unique_name("control-descriptor-policy"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
 
   constexpr rlim_t lowered_soft_limit = 256U;
+  constexpr int minimum_marker_descriptor = 512;
   rlimit original_limit{};
   ASSERT_EQ(::getrlimit(RLIMIT_NOFILE, &original_limit), 0);
-  if (original_limit.rlim_cur <= lowered_soft_limit ||
-      original_limit.rlim_max <= lowered_soft_limit) {
-    GTEST_SKIP() << "descriptor limits above 256 are required";
+  if (original_limit.rlim_max == RLIM_INFINITY ||
+      original_limit.rlim_max <= static_cast<rlim_t>(minimum_marker_descriptor)) {
+    GTEST_SKIP() << "a finite descriptor hard limit above 512 is required";
   }
   auto lowered_limit = original_limit;
   lowered_limit.rlim_cur = lowered_soft_limit;
   ASSERT_EQ(::setrlimit(RLIMIT_NOFILE, &lowered_limit), 0);
 
   LateMarker marker;
+  marker.raised_limit = original_limit;
+  marker.raised_limit.rlim_cur = original_limit.rlim_max;
+  marker.restored_limit = lowered_limit;
+  marker.minimum_descriptor = minimum_marker_descriptor;
+  marker.raise_soft_limit = true;
   pending_marker = &marker;
   std::thread opener{[&marker] { marker.open_after_policy(); }};
   libtmux::detail::force_numeric_spawn_descriptor_policy_for_test(
@@ -288,14 +317,35 @@ TEST(ControlModeConnection, ForcedNumericPolicyClosesAMarkerOpenedAfterItsAction
   pending_marker = nullptr;
   const auto restore_result = ::setrlimit(RLIMIT_NOFILE, &original_limit);
 
-  const bool setup_valid = marker.policy_error == 0 && marker.error == 0 &&
-                           marker.descriptors[0] >= 3 && marker.descriptors[1] >= 3 &&
-                           marker.descriptors[1] < static_cast<int>(lowered_soft_limit);
-  if (!setup_valid || !connected.has_value()) {
-    if (connected.has_value()) {
-      auto connection = std::move(*connected);
-      static_cast<void>(connection.shutdown(std::chrono::steady_clock::now() + 2s));
+  if (!connected.has_value()) {
+    for (const auto descriptor : marker.descriptors) {
+      if (descriptor >= 0) {
+        static_cast<void>(::close(descriptor));
+      }
     }
+    ASSERT_EQ(restore_result, 0);
+#if defined(__GLIBC__)
+    ASSERT_EQ(marker.policy_error, EBADF);
+    ASSERT_EQ(marker.error, 0);
+    ASSERT_EQ(marker.descriptors, (std::array<int, 2>{-1, -1}));
+    EXPECT_NE(connected.error().message.find("posix spawn descriptor policy"),
+              std::string::npos);
+
+    auto observed_server =
+        libtmux::Server::at_socket_path(server->socket_path().string());
+    ASSERT_TRUE(observed_server.has_value()) << observed_server.error().diagnostic;
+    const auto clients = observed_server->clients();
+    ASSERT_TRUE(clients.has_value()) << clients.error().diagnostic;
+    EXPECT_TRUE(clients->empty());
+#else
+    FAIL() << connected.error().message;
+#endif
+    return;
+  }
+  if (marker.policy_error != 0 || marker.error != 0 ||
+      marker.descriptors[0] < minimum_marker_descriptor || marker.descriptors[1] < 3) {
+    auto connection = std::move(*connected);
+    static_cast<void>(connection.shutdown(std::chrono::steady_clock::now() + 2s));
     for (const auto descriptor : marker.descriptors) {
       if (descriptor >= 0) {
         static_cast<void>(::close(descriptor));
@@ -304,14 +354,15 @@ TEST(ControlModeConnection, ForcedNumericPolicyClosesAMarkerOpenedAfterItsAction
     ASSERT_EQ(restore_result, 0);
     ASSERT_EQ(marker.policy_error, 0);
     ASSERT_EQ(marker.error, 0);
-    ASSERT_GE(marker.descriptors[0], 3);
+    ASSERT_GE(marker.descriptors[0], minimum_marker_descriptor);
     ASSERT_GE(marker.descriptors[1], 3);
-    ASSERT_LT(marker.descriptors[1], static_cast<int>(lowered_soft_limit));
-    ASSERT_TRUE(connected.has_value())
-        << (connected.has_value() ? "" : connected.error().message);
     return;
   }
   ASSERT_EQ(restore_result, 0);
+  ASSERT_EQ(marker.policy_error, 0);
+  ASSERT_EQ(marker.error, 0);
+  ASSERT_GE(marker.descriptors[0], minimum_marker_descriptor);
+  ASSERT_GE(marker.descriptors[1], 3);
   EXPECT_EQ(::close(marker.descriptors[0]), 0);
   auto connection = std::move(*connected);
 

@@ -17,7 +17,7 @@ extern char** environ;
 
 #if defined(__linux__)
 namespace {
-std::atomic<bool> return_infinite_soft_limit{false};
+std::atomic<bool> return_infinite_hard_limit{false};
 std::atomic<int> reported_policy_error{0};
 
 void record_policy_error(int error) {
@@ -29,8 +29,8 @@ extern "C" int __real_getrlimit(int resource, rlimit* limit);
 
 extern "C" int __wrap_getrlimit(int resource, rlimit* limit) {
   if (resource == RLIMIT_NOFILE &&
-      return_infinite_soft_limit.load(std::memory_order_acquire)) {
-    limit->rlim_cur = RLIM_INFINITY;
+      return_infinite_hard_limit.load(std::memory_order_acquire)) {
+    limit->rlim_cur = 256U;
     limit->rlim_max = RLIM_INFINITY;
     return 0;
   }
@@ -148,18 +148,18 @@ TEST(SpawnDescriptors, PlatformPolicyClosesAnUnrelatedDescriptor) {
 }
 
 #if defined(__linux__)
-TEST(SpawnDescriptors, ForcedNumericPolicyRefusesAnInfiniteSoftLimit) {
+TEST(SpawnDescriptors, ForcedNumericPolicyRefusesAnInfiniteHardLimit) {
   SpawnObjects spawn;
   ASSERT_EQ(spawn.actions_result, 0);
   ASSERT_EQ(spawn.attributes_result, 0);
-  return_infinite_soft_limit.store(true, std::memory_order_release);
+  return_infinite_hard_limit.store(true, std::memory_order_release);
   reported_policy_error.store(0, std::memory_order_release);
   libtmux::detail::force_numeric_spawn_descriptor_policy_for_test(record_policy_error);
 
   const auto policy = libtmux::detail::apply_spawn_descriptor_policy(
       spawn.actions, spawn.attributes, false);
   libtmux::detail::clear_spawn_descriptor_policy_test_override();
-  return_infinite_soft_limit.store(false, std::memory_order_release);
+  return_infinite_hard_limit.store(false, std::memory_order_release);
 
   ASSERT_FALSE(policy.has_value());
   EXPECT_EQ(policy.error(), EOVERFLOW);

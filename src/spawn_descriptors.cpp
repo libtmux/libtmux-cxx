@@ -40,15 +40,15 @@ expected<void, int> apply_numeric_policy(posix_spawn_file_actions_t& actions,
 }
 
 #if defined(__linux__)
-expected<std::uintmax_t, int> finite_allocation_ceiling() noexcept {
+expected<std::uintmax_t, int> finite_hard_ceiling() noexcept {
   rlimit descriptor_limit{};
   if (::getrlimit(RLIMIT_NOFILE, &descriptor_limit) != 0) {
     return unexpected(errno);
   }
-  if (descriptor_limit.rlim_cur == RLIM_INFINITY) {
+  if (descriptor_limit.rlim_max == RLIM_INFINITY) {
     return unexpected(EOVERFLOW);
   }
-  const auto ceiling = static_cast<std::uintmax_t>(descriptor_limit.rlim_cur);
+  const auto ceiling = static_cast<std::uintmax_t>(descriptor_limit.rlim_max);
   if (ceiling > static_cast<std::uintmax_t>(std::numeric_limits<int>::max())) {
     return unexpected(EOVERFLOW);
   }
@@ -109,21 +109,20 @@ expected<std::uintmax_t, int> live_descriptor_ceiling() noexcept {
 
 expected<void, int>
 apply_linux_numeric_policy(posix_spawn_file_actions_t& actions) noexcept {
-  const auto allocation_before_scan = finite_allocation_ceiling();
-  if (!allocation_before_scan.has_value()) {
-    return unexpected(allocation_before_scan.error());
+  const auto hard_before_scan = finite_hard_ceiling();
+  if (!hard_before_scan.has_value()) {
+    return unexpected(hard_before_scan.error());
   }
   const auto live_ceiling = live_descriptor_ceiling();
   if (!live_ceiling.has_value()) {
     return unexpected(live_ceiling.error());
   }
-  const auto allocation_after_scan = finite_allocation_ceiling();
-  if (!allocation_after_scan.has_value()) {
-    return unexpected(allocation_after_scan.error());
+  const auto hard_after_scan = finite_hard_ceiling();
+  if (!hard_after_scan.has_value()) {
+    return unexpected(hard_after_scan.error());
   }
-  const auto allocation_ceiling = *allocation_before_scan > *allocation_after_scan
-                                      ? *allocation_before_scan
-                                      : *allocation_after_scan;
+  const auto allocation_ceiling =
+      *hard_before_scan > *hard_after_scan ? *hard_before_scan : *hard_after_scan;
   const auto exhaustive_ceiling =
       allocation_ceiling > *live_ceiling ? allocation_ceiling : *live_ceiling;
   return apply_numeric_policy(actions, exhaustive_ceiling);
