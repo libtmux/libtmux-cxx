@@ -54,6 +54,7 @@ struct CommandRuntimeShutdown final {
   bool transports_stopped{};
   // True only when transports and pending work ended and no caller-side
   // dispatch or discard, including callback-target teardown, remains active.
+  // Callers must prevent concurrent or later runtime entry before unloading.
   bool safe_to_unload{};
   // The first runtime lifecycle failure; an operation may also carry it.
   std::optional<CommandFailure> failure;

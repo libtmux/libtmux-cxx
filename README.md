@@ -570,13 +570,14 @@ accepted commands enter the transport in admission order; completion order is
 not fixed, and callers racing from different threads have no priority
 guarantee.
 
-`snapshot` is one lock-consistent instant and never waits. `accepted`,
-`refused`, and `completed` are cumulative; `completed` means the result was
-published and its observer record, when present, became ready. `in_flight`
-counts commands retaining any of the three legs. The two `pending_*` fields
-count result and observer obligations whether or not their data is ready.
-`accepting` says stop or close has not ended admission; it does not promise
-that capacity or preflight will accept the next command.
+`snapshot` is one lock-consistent instant; it does not wait for command
+completion or runtime work to finish. `accepted`, `refused`, and `completed`
+are cumulative; `completed` means the result was published and its observer
+record, when present, became ready. `in_flight` counts commands retaining any
+of the three legs. The two `pending_*` fields count result and observer
+obligations whether or not their data is ready. `accepting` says stop or close
+has not ended admission; it does not promise that capacity or preflight will
+accept the next command.
 
 `request_stop` stops admission and requests cancellation without joining.
 `close` blocks until runtime threads stop, invokes and discards no observer,

@@ -634,7 +634,7 @@ Whether every owned child and transport thread retired.
 ```cpp
 bool safe_to_unload{};
 ```
-True only when transports and pending work ended and no caller-side dispatch or discard, including callback-target teardown, remains active.
+True only when transports and pending work ended and no caller-side dispatch or discard, including callback-target teardown, remains active. Callers must prevent concurrent or later runtime entry before unloading.
 
 <a id="libtmux-async-hpp-commandruntimeshutdown-failure"></a>
 #### `CommandRuntimeShutdown::failure`
