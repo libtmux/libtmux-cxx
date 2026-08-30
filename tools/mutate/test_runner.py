@@ -218,6 +218,60 @@ class MutationRunnerTest(unittest.TestCase):
             self.assertEqual(outcome.detail, "the selected tests already fail")
             self.assertEqual(source.read_text(encoding="utf-8"), "guard = true;\n")
 
+    def test_run_forces_a_rebuild_when_a_restoration_misses_the_binary(self) -> None:
+        """Never return leaving the mutated binary in the tree.
+
+        A build system that decides by timestamp can skip the rebuild that puts
+        the original back, and every later mutation sharing that target then
+        reports against a binary nobody restored.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "guard.cpp"
+            source.write_text("guard = true;\n", encoding="utf-8")
+            executable = root / "build" / "cxx-dev" / "tests" / "guard_test"
+            executable.parent.mkdir(parents=True)
+            executable.write_bytes(b"before")
+            builds = 0
+            tests = 0
+
+            def execute(argv: list[str]) -> subprocess.CompletedProcess[bytes]:
+                nonlocal builds, tests
+                if argv[0] == "cmake":
+                    builds += 1
+                    if builds == 2:
+                        executable.write_bytes(b"after")
+                    elif builds == 4 and "--clean-first" in argv:
+                        executable.write_bytes(b"restored")
+                    # Build 3 is the restoration a stale timestamp skipped.
+                    return subprocess.CompletedProcess(argv, 0, b"", b"")
+                if "--show-only=json-v1" in argv:
+                    listing = json.dumps({"tests": [{"name": "guard"}]}).encode()
+                    return subprocess.CompletedProcess(argv, 0, listing, b"")
+                tests += 1
+                return subprocess.CompletedProcess(
+                    argv, 1 if tests == 2 else 0, b"", b""
+                )
+
+            outcome = run(
+                Mutation(
+                    mutation_id="stale-restore",
+                    path="guard.cpp",
+                    find="true",
+                    replace="false",
+                    target="guard_test",
+                    guards="the guard",
+                    test_regex=r"^guard$",
+                ),
+                root,
+                "cxx-dev",
+                runner=execute,
+            )
+
+            self.assertEqual(outcome.verdict, "killed")
+            self.assertEqual(executable.read_bytes(), b"restored")
+            self.assertEqual(source.read_text(encoding="utf-8"), "guard = true;\n")
+
 
 if __name__ == "__main__":
     unittest.main()

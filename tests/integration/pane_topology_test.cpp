@@ -135,7 +135,7 @@ TEST(PaneTopology, PipingRefusesAnEmptyCommandRatherThanStopping) {
   const auto refused = pane->pipe_to("");
   ASSERT_FALSE(refused.has_value());
   EXPECT_EQ(refused.error().kind, libtmux::FailureKind::validation);
-  EXPECT_FALSE(refused.error().dispatched);
+  EXPECT_EQ(refused.error().delivery, libtmux::DeliveryStatus::not_started);
 
   const auto still = pane->refresh();
   ASSERT_TRUE(still.has_value()) << still.error().diagnostic;

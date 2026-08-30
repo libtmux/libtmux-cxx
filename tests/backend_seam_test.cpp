@@ -3,7 +3,7 @@
 // The library talks to tmux through one private interface. This test supplies
 // a different implementation of it — one that launches nothing and answers
 // from a script — and drives the whole public surface over it. That proves two
-// things at once: an async or control-mode executor can be dropped in without
+// things at once: an async executor can be dropped in without
 // touching an installed header, and the exact argv every operation sends,
 // which a test against a live server can only observe indirectly.
 
@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <semaphore>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -22,12 +23,12 @@
 #include <gtest/gtest.h>
 
 #include "libtmux/entities.hpp"
+#include "libtmux/format.hpp"
 #include "libtmux/server.hpp"
 
 #include "acquire.hpp"
 #include "backend.hpp"
-#include "control_backend.hpp"
-#include "notification_buffer.hpp"
+#include "notification_stream.hpp"
 
 namespace {
 
@@ -49,17 +50,29 @@ public:
                   libtmux::ExecutionPolicy policy = {})
       : Backend{{}, policy}, replies_{std::move(replies)}, version_{version} {}
 
+  // Stands in for an implementation, so a refusal only Windows would meet is
+  // reachable here. Unrecognised by default, which is what a custom executor
+  // reports.
+  libtmux::ServerCapabilities declared{};
+  [[nodiscard]] libtmux::ServerCapabilities capabilities() const noexcept override {
+    return declared;
+  }
+
   expected<std::string, CommandFailure>
-  run(const std::vector<std::string>& command,
+  run(const libtmux::CommandRequest& command,
       std::optional<std::chrono::milliseconds> timeout,
       std::optional<std::size_t> output_limit) const override {
-    issued.push_back(command);
+    issued.push_back(command.argv());
     command_timeouts.push_back(timeout);
     command_output_limits.push_back(output_limit);
+    if (gate_run) {
+      run_started.release();
+      continue_run.acquire();
+    }
     std::this_thread::sleep_for(delay);
     if (replies_.empty()) {
       return unexpected(CommandFailure{.kind = FailureKind::refused,
-                                       .dispatched = true,
+                                       .delivery = libtmux::DeliveryStatus::replied,
                                        .exit_code = 1,
                                        .diagnostic = "the script ran out"});
     }
@@ -68,12 +81,22 @@ public:
     return reply;
   }
 
+  CommandFailure report(CommandFailure failure,
+                        const libtmux::CommandRequest& command) const {
+    return report_failure(command, std::move(failure)).error();
+  }
+
   expected<std::string, CommandFailure>
   run_batch(const libtmux::CommandBatch& batch,
             std::optional<std::chrono::milliseconds> timeout,
             std::optional<std::size_t> output_limit) const override {
-    batches.push_back(batch.commands());
-    return run(batch.argv(), timeout, output_limit);
+    std::vector<std::vector<std::string>> commands;
+    commands.reserve(batch.commands().size());
+    for (const libtmux::CommandRequest& command : batch.commands()) {
+      commands.push_back(command.argv());
+    }
+    batches.push_back(std::move(commands));
+    return run(batch.request(), timeout, output_limit);
   }
 
   const std::vector<std::string>& connection() const noexcept override {
@@ -96,6 +119,9 @@ public:
   mutable std::vector<std::optional<std::size_t>> version_output_limits;
   mutable std::size_t version_queries{};
   std::chrono::milliseconds delay{};
+  bool gate_run{false};
+  mutable std::binary_semaphore run_started{0};
+  mutable std::binary_semaphore continue_run{0};
 
 private:
   mutable std::vector<std::string> replies_;
@@ -143,38 +169,25 @@ std::string named_window_row(std::string_view id, std::string_view name,
       automatic_rename});
 }
 
+std::string octal_word(std::string_view value) {
+  std::string quoted{"\""};
+  for (const char character : value) {
+    const auto byte = static_cast<unsigned char>(character);
+    quoted.push_back('\\');
+    quoted.push_back(static_cast<char>('0' + ((byte >> 6U) & 7U)));
+    quoted.push_back(static_cast<char>('0' + ((byte >> 3U) & 7U)));
+    quoted.push_back(static_cast<char>('0' + (byte & 7U)));
+  }
+  quoted.push_back('"');
+  return quoted;
+}
+
 std::vector<std::byte> bytes(std::string_view text) {
   std::vector<std::byte> result;
   result.reserve(text.size());
   for (const char byte : text) {
     result.push_back(static_cast<std::byte>(static_cast<unsigned char>(byte)));
   }
-  return result;
-}
-
-libtmux::ControlBlock control_block(std::uint64_t sequence,
-                                    libtmux::ControlTerminal terminal,
-                                    std::string_view body = {}) {
-  return {.sequence = sequence,
-          .command_number = sequence,
-          .terminal = terminal,
-          .begin_metadata = {},
-          .terminal_metadata = {},
-          .body = bytes(body),
-          .body_truncated = false,
-          .body_bytes = body.size()};
-}
-
-libtmux::ControlRequestResult inserted_result(
-    std::string_view wrapper_body, libtmux::ControlTerminal wrapper_terminal,
-    std::string_view inserted_body, libtmux::ControlTerminal inserted_terminal) {
-  libtmux::ControlRequestResult result;
-  result.operations = {
-      {.attribution = libtmux::Attribution::exact,
-       .block = control_block(1U, wrapper_terminal, wrapper_body)},
-      {.attribution = libtmux::Attribution::exact,
-       .block = control_block(2U, inserted_terminal, inserted_body)},
-  };
   return result;
 }
 
@@ -199,6 +212,75 @@ TEST(BackendSeam, TheWholeSurfaceRunsOverASubstitutedExecutor) {
   EXPECT_EQ(backend->issued.front().at(1), "-F");
 }
 
+TEST(BackendSeam, SubmissionReturnsBeforeAFallbackBackendAnswers) {
+  auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{"later"});
+  backend->delay = std::chrono::milliseconds{300};
+  const Server server = libtmux::detail::server_over(backend);
+
+  const auto started = std::chrono::steady_clock::now();
+  auto submitted = server.submit({"display-message", "-p", "later"});
+  const auto submit_took = std::chrono::steady_clock::now() - started;
+
+  ASSERT_TRUE(submitted.has_value()) << submitted.error().diagnostic;
+  EXPECT_LT(submit_took, std::chrono::milliseconds{100});
+  auto answer = std::move(*submitted).wait();
+  ASSERT_TRUE(answer.has_value()) << answer.error().diagnostic;
+  EXPECT_EQ(*answer, "later");
+}
+
+TEST(BackendSeam, DroppingAnOperationDoesNotWaitForItsFallbackBackend) {
+  auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{"later"});
+  backend->gate_run = true;
+  const Server server = libtmux::detail::server_over(backend);
+
+  auto submitted = server.submit({"display-message", "-p", "later"});
+  ASSERT_TRUE(submitted.has_value()) << submitted.error().diagnostic;
+  ASSERT_TRUE(backend->run_started.try_acquire_for(std::chrono::seconds{1}));
+
+  std::binary_semaphore dropped{0};
+  std::thread dropper{[operation = std::move(*submitted), &dropped]() mutable {
+    std::optional<libtmux::CommandOperation> held{std::move(operation)};
+    held.reset();
+    dropped.release();
+  }};
+  const bool returned = dropped.try_acquire_for(std::chrono::seconds{1});
+  backend->continue_run.release();
+  dropper.join();
+
+  EXPECT_TRUE(returned);
+}
+
+TEST(BackendSeam, QueuedFallbackCancellationPreventsDispatch) {
+  auto first_backend =
+      std::make_shared<ScriptedBackend>(std::vector<std::string>{"first"});
+  auto second_backend =
+      std::make_shared<ScriptedBackend>(std::vector<std::string>{"second"});
+  auto cancelled_backend =
+      std::make_shared<ScriptedBackend>(std::vector<std::string>{"must not run"});
+  first_backend->delay = std::chrono::milliseconds{300};
+  second_backend->delay = std::chrono::milliseconds{300};
+  const Server first_server = libtmux::detail::server_over(first_backend);
+  const Server second_server = libtmux::detail::server_over(second_backend);
+  const Server cancelled_server = libtmux::detail::server_over(cancelled_backend);
+
+  auto first = first_server.submit({"display-message", "-p", "first"});
+  auto second = second_server.submit({"display-message", "-p", "second"});
+  auto cancelled = cancelled_server.submit({"display-message", "-p", "must not run"});
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(second.has_value());
+  ASSERT_TRUE(cancelled.has_value());
+  EXPECT_TRUE(cancelled->request_cancel());
+
+  EXPECT_TRUE(std::move(*first).wait().has_value());
+  EXPECT_TRUE(std::move(*second).wait().has_value());
+  auto answer = std::move(*cancelled).wait();
+
+  ASSERT_FALSE(answer.has_value());
+  EXPECT_EQ(answer.error().kind, FailureKind::cancelled);
+  EXPECT_EQ(answer.error().delivery, libtmux::DeliveryStatus::not_started);
+  EXPECT_TRUE(cancelled_backend->issued.empty());
+}
+
 TEST(BackendSeam, EveryOperationSendsTheArgvItClaimsTo) {
   auto backend = std::make_shared<ScriptedBackend>(
       std::vector<std::string>{session_row("$0", "work"), "", "", ""});
@@ -219,6 +301,63 @@ TEST(BackendSeam, EveryOperationSendsTheArgvItClaimsTo) {
   EXPECT_EQ(backend->issued[2], (std::vector<std::string>{"set-option", "-t", "$0",
                                                           "status-position", "top"}));
   EXPECT_EQ(backend->issued[3], (std::vector<std::string>{"kill-session", "-t", "$0"}));
+}
+
+// psmux refuses what it cannot target safely, and until now that answer only
+// existed in a Windows build. Declaring the implementation reaches it here.
+TEST(BackendSeam, APsmuxServerRefusesNavigationWithoutDispatching) {
+  auto backend = std::make_shared<ScriptedBackend>(
+      std::vector<std::string>{session_row("$7", "work"), ""});
+  backend->declared = {.implementation = libtmux::ServerImplementation::psmux,
+                       .backend = libtmux::BackendKind::subprocess};
+  const Server server = libtmux::detail::server_over(backend);
+  const auto sessions = server.sessions();
+  ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
+  const auto listed = backend->issued.size();
+
+  const auto moved = sessions->front().select_next_window();
+
+  ASSERT_FALSE(moved.has_value());
+  EXPECT_EQ(moved.error().kind, libtmux::FailureKind::unsupported);
+  EXPECT_EQ(moved.error().delivery, libtmux::DeliveryStatus::not_started);
+  // Nothing ran, so there is no status to report: the exit code every other
+  // refusal in this library carries.
+  EXPECT_EQ(moved.error().exit_code, 0);
+  EXPECT_NE(moved.error().diagnostic.find("session navigation"), std::string::npos);
+  EXPECT_EQ(backend->issued.size(), listed) << "refused after dispatching";
+}
+
+// The server-scoped surface refuses the same way, and says which state it
+// cannot provide rather than failing at the wire.
+TEST(BackendSeam, APsmuxServerRefusesServerScopedState) {
+  auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{});
+  backend->declared = {.implementation = libtmux::ServerImplementation::psmux,
+                       .backend = libtmux::BackendKind::subprocess};
+  const Server server = libtmux::detail::server_over(backend);
+
+  const auto clients = server.clients();
+
+  ASSERT_FALSE(clients.has_value());
+  EXPECT_EQ(clients.error().kind, libtmux::FailureKind::unsupported);
+  EXPECT_EQ(clients.error().delivery, libtmux::DeliveryStatus::not_started);
+  EXPECT_EQ(clients.error().exit_code, 0);
+  EXPECT_NE(clients.error().diagnostic.find("clients"), std::string::npos);
+  EXPECT_TRUE(backend->issued.empty()) << "refused after dispatching";
+}
+
+// The same call over a backend nobody recognises still runs: unfamiliar is not
+// the same as known-broken.
+TEST(BackendSeam, AnUnrecognisedBackendIsNotRefused) {
+  auto backend = std::make_shared<ScriptedBackend>(
+      std::vector<std::string>{session_row("$7", "work"), "", ""});
+  const Server server = libtmux::detail::server_over(backend);
+  const auto sessions = server.sessions();
+  ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
+  const auto listed = backend->issued.size();
+
+  static_cast<void>(sessions->front().select_next_window());
+
+  EXPECT_GT(backend->issued.size(), listed);
 }
 
 TEST(BackendSeam, AnEntityTargetsItsIdRatherThanItsName) {
@@ -253,11 +392,13 @@ TEST(BackendSeam, RawTmux37RepairsABrokenOutWindowByStableId) {
   EXPECT_EQ(broken->name(), "roomy");
   EXPECT_EQ(backend->version_queries, 0U);
   ASSERT_EQ(backend->issued.size(), 3U);
-  ASSERT_EQ(backend->issued[1].size(), 9U);
-  EXPECT_EQ(
-      std::vector(backend->issued[1].begin(), backend->issued[1].begin() + 7),
-      (std::vector<std::string>{"break-pane", "-d", "-s", "%7", "-P", "-n", "roomy"}));
-  EXPECT_EQ(backend->issued[1][7], "-F");
+  ASSERT_EQ(backend->issued[1].size(), 7U);
+  EXPECT_EQ(std::vector(backend->issued[1].begin(), backend->issued[1].begin() + 5),
+            (std::vector<std::string>{"if-shell", "-F", "-t", "%7",
+                                      "#{==:#{window_panes},1}"}));
+  EXPECT_TRUE(backend->issued[1][6].starts_with("break-pane -d -s %7 -t $2: -P -n " +
+                                                octal_word("roomy")));
+  EXPECT_EQ(backend->issued[1][6].find("roomy"), std::string::npos);
   ASSERT_EQ(backend->batches.size(), 1U);
   ASSERT_EQ(backend->batches.front().size(), 3U);
   const auto& guard = backend->batches.front()[0];
@@ -285,6 +426,12 @@ TEST(BackendSeam, RawTmux37NameRepairTreatsHashesLiterally) {
 
   ASSERT_TRUE(broken.has_value()) << broken.error().diagnostic;
   EXPECT_EQ(broken->name(), requested);
+  ASSERT_EQ(backend->issued[1].size(), 7U);
+  EXPECT_NE(backend->issued[1][5].find(octal_word(libtmux::escape_literal(requested))),
+            std::string::npos);
+  EXPECT_NE(backend->issued[1][6].find(octal_word(requested)), std::string::npos);
+  EXPECT_EQ(backend->issued[1][5].find(requested), std::string::npos);
+  EXPECT_EQ(backend->issued[1][6].find(requested), std::string::npos);
   ASSERT_EQ(backend->batches.size(), 1U);
   EXPECT_EQ(backend->batches.front()[1],
             (std::vector<std::string>{"rename-window", "-t", "$2:@9", "--",
@@ -311,7 +458,7 @@ TEST(BackendSeam, RawTmux37RepairsACoincidentNaturalName) {
 TEST(BackendSeam, RawTmux37OnePaneKeepsItsNativeCleanedName) {
   auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{
       pane_row("%7", "@3", "$2"),
-      named_window_row("@3", R"(back\\slash\t雪)", "$4", "3.7", "0")});
+      named_window_row("@3", R"(back\\slash\t雪)", "$2", "3.7", "0")});
   const auto snapshot = libtmux::Snapshot::take(
       backend, libtmux::Pane::kFields, {"list-panes"}, libtmux::FormatArgument::flag);
   ASSERT_TRUE(snapshot.has_value()) << snapshot.error().diagnostic;
@@ -378,7 +525,7 @@ TEST(BackendSeam, RawTmux37NameRepairReportsTheMovedPane) {
 
   ASSERT_FALSE(broken.has_value());
   EXPECT_EQ(broken.error().kind, FailureKind::refused);
-  EXPECT_TRUE(broken.error().dispatched);
+  EXPECT_NE(broken.error().delivery, libtmux::DeliveryStatus::not_started);
   EXPECT_NE(broken.error().diagnostic.find("moved pane %7 into window @9"),
             std::string::npos)
       << broken.error().diagnostic;
@@ -410,7 +557,7 @@ TEST(BackendSeam, NamedBreakMismatchOnAnotherVersionIsReturnedUnchanged) {
   EXPECT_TRUE(backend->batches.empty());
 }
 
-TEST(BackendSeam, NamedOnePaneMoveMismatchSkipsVersionDetection) {
+TEST(BackendSeam, NamedBreakRejectsAReplyFromAnotherSession) {
   auto backend = std::make_shared<ScriptedBackend>(
       std::vector<std::string>{pane_row("%7", "@3", "$2"),
                                named_window_row("@3", "hooked", "$4", "3.7", "0")},
@@ -422,9 +569,11 @@ TEST(BackendSeam, NamedOnePaneMoveMismatchSkipsVersionDetection) {
 
   const auto broken = pane.break_out("roomy");
 
-  ASSERT_TRUE(broken.has_value()) << broken.error().diagnostic;
-  EXPECT_EQ(broken->id(), "@3");
-  EXPECT_EQ(broken->name(), "hooked");
+  ASSERT_FALSE(broken.has_value());
+  EXPECT_EQ(broken.error().kind, FailureKind::refused);
+  EXPECT_NE(broken.error().delivery, libtmux::DeliveryStatus::not_started);
+  EXPECT_NE(broken.error().diagnostic.find("exact connected window"), std::string::npos)
+      << broken.error().diagnostic;
   EXPECT_EQ(backend->version_queries, 0U);
   EXPECT_EQ(backend->issued.size(), 2U);
   EXPECT_TRUE(backend->batches.empty());
@@ -453,9 +602,10 @@ TEST(BackendSeam, EveryOtherTmuxKeepsTheNativeNamedBreakPath) {
     EXPECT_EQ(broken->name(), "roomy");
     EXPECT_EQ(backend->version_queries, 0U);
     ASSERT_EQ(backend->issued.size(), 2U);
-    EXPECT_EQ(std::vector(backend->issued[1].begin(), backend->issued[1].begin() + 7),
-              (std::vector<std::string>{"break-pane", "-d", "-s", "%7", "-P", "-n",
-                                        "roomy"}));
+    ASSERT_EQ(backend->issued[1].size(), 7U);
+    EXPECT_EQ(backend->issued[1][4], "#{==:#{window_panes},1}");
+    EXPECT_TRUE(backend->issued[1][6].starts_with("break-pane -d -s %7 -t $2: -P -n " +
+                                                  octal_word("roomy")));
     EXPECT_TRUE(backend->batches.empty());
   }
 }
@@ -477,7 +627,7 @@ TEST(BackendSeam, NamedBreakRejectsMalformedPostMutationMetadata) {
 
     ASSERT_FALSE(broken.has_value());
     EXPECT_EQ(broken.error().kind, FailureKind::refused);
-    EXPECT_TRUE(broken.error().dispatched);
+    EXPECT_NE(broken.error().delivery, libtmux::DeliveryStatus::not_started);
     EXPECT_NE(broken.error().diagnostic.find("version or automatic-rename"),
               std::string::npos)
         << broken.error().diagnostic;
@@ -503,7 +653,7 @@ TEST(BackendSeam, RawTmux37RepairRequiresTheSameWindowAndDurableNamePolicy) {
 
     ASSERT_FALSE(broken.has_value());
     EXPECT_EQ(broken.error().kind, FailureKind::refused);
-    EXPECT_TRUE(broken.error().dispatched);
+    EXPECT_NE(broken.error().delivery, libtmux::DeliveryStatus::not_started);
   }
 }
 
@@ -523,13 +673,15 @@ TEST(BackendSeam, UnnamedBreakAtomicallyGuardsOnlyRawTmux37) {
   EXPECT_EQ(broken->name(), "sh");
   EXPECT_EQ(backend->version_queries, 0U);
   ASSERT_EQ(backend->issued.size(), 2U);
-  const std::string reported = "break-pane -d -s %7 -P -F '" +
+  const std::string reported = "break-pane -d -s %7 -t $2: -P -F '" +
                                libtmux::format_request(libtmux::Window::kFields) + "'";
+  const std::string current = "display-message -p -t $2:@3 '" +
+                              libtmux::format_request(libtmux::Window::kFields) + "'";
+  const std::string guarded = "if-shell -F -t %7 '#{==:#{version},3.7}' { " + reported +
+                              " -n libtmux } { " + reported + " }";
   EXPECT_EQ(backend->issued[1],
             (std::vector<std::string>{"if-shell", "-F", "-t", "%7",
-                                      "#{&&:#{==:#{version},3.7},"
-                                      "#{>:#{window_panes},1}}",
-                                      reported + " -n libtmux", reported}));
+                                      "#{==:#{window_panes},1}", current, guarded}));
 }
 
 TEST(BackendSeam, AFailedInsertedBreakHasNoMaskingFollowup) {
@@ -545,7 +697,7 @@ TEST(BackendSeam, AFailedInsertedBreakHasNoMaskingFollowup) {
 
   ASSERT_FALSE(broken.has_value());
   EXPECT_EQ(broken.error().kind, FailureKind::refused);
-  EXPECT_TRUE(broken.error().dispatched);
+  EXPECT_NE(broken.error().delivery, libtmux::DeliveryStatus::not_started);
   EXPECT_EQ(broken.error().diagnostic, "the script ran out");
   EXPECT_EQ(backend->issued.size(), 2U);
 }
@@ -554,7 +706,7 @@ TEST(BackendSeam, UnnamedBreakRejectsMalformedOrNoncanonicalWindowRows) {
   for (const std::string& reply :
        {std::string{"$2:@9\n"}, window_row("@09", "sh", "$2"),
         window_row("@9", "sh", "$02"), window_row("@4294967296", "sh", "$2"),
-        window_row("@9", "sh", "$4294967296"),
+        window_row("@9", "sh", "$4294967296"), window_row("@9", "sh", "$3"),
         window_row("@9", "sh", "$2") + window_row("@10", "sh", "$2")}) {
     SCOPED_TRACE(reply);
     auto backend = std::make_shared<ScriptedBackend>(
@@ -569,7 +721,7 @@ TEST(BackendSeam, UnnamedBreakRejectsMalformedOrNoncanonicalWindowRows) {
 
     ASSERT_FALSE(broken.has_value());
     EXPECT_EQ(broken.error().kind, FailureKind::refused);
-    EXPECT_TRUE(broken.error().dispatched);
+    EXPECT_NE(broken.error().delivery, libtmux::DeliveryStatus::not_started);
     EXPECT_NE(broken.error().diagnostic.find("break-pane completed for pane %7"),
               std::string::npos)
         << broken.error().diagnostic;
@@ -589,7 +741,7 @@ TEST(BackendSeam, UnnamedBreakPreservesMissingForAReportWithoutOneWindow) {
 
   ASSERT_FALSE(broken.has_value());
   EXPECT_EQ(broken.error().kind, FailureKind::missing);
-  EXPECT_TRUE(broken.error().dispatched);
+  EXPECT_NE(broken.error().delivery, libtmux::DeliveryStatus::not_started);
   EXPECT_EQ(broken.error().diagnostic, "tmux has no window %7");
   EXPECT_EQ(backend->issued.size(), 2U);
 }
@@ -629,12 +781,75 @@ TEST(BackendSeam, RawTmux37RejectsAnUnsafeIdBeforeBuildingACommandString) {
 
     ASSERT_FALSE(broken.has_value());
     EXPECT_EQ(broken.error().kind, FailureKind::validation);
-    EXPECT_FALSE(broken.error().dispatched);
+    EXPECT_EQ(broken.error().delivery, libtmux::DeliveryStatus::not_started);
     EXPECT_NE(broken.error().diagnostic.find("stable numeric pane id"),
               std::string::npos)
         << broken.error().diagnostic;
     EXPECT_EQ(backend->issued.size(), 1U);
   }
+}
+
+TEST(BackendSeam, BreakOutRejectsAnUnsafeSessionBeforeBuildingACommandString) {
+  for (const std::string_view name : {std::string_view{}, std::string_view{"roomy"}}) {
+    SCOPED_TRACE(name);
+    auto backend = std::make_shared<ScriptedBackend>(
+        std::vector<std::string>{pane_row("%7", "@3", "$2; kill-server")});
+    const auto snapshot = libtmux::Snapshot::take(
+        backend, libtmux::Pane::kFields, {"list-panes"}, libtmux::FormatArgument::flag);
+    ASSERT_TRUE(snapshot.has_value()) << snapshot.error().diagnostic;
+    const libtmux::Pane pane{*snapshot, 0};
+
+    const auto broken = pane.break_out(name);
+
+    ASSERT_FALSE(broken.has_value());
+    EXPECT_EQ(broken.error().kind, FailureKind::validation);
+    EXPECT_EQ(broken.error().delivery, libtmux::DeliveryStatus::not_started);
+    EXPECT_NE(broken.error().diagnostic.find("stable numeric session id"),
+              std::string::npos)
+        << broken.error().diagnostic;
+    EXPECT_EQ(backend->issued.size(), 1U);
+  }
+}
+
+TEST(BackendSeam, BreakOutRejectsAnUnsafeWindowBeforeBuildingACommandString) {
+  for (const std::string_view name : {std::string_view{}, std::string_view{"roomy"}}) {
+    SCOPED_TRACE(name);
+    auto backend = std::make_shared<ScriptedBackend>(
+        std::vector<std::string>{pane_row("%7", "@3; kill-server", "$2")});
+    const auto snapshot = libtmux::Snapshot::take(
+        backend, libtmux::Pane::kFields, {"list-panes"}, libtmux::FormatArgument::flag);
+    ASSERT_TRUE(snapshot.has_value()) << snapshot.error().diagnostic;
+    const libtmux::Pane pane{*snapshot, 0};
+
+    const auto broken = pane.break_out(name);
+
+    ASSERT_FALSE(broken.has_value());
+    EXPECT_EQ(broken.error().kind, FailureKind::validation);
+    EXPECT_EQ(broken.error().delivery, libtmux::DeliveryStatus::not_started);
+    EXPECT_NE(broken.error().diagnostic.find("stable numeric window id"),
+              std::string::npos)
+        << broken.error().diagnostic;
+    EXPECT_EQ(backend->issued.size(), 1U);
+  }
+}
+
+TEST(BackendSeam, NamedBreakRejectsNulBeforeBuildingACommandString) {
+  auto backend = std::make_shared<ScriptedBackend>(
+      std::vector<std::string>{pane_row("%7", "@3", "$2")});
+  const auto snapshot = libtmux::Snapshot::take(
+      backend, libtmux::Pane::kFields, {"list-panes"}, libtmux::FormatArgument::flag);
+  ASSERT_TRUE(snapshot.has_value()) << snapshot.error().diagnostic;
+  const libtmux::Pane pane{*snapshot, 0};
+  const std::string name{"room\0y", 6U};
+
+  const auto broken = pane.break_out(name);
+
+  ASSERT_FALSE(broken.has_value());
+  EXPECT_EQ(broken.error().kind, FailureKind::validation);
+  EXPECT_EQ(broken.error().delivery, libtmux::DeliveryStatus::not_started);
+  EXPECT_NE(broken.error().diagnostic.find("cannot contain NUL"), std::string::npos)
+      << broken.error().diagnostic;
+  EXPECT_EQ(backend->issued.size(), 1U);
 }
 
 TEST(BackendSeam, Tmux37aUnnamedBreakLeavesNamingToTmux) {
@@ -654,9 +869,10 @@ TEST(BackendSeam, Tmux37aUnnamedBreakLeavesNamingToTmux) {
   EXPECT_EQ(backend->version_queries, 0U);
   ASSERT_EQ(backend->issued.size(), 2U);
   EXPECT_EQ(backend->issued[1].front(), "if-shell");
-  EXPECT_EQ(backend->issued[1].back(),
-            "break-pane -d -s %7 -P -F '" +
-                libtmux::format_request(libtmux::Window::kFields) + "'");
+  const std::string native = "break-pane -d -s %7 -t $2: -P -F '" +
+                             libtmux::format_request(libtmux::Window::kFields) + "'";
+  EXPECT_EQ(backend->issued[1].back(), "if-shell -F -t %7 '#{==:#{version},3.7}' { " +
+                                           native + " -n libtmux } { " + native + " }");
 }
 
 TEST(BackendSeam, AFailingExecutorIsReportedNotSwallowed) {
@@ -676,7 +892,7 @@ TEST(BackendSeam, AnEmptySuccessfulListingIsNotAlive) {
   const auto alive = server.check_alive();
   ASSERT_FALSE(alive.has_value());
   EXPECT_EQ(alive.error().kind, FailureKind::refused);
-  EXPECT_TRUE(alive.error().dispatched);
+  EXPECT_NE(alive.error().delivery, libtmux::DeliveryStatus::not_started);
   EXPECT_EQ(backend->issued.front(),
             (std::vector<std::string>{"list-sessions", "-F", "#{session_id}"}));
 }
@@ -692,7 +908,6 @@ TEST(BackendSeam, AnUnknownCustomBackendFailsCapabilitiesClosed) {
            libtmux::ServerFeature::exact_inspection,
            libtmux::ServerFeature::server_cleanup,
            libtmux::ServerFeature::control_mode,
-           libtmux::ServerFeature::receives_asynchronous_notifications,
        }) {
     EXPECT_FALSE(capabilities.supports(feature));
   }
@@ -712,8 +927,6 @@ TEST(BackendSeam, SubprocessCapabilitiesAreLocal) {
   EXPECT_EQ(capabilities.backend, libtmux::BackendKind::subprocess);
   EXPECT_TRUE(capabilities.supports(libtmux::ServerFeature::exact_inspection));
   EXPECT_TRUE(capabilities.supports(libtmux::ServerFeature::control_mode));
-  EXPECT_FALSE(capabilities.supports(
-      libtmux::ServerFeature::receives_asynchronous_notifications));
   EXPECT_EQ(observed_commands, 0U);
 }
 
@@ -734,33 +947,6 @@ TEST(BackendSeam, VersionDetectionInheritsTheBackendPolicy) {
   EXPECT_EQ(backend->version_output_limits.front(), 456U);
 }
 
-TEST(BackendSeam, ServerRoutingPreservesControlPolicy) {
-  libtmux::ConnectionOptions requested{
-      .tmux_binary = "/opt/libtmux/custom-tmux",
-      .socket_path = "/caller/must-not-select-this",
-      .session_name = "caller-must-not-select-this",
-      .startup_timeout = std::chrono::milliseconds{311},
-      .shutdown_timeout = std::chrono::milliseconds{733},
-      .retained_reply_bytes = 12345U,
-      .line_bytes = 4321U,
-      .pane_output = true,
-      .pause_after = std::chrono::seconds{17},
-  };
-
-  const auto routed = libtmux::detail::routed_control_options(
-      std::move(requested), "/server/selected/socket", "selected-session");
-
-  EXPECT_EQ(routed.tmux_binary, std::filesystem::path{"/opt/libtmux/custom-tmux"});
-  EXPECT_EQ(routed.socket_path, std::filesystem::path{"/server/selected/socket"});
-  EXPECT_EQ(routed.session_name, "selected-session");
-  EXPECT_EQ(routed.startup_timeout, std::chrono::milliseconds{311});
-  EXPECT_EQ(routed.shutdown_timeout, std::chrono::milliseconds{733});
-  EXPECT_EQ(routed.retained_reply_bytes, 12345U);
-  EXPECT_EQ(routed.line_bytes, 4321U);
-  EXPECT_TRUE(routed.pane_output);
-  EXPECT_EQ(routed.pause_after, std::chrono::seconds{17});
-}
-
 TEST(BackendSeam, ExpansionRejectsAReplyFromAnotherTarget) {
   const std::string separator{libtmux::kFormatSeparator};
   auto backend = std::make_shared<ScriptedBackend>(
@@ -771,7 +957,7 @@ TEST(BackendSeam, ExpansionRejectsAReplyFromAnotherTarget) {
 
   ASSERT_FALSE(expanded.has_value());
   EXPECT_EQ(expanded.error().kind, FailureKind::missing);
-  EXPECT_TRUE(expanded.error().dispatched);
+  EXPECT_NE(expanded.error().delivery, libtmux::DeliveryStatus::not_started);
 }
 
 TEST(BackendSeam, ExpansionRemovesOnlyTheNewlineTmuxAdds) {
@@ -806,13 +992,58 @@ TEST(BackendSeam, SnapshotFormattingPrecedesTheCommandTerminator) {
 
 TEST(BackendSeam, InvalidEnvironmentNamesFailBeforeDispatch) {
   for (const std::string& name : {std::string{}, std::string{"BAD=NAME"}}) {
-    std::vector<std::string> command{"new-session"};
+    libtmux::CommandRequest command{"new-session"};
     const auto appended =
         libtmux::detail::append_environment(command, {{name, "value"}});
     ASSERT_FALSE(appended.has_value());
-    EXPECT_FALSE(appended.error().dispatched);
-    EXPECT_EQ(command, (std::vector<std::string>{"new-session"}));
+    EXPECT_EQ(appended.error().delivery, libtmux::DeliveryStatus::not_started);
+    EXPECT_EQ(command.argv(), (std::vector<std::string>{"new-session"}));
   }
+}
+
+TEST(BackendSeam, ACompositeArgumentRedactsItsSensitivePart) {
+  auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{});
+  const std::string secret{"sensitive-part-only"};
+  libtmux::CommandRequest command{"new-session", "-e"};
+  constexpr std::string_view prefix{"PUBLIC_NAME="};
+  command.push_back(libtmux::CommandArgument::sensitive_range(
+      std::string{prefix} + secret, prefix.size(), secret.size()));
+  libtmux::CommandRequest copied = command;
+  libtmux::CommandRequest moved = std::move(copied);
+
+  const auto scrubbed = backend->report(
+      CommandFailure{.diagnostic = "tmux rejected value " + secret}, moved);
+
+  EXPECT_EQ(scrubbed.diagnostic.find(secret), std::string::npos) << scrubbed.diagnostic;
+  EXPECT_NE(scrubbed.diagnostic.find("[REDACTED]"), std::string::npos)
+      << scrubbed.diagnostic;
+  const std::string rendered = libtmux::detail::rendered_command(moved);
+  EXPECT_EQ(rendered.find(secret), std::string::npos) << rendered;
+  EXPECT_NE(rendered.find("PUBLIC_NAME="), std::string::npos) << rendered;
+}
+
+TEST(BackendSeam, ASecretCannotReappearThroughTheRedactionMarker) {
+  auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{});
+  const std::string secret{"[REDACTED]"};
+  libtmux::CommandRequest command{"display-message"};
+  command.push_back(libtmux::CommandArgument::sensitive(secret));
+
+  const auto failure =
+      backend->report(CommandFailure{.diagnostic = "tmux repeated " + secret}, command);
+  const std::string rendered = libtmux::detail::rendered_command(command);
+
+  EXPECT_EQ(failure.diagnostic.find(secret), std::string::npos) << failure.diagnostic;
+  EXPECT_EQ(rendered.find(secret), std::string::npos) << rendered;
+}
+
+TEST(BackendSeam, AnInvalidEmptySensitiveRangeFailsClosed) {
+  libtmux::CommandRequest command{"display-message"};
+  command.push_back(
+      libtmux::CommandArgument::sensitive_range("must-stay-private", 99U, 0U));
+
+  const std::string rendered = libtmux::detail::rendered_command(command);
+
+  EXPECT_EQ(rendered.find("must-stay-private"), std::string::npos) << rendered;
 }
 
 TEST(BackendSeam, UnreadableKeyTablesFailBeforeDispatch) {
@@ -822,7 +1053,7 @@ TEST(BackendSeam, UnreadableKeyTablesFailBeforeDispatch) {
   const auto bound = server.bind_key("bad table", "x", {"display-message"});
 
   ASSERT_FALSE(bound.has_value());
-  EXPECT_FALSE(bound.error().dispatched);
+  EXPECT_EQ(bound.error().delivery, libtmux::DeliveryStatus::not_started);
   EXPECT_TRUE(backend->issued.empty());
 }
 
@@ -839,99 +1070,60 @@ TEST(BackendSeam, BufferLoadingNamesTheDestination) {
                                       "/tmp/libtmux-buffer"}));
 }
 
-TEST(BackendSeam, AControlBatchKeepsOneOperationPerCommand) {
-  libtmux::CommandBatch batch;
-  ASSERT_TRUE(batch.add({"display-message", "one"}));
-  ASSERT_TRUE(batch.add({"display-message", "two"}));
-
-  const libtmux::ControlRequest request = libtmux::detail::batch_request(batch);
-
-  ASSERT_EQ(request.group.size(), 2U);
-  EXPECT_EQ(request.group[0].argv,
-            (std::vector<std::string>{"display-message", "one"}));
-  EXPECT_EQ(request.group[1].argv,
-            (std::vector<std::string>{"display-message", "two"}));
-}
-
-TEST(BackendSeam, AnInsertedControlReplyReturnsOnlyTheSecondBlock) {
-  const auto result = inserted_result({}, libtmux::ControlTerminal::end, "window-row\n",
-                                      libtmux::ControlTerminal::end);
-
-  const auto reply = libtmux::detail::inserted_command_reply(result, std::nullopt);
-
-  ASSERT_TRUE(reply.has_value()) << reply.error().diagnostic;
-  EXPECT_EQ(*reply, "window-row\n");
-}
-
-TEST(BackendSeam, AnInsertedControlFailureCannotBeMaskedByWrapperSuccess) {
-  const auto result =
-      inserted_result({}, libtmux::ControlTerminal::end, "break failed\n",
-                      libtmux::ControlTerminal::error);
-
-  const auto reply = libtmux::detail::inserted_command_reply(result, std::nullopt);
-
-  ASSERT_FALSE(reply.has_value());
-  EXPECT_EQ(reply.error().kind, FailureKind::refused);
-  EXPECT_TRUE(reply.error().dispatched);
-  EXPECT_EQ(reply.error().diagnostic, "break failed\n");
-
-  const auto wrapper_failure =
-      inserted_result("if-shell failed\n", libtmux::ControlTerminal::error, {},
-                      libtmux::ControlTerminal::end);
-  const auto wrapper_reply =
-      libtmux::detail::inserted_command_reply(wrapper_failure, std::nullopt);
-  ASSERT_FALSE(wrapper_reply.has_value());
-  EXPECT_EQ(wrapper_reply.error().kind, FailureKind::refused);
-  EXPECT_EQ(wrapper_reply.error().diagnostic, "if-shell failed\n");
-}
-
-TEST(BackendSeam, AnInsertedControlReplyChecksBothFramesAndTheCallBound) {
-  auto wrapper_output = inserted_result("unexpected\n", libtmux::ControlTerminal::end,
-                                        "row\n", libtmux::ControlTerminal::end);
-  const auto rejected_wrapper =
-      libtmux::detail::inserted_command_reply(wrapper_output, std::nullopt);
-  ASSERT_FALSE(rejected_wrapper.has_value());
-  EXPECT_EQ(rejected_wrapper.error().kind, FailureKind::pipe);
-
-  auto truncated = inserted_result({}, libtmux::ControlTerminal::end, "row\n",
-                                   libtmux::ControlTerminal::end);
-  truncated.operations[1].block->body_truncated = true;
-  truncated.operations[1].block->body_bytes = 100U;
-  const auto rejected_capture =
-      libtmux::detail::inserted_command_reply(truncated, std::nullopt);
-  ASSERT_FALSE(rejected_capture.has_value());
-  EXPECT_EQ(rejected_capture.error().kind, FailureKind::truncated);
-
-  auto unattributed = inserted_result({}, libtmux::ControlTerminal::end, "row\n",
-                                      libtmux::ControlTerminal::end);
-  unattributed.operations[1].attribution = libtmux::Attribution::unknown;
-  const auto rejected_attribution =
-      libtmux::detail::inserted_command_reply(unattributed, std::nullopt);
-  ASSERT_FALSE(rejected_attribution.has_value());
-  EXPECT_EQ(rejected_attribution.error().kind, FailureKind::timeout);
-
-  const auto bounded = inserted_result({}, libtmux::ControlTerminal::end, "row\n",
-                                       libtmux::ControlTerminal::end);
-  const auto rejected_bound = libtmux::detail::inserted_command_reply(bounded, 3U);
-  ASSERT_FALSE(rejected_bound.has_value());
-  EXPECT_EQ(rejected_bound.error().kind, FailureKind::truncated);
-}
-
 TEST(BackendSeam, NotificationRetentionDropsTheOldestAtItsBound) {
   constexpr std::size_t expected_bound = 4096U;
-  std::vector<libtmux::Notification> notifications;
-  std::size_t dropped = 0U;
+  libtmux::detail::NotificationStream notifications;
+  const auto cursor = notifications.subscribe(true);
   for (std::size_t index = 0U; index <= expected_bound; ++index) {
     libtmux::Notification notification;
     notification.body.push_back(static_cast<std::byte>(index & 0xffU));
-    libtmux::detail::retain_notification(notifications, dropped,
-                                         std::move(notification));
+    notifications.push(std::move(notification));
   }
 
-  ASSERT_EQ(notifications.size(), expected_bound);
-  EXPECT_EQ(dropped, 1U);
-  ASSERT_FALSE(notifications.front().body.empty());
-  EXPECT_EQ(notifications.front().body.front(), std::byte{1});
+  EXPECT_EQ(notifications.dropped(cursor), 1U);
+  auto held = notifications.take(cursor);
+  ASSERT_EQ(held.size(), expected_bound);
+  ASSERT_FALSE(held.front().body.empty());
+  EXPECT_EQ(held.front().body.front(), std::byte{1});
+  EXPECT_TRUE(notifications.take(cursor).empty());
+}
+
+TEST(BackendSeam, NotificationRetentionAlsoBoundsBytes) {
+  libtmux::detail::NotificationStream notifications{8U, 5U};
+  const auto cursor = notifications.subscribe(true);
+  notifications.push(libtmux::Notification{.body = bytes("old")});
+  notifications.push(libtmux::Notification{.body = bytes("new")});
+
+  auto held = notifications.take(cursor);
+
+  ASSERT_EQ(held.size(), 1U);
+  EXPECT_EQ(held.front().body, bytes("new"));
+  EXPECT_EQ(notifications.dropped(cursor), 1U);
+
+  notifications.push(libtmux::Notification{.body = bytes("oversized")});
+  EXPECT_TRUE(notifications.take(cursor).empty());
+  EXPECT_EQ(notifications.dropped(cursor), 2U);
+}
+
+TEST(BackendSeam, NotificationDropsBelongToTheCursorThatFellBehind) {
+  libtmux::detail::NotificationStream notifications{2U, 1024U};
+  const auto fast = notifications.subscribe(true);
+  const auto slow = notifications.subscribe(true);
+
+  notifications.push(libtmux::Notification{.body = bytes("one")});
+  notifications.push(libtmux::Notification{.body = bytes("two")});
+  ASSERT_EQ(notifications.take(fast).size(), 2U);
+
+  notifications.push(libtmux::Notification{.body = bytes("three")});
+  const auto fast_tail = notifications.take(fast);
+  const auto slow_tail = notifications.take(slow);
+
+  ASSERT_EQ(fast_tail.size(), 1U);
+  EXPECT_EQ(fast_tail.front().body, bytes("three"));
+  EXPECT_EQ(notifications.dropped(fast), 0U);
+  ASSERT_EQ(slow_tail.size(), 2U);
+  EXPECT_EQ(slow_tail.front().body, bytes("two"));
+  EXPECT_EQ(notifications.dropped(slow), 1U);
 }
 
 } // namespace

@@ -9,6 +9,103 @@ was recorded as it landed.
 
 ## Unreleased
 
+### Breaking
+
+- `LIBTMUX_ABI_NAMESPACE` advances to `v2_cxx20` and `v2_cxx23`.
+  Binary- and ABI-breaking; rebuild every object that links libtmux. (#10)
+
+- `CommandFailure::delivery` replaces `dispatched` with `not_started`,
+  `written`, `replied`, and `indeterminate`. Source- and ABI-breaking; treat
+  only `not_started` as safe to retry without more evidence. (#10)
+
+- `FailureKind` gains `overloaded` and `cancelled`. Source-breaking for an
+  exhaustive switch; add both cases or a `default`. (#10)
+
+- Typed `Server` calls no longer run over control mode. `over_control`,
+  `over_control_with_options`, the `Server` notification methods,
+  `BackendKind::control_mode`, and
+  `ServerFeature::receives_asynchronous_notifications` are removed; use a
+  subprocess-backed `Server` for final command status and `Connection` for
+  raw control blocks and events. (#10)
+
+- `Connection::execute` now returns every guarded block in
+  `ControlRequestResult::blocks`. The exact-count overload, `Attribution`, and
+  per-operation results are removed; use `Server::run` when final command
+  status matters. (#10)
+
+- `Session::attach_command` now returns
+  `expected<AttachCommand, CommandFailure>`, and `checked_attach_command` is
+  removed. Source-breaking; retain the `AttachCommand` until the spawned
+  client exits so its pinned socket route remains valid. (#10)
+
+- `NotificationKind` gains `config_error`, `exit`, `layout_change`, and
+  `message`. Source-breaking for an exhaustive switch; add the cases or a
+  `default`. (#10)
+
+### Server
+
+- Add `Server::submit`, which returns a move-only `CommandOperation` to cancel
+  or collect later. Several commands can run concurrently, each with its own
+  timeout and output limit. (#10)
+
+- Dropping an unconsumed `CommandOperation` detaches observation without
+  waiting for or cancelling an accepted command. (#10)
+
+- A submitted command whose deadline expires before it starts, including a
+  zero-timeout command, fails with `not_started` without dispatch or side
+  effects. (#10)
+
+- Process exit no longer waits indefinitely for a detached custom backend call
+  that has no timeout. (#10)
+
+- `CommandObserver` and `CommandFailure::diagnostic` redact typed environment,
+  option, hook, and shell values. Raw `CommandRequest` callers can mark the
+  same data with `CommandArgument::sensitive` or `sensitive_range`. (#10)
+
+- POSIX entity handles pin the socket incarnation they came from, so a retained
+  handle cannot compare equal to or mutate an object on a replacement server.
+  (#10)
+
+- POSIX command output drains fairly across concurrent children, so an earlier
+  noisy child cannot starve a later one. Output larger than the platform pipe
+  buffer is collected up to the configured limit. (#10)
+
+- `Server`, `Connection`, and `ScopedTmuxServer` no longer pass a caller's
+  blocked or ignored signals into tmux or pane commands. (#10)
+
+### Control mode
+
+- Add `Connection::watch_notifications`, returning independent
+  `NotificationWatch` cursors with their own wait, readiness descriptor, and
+  dropped-event count. One consumer no longer drains another. (#10)
+
+- Concurrent `Connection` calls keep independent deadlines, and notification
+  reads continue while another caller waits to write. (#10)
+
+- `Connection` recognizes every notification defined by supported tmux
+  releases and decodes extended output without treating later fields as pane
+  data. (#10)
+
+- Control-event retention is bounded by bytes and record count, and an
+  oversized or unterminated line fails without growing memory indefinitely.
+  Per-reader drop counts still report lost events. (#10)
+
+### Pane
+
+- `Pane::break_out` keeps a multi-pane break in its source session and returns
+  the existing window when the pane is already alone. It previously let tmux
+  choose another session implicitly. (#10)
+
+### Windows
+
+- On psmux, `Server::submit` returns before the command completes. Cancelling
+  a command proven to have started reports `cancelled` with `indeterminate`
+  delivery rather than pretending it never ran. (#10)
+
+- A psmux session or window name ending in `.<digits>` is rejected while other
+  dotted names remain valid, so a target-shaped name cannot be misread as
+  `session:window.pane`. (#10)
+
 ## 0.1.0-alpha.5 (2026-08-22)
 
 The library is unchanged from `0.1.0-alpha.4`: nothing outside comments moved

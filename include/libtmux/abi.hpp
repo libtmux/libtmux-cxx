@@ -7,17 +7,16 @@
 // objects from both produces a program that appears to build and then reads the
 // wrong bytes.
 //
-// An inline namespace whose name encodes the choice makes that a link error
-// naming the missing symbol instead. Callers still write `libtmux::Server`; the
-// namespace is inline, so it is invisible in source and decisive in the mangled
-// name.
+// An inline namespace whose name encodes the ABI revision and expected choice
+// makes incompatibility a link error. Callers still write `libtmux::Server`;
+// the namespace is inline in source and decisive in the mangled name.
 
 #include "libtmux/expected.hpp"
 
 #if defined(LIBTMUX_USE_TL_EXPECTED)
-#define LIBTMUX_ABI_NAMESPACE v1_cxx20
+#define LIBTMUX_ABI_NAMESPACE v2_cxx20
 #else
-#define LIBTMUX_ABI_NAMESPACE v1_cxx23
+#define LIBTMUX_ABI_NAMESPACE v2_cxx23
 #endif
 
 #define LIBTMUX_NAMESPACE_BEGIN                                                        \

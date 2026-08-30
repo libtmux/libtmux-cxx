@@ -154,20 +154,20 @@ public:
   // parse would invalidate every entity already handed out.
   [[nodiscard]] static expected<std::shared_ptr<const Snapshot>, CommandFailure>
   take(std::shared_ptr<const detail::Backend> backend,
-       std::span<const std::string_view> fields, std::vector<std::string> request,
+       std::span<const std::string_view> fields, CommandRequest request,
        FormatArgument placement = FormatArgument::flag);
 
   [[nodiscard]] static expected<std::shared_ptr<const Snapshot>, CommandFailure>
   take_in_session(std::shared_ptr<const detail::Backend> backend,
-                  std::span<const std::string_view> fields,
-                  std::vector<std::string> request, FormatArgument placement,
-                  std::string_view session_id, std::string_view session_name);
+                  std::span<const std::string_view> fields, CommandRequest request,
+                  FormatArgument placement, std::string_view session_id,
+                  std::string_view session_name);
 
   [[nodiscard]] static expected<std::shared_ptr<const Snapshot>, CommandFailure>
   take_in_session(std::shared_ptr<const detail::Backend> backend,
-                  std::span<const std::string_view> fields,
-                  std::vector<std::string> request, FormatArgument placement,
-                  std::string_view session_id, std::string_view session_name,
+                  std::span<const std::string_view> fields, CommandRequest request,
+                  FormatArgument placement, std::string_view session_id,
+                  std::string_view session_name,
                   std::optional<std::chrono::milliseconds> timeout,
                   std::optional<std::size_t> output_limit);
 

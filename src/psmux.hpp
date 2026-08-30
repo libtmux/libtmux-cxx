@@ -6,26 +6,28 @@
 
 namespace libtmux_psmux {
 
-[[nodiscard]] inline bool unsafe_command_argument(std::string_view value) noexcept {
+// psmux is the Windows implementation and tmux is everywhere else, so which
+// rules apply is settled at compile time. The rules live in `rules` below and
+// are never conditional: a naming rule nobody can compile is a naming rule
+// nobody can test, and these have edge cases worth testing.
+inline constexpr bool rules_apply =
 #if defined(_WIN32)
-  return value.find_first_of(";\r\n") != std::string_view::npos;
+    true;
 #else
-  static_cast<void>(value);
-  return false;
+    false;
 #endif
+
+namespace rules {
+
+[[nodiscard]] inline bool unsafe_command_argument(std::string_view value) noexcept {
+  return value.find_first_of(";\r\n") != std::string_view::npos;
 }
 
 [[nodiscard]] inline bool missing_session(std::string_view diagnostic) noexcept {
-#if defined(_WIN32)
   return diagnostic.find("psmux: no server running on session '") !=
          std::string_view::npos;
-#else
-  static_cast<void>(diagnostic);
-  return false;
-#endif
 }
 
-#if defined(_WIN32)
 [[nodiscard]] inline char ascii_lower(char character) noexcept {
   return character >= 'A' && character <= 'Z' ? static_cast<char>(character - 'A' + 'a')
                                               : character;
@@ -90,11 +92,9 @@ invalid_registry_component(std::string_view value, std::string_view kind) {
   }
   return std::nullopt;
 }
-#endif
 
 [[nodiscard]] inline std::optional<std::string>
 invalid_session_name(std::string_view name) {
-#if defined(_WIN32)
   if (auto invalid = invalid_registry_component(name, "session name");
       invalid.has_value()) {
     return invalid;
@@ -106,19 +106,17 @@ invalid_session_name(std::string_view name) {
   if (name.starts_with('$') && all_decimal(name.substr(1))) {
     return "a psmux session name cannot look like a session id";
   }
-  const std::size_t dot = name.find('.');
+  // The last dot, not the first: psmux reads `session:window.pane`, so what
+  // makes a name ambiguous is the suffix it ends with.
+  const std::size_t dot = name.rfind('.');
   if (dot != std::string_view::npos && all_decimal(name.substr(dot + 1U))) {
     return "a psmux session name cannot end in a numeric target suffix";
   }
-#else
-  static_cast<void>(name);
-#endif
   return std::nullopt;
 }
 
 [[nodiscard]] inline std::optional<std::string>
 invalid_socket_name(std::string_view name) {
-#if defined(_WIN32)
   if (auto invalid = invalid_registry_component(name, "socket name");
       invalid.has_value()) {
     return invalid;
@@ -126,10 +124,29 @@ invalid_socket_name(std::string_view name) {
   if (ascii_equal(name, "default")) {
     return "psmux cannot distinguish '-L default' from its default namespace";
   }
-#else
-  static_cast<void>(name);
-#endif
   return std::nullopt;
+}
+
+} // namespace rules
+
+// What callers ask. Each answers "no objection" wherever psmux's rules do not
+// apply, which is what every call site outside a platform branch relies on.
+[[nodiscard]] inline bool unsafe_command_argument(std::string_view value) noexcept {
+  return rules_apply && rules::unsafe_command_argument(value);
+}
+
+[[nodiscard]] inline bool missing_session(std::string_view diagnostic) noexcept {
+  return rules_apply && rules::missing_session(diagnostic);
+}
+
+[[nodiscard]] inline std::optional<std::string>
+invalid_session_name(std::string_view name) {
+  return rules_apply ? rules::invalid_session_name(name) : std::nullopt;
+}
+
+[[nodiscard]] inline std::optional<std::string>
+invalid_socket_name(std::string_view name) {
+  return rules_apply ? rules::invalid_socket_name(name) : std::nullopt;
 }
 
 } // namespace libtmux_psmux

@@ -342,11 +342,32 @@ def run(
         return Outcome(mutation, "not a result", "the restored target did not build")
     restored_fingerprint = _fingerprint(where, preset, executable)
     if restored_fingerprint is None or restored_fingerprint == after:
-        return Outcome(
-            mutation,
-            "not a result",
-            "the restoration did not reach the binary that was retested",
+        # A build system that decides by timestamp can skip the rebuild that
+        # puts the original back. Returning now would leave the mutation in the
+        # tree, where every later mutation sharing this target reports against
+        # a binary nobody restored — and so would the next suite anyone runs.
+        forced = execute(
+            [
+                "cmake",
+                "--build",
+                "--preset",
+                preset,
+                "--target",
+                mutation.target,
+                "--clean-first",
+            ]
         )
+        restored_fingerprint = _fingerprint(where, preset, executable)
+        if (
+            forced.returncode != 0
+            or restored_fingerprint is None
+            or restored_fingerprint == after
+        ):
+            return Outcome(
+                mutation,
+                "not a result",
+                "the restoration did not reach the binary that was retested",
+            )
     if execute(test_command).returncode != 0:
         return Outcome(mutation, "not a result", "the selected tests did not recover")
     return Outcome(mutation, "killed")

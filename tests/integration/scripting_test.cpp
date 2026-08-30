@@ -61,7 +61,7 @@ TEST(Scripting, AFailingCommandCarriesItsExitCode) {
   const auto failed = server.run_shell("exit 3");
   ASSERT_FALSE(failed.has_value());
   EXPECT_EQ(failed.error().exit_code, 3);
-  EXPECT_TRUE(failed.error().dispatched);
+  EXPECT_NE(failed.error().delivery, libtmux::DeliveryStatus::not_started);
 
   // 127 is the shell's own answer for a command it could not find, and it
   // arrives the same way: as the status, not as a different kind of error.
@@ -73,7 +73,7 @@ TEST(Scripting, AFailingCommandCarriesItsExitCode) {
   const auto empty = server.run_shell("");
   ASSERT_FALSE(empty.has_value());
   EXPECT_EQ(empty.error().kind, libtmux::FailureKind::validation);
-  EXPECT_FALSE(empty.error().dispatched);
+  EXPECT_EQ(empty.error().delivery, libtmux::DeliveryStatus::not_started);
 }
 
 TEST(Scripting, ABackgroundedCommandRunsWithoutBeingWaitedFor) {

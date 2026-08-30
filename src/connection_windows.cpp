@@ -11,11 +11,37 @@ LIBTMUX_NAMESPACE_BEGIN
 namespace {
 
 ProtocolError control_unavailable() {
-  return ProtocolError{"persistent control mode is unavailable with psmux on Windows; "
-                       "subprocess Server operations remain supported"};
+  return ProtocolError{
+      .message = "persistent control mode is unavailable with psmux on Windows; "
+                 "subprocess Server operations remain supported",
+      .delivery = DeliveryStatus::not_started};
 }
 
 } // namespace
+
+namespace detail {
+struct NotificationWatchState {};
+} // namespace detail
+
+NotificationWatch::NotificationWatch() noexcept = default;
+NotificationWatch::NotificationWatch(
+    std::unique_ptr<detail::NotificationWatchState> state) noexcept
+    : state_(std::move(state)) {}
+NotificationWatch::~NotificationWatch() noexcept = default;
+NotificationWatch::NotificationWatch(NotificationWatch&&) noexcept = default;
+NotificationWatch& NotificationWatch::operator=(NotificationWatch&&) noexcept = default;
+
+std::vector<Notification> NotificationWatch::take_notifications() { return {}; }
+
+std::vector<Notification> NotificationWatch::wait_for_notifications(
+    std::chrono::steady_clock::time_point deadline) {
+  static_cast<void>(deadline);
+  return {};
+}
+
+int NotificationWatch::notification_fd() const noexcept { return -1; }
+
+std::size_t NotificationWatch::dropped_notifications() const noexcept { return 0U; }
 
 struct Connection::State {};
 
@@ -40,22 +66,16 @@ expected<Connection, ProtocolError> Connection::connect(ConnectionOptions option
 ControlRequestResult
 Connection::execute(ControlRequest request,
                     std::chrono::steady_clock::time_point deadline) {
-  const std::size_t expected_operations = request.group.size();
-  return execute(std::move(request), expected_operations, deadline);
-}
-
-ControlRequestResult
-Connection::execute(ControlRequest request, std::size_t expected_operations,
-                    std::chrono::steady_clock::time_point deadline) {
   static_cast<void>(request);
   static_cast<void>(deadline);
   ControlRequestResult result;
-  result.operations.resize(expected_operations);
   result.connection_error = control_unavailable();
   return result;
 }
 
 std::vector<Notification> Connection::take_notifications() { return {}; }
+
+NotificationWatch Connection::watch_notifications() { return {}; }
 
 std::vector<Notification>
 Connection::wait_for_notifications(std::chrono::steady_clock::time_point deadline) {

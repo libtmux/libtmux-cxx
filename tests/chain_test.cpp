@@ -54,7 +54,7 @@ TEST(Chain, AnInvalidChainNeverReachesTmux) {
   chain.new_window("a:b", "never");
   const auto outcome = server->run_chain(chain);
   ASSERT_FALSE(outcome.has_value());
-  EXPECT_FALSE(outcome.error().dispatched);
+  EXPECT_EQ(outcome.error().delivery, libtmux::DeliveryStatus::not_started);
 }
 
 // A chain step and the entity method it mirrors are the same tmux command.
@@ -118,7 +118,7 @@ TEST(ServerDiagnostics, CarriesTheReasonTmuxRefused) {
   // alone is empty for every ordinary failure.
   const auto refused = server->run({"kill-session", "-t", "no-such-session"});
   ASSERT_FALSE(refused.has_value());
-  EXPECT_TRUE(refused.error().dispatched);
+  EXPECT_NE(refused.error().delivery, libtmux::DeliveryStatus::not_started);
   EXPECT_NE(refused.error().diagnostic.find("no-such-session"), std::string::npos)
       << "diagnostic was: " << refused.error().diagnostic;
 }

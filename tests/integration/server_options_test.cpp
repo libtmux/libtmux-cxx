@@ -130,7 +130,7 @@ TEST(ServerOptions, RefusesAnOptionTmuxDoesNotKnow) {
   const auto refused = server.set_server_option("not-an-option", "1");
   ASSERT_FALSE(refused.has_value());
   // tmux ran and said no, which is not the same as the request being malformed.
-  EXPECT_TRUE(refused.error().dispatched);
+  EXPECT_NE(refused.error().delivery, libtmux::DeliveryStatus::not_started);
   EXPECT_FALSE(refused.error().diagnostic.empty());
 }
 

@@ -1,56 +1,60 @@
-# Dispatching over a control connection
+# The control connection boundary
 
-The library talks to tmux through one private interface. The default
-implementation launches tmux per command. The second keeps one control-mode
-client open and writes commands to it, so a command costs a write and a read
-rather than a process.
+`Server` and `Connection` expose different tmux contracts.
 
-`Server::over_control(session)` returns a Server whose entities dispatch that
-way. Nothing above the transport changes: the entities, filters, options and
-failures are the same types, and the same test file drives both.
+`Server` launches one tmux client per invocation. That client remains attached
+until its command queue finishes, including foreground jobs and asynchronous
+file work, and returns tmux's final exit status. Typed entity operations use
+this path.
 
-Executing `source_file` is the deliberate exception. A file can insert an
-unknowable number of synchronous reply blocks, so a control-backed Server
-rejects it before dispatch; parse-only `check_file` remains available. Raw
-reply-inserting commands likewise need the low-level execute overload that
-states their exact count of CONTROL-attributed blocks. The inferred-count
-overload does not inspect the live alias map; an alias that changes the count
-must use the exact-count overload. A control-backed Server has no count
-override, so its live aliases must preserve that count for every command it
-dispatches. Otherwise use a low-level Connection or a subprocess-backed Server.
+`Connection` keeps one control client open. It exposes guarded reply blocks and
+outside-block events in wire order. This is the right surface for notification
+streams, pane output, and protocol tooling. It is not a second typed command
+backend.
 
-## What it is worth
+## Why a guarded block is not a result
 
-One hundred `windows()` listings against a server holding 21 windows,
-release build, tmux 3.7b:
+tmux may write `%end` before a command that returned `CMD_RETURN_WAIT` has
+finished. A job or file callback later writes output or an error without a
+guard or request identifier, then continues the queue. `run-shell`,
+`load-buffer`, `save-buffer`, and `source-file` all have such paths.
 
-| transport | per listing | rows returned |
-|---|---|---|
-| subprocess | 8.3 ms | 2100 |
-| control connection | 1.8 ms | 2100 |
+Local command classification cannot repair this:
 
-Both answers are identical; only the way of asking differs.
+- whether a command waits can depend on its arguments and tmux version;
+- server-global aliases expand during parsing and can replace any command;
+- hooks and conditionals may insert more commands; and
+- real notifications share the same outside-block stream as delayed output.
 
-## What it costs
+Assigning the next unguarded line to a request steals notifications. Treating
+every unguarded line as failure rejects valid requests. The library therefore
+keeps the evidence raw rather than inventing final status or attribution.
 
-**One conversation at a time.** Control mode matches replies to commands by
-order, so the backend holds a mutex across a command. Two Servers over the
-same socket are two conversations and do not contend. A caller who wants
-parallelism opens more connections, which is the honest shape of the protocol
-rather than a limitation of this class.
+## What `Connection::execute` guarantees
 
-**A different way to ask the same question.** `tmux -V` is a flag of the
-binary, not a command a connection can carry, so the control backend reads
-`#{version}` as a format instead. That is why the version question lives on the
-transport interface: only the transport knows how to ask it.
+A connection serializes complete writes. Each request ends with a private
+boundary, and `execute` returns every guarded block observed before that
+boundary. The boundary distinguishes concurrent callers even though tmux's
+guards contain no request id.
 
-**Attribution instead of exit codes.** A subprocess reports an exit status; a
-control connection reports a reply block that ends in `%end` or `%error`, and
-an attribution saying whether that block belongs to the command that was sent.
-A block that cannot be attributed is reported as a timeout with
-`dispatched` set, because the command reached tmux and what it did is unknown —
-the same answer a subprocess timeout gives, for the same reason.
+Deadlines remain caller-relative while waiting to write. A deadline reached
+after bytes were dispatched cannot cancel server-side effects; the connection
+fails closed because it can no longer prove later reply ownership.
 
-**A connection can die.** The subprocess transport fails one command at a time.
-A broken connection fails every later command, and reports the transport
-failure rather than a tmux refusal.
+`take_notifications` and `NotificationWatch` expose the bounded outside-block
+log. Most entries are tmux notifications. Unknown entries may instead be
+delayed command output, so callers must preserve unknown bytes rather than
+guess their origin.
+
+## Choosing the surface
+
+| Need | Surface |
+|---|---|
+| Final command success, typed entities, batches, observers | `Server` |
+| Guarded blocks and exact control-wire ordering | `Connection::execute` |
+| Notifications, pane output, readiness descriptor | `Connection` |
+
+Sequential `Server` calls preserve program order because one finishes before
+the next starts. Concurrent calls are separate tmux clients and promise no
+total order. A `Connection` is one FIFO client, so a waiting command also
+blocks later work on that connection.

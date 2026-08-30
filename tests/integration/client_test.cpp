@@ -7,13 +7,20 @@
 // A control-mode connection is a client without a terminal, which is what
 // makes these testable at all.
 
+#include <cerrno>
 #include <chrono>
+#include <filesystem>
+#include <optional>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <vector>
 
+#include <sys/stat.h>
+
 #include <gtest/gtest.h>
 
+#include "libtmux/control.hpp"
 #include "libtmux/entities.hpp"
 #include "libtmux/server.hpp"
 #include "libtmux/testing/capabilities.hpp"
@@ -24,6 +31,23 @@ namespace {
 using libtmux::Client;
 using libtmux::Server;
 using libtmux::Session;
+
+bool same_inode(const std::filesystem::path& left, const std::filesystem::path& right,
+                std::error_code& error) {
+  struct stat left_metadata {};
+  if (::lstat(left.c_str(), &left_metadata) != 0) {
+    error = {errno, std::generic_category()};
+    return false;
+  }
+  struct stat right_metadata {};
+  if (::lstat(right.c_str(), &right_metadata) != 0) {
+    error = {errno, std::generic_category()};
+    return false;
+  }
+  error.clear();
+  return left_metadata.st_dev == right_metadata.st_dev &&
+         left_metadata.st_ino == right_metadata.st_ino;
+}
 
 Server connect(const libtmux::test::ScopedTmuxServer& fixture) {
   auto server = Server::at_socket_path(fixture.socket_path().string());
@@ -139,16 +163,28 @@ TEST(Client, AttachingIsACommandLineRatherThanACall) {
 
   auto sessions = server.sessions();
   ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
-  const std::vector<std::string> command = sessions->front().attach_command();
-  const auto checked = sessions->front().checked_attach_command();
-  ASSERT_TRUE(checked.has_value()) << checked.error().diagnostic;
-  EXPECT_EQ(*checked, command);
+  const auto attach = sessions->front().attach_command();
+  ASSERT_TRUE(attach.has_value()) << attach.error().diagnostic;
+  const std::vector<std::string>& command = attach->argv();
 
   // Everything needed to reach this exact server, in exec order.
   ASSERT_GE(command.size(), 5U);
   EXPECT_EQ(command.front(), "tmux");
   EXPECT_EQ(command[1], "-S");
-  EXPECT_EQ(command[2], fixture->socket_path().string());
+  std::error_code compared;
+  EXPECT_TRUE(same_inode(command[2], fixture->socket_path(), compared));
+  EXPECT_FALSE(compared) << compared.message();
+  EXPECT_NE(command[2], fixture->socket_path().string())
+      << "attach must use the incarnation-pinned alias";
+  std::error_code inspected;
+  const auto permissions =
+      std::filesystem::status(std::filesystem::path{command[2]}.parent_path(),
+                              inspected)
+          .permissions();
+  EXPECT_FALSE(inspected) << inspected.message();
+  constexpr auto exposed =
+      std::filesystem::perms::group_all | std::filesystem::perms::others_all;
+  EXPECT_EQ(permissions & exposed, std::filesystem::perms::none);
   EXPECT_EQ(command[command.size() - 3], "attach-session");
   EXPECT_EQ(command[command.size() - 2], "-t");
   EXPECT_EQ(command.back(), sessions->front().id());
@@ -158,6 +194,45 @@ TEST(Client, AttachingIsACommandLineRatherThanACall) {
   const auto refused = server.run({"attach-session", "-t", command.back()});
   ASSERT_FALSE(refused.has_value());
   EXPECT_NE(refused.error().diagnostic.find("terminal"), std::string::npos);
+}
+
+TEST(Client, AttachCommandOwnsItsPinnedRoute) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+
+  std::optional<libtmux::AttachCommand> attach;
+  std::optional<libtmux::AttachCommand> copy;
+  std::filesystem::path alias;
+  std::filesystem::path alias_directory;
+  {
+    const Server server = connect(*fixture);
+    const auto sessions = server.sessions();
+    ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
+    auto prepared = sessions->front().attach_command();
+    ASSERT_TRUE(prepared.has_value()) << prepared.error().diagnostic;
+    copy.emplace(*prepared);
+    attach.emplace(std::move(*prepared));
+    EXPECT_TRUE(prepared->argv().empty());
+    alias = attach->argv()[2];
+    alias_directory = alias.parent_path();
+  }
+
+  ASSERT_TRUE(std::filesystem::exists(alias));
+  const std::vector<std::string>& command = attach->argv();
+  ASSERT_GE(command.size(), 5U);
+  {
+    const auto through_alias =
+        libtmux::Connection::connect({.tmux_binary = command.front(),
+                                      .socket_path = command[2],
+                                      .session_name = command.back()});
+    ASSERT_TRUE(through_alias.has_value()) << through_alias.error().message;
+  }
+
+  attach.reset();
+  EXPECT_TRUE(std::filesystem::exists(alias));
+  copy.reset();
+  EXPECT_FALSE(std::filesystem::exists(alias));
+  EXPECT_FALSE(std::filesystem::exists(alias_directory));
 }
 
 } // namespace

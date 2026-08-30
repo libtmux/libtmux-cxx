@@ -22,6 +22,7 @@
 // an older server instead of failing.
 
 #include "libtmux/abi.hpp"
+#include "libtmux/capabilities.hpp"
 #include "libtmux/command.hpp"
 #include "libtmux/expected.hpp"
 #include <array>
@@ -211,8 +212,14 @@ protected:
   // Run a command for this entity. An entity read out of a recording has no
   // server to run it against, and says so rather than doing nothing.
   [[nodiscard]] expected<std::string, CommandFailure>
-  run(const std::vector<std::string>& command,
+  run(const CommandRequest& command,
       std::optional<std::size_t> output_limit = {}) const;
+
+  // The refusal to return when this server is known to get `feature` wrong,
+  // and nothing when it is not. `why` says what it does instead, which is the
+  // part a caller cannot look up.
+  [[nodiscard]] std::optional<CommandFailure> refused(ServerFeature feature,
+                                                      std::string_view why) const;
 
 public:
   // The server this entity came from, for a command the typed surface does not
@@ -221,11 +228,9 @@ public:
   // the escape hatch should be able to see that they are back to raw argv.
   [[nodiscard]] expected<Server, CommandFailure> server() const;
 
-  // Which tmux server this came from: the socket path, resolved the way tmux
-  // resolves it. Equality and hashing are defined in terms of it, and it is
-  // the socket rather than the `Server` object on purpose — two handles opened
-  // on one socket describe one tmux, and a caller who built them separately
-  // still means the same thing by them.
+  // Which tmux server incarnation this came from. Equality and hashing are
+  // defined in terms of it, so two handles opened on one live socket agree but
+  // a handle kept across a restart does not become a handle to the replacement.
   //
   // Empty for a value read out of a recording, which is on no server at all.
   [[nodiscard]] std::string_view connection_identity() const noexcept;
@@ -241,6 +246,27 @@ private:
 };
 
 } // namespace detail
+
+// An attach argv and the private route selecting this server incarnation.
+// Keep it alive until the client exits; same-process `exec` leaves the route on disk.
+class AttachCommand final {
+public:
+  AttachCommand(const AttachCommand&) noexcept;
+  AttachCommand(AttachCommand&&) noexcept;
+  AttachCommand& operator=(const AttachCommand&) noexcept;
+  AttachCommand& operator=(AttachCommand&&) noexcept;
+  ~AttachCommand();
+
+  // Exec-order arguments; empty after this value is moved from.
+  [[nodiscard]] const std::vector<std::string>& argv() const noexcept;
+
+private:
+  struct State;
+  explicit AttachCommand(std::shared_ptr<const State> state) noexcept;
+
+  friend class Session;
+  std::shared_ptr<const State> state_;
+};
 
 class Session : private detail::Row {
 public:
@@ -327,18 +353,13 @@ public:
   [[nodiscard]] expected<void, CommandFailure>
   unset_option(std::string_view name) const;
 
-  // The command line that attaches a terminal to this session.
+  // A command line that attaches a terminal to this session.
   //
   // Not a method that attaches: a tmux client needs a terminal, and every
   // command this library runs talks to it through pipes, so an attach it
-  // performed itself could only ever fail. A caller that owns a terminal
-  // execs this instead.
-  //
-  // Prefer `checked_attach_command()`; this source-compatible form returns an
-  // empty vector when psmux cannot bind an attach target without a stale race.
-  [[nodiscard]] std::vector<std::string> attach_command() const;
-  [[nodiscard]] expected<std::vector<std::string>, CommandFailure>
-  checked_attach_command() const;
+  // performed itself could only ever fail. Spawn the returned argv and retain
+  // the value until that client exits.
+  [[nodiscard]] expected<AttachCommand, CommandFailure> attach_command() const;
 
   // Send every client here away, leaving the session running.
   [[nodiscard]] expected<void, CommandFailure> detach_clients() const;
@@ -615,7 +636,8 @@ public:
   [[nodiscard]] expected<void, CommandFailure> set_height(long long height) const;
   [[nodiscard]] expected<void, CommandFailure> swap_with(const Pane& other) const;
 
-  // Take this pane out into a window of its own, which is returned.
+  // Take this pane out into a window of its own, which is returned. If it is
+  // already the window's only pane, return that window without moving it.
   // An empty name leaves tmux to name the window after what is running.
   [[nodiscard]] expected<Window, CommandFailure>
   break_out(std::string_view name = {}) const;

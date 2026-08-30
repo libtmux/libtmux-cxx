@@ -275,16 +275,30 @@ TEST(WorkspaceBuilder, ASuppressedCommandIsTypedWithTheSpaceThatHidesIt) {
   // Answering with the position rather than the text in front of it: a
   // command at column zero has nothing in front of it, which is not the
   // same as not having been typed.
+  //
+  // Held until two readings agree. The prompt is drawn before the command but
+  // not always in one write, so a single capture can catch the line half
+  // rendered and answer with a column the shell is about to move.
   const auto column_of = [](const libtmux::Pane& pane) -> std::optional<std::size_t> {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
-    while (std::chrono::steady_clock::now() < deadline) {
+    const auto reading = [&pane]() -> std::optional<std::size_t> {
       const auto shown = pane.capture();
       EXPECT_TRUE(shown.has_value());
       const std::string screen = shown.value_or(std::string{});
-      if (const auto at = screen.find("echo hidden-marker"); at != std::string::npos) {
-        const auto line = screen.rfind('\n', at);
-        return at - (line == std::string::npos ? 0U : line + 1U);
+      const auto at = screen.find("echo hidden-marker");
+      if (at == std::string::npos) {
+        return std::nullopt;
       }
+      const auto line = screen.rfind('\n', at);
+      return at - (line == std::string::npos ? 0U : line + 1U);
+    };
+    std::optional<std::size_t> settled;
+    while (std::chrono::steady_clock::now() < deadline) {
+      const auto seen = reading();
+      if (seen.has_value() && settled == seen) {
+        return seen;
+      }
+      settled = seen;
       std::this_thread::sleep_for(std::chrono::milliseconds{20});
     }
     return std::nullopt;

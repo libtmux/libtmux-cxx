@@ -1,7 +1,5 @@
 #include "libtmux/snapshot.hpp"
 
-#include <algorithm>
-
 #include <string>
 #include <utility>
 
@@ -18,8 +16,8 @@ Snapshot::~Snapshot() = default;
 
 expected<std::shared_ptr<const Snapshot>, CommandFailure>
 Snapshot::take(std::shared_ptr<const detail::Backend> backend,
-               std::span<const std::string_view> fields,
-               std::vector<std::string> request, FormatArgument placement) {
+               std::span<const std::string_view> fields, CommandRequest request,
+               FormatArgument placement) {
   return take_in_session(std::move(backend), fields, std::move(request), placement, {},
                          {});
 }
@@ -27,7 +25,7 @@ Snapshot::take(std::shared_ptr<const detail::Backend> backend,
 expected<std::shared_ptr<const Snapshot>, CommandFailure>
 Snapshot::take_in_session(std::shared_ptr<const detail::Backend> backend,
                           std::span<const std::string_view> fields,
-                          std::vector<std::string> request, FormatArgument placement,
+                          CommandRequest request, FormatArgument placement,
                           std::string_view session_id, std::string_view session_name) {
   const ExecutionPolicy& policy = backend->policy();
   return take_in_session(std::move(backend), fields, std::move(request), placement,
@@ -37,7 +35,7 @@ Snapshot::take_in_session(std::shared_ptr<const detail::Backend> backend,
 expected<std::shared_ptr<const Snapshot>, CommandFailure>
 Snapshot::take_in_session(std::shared_ptr<const detail::Backend> backend,
                           std::span<const std::string_view> fields,
-                          std::vector<std::string> request, FormatArgument placement,
+                          CommandRequest request, FormatArgument placement,
                           std::string_view session_id, std::string_view session_name,
                           std::optional<std::chrono::milliseconds> timeout,
                           std::optional<std::size_t> output_limit) {
@@ -46,8 +44,22 @@ Snapshot::take_in_session(std::shared_ptr<const detail::Backend> backend,
     // past it is the caller's shell command and its arguments, so a `-F`
     // appended there is handed to that program instead of to tmux, which
     // then answers in its default shape and every field comes back missing.
-    const auto terminator = std::ranges::find(request, "--");
-    request.insert(terminator, {"-F", format_request(fields)});
+    CommandRequest formatted;
+    formatted.reserve(request.size() + 2U);
+    bool inserted = false;
+    for (const CommandArgument& argument : request.arguments()) {
+      if (!inserted && argument.value() == "--") {
+        formatted.emplace_back("-F");
+        formatted.push_back(format_request(fields));
+        inserted = true;
+      }
+      formatted.push_back(argument);
+    }
+    if (!inserted) {
+      formatted.emplace_back("-F");
+      formatted.push_back(format_request(fields));
+    }
+    request = std::move(formatted);
   } else {
     request.push_back(format_request(fields));
   }
@@ -66,7 +78,7 @@ Snapshot::take_in_session(std::shared_ptr<const detail::Backend> backend,
   if (!snapshot->parse()) {
     return unexpected(
         CommandFailure{.kind = FailureKind::refused,
-                       .dispatched = true,
+                       .delivery = DeliveryStatus::replied,
                        .exit_code = 0,
                        .diagnostic = "tmux output did not match the fields asked for"});
   }
@@ -76,14 +88,14 @@ Snapshot::take_in_session(std::shared_ptr<const detail::Backend> backend,
     if (session_column == fields.size()) {
       return unexpected(CommandFailure{
           .kind = FailureKind::validation,
-          .dispatched = false,
+          .delivery = DeliveryStatus::not_started,
           .exit_code = 0,
           .diagnostic = "psmux routed snapshot has no session identity field"});
     }
     if (snapshot->rows().empty()) {
       return unexpected(CommandFailure{
           .kind = FailureKind::missing,
-          .dispatched = true,
+          .delivery = DeliveryStatus::replied,
           .exit_code = 0,
           .diagnostic = "psmux session changed while reading its snapshot"});
     }
@@ -91,7 +103,7 @@ Snapshot::take_in_session(std::shared_ptr<const detail::Backend> backend,
       if (row[session_column] != session_id) {
         return unexpected(CommandFailure{
             .kind = FailureKind::missing,
-            .dispatched = true,
+            .delivery = DeliveryStatus::replied,
             .exit_code = 0,
             .diagnostic = "psmux session changed while reading its snapshot"});
       }

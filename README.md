@@ -57,8 +57,8 @@ failure by throwing.)
 - **Typed queries.** [`FilterExpr`](#query-with-typed-filters) over tmux's own
   fields, composed with `&&`, `||` and `!`, working with standard ranges.
 - **Errors as values.** One `CommandFailure` type with a
-  [kind](#when-things-fail), so a caller can tell a malformed request from
-  tmux refusing from tmux never answering.
+  [kind and delivery state](#when-things-fail), so a caller can tell a
+  malformed request from a tmux refusal and an indeterminate timeout.
 - **No dependencies.** The core links nothing. Not even a JSON parser.
 - **Two standards.** C++23 over `std::expected`, or C++20 over pinned
   `tl::expected`, each in its own ABI namespace so they cannot be mixed by
@@ -446,12 +446,21 @@ if (!gone.has_value()) {
 | Kind | Means |
 |---|---|
 | `validation` | The request was malformed; it never left the process |
-| `unsupported` | The selected backend cannot provide the operation safely; nothing was dispatched |
+| `unsupported` | The selected backend cannot provide the operation safely |
 | `spawn`, `pre_exec`, `pipe` | tmux could not be started or talked to |
-| `timeout` | Dispatched, no answer — tmux may already have acted |
+| `timeout` | A deadline expired |
 | `refused` | tmux ran and said no |
 | `missing` | The object is gone. tmux itself reports this as empty fields and exit zero |
 | `truncated` | The answer did not fit the limit given |
+
+`kind` says why the call failed; `delivery` says how far the command got:
+
+| Delivery | Means |
+|---|---|
+| `not_started` | tmux definitely did not receive the command; blind retry is safe |
+| `written` | the complete request reached the transport, but no terminal reply did |
+| `replied` | tmux produced a terminal reply |
+| `indeterminate` | the transport cannot prove whether tmux saw or completed it |
 
 ### Escape hatch
 
@@ -503,34 +512,30 @@ chain.new_window("a:b", "unreachable");
 std::printf("chain valid: %s\n", chain.valid() ? "yes" : "no"); // no
 ```
 
-Three ways to send work, and the difference matters:
+Three ways to send typed work, plus a raw control stream:
 
 | | What it is | Failure |
 |---|---|---|
 | **Call** | One command, one process | Reported on the call |
 | **Batch** | One tmux invocation, one fail-fast group | Partially applied, not rolled back |
 | **Chain** | Validated as it is built | A bad target is caught before tmux is reached |
-| **Control** | One connection held open | Every command gets its own reply block |
+| **Control** | One connection held open | Ordered reply blocks before a private request boundary |
 
-`Server::over_control(session)` returns a `Server` that dispatches every entity
-operation over a held-open connection — the same entity calls, without a
-process each, about 4.6× faster per listing. `source_file` is deliberately
-unsupported there because a file can add an unknowable number of control reply
-blocks; `check_file` remains available. Direct raw commands that synchronously
-insert reply blocks are rejected unless the low-level connection is given their
-exact reply count. The inferred-count path does not inspect live aliases, so an
-alias that changes the count must use that overload. A control-backed `Server`
-has no count override and requires aliases to preserve that count for every
-command it dispatches; otherwise use a low-level `Connection` or a
-subprocess-backed `Server`. See
-[`docs/design/control-transport.md`](docs/design/control-transport.md).
+`Server` uses ordinary tmux client processes because they remain alive through
+waiting jobs and file operations and return tmux's final exit status.
+`Server::control(session)` instead opens a low-level `Connection` for guarded
+reply blocks and outside-block events. A guard proves where tmux framed a
+request; it does not prove that a waiting command has finished. Use this raw
+surface for notification streams and protocol tooling, not as a faster typed
+executor. See [`docs/design/control-transport.md`](docs/design/control-transport.md).
 
-Streaming policy can enter through either Server doorway without rebuilding
-its socket route: use `control_with_options` or `over_control_with_options`.
-The Server supplies the socket and the first argument supplies the session
-name; the caller-selected executable, deadlines, limits, and pane-output policy
-are preserved. Windows psmux rejects both forms as unsupported before launching
-a control client.
+`control_with_options` keeps the Server's socket route while preserving the
+caller-selected executable, deadlines, limits, and pane-output policy. Windows
+psmux rejects control mode before launching a client.
+
+`take_notifications` is a single draining cursor on `Connection`. For two
+independent consumers, open a `NotificationWatch`; every watch has its own wait,
+dropped-event count, and readiness descriptor over one shared bounded log.
 
 ## Core concepts
 
@@ -542,7 +547,8 @@ a control client.
 | [`Pane`](include/libtmux/entities.hpp) | pane (`%1`, `%2`, …) | Where commands run |
 | [`Client`](include/libtmux/entities.hpp) | an attached terminal | Read-only |
 | [`Buffer`](include/libtmux/entities.hpp) | the server's clipboard | Named text outliving its pane |
-| [`Connection`](include/libtmux/control.hpp) | a control-mode session | Reply blocks, notifications |
+| [`Connection`](include/libtmux/control.hpp) | a control-mode session | Guarded blocks, outside-block events |
+| [`NotificationWatch`](include/libtmux/notification.hpp) | one outside-block event consumer | Independent cursor, wait, and readiness descriptor |
 
 ## tmux, libtmux, and tmuxp
 
@@ -707,7 +713,7 @@ child-to-parent relations that first prove the child still exists.
 launching `tmux.exe`. Check `ServerFeature` before choosing a workflow; a
 custom backend is unknown and supports nothing until it identifies its own
 contract. Unsupported typed calls return `FailureKind::unsupported` with
-`dispatched == false`.
+`delivery == DeliveryStatus::not_started`.
 
 The following capability boundaries fail before dispatch on Windows:
 
@@ -728,12 +734,11 @@ The following capability boundaries fail before dispatch on Windows:
 - pane selection and killing, session option and hook reads, reusable attach
   commands, and window targets.
 
-The legacy `Session::attach_command()` and `Window::target()` keep their POSIX
-signatures and return empty values on Windows. New code should use
-`checked_attach_command()` and `checked_target()` to receive the explicit
-unsupported failure. Ambiguous `-L default`, unsafe registry names, and typed
-arguments containing psmux command separators or line breaks are malformed
-requests instead, so they report `FailureKind::validation`.
+`Session::attach_command()` and `Window::checked_target()` return an explicit
+unsupported failure on Windows. `Window::target()` retains its empty
+compatibility sentinel. Ambiguous `-L default`, unsafe registry names, and
+typed arguments containing psmux command separators or line breaks are
+malformed requests instead, so they report `FailureKind::validation`.
 
 With an intact psmux registry, captured handles fail closed after an external
 session rename. Reacquire the session from `Server::session()` before

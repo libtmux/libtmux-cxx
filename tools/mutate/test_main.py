@@ -13,6 +13,23 @@ from tools.mutate.runner import Outcome
 class MutationMainTest(unittest.TestCase):
     """Keep a green mutation report from hiding a broken restored tree."""
 
+    def test_operation_mutations_cover_the_foundation_guards(self) -> None:
+        """Keep the four operation-state race ratchets selectable."""
+        operation_ids = {
+            mutation.mutation_id
+            for mutation in mutation_main.CATALOGUE
+            if mutation.mutation_id.startswith("operation-")
+        }
+
+        self.assertTrue(
+            {
+                "operation-single-publication",
+                "operation-cancellation-source-owned",
+                "operation-registration-recheck",
+                "operation-source-retention",
+            }.issubset(operation_ids)
+        )
+
     def run_main_with_restore_status(self, status: int) -> int:
         """Run one mocked mutation and return the command status."""
         mutation = mutation_main.CATALOGUE[0]

@@ -47,14 +47,14 @@ using libtmux::mcp::server::ProtocolEra;
 class SlowBackend final : public libtmux::detail::Backend {
 public:
   libtmux::expected<std::string, libtmux::CommandFailure>
-  run(const std::vector<std::string>&, std::optional<std::chrono::milliseconds> timeout,
+  run(const libtmux::CommandRequest&, std::optional<std::chrono::milliseconds> timeout,
       std::optional<std::size_t>) const override {
     if (timeout.has_value()) {
       std::this_thread::sleep_for(*timeout);
     }
     return libtmux::unexpected(
         libtmux::CommandFailure{.kind = libtmux::FailureKind::timeout,
-                                .dispatched = true,
+                                .delivery = libtmux::DeliveryStatus::replied,
                                 .exit_code = -1,
                                 .diagnostic = "scripted timeout"});
   }

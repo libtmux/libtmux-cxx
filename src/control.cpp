@@ -166,27 +166,9 @@ Parser::feed(std::span<const std::byte> input) {
     return unexpected(*failure_);
   }
 
-  pending_.insert(pending_.end(), input.begin(), input.end());
   std::vector<Event> events;
-  for (;;) {
-    const auto newline = std::find(pending_.begin(), pending_.end(), std::byte{0x0a});
-    if (newline == pending_.end()) {
-      // Nothing to hand back and nowhere to put the rest. A line this long is
-      // not a large answer — bodies arrive as many lines — so it is the stream
-      // that is wrong, and a control stream cannot be resynchronised.
-      if (line_bytes_ != 0U && pending_.size() > line_bytes_) {
-        failure_ = ProtocolError{"control line exceeded " +
-                                 std::to_string(line_bytes_) + " bytes"};
-        pending_.clear();
-        pending_.shrink_to_fit();
-        return unexpected(*failure_);
-      }
-      break;
-    }
-    Bytes line{pending_.begin(), newline};
-    pending_.erase(pending_.begin(), newline + 1);
-    const auto view = std::span<const std::byte>{line};
-
+  const auto consume_line =
+      [&](std::span<const std::byte> view) -> expected<void, ProtocolError> {
     if (block_) {
       const auto close = [&](std::string_view prefix,
                              ControlTerminal terminal) -> bool {
@@ -205,16 +187,16 @@ Parser::feed(std::span<const std::byte> input) {
       };
       if (close("%end ", ControlTerminal::end) ||
           close("%error ", ControlTerminal::error)) {
-        continue;
+        return {};
       }
       // Counted in full, retained up to the bound. Draining the rest is what
       // keeps the next command's reply attributable: a parser that stopped
       // reading here would meet `%end` mid-body and lose the stream.
-      const std::size_t arriving = line.size() + 1U;
+      const std::size_t arriving = view.size() + 1U;
       block_->body_bytes += arriving;
       if (retained_reply_bytes_ == 0U ||
           block_->body.size() + arriving <= retained_reply_bytes_) {
-        block_->body.insert(block_->body.end(), line.begin(), line.end());
+        block_->body.insert(block_->body.end(), view.begin(), view.end());
         block_->body.push_back(std::byte{0x0a});
       } else if (!block_->body_truncated) {
         block_->body_truncated = true;
@@ -222,7 +204,7 @@ Parser::feed(std::span<const std::byte> input) {
         // needed. Without this the vector keeps whatever growth reserved.
         block_->body.shrink_to_fit();
       }
-      continue;
+      return {};
     }
 
     if (marker(view, "%begin")) {
@@ -237,7 +219,7 @@ Parser::feed(std::span<const std::byte> input) {
                             .begin_metadata = std::move(parsed->metadata),
                             .terminal_metadata = {},
                             .body = {}};
-      continue;
+      return {};
     }
     if (marker(view, "%end") || marker(view, "%error")) {
       failure_ = ProtocolError{"terminal guard without an open block"};
@@ -249,6 +231,51 @@ Parser::feed(std::span<const std::byte> input) {
       return unexpected(*failure_);
     }
     events.emplace_back(Notification{std::move(*body)});
+    return {};
+  };
+
+  const auto reject_oversized_line =
+      [&]() -> expected<std::vector<Event>, ProtocolError> {
+    failure_ = ProtocolError{"control line exceeded " + std::to_string(line_bytes_) +
+                             " bytes"};
+    pending_.clear();
+    pending_.shrink_to_fit();
+    return unexpected(*failure_);
+  };
+
+  std::size_t cursor = 0U;
+  while (cursor < input.size()) {
+    const auto remaining = input.subspan(cursor);
+    const auto newline = std::find(remaining.begin(), remaining.end(), std::byte{0x0a});
+    const bool complete = newline != remaining.end();
+    const std::size_t segment_bytes =
+        static_cast<std::size_t>(newline - remaining.begin());
+
+    if (line_bytes_ != 0U && (pending_.size() > line_bytes_ ||
+                              segment_bytes > line_bytes_ - pending_.size())) {
+      // Nothing can be handed back and there is nowhere to put the rest. A
+      // line this long is not a large answer — bodies arrive as many lines —
+      // so the stream is wrong and cannot be resynchronised.
+      return reject_oversized_line();
+    }
+
+    if (!complete) {
+      pending_.insert(pending_.end(), remaining.begin(), remaining.end());
+      break;
+    }
+
+    expected<void, ProtocolError> consumed;
+    if (pending_.empty()) {
+      consumed = consume_line(remaining.first(segment_bytes));
+    } else {
+      pending_.insert(pending_.end(), remaining.begin(), newline);
+      consumed = consume_line(std::span<const std::byte>{pending_});
+      pending_.clear();
+    }
+    if (!consumed) {
+      return unexpected(consumed.error());
+    }
+    cursor += segment_bytes + 1U;
   }
   return events;
 }
@@ -279,9 +306,8 @@ struct KindName {
   NotificationKind kind;
 };
 
-// Every name tmux writes, across 3.2a to master. The two paste-buffer ones
-// arrived in 3.4; an older server simply never sends them.
-constexpr std::array<KindName, 21> kNotificationNames{{
+// Known notification names in the supported tmux range.
+constexpr auto kNotificationNames = std::to_array<KindName>({
     {"%output", NotificationKind::output},
     {"%extended-output", NotificationKind::extended_output},
     {"%pause", NotificationKind::paused},
@@ -303,7 +329,11 @@ constexpr std::array<KindName, 21> kNotificationNames{{
     {"%paste-buffer-changed", NotificationKind::paste_buffer_changed},
     {"%paste-buffer-deleted", NotificationKind::paste_buffer_deleted},
     {"%subscription-changed", NotificationKind::subscription_changed},
-}};
+    {"%config-error", NotificationKind::config_error},
+    {"%exit", NotificationKind::exit},
+    {"%layout-change", NotificationKind::layout_change},
+    {"%message", NotificationKind::message},
+});
 
 // The arguments before any free text or payload, split on single spaces. Only
 // the leading region is tokenised: an output payload is already unescaped, so
@@ -359,12 +389,9 @@ ParsedNotification parse(const Notification& notification) {
     return parsed;
   }
 
-  // Output kinds end in bytes rather than fields, so their prefix is fixed
-  // width and everything after it is payload.
-  if (parsed.kind == NotificationKind::output ||
-      parsed.kind == NotificationKind::extended_output) {
-    const std::size_t argument_count =
-        parsed.kind == NotificationKind::output ? 2U : 4U;
+  // `%output` has one field before its byte payload.
+  if (parsed.kind == NotificationKind::output) {
+    constexpr std::size_t argument_count = 2U;
     const auto fields = leading_fields(line, argument_count);
     if (fields.size() < argument_count) {
       return parsed;
@@ -374,16 +401,31 @@ ParsedNotification parse(const Notification& notification) {
     for (std::size_t index = 0; index < argument_count; ++index) {
       consumed += fields[index].size() + 1U;
     }
-    if (parsed.kind == NotificationKind::extended_output) {
-      std::uint64_t age = 0;
-      const auto& digits = fields[2];
-      if (std::from_chars(digits.data(), digits.data() + digits.size(), age).ec ==
-          std::errc{}) {
-        parsed.age = age;
-      }
-    }
     if (consumed <= notification.body.size()) {
       parsed.payload = std::span<const std::byte>{notification.body}.subspan(consumed);
+    }
+    return parsed;
+  }
+  // Extended output may grow fields before the delimiter; tmux requires
+  // callers to ignore them.
+  if (parsed.kind == NotificationKind::extended_output) {
+    const auto fields = leading_fields(line, 3U);
+    if (fields.size() < 3U) {
+      return parsed;
+    }
+    place_argument(parsed, fields[1]);
+    std::uint64_t age = 0;
+    const auto& digits = fields[2];
+    const auto converted =
+        std::from_chars(digits.data(), digits.data() + digits.size(), age);
+    if (converted.ec == std::errc{} && converted.ptr == digits.data() + digits.size()) {
+      parsed.age = age;
+    }
+    const auto delimiter = line.find(
+        " : ", static_cast<std::size_t>(digits.data() - line.data()) + digits.size());
+    if (delimiter != std::string_view::npos) {
+      parsed.payload =
+          std::span<const std::byte>{notification.body}.subspan(delimiter + 3U);
     }
     return parsed;
   }

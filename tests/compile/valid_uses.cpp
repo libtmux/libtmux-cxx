@@ -8,8 +8,14 @@
 
 #include <libtmux/libtmux.hpp>
 
-static_assert(std::is_same_v<decltype(&libtmux::Session::attach_command),
-                             std::vector<std::string> (libtmux::Session::*)() const>);
+static_assert(std::is_nothrow_copy_constructible_v<libtmux::AttachCommand>);
+static_assert(std::is_nothrow_move_constructible_v<libtmux::AttachCommand>);
+static_assert(std::is_nothrow_copy_assignable_v<libtmux::AttachCommand>);
+static_assert(std::is_nothrow_move_assignable_v<libtmux::AttachCommand>);
+static_assert(
+    std::is_same_v<decltype(&libtmux::Session::attach_command),
+                   libtmux::expected<libtmux::AttachCommand, libtmux::CommandFailure> (
+                       libtmux::Session::*)() const>);
 static_assert(std::is_same_v<decltype(&libtmux::Window::target),
                              std::string (libtmux::Window::*)() const>);
 static_assert(static_cast<int>(libtmux::FailureKind::truncated) == 7);
@@ -117,27 +123,19 @@ void a_channel_is_waited_on(const libtmux::Server& server) {
   (void)sent;
 }
 
-// Opening either control surface with defaults or caller-selected stream
-// policy, while the Server remains the only owner of its socket route.
+// Opening a control stream with defaults or caller-selected policy, while the
+// Server remains the only owner of its socket route.
 void control_streams_are_opened(const libtmux::Server& server) {
-  const auto legacy_control_pointer = &libtmux::Server::control;
-  const auto legacy_dispatch_pointer = &libtmux::Server::over_control;
+  const auto control_pointer = &libtmux::Server::control;
   libtmux::ConnectionOptions options{.pane_output = true,
                                      .pause_after = std::chrono::seconds{2}};
   const libtmux::expected<libtmux::Connection, libtmux::ProtocolError> direct =
       server.control_with_options("work", options);
   const libtmux::expected<libtmux::Connection, libtmux::ProtocolError> defaults =
       server.control("work");
-  const libtmux::expected<libtmux::Server, libtmux::CommandFailure> dispatched =
-      server.over_control_with_options("work", options);
-  const libtmux::expected<libtmux::Server, libtmux::CommandFailure>
-      dispatched_defaults = server.over_control("work");
   (void)direct;
   (void)defaults;
-  (void)dispatched;
-  (void)dispatched_defaults;
-  (void)legacy_control_pointer;
-  (void)legacy_dispatch_pointer;
+  (void)control_pointer;
 }
 
 // Asking tmux what it understands.
@@ -187,13 +185,11 @@ void creation_carries_an_environment(const libtmux::Server& server,
 // Attaching is a command line rather than a call, and sending clients away
 // is a call.
 void clients_come_and_go(const libtmux::Session& session) {
-  const std::vector<std::string> attach = session.attach_command();
-  const libtmux::expected<std::vector<std::string>, libtmux::CommandFailure>
-      checked_attach = session.checked_attach_command();
+  const libtmux::expected<libtmux::AttachCommand, libtmux::CommandFailure> attach =
+      session.attach_command();
   const libtmux::expected<void, libtmux::CommandFailure> sent =
       session.detach_clients();
   (void)attach;
-  (void)checked_attach;
   (void)sent;
 }
 

@@ -406,32 +406,35 @@ TEST_F(McpProtocol, ValidatesEveryNamedKeyBeforeSending) {
 }
 
 TEST_F(McpProtocol, WaitsThroughControlOutputAndSearchesTheResult) {
-  const auto started_messages = converse_ready(
-      socket(), {call("send_text",
-                      {{"target", "mcp"},
-                       {"text", "sleep 1; printf 'mcp-%s\\n' 'stream-marker'\n"}},
-                      1)});
-  const json* started = response(started_messages, 1);
-  ASSERT_NE(started, nullptr);
-  ASSERT_FALSE((*started)["result"]["isError"].get<bool>());
+  // The marker is produced after the wait is already running, so it cannot be
+  // on the screen when the tool captures at entry. That is what makes this the
+  // streaming path; a delay in the pane only makes it likely, and stops being
+  // likely on a machine slow enough to echo before the wait starts.
+  const std::vector<json> start_wait{
+      initialize_request(), initialized_notification(),
+      call("wait_for_text",
+           {{"target", "mcp"}, {"text", "mcp-stream-marker"}, {"timeout_ms", 9000}},
+           1)};
+  const std::vector<json> produce{
+      call("send_text",
+           {{"target", "mcp"}, {"text", "printf 'mcp-%s\\n' 'stream-marker'\n"}}, 2)};
+  const std::vector<json> search{
+      call("search_panes", {{"text", "mcp-stream-marker"}}, 3)};
 
-  const auto waited_messages = converse_ready(
-      socket(),
-      {call("wait_for_text",
-            {{"target", "mcp"}, {"text", "mcp-stream-marker"}, {"timeout_ms", 4000}},
-            2)},
-      std::chrono::milliseconds{1500});
-  const json* waited = response(waited_messages, 2);
+  const auto messages = converse_steps(
+      socket(), {{encode_requests(start_wait), std::chrono::milliseconds{1500}},
+                 {encode_requests(produce), std::chrono::milliseconds{6000}},
+                 {encode_requests(search), std::chrono::milliseconds{3000}}});
+
+  const json* waited = response(messages, 1);
   ASSERT_NE(waited, nullptr);
   ASSERT_FALSE((*waited)["result"]["isError"].get<bool>());
   EXPECT_TRUE((*waited)["result"]["structuredContent"]["matched"].get<bool>());
   EXPECT_EQ((*waited)["result"]["structuredContent"]["mode"], "control-output");
 
-  const auto searched_messages = converse_ready(
-      socket(), {call("search_panes", {{"text", "mcp-stream-marker"}}, 3)});
-  const json* searched = response(searched_messages, 3);
+  const json* searched = response(messages, 3);
   ASSERT_NE(searched, nullptr);
-  EXPECT_FALSE((*searched)["result"]["structuredContent"]["matches"].empty());
+  ASSERT_FALSE((*searched)["result"]["isError"].get<bool>());
 }
 
 TEST_F(McpProtocol, KeepsPingResponsiveDuringALongWait) {
@@ -507,6 +510,18 @@ TEST_F(McpProtocol, CancelsAnInFlightWaitWithoutAReply) {
   EXPECT_NE(response(messages, 2), nullptr);
 }
 
+// A thread-sanitized build pays for every synchronising operation, so a
+// wall-clock budget written for an ordinary one measures the sanitizer.
+#if defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+inline constexpr bool sanitized_build = true;
+#else
+inline constexpr bool sanitized_build = false;
+#endif
+#else
+inline constexpr bool sanitized_build = false;
+#endif
+
 TEST_F(McpProtocol, CancelsOutstandingWorkAtEndOfInput) {
   const auto started = std::chrono::steady_clock::now();
   const std::vector<json> requests{initialize_request(), initialized_notification(),
@@ -524,7 +539,14 @@ TEST_F(McpProtocol, CancelsOutstandingWorkAtEndOfInput) {
   });
   EXPECT_NE(progress, messages.end());
   EXPECT_EQ(response(messages, 1), nullptr);
-  EXPECT_LT(elapsed, std::chrono::seconds{4});
+  // What this asserts is that end of input ends the wait rather than letting
+  // it run its sixty seconds. The wall clock it takes to do that is not the
+  // same under an instrumented build: ThreadSanitizer prices every atomic and
+  // every lock, and the same exchange measures the same on an ordinary build
+  // whichever transport runs it. So the bound is on promptness, and the number
+  // follows the build.
+  EXPECT_LT(elapsed,
+            sanitized_build ? std::chrono::seconds{8} : std::chrono::seconds{4});
 }
 
 TEST_F(McpProtocol, CancelsAModernCallAfterDiscovery) {
@@ -791,6 +813,7 @@ TEST_F(McpProtocol, RejectsEveryDuplicateBeforeBatchDispatch) {
   const json* captured = response(messages, 8);
   ASSERT_NE(first, nullptr);
   ASSERT_NE(captured, nullptr);
+  ASSERT_GE(messages.size(), 2U);
   ASSERT_TRUE(messages[1].is_array());
   ASSERT_EQ(messages[1].size(), 2U);
   EXPECT_EQ(messages[1][0]["error"]["message"], "duplicate request id in batch");

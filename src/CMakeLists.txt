@@ -3,12 +3,13 @@
 include(GNUInstallDirs)
 
 set(LIBTMUX_SOURCES
-    version.cpp server.cpp backend.cpp control_backend.cpp snapshot.cpp
-    entities.cpp socket_identity.cpp control.cpp)
+    version.cpp server.cpp backend.cpp snapshot.cpp entities.cpp
+    socket_identity.cpp control.cpp completion_queue.cpp command_engine.cpp async.cpp)
 if(WIN32)
   list(APPEND LIBTMUX_SOURCES process_windows.cpp connection_windows.cpp)
 else()
-  list(APPEND LIBTMUX_SOURCES process.cpp connection.cpp)
+  list(APPEND LIBTMUX_SOURCES process.cpp posix_child.cpp process_engine.cpp
+       connection.cpp notification_stream.cpp)
 endif()
 add_library(libtmux STATIC ${LIBTMUX_SOURCES})
 add_library(libtmux::libtmux ALIAS libtmux)

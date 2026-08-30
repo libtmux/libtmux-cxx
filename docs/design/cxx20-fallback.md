@@ -63,7 +63,7 @@ Both legs build. The C++23 build is the default and links nothing outside the
 standard library. `LIBTMUX_CXX_STANDARD=20` fetches the pinned source, defines
 `LIBTMUX_USE_TL_EXPECTED`, and produces the same public surface.
 
-Every public header opens `libtmux::v1_cxx23` or `libtmux::v1_cxx20` as an
+Every public header opens `libtmux::v2_cxx23` or `libtmux::v2_cxx20` as an
 inline namespace, so mixing objects from the two builds is a link error whose
 missing symbol names the ABI it expected. The namespace is inline, so callers
 still write `libtmux::Server` and never see it.

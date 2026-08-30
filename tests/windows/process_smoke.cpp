@@ -29,8 +29,8 @@
 
 namespace {
 
+using libtmux::DeliveryStatus;
 using libtmux::detail::Argument;
-using libtmux::detail::DispatchPhase;
 using libtmux::detail::Exited;
 using libtmux::detail::ProcessError;
 using libtmux::detail::ProcessReply;
@@ -553,7 +553,7 @@ void test_missing_executable(const std::filesystem::path& self, Checks& checks) 
   if (checks.require(!reply.has_value(), "a missing executable must fail to spawn")) {
     checks.require(reply.error().kind == ProcessError::Kind::spawn,
                    "a missing executable must be a spawn error");
-    checks.require(reply.error().dispatch_phase == DispatchPhase::not_dispatched,
+    checks.require(reply.error().delivery == DeliveryStatus::not_started,
                    "a missing executable must not be reported as dispatched");
   }
 }
@@ -613,7 +613,7 @@ void test_timeout_tree(const std::filesystem::path& self, Checks& checks) {
   const auto& error = reply.error();
   checks.require(error.kind == ProcessError::Kind::timeout,
                  "a post-launch deadline must be a timeout error");
-  checks.require(error.dispatch_phase == DispatchPhase::dispatch_uncertain,
+  checks.require(error.delivery == DeliveryStatus::indeterminate,
                  "a resumed process must be reported as possibly dispatched");
 
   const std::string output = bytes(error.stdout_bytes);

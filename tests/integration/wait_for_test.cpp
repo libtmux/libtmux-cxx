@@ -88,7 +88,7 @@ TEST(WaitFor, AChannelNeedsAName) {
   const auto waited = server.wait_for("", 1s);
   ASSERT_FALSE(waited.has_value());
   EXPECT_EQ(waited.error().kind, libtmux::FailureKind::validation);
-  EXPECT_FALSE(waited.error().dispatched);
+  EXPECT_EQ(waited.error().delivery, libtmux::DeliveryStatus::not_started);
   EXPECT_FALSE(server.signal("").has_value());
 }
 

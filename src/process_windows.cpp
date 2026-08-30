@@ -269,14 +269,13 @@ struct PreparedRequest final {
   return result;
 }
 
-[[nodiscard]] ProcessError make_error(ProcessError::Kind kind, DispatchPhase phase,
+[[nodiscard]] ProcessError make_error(ProcessError::Kind kind, DeliveryStatus delivery,
                                       std::string_view operation,
                                       const ProcessRequest& request,
                                       std::error_code cause, Capture capture = {}) {
   return {
       .kind = kind,
-      .dispatch_phase = phase,
-      .cause = cause,
+      .delivery = delivery,
       .diagnostic = diagnostic(operation, request, cause),
       .stdout_bytes = std::move(capture.stdout_bytes),
       .stderr_bytes = std::move(capture.stderr_bytes),
@@ -292,7 +291,7 @@ struct PreparedRequest final {
 [[nodiscard]] std::optional<ProcessError>
 validate_request(const ProcessRequest& request) {
   const auto invalid = [&]() {
-    return make_error(ProcessError::Kind::validation, DispatchPhase::not_dispatched,
+    return make_error(ProcessError::Kind::validation, DeliveryStatus::not_started,
                       "validation", request,
                       std::make_error_code(std::errc::invalid_argument));
   };
@@ -483,13 +482,13 @@ prepare_request(const ProcessRequest& request) {
   auto executable = widen_utf8(libtmux_path::command_string(request.executable));
   if (!executable) {
     return unexpected(make_error(ProcessError::Kind::validation,
-                                 DispatchPhase::not_dispatched, "UTF-8 conversion",
+                                 DeliveryStatus::not_started, "UTF-8 conversion",
                                  request, windows_error(executable.error())));
   }
   auto resolved_executable = resolve_executable(*executable);
   if (!resolved_executable) {
     const auto kind = spawn_error_kind(resolved_executable.error());
-    return unexpected(make_error(kind, DispatchPhase::not_dispatched,
+    return unexpected(make_error(kind, DeliveryStatus::not_started,
                                  spawn_operation(kind), request,
                                  windows_error(resolved_executable.error())));
   }
@@ -501,7 +500,7 @@ prepare_request(const ProcessRequest& request) {
     auto widened = widen_utf8(argument.value);
     if (!widened) {
       return unexpected(make_error(ProcessError::Kind::validation,
-                                   DispatchPhase::not_dispatched, "UTF-8 conversion",
+                                   DeliveryStatus::not_started, "UTF-8 conversion",
                                    request, windows_error(widened.error())));
     }
     arguments.push_back(std::move(*widened));
@@ -513,7 +512,7 @@ prepare_request(const ProcessRequest& request) {
     auto wide_name = widen_utf8(name);
     if (!wide_name) {
       return unexpected(make_error(ProcessError::Kind::validation,
-                                   DispatchPhase::not_dispatched, "UTF-8 conversion",
+                                   DeliveryStatus::not_started, "UTF-8 conversion",
                                    request, windows_error(wide_name.error())));
     }
     std::optional<std::wstring> wide_value;
@@ -521,7 +520,7 @@ prepare_request(const ProcessRequest& request) {
       auto converted = widen_utf8(*value);
       if (!converted) {
         return unexpected(make_error(ProcessError::Kind::validation,
-                                     DispatchPhase::not_dispatched, "UTF-8 conversion",
+                                     DeliveryStatus::not_started, "UTF-8 conversion",
                                      request, windows_error(converted.error())));
       }
       wide_value = std::move(*converted);
@@ -532,7 +531,7 @@ prepare_request(const ProcessRequest& request) {
   auto environment = build_environment(overlay);
   if (!environment) {
     return unexpected(make_error(ProcessError::Kind::pre_exec,
-                                 DispatchPhase::not_dispatched, "environment", request,
+                                 DeliveryStatus::not_started, "environment", request,
                                  windows_error(environment.error())));
   }
 
@@ -545,7 +544,7 @@ prepare_request(const ProcessRequest& request) {
   }
   if (command_line.size() >= 32767U) {
     return unexpected(make_error(
-        ProcessError::Kind::validation, DispatchPhase::not_dispatched, "validation",
+        ProcessError::Kind::validation, DeliveryStatus::not_started, "validation",
         request, std::make_error_code(std::errc::argument_list_too_long)));
   }
 
@@ -752,14 +751,24 @@ void terminate_and_drain(HANDLE job, HANDLE process, OwnedHandle& stdout_read,
 } // namespace
 
 expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) {
+  return run_process(request, [] { return false; });
+}
+
+expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request,
+                                                 const CancellationProbe& cancelled) {
   if (auto validation = validate_request(request)) {
     return unexpected(std::move(*validation));
   }
   if (request.timeout.has_value() &&
       *request.timeout <= std::chrono::milliseconds::zero()) {
     return unexpected(make_error(ProcessError::Kind::timeout,
-                                 DispatchPhase::not_dispatched, "timeout", request,
+                                 DeliveryStatus::not_started, "timeout", request,
                                  std::make_error_code(std::errc::timed_out)));
+  }
+  if (cancelled()) {
+    return unexpected(make_error(ProcessError::Kind::cancelled,
+                                 DeliveryStatus::not_started, "cancellation", request,
+                                 std::make_error_code(std::errc::operation_canceled)));
   }
 
   std::optional<Clock::time_point> deadline;
@@ -773,15 +782,15 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
 
   auto io = prepare_child_io(request.stdio);
   if (!io) {
-    return unexpected(make_error(ProcessError::Kind::pipe,
-                                 DispatchPhase::not_dispatched, io.error().operation,
-                                 request, windows_error(io.error().error)));
+    return unexpected(make_error(ProcessError::Kind::pipe, DeliveryStatus::not_started,
+                                 io.error().operation, request,
+                                 windows_error(io.error().error)));
   }
 
   AttributeList attributes;
   if (const auto error = attributes.initialize(); error != ERROR_SUCCESS) {
     return unexpected(make_error(ProcessError::Kind::pre_exec,
-                                 DispatchPhase::not_dispatched, "handle inheritance",
+                                 DeliveryStatus::not_started, "handle inheritance",
                                  request, windows_error(error)));
   }
   std::array<HANDLE, 3> inherited_handles{io->input.get(), io->output.get(),
@@ -789,7 +798,7 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
   if (const auto error = attributes.set_inherited_handles(inherited_handles);
       error != ERROR_SUCCESS) {
     return unexpected(make_error(ProcessError::Kind::pre_exec,
-                                 DispatchPhase::not_dispatched, "handle inheritance",
+                                 DeliveryStatus::not_started, "handle inheritance",
                                  request, windows_error(error)));
   }
 
@@ -798,14 +807,19 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
   OwnedHandle job{::CreateJobObjectW(nullptr, nullptr)};
   if (!job.valid()) {
     return unexpected(make_error(ProcessError::Kind::pre_exec,
-                                 DispatchPhase::not_dispatched, "job", request,
+                                 DeliveryStatus::not_started, "job", request,
                                  windows_error(::GetLastError())));
   }
 
   if (deadline.has_value() && Clock::now() >= *deadline) {
     return unexpected(make_error(ProcessError::Kind::timeout,
-                                 DispatchPhase::not_dispatched, "timeout", request,
+                                 DeliveryStatus::not_started, "timeout", request,
                                  std::make_error_code(std::errc::timed_out)));
+  }
+  if (cancelled()) {
+    return unexpected(make_error(ProcessError::Kind::cancelled,
+                                 DeliveryStatus::not_started, "cancellation", request,
+                                 std::make_error_code(std::errc::operation_canceled)));
   }
 
   STARTUPINFOEXW startup{};
@@ -826,7 +840,7 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
   if (created == FALSE) {
     const auto error = ::GetLastError();
     const auto kind = spawn_error_kind(error);
-    return unexpected(make_error(kind, DispatchPhase::not_dispatched,
+    return unexpected(make_error(kind, DeliveryStatus::not_started,
                                  spawn_operation(kind), request, windows_error(error)));
   }
 
@@ -843,8 +857,8 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
     static_cast<void>(::WaitForSingleObject(
         process.get(), static_cast<DWORD>(terminate_wait.count())));
     return unexpected(make_error(ProcessError::Kind::pre_exec,
-                                 DispatchPhase::not_dispatched, "job assignment",
-                                 request, windows_error(error)));
+                                 DeliveryStatus::not_started, "job assignment", request,
+                                 windows_error(error)));
   }
 
   if (deadline.has_value() && Clock::now() >= *deadline) {
@@ -852,8 +866,17 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
     terminate_and_drain(job.get(), process.get(), io->stdout_pipe.read,
                         io->stderr_pipe.read, capture, request.capture_limit);
     return unexpected(make_error(
-        ProcessError::Kind::timeout, DispatchPhase::not_dispatched, "timeout", request,
+        ProcessError::Kind::timeout, DeliveryStatus::not_started, "timeout", request,
         std::make_error_code(std::errc::timed_out), std::move(capture)));
+  }
+  if (cancelled()) {
+    Capture capture;
+    terminate_and_drain(job.get(), process.get(), io->stdout_pipe.read,
+                        io->stderr_pipe.read, capture, request.capture_limit);
+    return unexpected(make_error(ProcessError::Kind::cancelled,
+                                 DeliveryStatus::not_started, "cancellation", request,
+                                 std::make_error_code(std::errc::operation_canceled),
+                                 std::move(capture)));
   }
 
   if (::ResumeThread(thread.get()) == static_cast<DWORD>(-1)) {
@@ -862,7 +885,7 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
     terminate_and_drain(job.get(), process.get(), io->stdout_pipe.read,
                         io->stderr_pipe.read, capture, request.capture_limit);
     return unexpected(make_error(ProcessError::Kind::pre_exec,
-                                 DispatchPhase::not_dispatched, "resume", request,
+                                 DeliveryStatus::not_started, "resume", request,
                                  windows_error(error), std::move(capture)));
   }
   thread.reset();
@@ -884,15 +907,15 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
         terminate_and_drain(job.get(), process.get(), io->stdout_pipe.read,
                             io->stderr_pipe.read, capture, request.capture_limit);
         return unexpected(make_error(
-            ProcessError::Kind::pipe, DispatchPhase::dispatch_uncertain,
-            "process status", request, windows_error(error), std::move(capture)));
+            ProcessError::Kind::pipe, DeliveryStatus::indeterminate, "process status",
+            request, windows_error(error), std::move(capture)));
       }
     } else if (wait == WAIT_FAILED) {
       const auto error = ::GetLastError();
       terminate_and_drain(job.get(), process.get(), io->stdout_pipe.read,
                           io->stderr_pipe.read, capture, request.capture_limit);
       return unexpected(make_error(ProcessError::Kind::pipe,
-                                   DispatchPhase::dispatch_uncertain, "wait", request,
+                                   DeliveryStatus::indeterminate, "wait", request,
                                    windows_error(error), std::move(capture)));
     }
 
@@ -902,10 +925,9 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
       const auto failure = drained.error();
       terminate_and_drain(job.get(), process.get(), io->stdout_pipe.read,
                           io->stderr_pipe.read, capture, request.capture_limit);
-      return unexpected(make_error(ProcessError::Kind::pipe,
-                                   DispatchPhase::dispatch_uncertain, failure.operation,
-                                   request, windows_error(failure.error),
-                                   std::move(capture)));
+      return unexpected(make_error(
+          ProcessError::Kind::pipe, DeliveryStatus::indeterminate, failure.operation,
+          request, windows_error(failure.error), std::move(capture)));
     }
 
     if (exited && !io->stdout_pipe.read.valid() && !io->stderr_pipe.read.valid()) {
@@ -919,8 +941,16 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
       terminate_and_drain(job.get(), process.get(), io->stdout_pipe.read,
                           io->stderr_pipe.read, capture, request.capture_limit);
       return unexpected(make_error(
-          ProcessError::Kind::timeout, DispatchPhase::dispatch_uncertain, "timeout",
+          ProcessError::Kind::timeout, DeliveryStatus::indeterminate, "timeout",
           request, std::make_error_code(std::errc::timed_out), std::move(capture)));
+    }
+    if (!exited && cancelled()) {
+      terminate_and_drain(job.get(), process.get(), io->stdout_pipe.read,
+                          io->stderr_pipe.read, capture, request.capture_limit);
+      return unexpected(make_error(
+          ProcessError::Kind::cancelled, DeliveryStatus::indeterminate, "cancellation",
+          request, std::make_error_code(std::errc::operation_canceled),
+          std::move(capture)));
     }
     if (*drained) {
       continue;
@@ -941,7 +971,7 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
         terminate_and_drain(job.get(), process.get(), io->stdout_pipe.read,
                             io->stderr_pipe.read, capture, request.capture_limit);
         return unexpected(make_error(ProcessError::Kind::pipe,
-                                     DispatchPhase::dispatch_uncertain, "wait", request,
+                                     DeliveryStatus::indeterminate, "wait", request,
                                      windows_error(error), std::move(capture)));
       }
     }

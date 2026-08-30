@@ -178,7 +178,7 @@ TEST(WindowIndex, AWindowIsPutWhereItIsAskedFor) {
   // so, and a workspace rebuilt over a running one should hear it.
   const auto again = session->new_window(options);
   ASSERT_FALSE(again.has_value());
-  EXPECT_TRUE(again.error().dispatched);
+  EXPECT_NE(again.error().delivery, libtmux::DeliveryStatus::not_started);
 
   // Without one, tmux picks, and the earlier window is still where it was.
   libtmux::NewWindowOptions unplaced;

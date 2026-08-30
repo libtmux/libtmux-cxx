@@ -26,14 +26,19 @@
 #include <vector>
 
 #include "libtmux/abi.hpp"
+#include "libtmux/delivery.hpp"
 #include "libtmux/expected.hpp"
+#include "libtmux/notification.hpp"
 
 LIBTMUX_NAMESPACE_BEGIN
 
-// Why a decode stopped. The stream is terminal for its connection: a caller
-// cannot resynchronise a control stream, only start a new one.
+// Why a control operation stopped. The stream is terminal after a protocol
+// failure: a caller cannot resynchronise it, only start a new one. `delivery`
+// says whether the affected request was untouched, fully written, answered,
+// or left indeterminate.
 struct ProtocolError {
   std::string message;
+  DeliveryStatus delivery{DeliveryStatus::indeterminate};
 };
 
 enum class ControlTerminal : std::uint8_t { end, error };
@@ -65,71 +70,7 @@ struct ControlBlock {
   std::size_t body_bytes{0};
 };
 
-struct Notification {
-  std::vector<std::byte> body;
-};
-
 using Event = std::variant<ControlBlock, Notification>;
-
-// What a notification is, once its name and arguments have been read.
-//
-// `unknown` is not a failure. tmux has only ever added notifications across
-// the range this library supports — nineteen at 3.2a, twenty-one from 3.4 —
-// so a name this build does not know is a newer tmux, and the body is still
-// there to read. That is also why this is a kind and fields rather than a
-// variant: an exhaustive `std::visit` would turn every such addition into a
-// caller-breaking change.
-enum class NotificationKind : std::uint8_t {
-  unknown,
-  output,
-  extended_output,
-  paused,
-  resumed,
-  sessions_changed,
-  session_changed,
-  session_renamed,
-  session_window_changed,
-  client_detached,
-  client_session_changed,
-  window_add,
-  window_close,
-  window_renamed,
-  window_pane_changed,
-  unlinked_window_add,
-  unlinked_window_close,
-  unlinked_window_renamed,
-  pane_mode_changed,
-  paste_buffer_changed,
-  paste_buffer_deleted,
-  subscription_changed,
-};
-
-[[nodiscard]] std::string_view to_string(NotificationKind kind) noexcept;
-
-// A notification's arguments, as views into the notification it was read from.
-//
-// tmux types its arguments by prefix — `$0` a session, `@1` a window, `%2` a
-// pane — so each lands in the field it belongs to and the others stay empty.
-// `payload` is the pane bytes of an output notification, already unescaped;
-// it is empty for every other kind.
-//
-// Everything here borrows. The notification must outlive it, which is why
-// there is no overload taking a temporary.
-struct ParsedNotification {
-  NotificationKind kind{NotificationKind::unknown};
-  std::string_view name{};
-  std::string_view session{};
-  std::string_view window{};
-  std::string_view pane{};
-  std::string_view text{};
-  std::span<const std::byte> payload{};
-  // Milliseconds this output was behind when tmux wrote it. Only
-  // `extended_output` carries one.
-  std::optional<std::uint64_t> age{};
-};
-
-[[nodiscard]] ParsedNotification parse(const Notification& notification);
-ParsedNotification parse(Notification&&) = delete;
 
 class Parser final {
 public:
@@ -151,8 +92,6 @@ private:
   bool finished_{false};
 };
 
-enum class Attribution : std::uint8_t { exact, skipped, unknown };
-
 struct ControlCommand {
   std::vector<std::string> argv;
 };
@@ -161,13 +100,11 @@ struct ControlRequest {
   std::vector<ControlCommand> group;
 };
 
-struct ControlOperationResult {
-  Attribution attribution{Attribution::unknown};
-  std::optional<ControlBlock> block;
-};
-
 struct ControlRequestResult {
-  std::vector<ControlOperationResult> operations;
+  // Every synchronous reply block tmux emitted for this request, in wire
+  // order. tmux does not put a request or operation ID on its guards, so a
+  // command alias or inserted command may make this differ from `group`.
+  std::vector<ControlBlock> blocks;
   std::optional<ProtocolError> connection_error;
 };
 
@@ -178,8 +115,9 @@ struct ConnectionOptions {
   std::chrono::milliseconds startup_timeout{2000};
   std::chrono::milliseconds shutdown_timeout{2000};
   // Passed to the decoder. Raise the first to hold a bigger capture; the
-  // second bounds a line that never ends and wants raising only if tmux grows
-  // a longer one.
+  // second bounds a line that never ends. A connection accepts zero
+  // (unbounded) or at least 128 bytes, which leaves room for its private
+  // request boundary.
   std::size_t retained_reply_bytes{kDefaultRetainedReplyBytes};
   std::size_t line_bytes{kDefaultLineBytes};
 
@@ -258,7 +196,7 @@ public:
 
 private:
   friend class iterator;
-  // The next notification, or nothing once the deadline has passed with none.
+  // The next outside-block event, or nothing after an empty deadline.
   [[nodiscard]] const Notification* next();
 
   Connection* connection_{nullptr};
@@ -277,16 +215,14 @@ public:
   Connection(const Connection&) = delete;
   Connection& operator=(const Connection&) = delete;
 
-  // Rejects direct commands whose reply count is not implied by `group`.
-  // This overload does not inspect live aliases; use the exact-count overload.
+  // Completes at this request's private protocol boundary and preserves every
+  // guarded block before it. This is wire evidence, not a final command
+  // result: tmux may end a block before a waiting job or file operation later
+  // reports unguarded output or failure. Use `Server::run` when final success
+  // or failure is required.
   ControlRequestResult execute(ControlRequest request,
                                std::chrono::steady_clock::time_point deadline);
-  // The exact flag-1 block count, including synchronous inserts; flag-0 blocks
-  // do not count. A mismatch can misattribute concurrent replies and violates
-  // this overload's precondition; custom aliases need their expanded count.
-  ControlRequestResult execute(ControlRequest request, std::size_t expected_operations,
-                               std::chrono::steady_clock::time_point deadline);
-  // Everything tmux has said since the last call, returned at once.
+  // Every outside-block event tmux has written since the last call.
   //
   // Taking drains: what comes back will not come back again. It says nothing
   // about what happens next, so an empty result does not mean the stream has
@@ -294,17 +230,21 @@ public:
   // the next event with `wait_for_notifications` rather than polling for one.
   [[nodiscard]] std::vector<Notification> take_notifications();
 
+  // Open an independent cursor at the next outside-block event. Unlike the
+  // legacy taking methods above, watches do not steal events from each other.
+  [[nodiscard]] NotificationWatch watch_notifications();
+
   // The same, but waits for something to arrive.
   //
   // `take_notifications` returns immediately, so a caller reacting to tmux had
   // to call it in a loop and sleep between — which either wakes too often or
   // reacts too late, and picks that trade with no idea how long the next event
-  // will take. This blocks until at least one notification is available, the
+  // will take. This blocks until at least one event is available, the
   // connection fails, or the deadline passes, and returns whatever it has.
   //
   // An empty result means the deadline passed or the stream ended; the two are
   // told apart by asking `execute` or `shutdown`, which report the failure.
-  // Notifications already buffered are returned without waiting at all.
+  // Events already buffered are returned without waiting at all.
   [[nodiscard]] std::vector<Notification>
   wait_for_notifications(std::chrono::steady_clock::time_point deadline);
   // A descriptor that is readable exactly when a take would return something.
@@ -343,8 +283,8 @@ public:
   [[nodiscard]] NotificationRange
   events(std::chrono::steady_clock::time_point deadline);
 
-  // How many notifications were discarded to keep the buffer bounded, which
-  // is what distinguishes a quiet connection from one that outran its reader.
+  // How many outside-block events this Connection's legacy taking cursor
+  // missed to keep the shared log bounded. Each watch has its own count.
   [[nodiscard]] std::size_t dropped_notifications() const noexcept;
   [[nodiscard]] std::int64_t native_child_pid() const noexcept;
   expected<void, ProtocolError>

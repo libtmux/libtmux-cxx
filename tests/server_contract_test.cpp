@@ -4,7 +4,9 @@
 // the transport spikes.
 #include <chrono>
 #include <filesystem>
+#include <latch>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -17,12 +19,111 @@
 
 namespace {
 
+using libtmux::DeliveryStatus;
 using libtmux::Server;
 
 Server connect(const libtmux::test::ScopedTmuxServer& fixture) {
   auto server = Server::at_socket_path(fixture.socket_path().string());
   EXPECT_TRUE(server.has_value());
   return server.value();
+}
+
+// Every typed call now crosses the engine's threads, so a Server shared
+// between callers is a Server whose commands are interleaved rather than
+// serialised behind one another. Each answer must still be the answer to the
+// question that caller asked.
+// Submitting sends the command and keeps the answer for later, so a program
+// with several questions asks them all before collecting any. Each answer must
+// still belong to the question it was asked for.
+TEST(ServerContract, SubmittedCommandsAreCollectedLater) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+
+  constexpr int asked = 8;
+  std::vector<libtmux::CommandOperation> sent;
+  sent.reserve(asked);
+  for (int index = 0; index < asked; ++index) {
+    auto submitted =
+        server.submit({"display-message", "-p", "asked-" + std::to_string(index)});
+    ASSERT_TRUE(submitted.has_value()) << submitted.error().diagnostic;
+    sent.push_back(*std::move(submitted));
+  }
+
+  for (int index = 0; index < asked; ++index) {
+    auto answer = std::move(sent[static_cast<std::size_t>(index)]).wait();
+    ASSERT_TRUE(answer.has_value()) << answer.error().diagnostic;
+    EXPECT_EQ(*answer, "asked-" + std::to_string(index) + "\n");
+  }
+}
+
+// What `run` bounds per call, `submit` bounds per call too. The one long
+// question in a batch is exactly the one needing a bound of its own, and a
+// submission that could only take the server-wide default would leave a
+// caller opening a second server to ask it.
+TEST(ServerContract, ASubmissionTakesTheBoundTheCallerGaveIt) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+
+  auto submitted = server.submit({"display-message", "-p", "longer than one byte"}, {},
+                                 std::size_t{1});
+  ASSERT_TRUE(submitted.has_value()) << submitted.error().diagnostic;
+  auto answer = std::move(*submitted).wait();
+
+  ASSERT_FALSE(answer.has_value()) << "the call's own bound was not applied";
+  EXPECT_EQ(answer.error().kind, libtmux::FailureKind::truncated);
+  EXPECT_EQ(answer.error().delivery, DeliveryStatus::replied);
+  // Which bound was passed, not merely that one was. The diagnostic names the
+  // number a caller has to change, so naming the server's instead sends them
+  // to a setting that was never in force.
+  EXPECT_NE(answer.error().diagnostic.find("the 1 byte limit"), std::string::npos)
+      << answer.error().diagnostic;
+}
+
+// A submitted command reports what tmux said about it, not merely that it ran.
+TEST(ServerContract, ASubmittedFailureCarriesWhatTmuxSaid) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+
+  auto submitted = server.submit({"kill-session", "-t", "no-such-session"});
+  ASSERT_TRUE(submitted.has_value()) << submitted.error().diagnostic;
+  const auto answer = (*std::move(submitted)).wait();
+
+  ASSERT_FALSE(answer.has_value());
+  EXPECT_EQ(answer.error().kind, libtmux::FailureKind::refused);
+  EXPECT_NE(answer.error().diagnostic.find("no-such-session"), std::string::npos);
+}
+
+TEST(ServerContract, ConcurrentCallersEachGetTheirOwnAnswer) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+
+  constexpr int callers = 12;
+  std::vector<std::string> answers(callers);
+  std::vector<std::thread> asking;
+  asking.reserve(callers);
+  std::latch ready{callers};
+  for (int index = 0; index < callers; ++index) {
+    asking.emplace_back([&, index] {
+      const std::string mine = "caller-" + std::to_string(index);
+      ready.arrive_and_wait();
+      const auto printed = server.run({"display-message", "-p", mine});
+      if (printed.has_value()) {
+        answers[static_cast<std::size_t>(index)] = *printed;
+      }
+    });
+  }
+  for (auto& thread : asking) {
+    thread.join();
+  }
+
+  for (int index = 0; index < callers; ++index) {
+    EXPECT_EQ(answers[static_cast<std::size_t>(index)],
+              "caller-" + std::to_string(index) + "\n");
+  }
 }
 
 TEST(ServerContract, ArgumentsReachTmuxWithoutAShell) {
@@ -57,7 +158,7 @@ TEST(ServerContract, ANonzeroExitIsAReplyNotACrash) {
 
   const auto refused = server.run({"kill-session", "-t", "absent"});
   ASSERT_FALSE(refused.has_value());
-  EXPECT_TRUE(refused.error().dispatched);
+  EXPECT_EQ(refused.error().delivery, DeliveryStatus::replied);
   EXPECT_GT(refused.error().exit_code, 0);
   EXPECT_FALSE(refused.error().diagnostic.empty());
 }
@@ -69,7 +170,7 @@ TEST(ServerContract, AnUnknownSubcommandIsRefusedNotDispatchedBlindly) {
 
   const auto refused = server.run({"no-such-tmux-command"});
   ASSERT_FALSE(refused.has_value());
-  EXPECT_TRUE(refused.error().dispatched);
+  EXPECT_EQ(refused.error().delivery, DeliveryStatus::replied);
   EXPECT_NE(refused.error().diagnostic.find("no-such-tmux-command"), std::string::npos);
 }
 
@@ -78,8 +179,8 @@ TEST(ServerContract, AnUnreachableSocketFailsWithoutHanging) {
   ASSERT_TRUE(server.has_value());
   const auto refused = server->run({"list-sessions"});
   ASSERT_FALSE(refused.has_value());
-  // tmux ran and could not connect; the process itself was dispatched.
-  EXPECT_TRUE(refused.error().dispatched);
+  EXPECT_EQ(refused.error().kind, libtmux::FailureKind::missing);
+  EXPECT_EQ(refused.error().delivery, DeliveryStatus::not_started);
 }
 
 TEST(ServerContract, RepeatedRunsDoNotLeakDescriptors) {
@@ -107,8 +208,9 @@ TEST(ServerContract, ATimeoutIsItsOwnFailureNotARefusal) {
                                     std::chrono::milliseconds{300});
   ASSERT_FALSE(timed_out.has_value());
   EXPECT_EQ(timed_out.error().kind, libtmux::FailureKind::timeout);
-  // It reached tmux, so a caller must not assume nothing happened.
-  EXPECT_TRUE(timed_out.error().dispatched);
+  // The child started, but the transport cannot prove whether the command
+  // reached tmux before it was terminated.
+  EXPECT_EQ(timed_out.error().delivery, DeliveryStatus::indeterminate);
 }
 
 TEST(ServerContract, ARefusalIsDistinguishableFromNeverRunning) {
@@ -123,7 +225,7 @@ TEST(ServerContract, ARefusalIsDistinguishableFromNeverRunning) {
   const auto empty = server.run_batch(libtmux::CommandBatch{});
   ASSERT_FALSE(empty.has_value());
   EXPECT_EQ(empty.error().kind, libtmux::FailureKind::validation);
-  EXPECT_FALSE(empty.error().dispatched);
+  EXPECT_EQ(empty.error().delivery, libtmux::DeliveryStatus::not_started);
 }
 
 } // namespace
@@ -136,6 +238,13 @@ TEST(ServerContract, TheVersionIsReadableWithoutAServer) {
   const auto running = server.tmux_version();
   ASSERT_TRUE(running.has_value()) << running.error().diagnostic;
   EXPECT_TRUE(libtmux::is_supported(*running));
+
+  const auto absent =
+      Server::at_socket_path((fixture->tmux_tmpdir() / "absent-version").string());
+  ASSERT_TRUE(absent.has_value()) << absent.error().diagnostic;
+  const auto without_server = absent->tmux_version();
+  ASSERT_TRUE(without_server.has_value()) << without_server.error().diagnostic;
+  EXPECT_EQ(*without_server, *running);
 
   // `tmux -V` does not connect, so the answer survives the server's death.
   ASSERT_TRUE(server.kill().has_value());
@@ -155,7 +264,7 @@ TEST(ServerContract, SubprocessVersionHonoursTheServersOutputBound) {
 
   ASSERT_FALSE(version.has_value());
   EXPECT_EQ(version.error().kind, libtmux::FailureKind::truncated);
-  EXPECT_TRUE(version.error().dispatched);
+  EXPECT_EQ(version.error().delivery, DeliveryStatus::replied);
 }
 
 TEST(ServerContract, LivenessIsAskedAndAnsweredWithoutThrowing) {
@@ -285,6 +394,91 @@ TEST(ServerContract, AnObserverSeesEveryCommandAndWhyOneFailed) {
   EXPECT_EQ(failed.at(0), "kill-session -t absent");
 }
 
+TEST(ServerContract, AnObserverNeverSeesAnEnvironmentValue) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+
+  std::vector<std::string> seen;
+  std::vector<std::string> diagnostics;
+  auto server = Server::at_socket_path(
+      fixture->socket_path().string(),
+      [&seen, &diagnostics](std::string_view command,
+                            const libtmux::CommandFailure* failure) {
+        seen.emplace_back(command);
+        if (failure != nullptr) {
+          diagnostics.push_back(failure->diagnostic);
+        }
+      });
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+
+  constexpr std::string_view secret = "known-only-to-tmux-$[] with spaces;";
+  libtmux::CommandRequest raw{"display-message", "-p"};
+  raw.push_back(libtmux::CommandArgument::sensitive(std::string{secret}));
+  const auto printed = server->run(raw);
+  ASSERT_TRUE(printed.has_value()) << printed.error().diagnostic;
+  EXPECT_EQ(*printed, std::string{secret} + "\n");
+
+  libtmux::NewSessionOptions options;
+  options.name = "redacted";
+  options.environment = {{"LIBTMUX_SECRET", std::string{secret}}};
+  const auto session = server->new_session(std::move(options));
+  ASSERT_TRUE(session.has_value()) << session.error().diagnostic;
+
+  const auto set_option = server->set_global_option("@secret", secret);
+  ASSERT_TRUE(set_option.has_value()) << set_option.error().diagnostic;
+
+  libtmux::CommandBatch batch;
+  ASSERT_TRUE(batch.add({"display-message", "-p", "public-prefix"}));
+  ASSERT_TRUE(batch.add(raw));
+  const auto batched = server->run_batch(batch);
+  ASSERT_TRUE(batched.has_value()) << batched.error().diagnostic;
+  EXPECT_EQ(*batched, "public-prefix\n" + std::string{secret} + "\n");
+  const std::string shell_secret{"shell-secret with spaces"};
+  const std::string shell_command =
+      "tmux set-option -g @shell-secret '" + shell_secret + "'";
+  ASSERT_TRUE(server->run_shell(shell_command).has_value());
+  const auto shell_value = server->run({"show-options", "-gv", "@shell-secret"});
+  ASSERT_TRUE(shell_value.has_value()) << shell_value.error().diagnostic;
+  EXPECT_EQ(*shell_value, shell_secret + "\n");
+
+  const std::string hook_command = "display-message '" + shell_secret + "'";
+  ASSERT_TRUE(server->set_global_hook("alert-bell", hook_command).has_value());
+  const auto pane = session->active_pane();
+  ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
+  ASSERT_TRUE(pane->pipe_to("cat >/dev/null # " + shell_secret).has_value());
+  ASSERT_TRUE(pane->stop_piping().has_value());
+
+  libtmux::CommandRequest failing{"kill-session", "-t"};
+  failing.push_back(libtmux::CommandArgument::sensitive(std::string{secret}));
+  const auto refused = server->run(failing);
+  ASSERT_FALSE(refused.has_value());
+  EXPECT_EQ(refused.error().diagnostic.find(secret), std::string::npos)
+      << refused.error().diagnostic;
+  libtmux::CommandBatch failing_batch;
+  ASSERT_TRUE(failing_batch.add({"display-message", "-p", "safe-before-failure"}));
+  ASSERT_TRUE(failing_batch.add(failing));
+  const auto refused_batch = server->run_batch(failing_batch);
+  ASSERT_FALSE(refused_batch.has_value());
+  EXPECT_EQ(refused_batch.error().diagnostic.find(secret), std::string::npos)
+      << refused_batch.error().diagnostic;
+  const auto value = server->run(
+      {"show-environment", "-t", std::string{session->id()}, "LIBTMUX_SECRET"});
+  ASSERT_TRUE(value.has_value()) << value.error().diagnostic;
+  EXPECT_EQ(*value, "LIBTMUX_SECRET=" + std::string{secret} + "\n");
+
+  bool replaced = false;
+  for (const std::string& command : seen) {
+    EXPECT_EQ(command.find(secret), std::string::npos) << command;
+    EXPECT_EQ(command.find(shell_secret), std::string::npos) << command;
+    replaced = replaced || command.find("[REDACTED]") != std::string::npos;
+  }
+  EXPECT_TRUE(replaced);
+  for (const std::string& diagnostic : diagnostics) {
+    EXPECT_EQ(diagnostic.find(secret), std::string::npos) << diagnostic;
+    EXPECT_EQ(diagnostic.find(shell_secret), std::string::npos) << diagnostic;
+  }
+}
+
 TEST(ServerContract, ARefusalNamesTheCommandAndCarriesNoStrayNewline) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
@@ -322,8 +516,7 @@ TEST(ServerContract, ATypedCallInheritsTheServersDeadline) {
 
   ASSERT_FALSE(slow.has_value()) << "a 150ms deadline should not have been met";
   EXPECT_EQ(slow.error().kind, libtmux::FailureKind::timeout);
-  // Reported as dispatched: tmux ran it, and what it did is not yet known.
-  EXPECT_TRUE(slow.error().dispatched);
+  EXPECT_EQ(slow.error().delivery, DeliveryStatus::indeterminate);
   EXPECT_LT(elapsed, std::chrono::seconds{3})
       << "the call outlived the deadline it was given";
 

@@ -12,7 +12,6 @@
 
 #include "acquire.hpp"
 #include "backend.hpp"
-#include "control_backend.hpp"
 #include "environment.hpp"
 #include "path.hpp"
 #include "psmux.hpp"
@@ -21,15 +20,29 @@ LIBTMUX_NAMESPACE_BEGIN
 
 namespace {
 
+[[nodiscard]] ConnectionOptions routed_control_options(ConnectionOptions options,
+                                                       std::string socket_path,
+                                                       std::string session) {
+  options.socket_path = std::move(socket_path);
+  options.session_name = std::move(session);
+  return options;
+}
+
 // A command run for its effect: its output is not a result.
-#if !defined(_WIN32)
 expected<void, CommandFailure> applied(expected<std::string, CommandFailure> reply) {
   if (!reply.has_value()) {
     return unexpected(reply.error());
   }
   return {};
 }
-#endif
+
+[[nodiscard]] CommandFailure unsupported_psmux_state(std::string_view operation) {
+  return CommandFailure{.kind = FailureKind::unsupported,
+                        .delivery = DeliveryStatus::not_started,
+                        .exit_code = 0,
+                        .diagnostic = "psmux cannot provide " + std::string{operation} +
+                                      " through the typed API"};
+}
 
 #if defined(_WIN32)
 [[nodiscard]] bool unavailable_candidate(const CommandFailure& failure) noexcept {
@@ -40,17 +53,9 @@ expected<void, CommandFailure> applied(expected<std::string, CommandFailure> rep
 
 [[nodiscard]] CommandFailure no_sessions() {
   return CommandFailure{.kind = FailureKind::refused,
-                        .dispatched = true,
+                        .delivery = DeliveryStatus::replied,
                         .exit_code = 0,
                         .diagnostic = "the server has no sessions"};
-}
-
-[[nodiscard]] CommandFailure unsupported_psmux_state(std::string_view operation) {
-  return CommandFailure{.kind = FailureKind::unsupported,
-                        .dispatched = false,
-                        .exit_code = 0,
-                        .diagnostic = "psmux cannot provide " + std::string{operation} +
-                                      " through the typed API"};
 }
 
 [[nodiscard]] ExecutionPolicy
@@ -107,7 +112,7 @@ exact_psmux_sessions(const std::shared_ptr<const detail::Backend>& backend,
         })) {
       return unexpected(
           CommandFailure{.kind = FailureKind::refused,
-                         .dispatched = true,
+                         .delivery = DeliveryStatus::replied,
                          .exit_code = 0,
                          .diagnostic = "psmux reported one session ID more than once"});
     }
@@ -134,9 +139,20 @@ CommandFailure rejected_selector(std::string_view selector, SocketError error) {
   return CommandFailure{
       .kind = error == SocketError::path_unsupported ? FailureKind::unsupported
                                                      : FailureKind::validation,
-      .dispatched = false,
+      .delivery = DeliveryStatus::not_started,
       .exit_code = 0,
       .diagnostic = std::string{to_string(error)} + ": " + std::string{selector}};
+}
+
+expected<Server, CommandFailure> subprocess_server(std::vector<std::string> connection,
+                                                   CommandObserver observer,
+                                                   ExecutionPolicy policy) {
+  auto backend = detail::SubprocessBackend::open(std::move(connection),
+                                                 std::move(observer), policy);
+  if (!backend.has_value()) {
+    return unexpected(std::move(backend.error()));
+  }
+  return detail::server_over(*std::move(backend));
 }
 
 } // namespace
@@ -148,8 +164,7 @@ expected<Server, CommandFailure> Server::at_socket_path(std::string_view path,
   if (!arguments.has_value()) {
     return unexpected(rejected_selector(path, arguments.error()));
   }
-  return detail::server_over(std::make_shared<const detail::SubprocessBackend>(
-      *std::move(arguments), std::move(observer), policy));
+  return subprocess_server(*std::move(arguments), std::move(observer), policy);
 }
 
 expected<Server, CommandFailure> Server::from_env(CommandObserver observer,
@@ -158,7 +173,7 @@ expected<Server, CommandFailure> Server::from_env(CommandObserver observer,
   if (!inherited.has_value()) {
     return unexpected(CommandFailure{
         .kind = FailureKind::validation,
-        .dispatched = false,
+        .delivery = DeliveryStatus::not_started,
         .exit_code = 0,
         .diagnostic = "TMUX is not set: this process is not running inside tmux"});
   }
@@ -171,7 +186,7 @@ expected<Server, CommandFailure> Server::from_env(CommandObserver observer,
       pid_start == std::string_view::npos ? value : value.substr(0, pid_start);
   if (socket.empty()) {
     return unexpected(CommandFailure{.kind = FailureKind::validation,
-                                     .dispatched = false,
+                                     .delivery = DeliveryStatus::not_started,
                                      .exit_code = 0,
                                      .diagnostic = "TMUX names no socket path"});
   }
@@ -193,8 +208,7 @@ expected<Server, CommandFailure> Server::at_default(CommandObserver observer,
                                                     ExecutionPolicy policy) {
   // No selector at all, which is what tmux itself does: the default socket
   // under the directory it chooses, honouring TMUX_TMPDIR as tmux does.
-  return detail::server_over(std::make_shared<const detail::SubprocessBackend>(
-      std::vector<std::string>{}, std::move(observer), policy));
+  return subprocess_server({}, std::move(observer), policy);
 }
 
 expected<Server, CommandFailure> Server::at_socket_name(std::string_view name,
@@ -202,7 +216,7 @@ expected<Server, CommandFailure> Server::at_socket_name(std::string_view name,
                                                         ExecutionPolicy policy) {
   if (auto invalid = libtmux_psmux::invalid_socket_name(name); invalid.has_value()) {
     return unexpected(CommandFailure{.kind = FailureKind::validation,
-                                     .dispatched = false,
+                                     .delivery = DeliveryStatus::not_started,
                                      .exit_code = 0,
                                      .diagnostic = std::move(*invalid)});
   }
@@ -210,8 +224,11 @@ expected<Server, CommandFailure> Server::at_socket_name(std::string_view name,
   if (!arguments.has_value()) {
     return unexpected(rejected_selector(name, arguments.error()));
   }
-  return detail::server_over(std::make_shared<const detail::SubprocessBackend>(
-      *std::move(arguments), std::move(observer), policy));
+  return subprocess_server(*std::move(arguments), std::move(observer), policy);
+}
+
+bool Server::refuses(ServerFeature feature) const noexcept {
+  return backend_ != nullptr && backend_->capabilities().refuses(feature);
 }
 
 ServerCapabilities Server::capabilities() const noexcept {
@@ -219,7 +236,7 @@ ServerCapabilities Server::capabilities() const noexcept {
 }
 
 expected<std::string, CommandFailure>
-Server::run(const std::vector<std::string>& command,
+Server::run(const CommandRequest& command,
             std::optional<std::chrono::milliseconds> timeout,
             std::optional<std::size_t> output_limit) const {
   // The policy fills in what the call did not say. Applied here rather than in
@@ -234,7 +251,7 @@ expected<std::string, CommandFailure>
 Server::run_batch(const CommandBatch& batch) const {
   if (batch.empty()) {
     return unexpected(CommandFailure{.kind = FailureKind::validation,
-                                     .dispatched = false,
+                                     .delivery = DeliveryStatus::not_started,
                                      .exit_code = 0,
                                      .diagnostic = "empty batch"});
   }
@@ -245,7 +262,7 @@ Server::run_batch(const CommandBatch& batch) const {
 expected<std::string, CommandFailure> Server::run_chain(const Chain& chain) const {
   if (!chain.valid()) {
     return unexpected(CommandFailure{.kind = FailureKind::validation,
-                                     .dispatched = false,
+                                     .delivery = DeliveryStatus::not_started,
                                      .exit_code = 0,
                                      .diagnostic = chain.error()});
   }
@@ -262,17 +279,20 @@ Server::control_with_options(std::string_view session,
   const ServerCapabilities available = capabilities();
   if (!available.supports(ServerFeature::control_mode)) {
     return unexpected(
-        ProtocolError{std::string{to_string(available.implementation)} +
-                      " backend does not support persistent control mode"});
+        ProtocolError{.message = std::string{to_string(available.implementation)} +
+                                 " backend does not support persistent control mode",
+                      .delivery = DeliveryStatus::not_started});
   }
-  // POSIX control uses the resolved socket path. The Windows implementation
-  // rejects psmux control mode before consuming its logical identity.
-  const std::string_view resolved = backend_->identity();
-  if (resolved.empty()) {
-    return unexpected(ProtocolError{"this server has no socket to connect to"});
+  // The route is not the identity: a pinned POSIX handle identifies an inode
+  // incarnation while connecting through its private alias.
+  const std::string_view socket_path = backend_->socket_path();
+  if (socket_path.empty()) {
+    return unexpected(
+        ProtocolError{.message = "this server has no socket to connect to",
+                      .delivery = DeliveryStatus::not_started});
   }
-  return Connection::connect(detail::routed_control_options(
-      std::move(options), std::string{resolved}, std::string{session}));
+  return Connection::connect(routed_control_options(
+      std::move(options), std::string{socket_path}, std::string{session}));
 }
 
 expected<Version, CommandFailure> Server::tmux_version() const {
@@ -307,7 +327,7 @@ Server::check_alive(std::chrono::milliseconds timeout) const {
   // A successful empty listing still describes no live server.
   if (sessions->find_first_not_of(" \t\r\n") == std::string::npos) {
     return unexpected(CommandFailure{.kind = FailureKind::refused,
-                                     .dispatched = true,
+                                     .delivery = DeliveryStatus::replied,
                                      .exit_code = 0,
                                      .diagnostic = "the server has no sessions"});
   }
@@ -343,7 +363,7 @@ expected<void, CommandFailure> Server::kill() const {
     if (candidates == nullptr) {
       return unexpected(CommandFailure{
           .kind = FailureKind::refused,
-          .dispatched = true,
+          .delivery = DeliveryStatus::replied,
           .exit_code = 0,
           .diagnostic = "tmux output did not match the fields asked for"});
     }
@@ -401,56 +421,6 @@ expected<void, CommandFailure> Server::kill() const {
 #else
   return applied(run({"kill-server"}));
 #endif
-}
-
-std::vector<Notification> Server::take_notifications() const {
-  return backend_->take_notifications();
-}
-
-std::size_t Server::dropped_notifications() const noexcept {
-  return backend_->dropped_notifications();
-}
-
-expected<Server, CommandFailure> Server::over_control(std::string_view session) const {
-  return over_control_with_options(session, {});
-}
-
-expected<Server, CommandFailure>
-Server::over_control_with_options(std::string_view session,
-                                  ConnectionOptions options) const {
-  const ServerCapabilities available = capabilities();
-  if (!available.supports(ServerFeature::control_mode)) {
-    return unexpected(
-        CommandFailure{.kind = FailureKind::unsupported,
-                       .dispatched = false,
-                       .exit_code = 0,
-                       .diagnostic = std::string{to_string(available.implementation)} +
-                                     " backend does not support control mode"});
-  }
-  const std::vector<std::string>& selector = backend_->connection();
-  // POSIX selectors resolve to paths; Windows selectors resolve only far
-  // enough for the control implementation to reject psmux explicitly.
-  const std::string_view resolved = backend_->identity();
-  if (resolved.empty()) {
-    return unexpected(
-        CommandFailure{.kind = FailureKind::validation,
-                       .dispatched = false,
-                       .exit_code = 0,
-                       .diagnostic = "this server has no socket to connect to"});
-  }
-  auto backend = detail::ControlBackend::open(
-      selector, std::string{resolved}, std::string{resolved}, std::string{session},
-      std::move(options), backend_->observer(), backend_->policy());
-  if (!backend.has_value()) {
-    // The same kind a control connection reports when it breaks mid-command,
-    // because it is the same thing failing. Not dispatched: no command ran,
-    // and a connection that never came up left nothing for a retry to repeat.
-    return unexpected(CommandFailure{.kind = FailureKind::pipe,
-                                     .dispatched = false,
-                                     .exit_code = 0,
-                                     .diagnostic = backend.error().message});
-  }
-  return detail::server_over(*std::move(backend));
 }
 
 expected<std::vector<Session>, CommandFailure> Server::sessions() const {
@@ -517,11 +487,10 @@ expected<std::vector<Pane>, CommandFailure> Server::panes() const {
 }
 
 expected<std::vector<Client>, CommandFailure> Server::clients() const {
-#if defined(_WIN32)
-  return unexpected(unsupported_psmux_state("clients"));
-#else
+  if (refuses(ServerFeature::server_state)) {
+    return unexpected(unsupported_psmux_state("clients"));
+  }
   return detail::list_entities<Client>(backend_, {"list-clients"});
-#endif
 }
 
 expected<void, CommandFailure>
@@ -529,14 +498,13 @@ Server::wait_for(std::string_view channel,
                  std::optional<std::chrono::milliseconds> timeout) const {
   if (channel.empty()) {
     return unexpected(CommandFailure{.kind = FailureKind::validation,
-                                     .dispatched = false,
+                                     .delivery = DeliveryStatus::not_started,
                                      .exit_code = 0,
                                      .diagnostic = "a channel needs a name"});
   }
-#if defined(_WIN32)
-  static_cast<void>(timeout);
-  return unexpected(unsupported_psmux_state("wait channels"));
-#else
+  if (refuses(ServerFeature::wait_channels)) {
+    return unexpected(unsupported_psmux_state("wait channels"));
+  }
   // Straight to the backend, so an absent timeout still means wait. Waiting is
   // the request here; the policy's floor exists for calls that should have
   // answered by now, and this one has not been asked yet.
@@ -550,76 +518,68 @@ Server::wait_for(std::string_view channel,
   if (!is_alive()) {
     return unexpected(CommandFailure{
         .kind = FailureKind::pipe,
-        .dispatched = true,
+        .delivery = DeliveryStatus::replied,
         .exit_code = 0,
         .diagnostic = "the server ended while waiting on " + std::string{channel}});
   }
   return {};
-#endif
 }
 
 expected<void, CommandFailure> Server::signal(std::string_view channel) const {
   if (channel.empty()) {
     return unexpected(CommandFailure{.kind = FailureKind::validation,
-                                     .dispatched = false,
+                                     .delivery = DeliveryStatus::not_started,
                                      .exit_code = 0,
                                      .diagnostic = "a channel needs a name"});
   }
-#if defined(_WIN32)
-  return unexpected(unsupported_psmux_state("wait channels"));
-#else
+  if (refuses(ServerFeature::wait_channels)) {
+    return unexpected(unsupported_psmux_state("wait channels"));
+  }
   return applied(run({"wait-for", "-S", std::string{channel}}));
-#endif
 }
 
 expected<std::vector<Command>, CommandFailure> Server::commands() const {
-#if defined(_WIN32)
-  return unexpected(unsupported_psmux_state("command metadata"));
-#else
+  if (refuses(ServerFeature::server_state)) {
+    return unexpected(unsupported_psmux_state("command metadata"));
+  }
   return detail::list_entities<Command>(backend_, {"list-commands"});
-#endif
 }
 
 expected<std::vector<Buffer>, CommandFailure> Server::buffers() const {
-#if defined(_WIN32)
-  return unexpected(unsupported_psmux_state("buffers"));
-#else
+  if (refuses(ServerFeature::server_state)) {
+    return unexpected(unsupported_psmux_state("buffers"));
+  }
   return detail::list_entities<Buffer>(backend_, {"list-buffers"});
-#endif
 }
 
 expected<void, CommandFailure>
 Server::load_buffer(std::string_view name, const std::filesystem::path& from) const {
   if (name.empty()) {
     return unexpected(CommandFailure{.kind = FailureKind::validation,
-                                     .dispatched = false,
+                                     .delivery = DeliveryStatus::not_started,
                                      .exit_code = 0,
                                      .diagnostic = "a buffer needs a name"});
   }
-#if defined(_WIN32)
-  static_cast<void>(from);
-  return unexpected(unsupported_psmux_state("buffers"));
-#else
+  if (refuses(ServerFeature::server_state)) {
+    return unexpected(unsupported_psmux_state("buffers"));
+  }
   return applied(run({"load-buffer", "-b", std::string{name}, "--",
                       libtmux_path::command_string(from)}));
-#endif
 }
 
 expected<void, CommandFailure>
 Server::save_buffer(std::string_view name, const std::filesystem::path& to) const {
   if (name.empty()) {
     return unexpected(CommandFailure{.kind = FailureKind::validation,
-                                     .dispatched = false,
+                                     .delivery = DeliveryStatus::not_started,
                                      .exit_code = 0,
                                      .diagnostic = "a buffer needs a name"});
   }
-#if defined(_WIN32)
-  static_cast<void>(to);
-  return unexpected(unsupported_psmux_state("buffers"));
-#else
+  if (refuses(ServerFeature::server_state)) {
+    return unexpected(unsupported_psmux_state("buffers"));
+  }
   return applied(run({"save-buffer", "-b", std::string{name}, "--",
                       libtmux_path::command_string(to)}));
-#endif
 }
 
 namespace {
@@ -633,7 +593,7 @@ namespace {
 expected<void, CommandFailure> usable_table(std::string_view table) {
   const auto refuse = [](std::string diagnostic) {
     return unexpected(CommandFailure{.kind = FailureKind::validation,
-                                     .dispatched = false,
+                                     .delivery = DeliveryStatus::not_started,
                                      .exit_code = 0,
                                      .diagnostic = std::move(diagnostic)});
   };
@@ -658,15 +618,13 @@ expected<void, CommandFailure> Server::bind_key(std::string_view table,
   }
   if (command.empty()) {
     return unexpected(CommandFailure{.kind = FailureKind::validation,
-                                     .dispatched = false,
+                                     .delivery = DeliveryStatus::not_started,
                                      .exit_code = 0,
                                      .diagnostic = "a binding needs a command to run"});
   }
-#if defined(_WIN32)
-  static_cast<void>(key);
-  static_cast<void>(repeatable);
-  return unexpected(unsupported_psmux_state("key bindings"));
-#else
+  if (refuses(ServerFeature::server_state)) {
+    return unexpected(unsupported_psmux_state("key bindings"));
+  }
   std::vector<std::string> argv{"bind-key"};
   if (repeatable) {
     argv.emplace_back("-r");
@@ -677,7 +635,6 @@ expected<void, CommandFailure> Server::bind_key(std::string_view table,
   argv.emplace_back(key);
   argv.insert(argv.end(), command.begin(), command.end());
   return applied(run(argv));
-#endif
 }
 
 expected<void, CommandFailure> Server::unbind_key(std::string_view table,
@@ -685,76 +642,60 @@ expected<void, CommandFailure> Server::unbind_key(std::string_view table,
   if (const auto usable = usable_table(table); !usable.has_value()) {
     return unexpected(usable.error());
   }
-#if defined(_WIN32)
-  static_cast<void>(key);
-  return unexpected(unsupported_psmux_state("key bindings"));
-#else
+  if (refuses(ServerFeature::server_state)) {
+    return unexpected(unsupported_psmux_state("key bindings"));
+  }
   std::vector<std::string> argv{"unbind-key", "-T", std::string{table}};
   argv.emplace_back("--");
   argv.emplace_back(key);
   return applied(run(argv));
-#endif
 }
 
 expected<void, CommandFailure> Server::run_shell(std::string_view command,
                                                  bool background) const {
   if (command.empty()) {
     return unexpected(CommandFailure{.kind = FailureKind::validation,
-                                     .dispatched = false,
+                                     .delivery = DeliveryStatus::not_started,
                                      .exit_code = 0,
                                      .diagnostic = "a shell command cannot be empty"});
   }
-#if defined(_WIN32)
-  static_cast<void>(background);
-  return unexpected(unsupported_psmux_state("run-shell state"));
-#else
-  std::vector<std::string> argv{"run-shell"};
+  if (refuses(ServerFeature::server_state)) {
+    return unexpected(unsupported_psmux_state("run-shell state"));
+  }
+  CommandRequest argv{"run-shell"};
   if (background) {
     argv.emplace_back("-b");
   }
   argv.emplace_back("--");
-  argv.emplace_back(command);
+  argv.push_back(CommandArgument::sensitive(std::string{command}));
   return applied(run(argv));
-#endif
 }
 
 expected<void, CommandFailure>
 Server::source_file(const std::filesystem::path& file) const {
-#if defined(_WIN32)
-  static_cast<void>(file);
-  return unexpected(unsupported_psmux_state("configuration state"));
-#else
-  if (backend_->capabilities().backend == BackendKind::control_mode) {
-    return unexpected(CommandFailure{
-        .kind = FailureKind::unsupported,
-        .dispatched = false,
-        .exit_code = 0,
-        .diagnostic = "control mode cannot attribute the commands source-file may "
-                      "insert into its reply stream"});
+  if (refuses(ServerFeature::server_state)) {
+    return unexpected(unsupported_psmux_state("configuration state"));
   }
   return applied(run({"source-file", "--", libtmux_path::command_string(file)}));
-#endif
 }
 
 expected<void, CommandFailure>
 Server::check_file(const std::filesystem::path& file) const {
-#if defined(_WIN32)
-  static_cast<void>(file);
-  return unexpected(CommandFailure{
-      .kind = FailureKind::unsupported,
-      .dispatched = false,
-      .exit_code = 0,
-      .diagnostic = "psmux cannot check a source file without executing its commands"});
-#else
+  if (refuses(ServerFeature::server_state)) {
+    return unexpected(CommandFailure{
+        .kind = FailureKind::unsupported,
+        .delivery = DeliveryStatus::not_started,
+        .exit_code = 0,
+        .diagnostic =
+            "psmux cannot check a source file without executing its commands"});
+  }
   return applied(run({"source-file", "-n", "--", libtmux_path::command_string(file)}));
-#endif
 }
 
 expected<std::string, CommandFailure> Server::expand(std::string_view format) const {
-#if defined(_WIN32)
-  static_cast<void>(format);
-  return unexpected(unsupported_psmux_state("format context"));
-#else
+  if (refuses(ServerFeature::server_state)) {
+    return unexpected(unsupported_psmux_state("format context"));
+  }
   std::vector<std::string> command{"display-message", "-p"};
   detail::append_display_message_text(command, std::string{format});
   auto reply = run(command);
@@ -762,27 +703,22 @@ expected<std::string, CommandFailure> Server::expand(std::string_view format) co
     return unexpected(reply.error());
   }
   return detail::without_trailing_newline(std::move(*reply));
-#endif
 }
 
 expected<void, CommandFailure> Server::show_message(std::string_view text) const {
-#if defined(_WIN32)
-  static_cast<void>(text);
-  return unexpected(unsupported_psmux_state("message state"));
-#else
+  if (refuses(ServerFeature::server_state)) {
+    return unexpected(unsupported_psmux_state("message state"));
+  }
   std::vector<std::string> command{"display-message"};
   detail::append_display_message_text(command, std::string{text});
   return applied(run(command));
-#endif
 }
 
 expected<void, CommandFailure> Server::set_buffer(std::string_view name,
                                                   std::string_view data) const {
-#if defined(_WIN32)
-  static_cast<void>(name);
-  static_cast<void>(data);
-  return unexpected(unsupported_psmux_state("buffers"));
-#else
+  if (refuses(ServerFeature::server_state)) {
+    return unexpected(unsupported_psmux_state("buffers"));
+  }
   std::vector<std::string> command{"set-buffer"};
   if (!name.empty()) {
     command.emplace_back("-b");
@@ -792,7 +728,6 @@ expected<void, CommandFailure> Server::set_buffer(std::string_view name,
   command.emplace_back("--");
   command.emplace_back(data);
   return applied(run(command));
-#endif
 }
 
 expected<Session, CommandFailure> Server::session(std::string_view target) const {
@@ -811,7 +746,7 @@ expected<Session, CommandFailure> Server::session(std::string_view target) const
       if (found.has_value()) {
         return unexpected(CommandFailure{
             .kind = FailureKind::validation,
-            .dispatched = false,
+            .delivery = DeliveryStatus::not_started,
             .exit_code = 0,
             .diagnostic = "psmux session target is ambiguous: " + std::string{target}});
       }
@@ -821,7 +756,7 @@ expected<Session, CommandFailure> Server::session(std::string_view target) const
   if (!found.has_value()) {
     return unexpected(
         CommandFailure{.kind = FailureKind::missing,
-                       .dispatched = true,
+                       .delivery = DeliveryStatus::replied,
                        .exit_code = 0,
                        .diagnostic = "tmux has no session " + std::string{target}});
   }
@@ -832,29 +767,27 @@ expected<Session, CommandFailure> Server::session(std::string_view target) const
 }
 
 expected<Window, CommandFailure> Server::window(std::string_view target) const {
-#if defined(_WIN32)
-  return unexpected(
-      CommandFailure{.kind = FailureKind::unsupported,
-                     .dispatched = false,
-                     .exit_code = 0,
-                     .diagnostic = "psmux window targets need an owning Session: " +
-                                   std::string{target}});
-#else
+  if (refuses(ServerFeature::server_entity_lookup)) {
+    return unexpected(
+        CommandFailure{.kind = FailureKind::unsupported,
+                       .delivery = DeliveryStatus::not_started,
+                       .exit_code = 0,
+                       .diagnostic = "psmux window targets need an owning Session: " +
+                                     std::string{target}});
+  }
   return detail::describe<Window>(backend_, target);
-#endif
 }
 
 expected<Pane, CommandFailure> Server::pane(std::string_view target) const {
-#if defined(_WIN32)
-  return unexpected(
-      CommandFailure{.kind = FailureKind::unsupported,
-                     .dispatched = false,
-                     .exit_code = 0,
-                     .diagnostic = "psmux pane targets need an owning Session: " +
-                                   std::string{target}});
-#else
+  if (refuses(ServerFeature::server_entity_lookup)) {
+    return unexpected(
+        CommandFailure{.kind = FailureKind::unsupported,
+                       .delivery = DeliveryStatus::not_started,
+                       .exit_code = 0,
+                       .diagnostic = "psmux pane targets need an owning Session: " +
+                                     std::string{target}});
+  }
   return detail::describe<Pane>(backend_, target);
-#endif
 }
 
 expected<Session, CommandFailure> Server::new_session(std::string_view name) const {
@@ -864,27 +797,27 @@ expected<Session, CommandFailure> Server::new_session(std::string_view name) con
 expected<Session, CommandFailure> Server::new_session(NewSessionOptions options) const {
   if (options.name.empty()) {
     return unexpected(CommandFailure{.kind = FailureKind::validation,
-                                     .dispatched = false,
+                                     .delivery = DeliveryStatus::not_started,
                                      .exit_code = 0,
                                      .diagnostic = "session name is empty"});
   }
   if (auto invalid = libtmux_psmux::invalid_session_name(options.name);
       invalid.has_value()) {
     return unexpected(CommandFailure{.kind = FailureKind::validation,
-                                     .dispatched = false,
+                                     .delivery = DeliveryStatus::not_started,
                                      .exit_code = 0,
                                      .diagnostic = std::move(*invalid)});
   }
-#if defined(_WIN32)
-  static_cast<void>(options);
-  return unexpected(CommandFailure{
-      .kind = FailureKind::unsupported,
-      .dispatched = false,
-      .exit_code = 0,
-      .diagnostic = "psmux cannot prove ownership of a concurrently created session; "
-                    "create it with the psmux CLI and reacquire it from this Server"});
-#else
-  std::vector<std::string> command{"new-session", "-d", "-P", "-s", options.name};
+  if (refuses(ServerFeature::session_creation)) {
+    return unexpected(CommandFailure{
+        .kind = FailureKind::unsupported,
+        .delivery = DeliveryStatus::not_started,
+        .exit_code = 0,
+        .diagnostic =
+            "psmux cannot prove ownership of a concurrently created session; "
+            "create it with the psmux CLI and reacquire it from this Server"});
+  }
+  CommandRequest command{"new-session", "-d", "-P", "-s", options.name};
   if (!options.first_window_name.empty()) {
     command.emplace_back("-n");
     command.push_back(options.first_window_name);
@@ -907,89 +840,78 @@ expected<Session, CommandFailure> Server::new_session(NewSessionOptions options)
   }
   if (!options.shell_command.empty()) {
     command.emplace_back("--");
-    command.push_back(std::move(options.shell_command));
+    command.push_back(CommandArgument::sensitive(std::move(options.shell_command)));
   }
   auto created = detail::one_entity<Session>(backend_, std::move(command),
                                              FormatArgument::flag, options.name);
   return created;
-#endif
 }
 
 expected<std::vector<OptionEntry>, CommandFailure>
 Server::options(std::string_view target) const {
-#if defined(_WIN32)
-  static_cast<void>(target);
-  return unexpected(unsupported_psmux_state("session option context"));
-#else
+  if (refuses(ServerFeature::server_state)) {
+    return unexpected(unsupported_psmux_state("session option context"));
+  }
   return show({"show-options", "-A"}, target);
-#endif
 }
 
 expected<std::vector<OptionEntry>, CommandFailure> Server::server_options() const {
-#if defined(_WIN32)
-  return unexpected(unsupported_psmux_state("server options"));
-#else
+  if (refuses(ServerFeature::server_state)) {
+    return unexpected(unsupported_psmux_state("server options"));
+  }
   return show({"show-options", "-s"}, {});
-#endif
 }
 
 expected<void, CommandFailure> Server::set_server_option(std::string_view name,
                                                          std::string_view value) const {
-#if defined(_WIN32)
-  static_cast<void>(name);
-  static_cast<void>(value);
-  return unexpected(unsupported_psmux_state("server options"));
-#else
-  return applied(run({"set-option", "-s", std::string{name}, std::string{value}}));
-#endif
+  if (refuses(ServerFeature::server_state)) {
+    return unexpected(unsupported_psmux_state("server options"));
+  }
+  CommandRequest command{"set-option", "-s", std::string{name}};
+  command.push_back(CommandArgument::sensitive(std::string{value}));
+  return applied(run(command));
 }
 
 expected<std::vector<OptionEntry>, CommandFailure> Server::global_options() const {
-#if defined(_WIN32)
-  return unexpected(unsupported_psmux_state("global options"));
-#else
+  if (refuses(ServerFeature::server_state)) {
+    return unexpected(unsupported_psmux_state("global options"));
+  }
   return show({"show-options", "-g"}, {});
-#endif
 }
 
 expected<void, CommandFailure> Server::set_global_option(std::string_view name,
                                                          std::string_view value) const {
-#if defined(_WIN32)
-  static_cast<void>(name);
-  static_cast<void>(value);
-  return unexpected(unsupported_psmux_state("global options"));
-#else
-  return applied(run({"set-option", "-g", std::string{name}, std::string{value}}));
-#endif
+  if (refuses(ServerFeature::server_state)) {
+    return unexpected(unsupported_psmux_state("global options"));
+  }
+  CommandRequest command{"set-option", "-g", std::string{name}};
+  command.push_back(CommandArgument::sensitive(std::string{value}));
+  return applied(run(command));
 }
 
 expected<std::vector<OptionEntry>, CommandFailure>
 Server::hooks(std::string_view target) const {
-#if defined(_WIN32)
-  static_cast<void>(target);
-  return unexpected(unsupported_psmux_state("session hook context"));
-#else
+  if (refuses(ServerFeature::server_state)) {
+    return unexpected(unsupported_psmux_state("session hook context"));
+  }
   return show({"show-hooks"}, target);
-#endif
 }
 
 expected<std::vector<OptionEntry>, CommandFailure> Server::global_hooks() const {
-#if defined(_WIN32)
-  return unexpected(unsupported_psmux_state("global hooks"));
-#else
+  if (refuses(ServerFeature::server_state)) {
+    return unexpected(unsupported_psmux_state("global hooks"));
+  }
   return show({"show-hooks", "-g"}, {});
-#endif
 }
 
 expected<void, CommandFailure> Server::set_global_hook(std::string_view name,
                                                        std::string_view command) const {
-#if defined(_WIN32)
-  static_cast<void>(name);
-  static_cast<void>(command);
-  return unexpected(unsupported_psmux_state("global hooks"));
-#else
-  return applied(run({"set-hook", "-g", std::string{name}, std::string{command}}));
-#endif
+  if (refuses(ServerFeature::server_state)) {
+    return unexpected(unsupported_psmux_state("global hooks"));
+  }
+  CommandRequest request{"set-hook", "-g", std::string{name}};
+  request.push_back(CommandArgument::sensitive(std::string{command}));
+  return applied(run(request));
 }
 
 expected<std::vector<OptionEntry>, CommandFailure>

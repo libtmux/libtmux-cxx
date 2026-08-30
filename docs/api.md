@@ -11,15 +11,18 @@ is the prose there. Run it with `--check` to prove this page is current.
 
 - [`libtmux/libtmux.hpp`](#libtmux-libtmux-hpp)
 - [`libtmux/server.hpp`](#libtmux-server-hpp)
+- [`libtmux/async.hpp`](#libtmux-async-hpp)
 - [`libtmux/capabilities.hpp`](#libtmux-capabilities-hpp)
 - [`libtmux/entities.hpp`](#libtmux-entities-hpp)
 - [`libtmux/snapshot.hpp`](#libtmux-snapshot-hpp)
 - [`libtmux/filter_expr.hpp`](#libtmux-filter-expr-hpp)
 - [`libtmux/relations.hpp`](#libtmux-relations-hpp)
 - [`libtmux/cardinality.hpp`](#libtmux-cardinality-hpp)
+- [`libtmux/delivery.hpp`](#libtmux-delivery-hpp)
 - [`libtmux/command.hpp`](#libtmux-command-hpp)
 - [`libtmux/options.hpp`](#libtmux-options-hpp)
 - [`libtmux/control.hpp`](#libtmux-control-hpp)
+- [`libtmux/notification.hpp`](#libtmux-notification-hpp)
 - [`libtmux/batch.hpp`](#libtmux-batch-hpp)
 - [`libtmux/chain.hpp`](#libtmux-chain-hpp)
 - [`libtmux/keys.hpp`](#libtmux-keys-hpp)
@@ -53,14 +56,11 @@ The connection root.  A Server names which tmux server to talk to and how to rea
   - [`Server::at_default`](#libtmux-server-hpp-server-at-default)
   - [`Server::capabilities`](#libtmux-server-hpp-server-capabilities)
   - [`Server::run`](#libtmux-server-hpp-server-run)
+  - [`Server::submit`](#libtmux-server-hpp-server-submit)
   - [`Server::run_batch`](#libtmux-server-hpp-server-run-batch)
   - [`Server::run_chain`](#libtmux-server-hpp-server-run-chain)
   - [`Server::control`](#libtmux-server-hpp-server-control)
   - [`Server::control_with_options`](#libtmux-server-hpp-server-control-with-options)
-  - [`Server::take_notifications`](#libtmux-server-hpp-server-take-notifications)
-  - [`Server::dropped_notifications`](#libtmux-server-hpp-server-dropped-notifications)
-  - [`Server::over_control`](#libtmux-server-hpp-server-over-control)
-  - [`Server::over_control_with_options`](#libtmux-server-hpp-server-over-control-with-options)
   - [`Server::tmux_version`](#libtmux-server-hpp-server-tmux-version)
   - [`Server::is_alive`](#libtmux-server-hpp-server-is-alive)
   - [`Server::check_alive`](#libtmux-server-hpp-server-check-alive)
@@ -148,9 +148,17 @@ The local backend contract; no command runs. `tmux_version()` separately queries
 #### `Server::run`
 
 ```cpp
-[[nodiscard]] expected<std::string, CommandFailure> run(const std::vector<std::string>& command, std::optional<std::chrono::milliseconds> timeout = {}, std::optional<std::size_t> output_limit = {}) const;
+[[nodiscard]] expected<std::string, CommandFailure> run(const CommandRequest& command, std::optional<std::chrono::milliseconds> timeout = {}, std::optional<std::size_t> output_limit = {}) const;
 ```
 Run one command and return its standard output.  The timeout still rides on the call: how long a caller will wait is a property of what they asked for, and listing sessions does not share a deadline with attaching a client. Unset takes the server's `ExecutionPolicy`, which is thirty seconds rather than forever — a floor, not a guess at what this particular command needs. `output_limit` bounds how much of tmux's answer this call will hold. Past it the command reports `truncated` rather than returning a prefix that reads like a complete answer. Unset uses the package default, which is ample for every listing and can be too small for a long scrollback.
+
+<a id="libtmux-server-hpp-server-submit"></a>
+#### `Server::submit`
+
+```cpp
+[[nodiscard]] expected<CommandOperation, CommandFailure> submit(CommandRequest command, std::optional<std::chrono::milliseconds> timeout = {}, std::optional<std::size_t> output_limit = {}) const;
+```
+Send a command without waiting for it. The answer is the same one `run` gives, bounded per call by the same two arguments; what differs is that a program with several questions can ask them all before collecting any. The bounds matter more here, not less: the one long question in a batch is exactly the one that needs its own. See `libtmux/async.hpp`.
 
 <a id="libtmux-server-hpp-server-run-batch"></a>
 #### `Server::run_batch`
@@ -158,7 +166,7 @@ Run one command and return its standard output.  The timeout still rides on the 
 ```cpp
 [[nodiscard]] expected<std::string, CommandFailure> run_batch(const CommandBatch& batch) const;
 ```
-Run several commands in one invocation. tmux runs a batch fail-fast, so a failed batch is partially applied rather than rolled back, and one exit status covers the group: which member failed needs control mode.
+Run several commands in one invocation. tmux runs a batch fail-fast, so a failed batch is partially applied rather than rolled back, and one exit status covers the group, so tmux does not identify which member failed.
 
 <a id="libtmux-server-hpp-server-run-chain"></a>
 #### `Server::run_chain`
@@ -174,7 +182,7 @@ Run a chain. A chain that failed validation never reaches tmux, and says which s
 ```cpp
 [[nodiscard]] expected<Connection, ProtocolError> control(std::string_view session) const;
 ```
-Open a control-mode connection to one session.  This is the streaming half of the transport: a control connection stays open, gives each command its own reply block, and delivers asynchronous notifications between them. The synchronous surface above is unaffected — a caller who never opens one never pays for it.  Fails with `ProtocolError`, not `CommandFailure`, because that is what the `Connection` it returns speaks: an error type here that the value's own surface does not use would make the doorway disagree with the room. `over_control` returns an ordinary `Server` and so reports the ordinary failure.
+Open a control-mode connection to one session.  This is the streaming half of the transport: a control connection stays open, exposes guarded reply blocks in wire order, and delivers events outside those blocks. The synchronous surface above is unaffected — a caller who never opens one never pays for it. A guarded block is not a final result for commands whose work tmux completes asynchronously.  Fails with `ProtocolError`, not `CommandFailure`, because that is what the `Connection` it returns speaks: an error type here that the value's own surface does not use would make the doorway disagree with the room.
 
 <a id="libtmux-server-hpp-server-control-with-options"></a>
 #### `Server::control_with_options`
@@ -184,44 +192,13 @@ Open a control-mode connection to one session.  This is the streaming half of th
 ```
 The Server supplies the socket and `session` supplies the session name; every other connection option is kept, including pane output policy.
 
-<a id="libtmux-server-hpp-server-take-notifications"></a>
-#### `Server::take_notifications`
-
-```cpp
-[[nodiscard]] std::vector<Notification> take_notifications() const;
-```
-What tmux has said on its own initiative since the last call: a window renamed, a pane exited, a client attached. A Server that runs a process per command hears nothing between them and answers with nothing, so a caller that wants this opens one with `over_control`.  Taking drains: what comes back will not come back again, and an empty result means nothing has arrived yet rather than that none will.  The buffer is bounded; `dropped_notifications` says how many were discarded, which distinguishes a quiet server from one that outran a caller who was not collecting.
-
-<a id="libtmux-server-hpp-server-dropped-notifications"></a>
-#### `Server::dropped_notifications`
-
-```cpp
-[[nodiscard]] std::size_t dropped_notifications() const noexcept;
-```
-
-<a id="libtmux-server-hpp-server-over-control"></a>
-#### `Server::over_control`
-
-```cpp
-[[nodiscard]] expected<Server, CommandFailure> over_control(std::string_view session) const;
-```
-The same surface, dispatched over one open control connection instead of a process per command. Entities taken from the result are ordinary entities; nothing above the transport knows the difference.  A connection carries one conversation, so commands over it are serialized. Two Servers over the same socket are two conversations. Live aliases must preserve the expected flag-1 reply-block count for every command; otherwise use Connection's exact-count overload or subprocess.
-
-<a id="libtmux-server-hpp-server-over-control-with-options"></a>
-#### `Server::over_control_with_options`
-
-```cpp
-[[nodiscard]] expected<Server, CommandFailure> over_control_with_options(std::string_view session, ConnectionOptions options) const;
-```
-As above, with the connection's timeouts, limits, executable, and output policy selected by the caller rather than reconstructed from a route.
-
 <a id="libtmux-server-hpp-server-tmux-version"></a>
 #### `Server::tmux_version`
 
 ```cpp
 [[nodiscard]] expected<Version, CommandFailure> tmux_version() const;
 ```
-The subprocess backend asks `tmux -V` without touching a server; a control backend asks its connected server. Both use this Server's execution policy.
+Ask the selected subprocess executable with `tmux -V` without touching a server. The call uses this Server's execution policy.
 
 <a id="libtmux-server-hpp-server-is-alive"></a>
 #### `Server::is_alive`
@@ -484,6 +461,80 @@ A hook set globally is not reported by the unscoped listing, so reading it back 
 [[nodiscard]] expected<void, CommandFailure> set_global_hook(std::string_view name, std::string_view command) const;
 ```
 
+<a id="libtmux-async-hpp"></a>
+## `libtmux/async.hpp`
+
+A command that has been sent and not yet answered.  `Server::submit` returns one instead of blocking, so a program with several questions for tmux asks them all and then collects. The waiting is the caller's to do and to order; the engine underneath runs them at once on threads it owns, whatever number of them there are.  An operation is answered once. Dropping one without waiting stops observing it; it does not stop the command, which tmux may already have run.
+
+**Symbols:**
+
+- [`CommandOperation`](#libtmux-async-hpp-commandoperation)
+  - [`CommandOperation::CommandOperation`](#libtmux-async-hpp-commandoperation-commandoperation)
+  - [`CommandOperation::operator=`](#libtmux-async-hpp-commandoperation-operator)
+  - [`CommandOperation::CommandOperation`](#libtmux-async-hpp-commandoperation-commandoperation-2)
+  - [`CommandOperation::operator=`](#libtmux-async-hpp-commandoperation-operator-2)
+  - [`CommandOperation::~CommandOperation`](#libtmux-async-hpp-commandoperation-commandoperation-3)
+  - [`CommandOperation::wait`](#libtmux-async-hpp-commandoperation-wait)
+  - [`CommandOperation::request_cancel`](#libtmux-async-hpp-commandoperation-request-cancel)
+
+<a id="libtmux-async-hpp-commandoperation"></a>
+### `CommandOperation`
+
+```cpp
+class CommandOperation final;
+```
+
+<a id="libtmux-async-hpp-commandoperation-commandoperation"></a>
+#### `CommandOperation::CommandOperation`
+
+```cpp
+CommandOperation(CommandOperation&& other) noexcept;
+```
+
+<a id="libtmux-async-hpp-commandoperation-operator"></a>
+#### `CommandOperation::operator=`
+
+```cpp
+CommandOperation& operator=(CommandOperation&& other) noexcept;
+```
+
+<a id="libtmux-async-hpp-commandoperation-commandoperation-2"></a>
+#### `CommandOperation::CommandOperation`
+
+```cpp
+CommandOperation(const CommandOperation&) = delete;
+```
+
+<a id="libtmux-async-hpp-commandoperation-operator-2"></a>
+#### `CommandOperation::operator=`
+
+```cpp
+CommandOperation& operator=(const CommandOperation&) = delete;
+```
+
+<a id="libtmux-async-hpp-commandoperation-commandoperation-3"></a>
+#### `CommandOperation::~CommandOperation`
+
+```cpp
+~CommandOperation();
+```
+
+<a id="libtmux-async-hpp-commandoperation-wait"></a>
+#### `CommandOperation::wait`
+
+```cpp
+[[nodiscard]] expected<std::string, CommandFailure> wait() &&;
+```
+What tmux said, once it has said it. The same answer `Server::run` gives, including the bound on how much of it is kept and what a non-zero exit means. Consumed once: the operation is spent afterwards.
+
+<a id="libtmux-async-hpp-commandoperation-request-cancel"></a>
+#### `CommandOperation::request_cancel`
+
+```cpp
+[[nodiscard]] bool request_cancel();
+```
+Ask for the command to be withdrawn. A request rather than an outcome: tmux may answer first, and whether it acted is reported by the failure's delivery rather than guessed at here.
+
 <a id="libtmux-capabilities-hpp"></a>
 ## `libtmux/capabilities.hpp`
 
@@ -498,7 +549,6 @@ What this Server can promise without probing tmux.  These describe the local bac
 - [`BackendKind`](#libtmux-capabilities-hpp-backendkind)
   - [`BackendKind::custom`](#libtmux-capabilities-hpp-backendkind-custom)
   - [`BackendKind::subprocess`](#libtmux-capabilities-hpp-backendkind-subprocess)
-  - [`BackendKind::control_mode`](#libtmux-capabilities-hpp-backendkind-control-mode)
 - [`ServerFeature`](#libtmux-capabilities-hpp-serverfeature)
   - [`ServerFeature::exact_inspection`](#libtmux-capabilities-hpp-serverfeature-exact-inspection)
   - [`ServerFeature::server_cleanup`](#libtmux-capabilities-hpp-serverfeature-server-cleanup)
@@ -512,11 +562,11 @@ What this Server can promise without probing tmux.  These describe the local bac
   - [`ServerFeature::server_state`](#libtmux-capabilities-hpp-serverfeature-server-state)
   - [`ServerFeature::wait_channels`](#libtmux-capabilities-hpp-serverfeature-wait-channels)
   - [`ServerFeature::control_mode`](#libtmux-capabilities-hpp-serverfeature-control-mode)
-  - [`ServerFeature::receives_asynchronous_notifications`](#libtmux-capabilities-hpp-serverfeature-receives-asynchronous-notifications)
 - [`ServerCapabilities`](#libtmux-capabilities-hpp-servercapabilities)
   - [`ServerCapabilities::implementation`](#libtmux-capabilities-hpp-servercapabilities-implementation)
   - [`ServerCapabilities::backend`](#libtmux-capabilities-hpp-servercapabilities-backend)
   - [`ServerCapabilities::supports`](#libtmux-capabilities-hpp-servercapabilities-supports)
+  - [`ServerCapabilities::refuses`](#libtmux-capabilities-hpp-servercapabilities-refuses)
 - [`Free symbols`](#libtmux-capabilities-hpp-free-symbols)
   - [`to_string`](#libtmux-capabilities-hpp-free-symbols-to-string)
   - [`to_string`](#libtmux-capabilities-hpp-free-symbols-to-string-2)
@@ -550,9 +600,6 @@ enum class BackendKind;
 
 <a id="libtmux-capabilities-hpp-backendkind-subprocess"></a>
 #### `BackendKind::subprocess` — `subprocess,`
-
-<a id="libtmux-capabilities-hpp-backendkind-control-mode"></a>
-#### `BackendKind::control_mode` — `control_mode,`
 
 <a id="libtmux-capabilities-hpp-serverfeature"></a>
 ### `ServerFeature`
@@ -623,11 +670,6 @@ Latched `wait-for` channels.
 
 This Server can open a persistent control connection.
 
-<a id="libtmux-capabilities-hpp-serverfeature-receives-asynchronous-notifications"></a>
-#### `ServerFeature::receives_asynchronous_notifications` — `receives_asynchronous_notifications,`
-
-This Server itself is already backed by control mode and receives events.
-
 <a id="libtmux-capabilities-hpp-servercapabilities"></a>
 ### `ServerCapabilities`
 
@@ -656,6 +698,14 @@ BackendKind backend{BackendKind::custom};
 [[nodiscard]] constexpr bool supports(ServerFeature feature) const noexcept;
 ```
 Purely local: this never launches tmux or touches a server.
+
+<a id="libtmux-capabilities-hpp-servercapabilities-refuses"></a>
+#### `ServerCapabilities::refuses`
+
+```cpp
+[[nodiscard]] constexpr bool refuses(ServerFeature feature) const noexcept;
+```
+Whether this implementation is known to get the feature wrong, which is the opposite question from `supports` rather than its negation. Both answer no for a backend nobody recognises: a caller asking what it may rely on must not be promised anything, and a custom executor running real tmux must not be refused for being unfamiliar.
 
 <a id="libtmux-capabilities-hpp-free-symbols"></a>
 ### `Free symbols`
@@ -721,6 +771,13 @@ The tmux object hierarchy.  A Session, Window, Pane or Client is one row of a sn
   - [`CaptureOptions::with_escape_sequences`](#libtmux-entities-hpp-captureoptions-with-escape-sequences)
   - [`CaptureOptions::keep_trailing_spaces`](#libtmux-entities-hpp-captureoptions-keep-trailing-spaces)
   - [`CaptureOptions::output_limit`](#libtmux-entities-hpp-captureoptions-output-limit)
+- [`AttachCommand`](#libtmux-entities-hpp-attachcommand)
+  - [`AttachCommand::AttachCommand`](#libtmux-entities-hpp-attachcommand-attachcommand)
+  - [`AttachCommand::AttachCommand`](#libtmux-entities-hpp-attachcommand-attachcommand-2)
+  - [`AttachCommand::operator=`](#libtmux-entities-hpp-attachcommand-operator)
+  - [`AttachCommand::operator=`](#libtmux-entities-hpp-attachcommand-operator-2)
+  - [`AttachCommand::~AttachCommand`](#libtmux-entities-hpp-attachcommand-attachcommand-3)
+  - [`AttachCommand::argv`](#libtmux-entities-hpp-attachcommand-argv)
 - [`Session`](#libtmux-entities-hpp-session)
   - [`Session::kNoun`](#libtmux-entities-hpp-session-knoun)
   - [`Session::kFields`](#libtmux-entities-hpp-session-kfields)
@@ -754,7 +811,6 @@ The tmux object hierarchy.  A Session, Window, Pane or Client is one row of a sn
   - [`Session::set_option`](#libtmux-entities-hpp-session-set-option)
   - [`Session::unset_option`](#libtmux-entities-hpp-session-unset-option)
   - [`Session::attach_command`](#libtmux-entities-hpp-session-attach-command)
-  - [`Session::checked_attach_command`](#libtmux-entities-hpp-session-checked-attach-command)
   - [`Session::detach_clients`](#libtmux-entities-hpp-session-detach-clients)
   - [`Session::expand`](#libtmux-entities-hpp-session-expand)
   - [`Session::show_message`](#libtmux-entities-hpp-session-show-message)
@@ -1218,6 +1274,58 @@ std::optional<std::size_t> output_limit{};
 ```
 How much of the answer this call is prepared to hold. A scrollback can be far larger than the default, and one that does not fit is reported.
 
+<a id="libtmux-entities-hpp-attachcommand"></a>
+### `AttachCommand`
+
+An attach argv and the private route selecting this server incarnation. Keep it alive until the client exits; same-process `exec` leaves the route on disk.
+
+```cpp
+class AttachCommand final;
+```
+
+<a id="libtmux-entities-hpp-attachcommand-attachcommand"></a>
+#### `AttachCommand::AttachCommand`
+
+```cpp
+AttachCommand(const AttachCommand&) noexcept;
+```
+
+<a id="libtmux-entities-hpp-attachcommand-attachcommand-2"></a>
+#### `AttachCommand::AttachCommand`
+
+```cpp
+AttachCommand(AttachCommand&&) noexcept;
+```
+
+<a id="libtmux-entities-hpp-attachcommand-operator"></a>
+#### `AttachCommand::operator=`
+
+```cpp
+AttachCommand& operator=(const AttachCommand&) noexcept;
+```
+
+<a id="libtmux-entities-hpp-attachcommand-operator-2"></a>
+#### `AttachCommand::operator=`
+
+```cpp
+AttachCommand& operator=(AttachCommand&&) noexcept;
+```
+
+<a id="libtmux-entities-hpp-attachcommand-attachcommand-3"></a>
+#### `AttachCommand::~AttachCommand`
+
+```cpp
+~AttachCommand();
+```
+
+<a id="libtmux-entities-hpp-attachcommand-argv"></a>
+#### `AttachCommand::argv`
+
+```cpp
+[[nodiscard]] const std::vector<std::string>& argv() const noexcept;
+```
+Exec-order arguments; empty after this value is moved from.
+
 <a id="libtmux-entities-hpp-session"></a>
 ### `Session`
 
@@ -1454,16 +1562,9 @@ Remove the value set here, so the wider scope shows through again.
 #### `Session::attach_command`
 
 ```cpp
-[[nodiscard]] std::vector<std::string> attach_command() const;
+[[nodiscard]] expected<AttachCommand, CommandFailure> attach_command() const;
 ```
-The command line that attaches a terminal to this session.  Not a method that attaches: a tmux client needs a terminal, and every command this library runs talks to it through pipes, so an attach it performed itself could only ever fail. A caller that owns a terminal execs this instead.  Prefer `checked_attach_command()`; this source-compatible form returns an empty vector when psmux cannot bind an attach target without a stale race.
-
-<a id="libtmux-entities-hpp-session-checked-attach-command"></a>
-#### `Session::checked_attach_command`
-
-```cpp
-[[nodiscard]] expected<std::vector<std::string>, CommandFailure> checked_attach_command() const;
-```
+A command line that attaches a terminal to this session.  Not a method that attaches: a tmux client needs a terminal, and every command this library runs talks to it through pipes, so an attach it performed itself could only ever fail. Spawn the returned argv and retain the value until that client exits.
 
 <a id="libtmux-entities-hpp-session-detach-clients"></a>
 #### `Session::detach_clients`
@@ -2135,7 +2236,7 @@ The visible contents, as tmux printed them. `capture_lines` frames it into lines
 ```cpp
 [[nodiscard]] expected<Window, CommandFailure> break_out(std::string_view name = {}) const;
 ```
-Take this pane out into a window of its own, which is returned. An empty name leaves tmux to name the window after what is running.
+Take this pane out into a window of its own, which is returned. If it is already the window's only pane, return that window without moving it. An empty name leaves tmux to name the window after what is running.
 
 <a id="libtmux-entities-hpp-pane-join"></a>
 #### `Pane::join`
@@ -3052,7 +3153,7 @@ class Snapshot;
 #### `Snapshot::take`
 
 ```cpp
-[[nodiscard]] static expected<std::shared_ptr<const Snapshot>, CommandFailure> take(std::shared_ptr<const detail::Backend> backend, std::span<const std::string_view> fields, std::vector<std::string> request, FormatArgument placement = FormatArgument::flag);
+[[nodiscard]] static expected<std::shared_ptr<const Snapshot>, CommandFailure> take(std::shared_ptr<const detail::Backend> backend, std::span<const std::string_view> fields, CommandRequest request, FormatArgument placement = FormatArgument::flag);
 ```
 Run `request` with this entity's fields appended and parse what came back. Rows are parsed once, here: entities hold views into them, so a second parse would invalidate every entity already handed out.
 
@@ -3060,14 +3161,14 @@ Run `request` with this entity's fields appended and parse what came back. Rows 
 #### `Snapshot::take_in_session`
 
 ```cpp
-[[nodiscard]] static expected<std::shared_ptr<const Snapshot>, CommandFailure> take_in_session(std::shared_ptr<const detail::Backend> backend, std::span<const std::string_view> fields, std::vector<std::string> request, FormatArgument placement, std::string_view session_id, std::string_view session_name);
+[[nodiscard]] static expected<std::shared_ptr<const Snapshot>, CommandFailure> take_in_session(std::shared_ptr<const detail::Backend> backend, std::span<const std::string_view> fields, CommandRequest request, FormatArgument placement, std::string_view session_id, std::string_view session_name);
 ```
 
 <a id="libtmux-snapshot-hpp-snapshot-take-in-session-2"></a>
 #### `Snapshot::take_in_session`
 
 ```cpp
-[[nodiscard]] static expected<std::shared_ptr<const Snapshot>, CommandFailure> take_in_session(std::shared_ptr<const detail::Backend> backend, std::span<const std::string_view> fields, std::vector<std::string> request, FormatArgument placement, std::string_view session_id, std::string_view session_name, std::optional<std::chrono::milliseconds> timeout, std::optional<std::size_t> output_limit);
+[[nodiscard]] static expected<std::shared_ptr<const Snapshot>, CommandFailure> take_in_session(std::shared_ptr<const detail::Backend> backend, std::span<const std::string_view> fields, CommandRequest request, FormatArgument placement, std::string_view session_id, std::string_view session_name, std::optional<std::chrono::milliseconds> timeout, std::optional<std::size_t> output_limit);
 ```
 
 <a id="libtmux-snapshot-hpp-snapshot-from-recording"></a>
@@ -4038,6 +4139,50 @@ template <ReferenceRange Range> [[nodiscard]] expected<Referenced<Range>, Cardin
 ```
 `exactly_one` states that several is a caller error, and says which one.
 
+<a id="libtmux-delivery-hpp"></a>
+## `libtmux/delivery.hpp`
+
+How far a tmux command is known to have progressed before a failure.  Only `not_started` is safe to retry without inspecting the operation. `written` means the complete request reached the transport but no terminal reply did. `replied` means tmux produced a terminal reply. `indeterminate` means the transport cannot prove whether tmux saw or completed the request.
+
+**Symbols:**
+
+- [`DeliveryStatus`](#libtmux-delivery-hpp-deliverystatus)
+  - [`DeliveryStatus::not_started`](#libtmux-delivery-hpp-deliverystatus-not-started)
+  - [`DeliveryStatus::written`](#libtmux-delivery-hpp-deliverystatus-written)
+  - [`DeliveryStatus::replied`](#libtmux-delivery-hpp-deliverystatus-replied)
+  - [`DeliveryStatus::indeterminate`](#libtmux-delivery-hpp-deliverystatus-indeterminate)
+- [`Free symbols`](#libtmux-delivery-hpp-free-symbols)
+  - [`to_string`](#libtmux-delivery-hpp-free-symbols-to-string)
+
+<a id="libtmux-delivery-hpp-deliverystatus"></a>
+### `DeliveryStatus`
+
+```cpp
+enum class DeliveryStatus : std::uint8_t;
+```
+
+<a id="libtmux-delivery-hpp-deliverystatus-not-started"></a>
+#### `DeliveryStatus::not_started` — `not_started,`
+
+<a id="libtmux-delivery-hpp-deliverystatus-written"></a>
+#### `DeliveryStatus::written` — `written,`
+
+<a id="libtmux-delivery-hpp-deliverystatus-replied"></a>
+#### `DeliveryStatus::replied` — `replied,`
+
+<a id="libtmux-delivery-hpp-deliverystatus-indeterminate"></a>
+#### `DeliveryStatus::indeterminate` — `indeterminate,`
+
+<a id="libtmux-delivery-hpp-free-symbols"></a>
+### `Free symbols`
+
+<a id="libtmux-delivery-hpp-free-symbols-to-string"></a>
+#### `to_string`
+
+```cpp
+[[nodiscard]] constexpr std::string_view to_string(DeliveryStatus status) noexcept;
+```
+
 <a id="libtmux-command-hpp"></a>
 ## `libtmux/command.hpp`
 
@@ -4055,11 +4200,38 @@ Why a tmux command produced no answer.  `refused` means tmux ran and said no; `m
   - [`FailureKind::missing`](#libtmux-command-hpp-failurekind-missing)
   - [`FailureKind::truncated`](#libtmux-command-hpp-failurekind-truncated)
   - [`FailureKind::unsupported`](#libtmux-command-hpp-failurekind-unsupported)
+  - [`FailureKind::overloaded`](#libtmux-command-hpp-failurekind-overloaded)
+  - [`FailureKind::cancelled`](#libtmux-command-hpp-failurekind-cancelled)
 - [`CommandFailure`](#libtmux-command-hpp-commandfailure)
   - [`CommandFailure::kind`](#libtmux-command-hpp-commandfailure-kind)
-  - [`CommandFailure::dispatched`](#libtmux-command-hpp-commandfailure-dispatched)
+  - [`CommandFailure::delivery`](#libtmux-command-hpp-commandfailure-delivery)
   - [`CommandFailure::exit_code`](#libtmux-command-hpp-commandfailure-exit-code)
   - [`CommandFailure::diagnostic`](#libtmux-command-hpp-commandfailure-diagnostic)
+- [`ArgumentSensitivity`](#libtmux-command-hpp-argumentsensitivity)
+  - [`ArgumentSensitivity::public_value`](#libtmux-command-hpp-argumentsensitivity-public-value)
+  - [`ArgumentSensitivity::secret`](#libtmux-command-hpp-argumentsensitivity-secret)
+- [`CommandArgument`](#libtmux-command-hpp-commandargument)
+  - [`CommandArgument::CommandArgument`](#libtmux-command-hpp-commandargument-commandargument)
+  - [`CommandArgument::CommandArgument`](#libtmux-command-hpp-commandargument-commandargument-2)
+  - [`CommandArgument::CommandArgument`](#libtmux-command-hpp-commandargument-commandargument-3)
+  - [`CommandArgument::sensitive`](#libtmux-command-hpp-commandargument-sensitive)
+  - [`CommandArgument::sensitive_range`](#libtmux-command-hpp-commandargument-sensitive-range)
+  - [`CommandArgument::value`](#libtmux-command-hpp-commandargument-value)
+  - [`CommandArgument::sensitivity`](#libtmux-command-hpp-commandargument-sensitivity)
+  - [`CommandArgument::sensitive_parts`](#libtmux-command-hpp-commandargument-sensitive-parts)
+- [`CommandRequest`](#libtmux-command-hpp-commandrequest)
+  - [`CommandRequest::CommandRequest`](#libtmux-command-hpp-commandrequest-commandrequest)
+  - [`CommandRequest::CommandRequest`](#libtmux-command-hpp-commandrequest-commandrequest-2)
+  - [`CommandRequest::CommandRequest`](#libtmux-command-hpp-commandrequest-commandrequest-3)
+  - [`CommandRequest::empty`](#libtmux-command-hpp-commandrequest-empty)
+  - [`CommandRequest::size`](#libtmux-command-hpp-commandrequest-size)
+  - [`CommandRequest::reserve`](#libtmux-command-hpp-commandrequest-reserve)
+  - [`CommandRequest::emplace_back`](#libtmux-command-hpp-commandrequest-emplace-back)
+  - [`CommandRequest::emplace_back`](#libtmux-command-hpp-commandrequest-emplace-back-2)
+  - [`CommandRequest::emplace_back`](#libtmux-command-hpp-commandrequest-emplace-back-3)
+  - [`CommandRequest::push_back`](#libtmux-command-hpp-commandrequest-push-back)
+  - [`CommandRequest::arguments`](#libtmux-command-hpp-commandrequest-arguments)
+  - [`CommandRequest::argv`](#libtmux-command-hpp-commandrequest-argv)
 - [`ExecutionPolicy`](#libtmux-command-hpp-executionpolicy)
   - [`ExecutionPolicy::timeout`](#libtmux-command-hpp-executionpolicy-timeout)
   - [`ExecutionPolicy::output_limit`](#libtmux-command-hpp-executionpolicy-output-limit)
@@ -4105,6 +4277,16 @@ tmux ran and answered, and the answer did not fit. Reported rather than returned
 
 The backend cannot provide this operation without weakening its contract; nothing was dispatched.
 
+<a id="libtmux-command-hpp-failurekind-overloaded"></a>
+#### `FailureKind::overloaded` — `overloaded,`
+
+More work is in flight than the engine accepts. Nothing was dispatched, so this is the one refusal a caller may simply try again later — appended rather than grouped, because the values before it are an installed ABI.
+
+<a id="libtmux-command-hpp-failurekind-cancelled"></a>
+#### `FailureKind::cancelled` — `cancelled,`
+
+The caller withdrew the call. Whether tmux acted is a separate question, and `delivery` is what answers it: a cancellation accepted before dispatch is not_started, and one accepted after the command was written is not.
+
 <a id="libtmux-command-hpp-commandfailure"></a>
 ### `CommandFailure`
 
@@ -4119,13 +4301,13 @@ struct CommandFailure;
 FailureKind kind{FailureKind::refused};
 ```
 
-<a id="libtmux-command-hpp-commandfailure-dispatched"></a>
-#### `CommandFailure::dispatched`
+<a id="libtmux-command-hpp-commandfailure-delivery"></a>
+#### `CommandFailure::delivery`
 
 ```cpp
-bool dispatched{};
+DeliveryStatus delivery{DeliveryStatus::not_started};
 ```
-True only when tmux itself ran. Retrying a dispatched command repeats whatever it already did.
+How far the command is known to have progressed. Only `not_started` is safe to retry blindly.
 
 <a id="libtmux-command-hpp-commandfailure-exit-code"></a>
 #### `CommandFailure::exit_code`
@@ -4139,6 +4321,174 @@ int exit_code{};
 
 ```cpp
 std::string diagnostic;
+```
+
+<a id="libtmux-command-hpp-argumentsensitivity"></a>
+### `ArgumentSensitivity`
+
+```cpp
+enum class ArgumentSensitivity : std::uint8_t;
+```
+
+<a id="libtmux-command-hpp-argumentsensitivity-public-value"></a>
+#### `ArgumentSensitivity::public_value` — `public_value,`
+
+<a id="libtmux-command-hpp-argumentsensitivity-secret"></a>
+#### `ArgumentSensitivity::secret` — `secret,`
+
+<a id="libtmux-command-hpp-commandargument"></a>
+### `CommandArgument`
+
+```cpp
+class CommandArgument;
+```
+
+<a id="libtmux-command-hpp-commandargument-commandargument"></a>
+#### `CommandArgument::CommandArgument`
+
+```cpp
+CommandArgument(const char* value);
+```
+
+<a id="libtmux-command-hpp-commandargument-commandargument-2"></a>
+#### `CommandArgument::CommandArgument`
+
+```cpp
+CommandArgument(std::string value);
+```
+
+<a id="libtmux-command-hpp-commandargument-commandargument-3"></a>
+#### `CommandArgument::CommandArgument`
+
+```cpp
+CommandArgument(std::string_view value);
+```
+
+<a id="libtmux-command-hpp-commandargument-sensitive"></a>
+#### `CommandArgument::sensitive`
+
+```cpp
+[[nodiscard]] static CommandArgument sensitive(std::string value);
+```
+
+<a id="libtmux-command-hpp-commandargument-sensitive-range"></a>
+#### `CommandArgument::sensitive_range`
+
+```cpp
+[[nodiscard]] static CommandArgument sensitive_range(std::string value, std::size_t offset, std::size_t size);
+```
+Keep a composite argument intact on the wire while treating one byte range inside it as sensitive. An invalid range hides the whole argument.
+
+<a id="libtmux-command-hpp-commandargument-value"></a>
+#### `CommandArgument::value`
+
+```cpp
+[[nodiscard]] const std::string& value() const noexcept;
+```
+
+<a id="libtmux-command-hpp-commandargument-sensitivity"></a>
+#### `CommandArgument::sensitivity`
+
+```cpp
+[[nodiscard]] ArgumentSensitivity sensitivity() const noexcept;
+```
+
+<a id="libtmux-command-hpp-commandargument-sensitive-parts"></a>
+#### `CommandArgument::sensitive_parts`
+
+```cpp
+[[nodiscard]] const std::vector<std::string>& sensitive_parts() const noexcept;
+```
+
+<a id="libtmux-command-hpp-commandrequest"></a>
+### `CommandRequest`
+
+```cpp
+class CommandRequest;
+```
+
+<a id="libtmux-command-hpp-commandrequest-commandrequest"></a>
+#### `CommandRequest::CommandRequest`
+
+```cpp
+CommandRequest() = default;
+```
+
+<a id="libtmux-command-hpp-commandrequest-commandrequest-2"></a>
+#### `CommandRequest::CommandRequest`
+
+```cpp
+CommandRequest(std::initializer_list<CommandArgument> arguments);
+```
+
+<a id="libtmux-command-hpp-commandrequest-commandrequest-3"></a>
+#### `CommandRequest::CommandRequest`
+
+```cpp
+CommandRequest(std::vector<std::string> arguments);
+```
+
+<a id="libtmux-command-hpp-commandrequest-empty"></a>
+#### `CommandRequest::empty`
+
+```cpp
+[[nodiscard]] bool empty() const noexcept;
+```
+
+<a id="libtmux-command-hpp-commandrequest-size"></a>
+#### `CommandRequest::size`
+
+```cpp
+[[nodiscard]] std::size_t size() const noexcept;
+```
+
+<a id="libtmux-command-hpp-commandrequest-reserve"></a>
+#### `CommandRequest::reserve`
+
+```cpp
+void reserve(std::size_t size);
+```
+
+<a id="libtmux-command-hpp-commandrequest-emplace-back"></a>
+#### `CommandRequest::emplace_back`
+
+```cpp
+void emplace_back(const char* value);
+```
+
+<a id="libtmux-command-hpp-commandrequest-emplace-back-2"></a>
+#### `CommandRequest::emplace_back`
+
+```cpp
+void emplace_back(std::string value);
+```
+
+<a id="libtmux-command-hpp-commandrequest-emplace-back-3"></a>
+#### `CommandRequest::emplace_back`
+
+```cpp
+void emplace_back(std::string_view value);
+```
+
+<a id="libtmux-command-hpp-commandrequest-push-back"></a>
+#### `CommandRequest::push_back`
+
+```cpp
+void push_back(CommandArgument argument);
+```
+
+<a id="libtmux-command-hpp-commandrequest-arguments"></a>
+#### `CommandRequest::arguments`
+
+```cpp
+[[nodiscard]] const std::vector<CommandArgument>& arguments() const noexcept;
+```
+
+<a id="libtmux-command-hpp-commandrequest-argv"></a>
+#### `CommandRequest::argv`
+
+```cpp
+[[nodiscard]] std::vector<std::string> argv() const;
 ```
 
 <a id="libtmux-command-hpp-executionpolicy"></a>
@@ -4182,7 +4532,7 @@ Absent leaves the transport's own bound, which is one megabyte.
 ```cpp
 using CommandObserver = std::function<void(std::string_view command, const CommandFailure* failure)>;
 ```
-Told about every command, as it finishes.  There is otherwise no way to see what this library ran: a caller debugging a tmux interaction has only the failures, and nothing at all when things succeed. The command is rendered as tmux received it, with any argument marked sensitive replaced.  Called on the thread that ran the command, while nothing is held, so an observer that itself calls tmux does not deadlock — but one shared between threads has to say so itself.
+Told about every command, as it finishes.  There is otherwise no way to see what this library ran: a caller debugging a tmux interaction has only the failures, and nothing at all when things succeed. The command is rendered as tmux received it, with any argument marked sensitive replaced.  Called on the thread that ran the command, while nothing is held, so an observer that itself calls tmux does not deadlock — but one shared between threads has to say so itself. Both callback arguments expire on return.
 
 <a id="libtmux-options-hpp"></a>
 ## `libtmux/options.hpp`
@@ -4273,6 +4623,7 @@ Decode tmux's control protocol.  A control-mode stream interleaves command reply
 
 - [`ProtocolError`](#libtmux-control-hpp-protocolerror)
   - [`ProtocolError::message`](#libtmux-control-hpp-protocolerror-message)
+  - [`ProtocolError::delivery`](#libtmux-control-hpp-protocolerror-delivery)
 - [`ControlTerminal`](#libtmux-control-hpp-controlterminal)
   - [`ControlTerminal::end`](#libtmux-control-hpp-controlterminal-end)
   - [`ControlTerminal::error`](#libtmux-control-hpp-controlterminal-error)
@@ -4285,58 +4636,17 @@ Decode tmux's control protocol.  A control-mode stream interleaves command reply
   - [`ControlBlock::body`](#libtmux-control-hpp-controlblock-body)
   - [`ControlBlock::body_truncated`](#libtmux-control-hpp-controlblock-body-truncated)
   - [`ControlBlock::body_bytes`](#libtmux-control-hpp-controlblock-body-bytes)
-- [`Notification`](#libtmux-control-hpp-notification)
-  - [`Notification::body`](#libtmux-control-hpp-notification-body)
-- [`NotificationKind`](#libtmux-control-hpp-notificationkind)
-  - [`NotificationKind::unknown`](#libtmux-control-hpp-notificationkind-unknown)
-  - [`NotificationKind::output`](#libtmux-control-hpp-notificationkind-output)
-  - [`NotificationKind::extended_output`](#libtmux-control-hpp-notificationkind-extended-output)
-  - [`NotificationKind::paused`](#libtmux-control-hpp-notificationkind-paused)
-  - [`NotificationKind::resumed`](#libtmux-control-hpp-notificationkind-resumed)
-  - [`NotificationKind::sessions_changed`](#libtmux-control-hpp-notificationkind-sessions-changed)
-  - [`NotificationKind::session_changed`](#libtmux-control-hpp-notificationkind-session-changed)
-  - [`NotificationKind::session_renamed`](#libtmux-control-hpp-notificationkind-session-renamed)
-  - [`NotificationKind::session_window_changed`](#libtmux-control-hpp-notificationkind-session-window-changed)
-  - [`NotificationKind::client_detached`](#libtmux-control-hpp-notificationkind-client-detached)
-  - [`NotificationKind::client_session_changed`](#libtmux-control-hpp-notificationkind-client-session-changed)
-  - [`NotificationKind::window_add`](#libtmux-control-hpp-notificationkind-window-add)
-  - [`NotificationKind::window_close`](#libtmux-control-hpp-notificationkind-window-close)
-  - [`NotificationKind::window_renamed`](#libtmux-control-hpp-notificationkind-window-renamed)
-  - [`NotificationKind::window_pane_changed`](#libtmux-control-hpp-notificationkind-window-pane-changed)
-  - [`NotificationKind::unlinked_window_add`](#libtmux-control-hpp-notificationkind-unlinked-window-add)
-  - [`NotificationKind::unlinked_window_close`](#libtmux-control-hpp-notificationkind-unlinked-window-close)
-  - [`NotificationKind::unlinked_window_renamed`](#libtmux-control-hpp-notificationkind-unlinked-window-renamed)
-  - [`NotificationKind::pane_mode_changed`](#libtmux-control-hpp-notificationkind-pane-mode-changed)
-  - [`NotificationKind::paste_buffer_changed`](#libtmux-control-hpp-notificationkind-paste-buffer-changed)
-  - [`NotificationKind::paste_buffer_deleted`](#libtmux-control-hpp-notificationkind-paste-buffer-deleted)
-  - [`NotificationKind::subscription_changed`](#libtmux-control-hpp-notificationkind-subscription-changed)
-- [`ParsedNotification`](#libtmux-control-hpp-parsednotification)
-  - [`ParsedNotification::kind`](#libtmux-control-hpp-parsednotification-kind)
-  - [`ParsedNotification::name`](#libtmux-control-hpp-parsednotification-name)
-  - [`ParsedNotification::session`](#libtmux-control-hpp-parsednotification-session)
-  - [`ParsedNotification::window`](#libtmux-control-hpp-parsednotification-window)
-  - [`ParsedNotification::pane`](#libtmux-control-hpp-parsednotification-pane)
-  - [`ParsedNotification::text`](#libtmux-control-hpp-parsednotification-text)
-  - [`ParsedNotification::payload`](#libtmux-control-hpp-parsednotification-payload)
-  - [`ParsedNotification::age`](#libtmux-control-hpp-parsednotification-age)
 - [`Parser`](#libtmux-control-hpp-parser)
   - [`Parser::Parser`](#libtmux-control-hpp-parser-parser)
   - [`Parser::Parser`](#libtmux-control-hpp-parser-parser-2)
   - [`Parser::feed`](#libtmux-control-hpp-parser-feed)
   - [`Parser::finish`](#libtmux-control-hpp-parser-finish)
-- [`Attribution`](#libtmux-control-hpp-attribution)
-  - [`Attribution::exact`](#libtmux-control-hpp-attribution-exact)
-  - [`Attribution::skipped`](#libtmux-control-hpp-attribution-skipped)
-  - [`Attribution::unknown`](#libtmux-control-hpp-attribution-unknown)
 - [`ControlCommand`](#libtmux-control-hpp-controlcommand)
   - [`ControlCommand::argv`](#libtmux-control-hpp-controlcommand-argv)
 - [`ControlRequest`](#libtmux-control-hpp-controlrequest)
   - [`ControlRequest::group`](#libtmux-control-hpp-controlrequest-group)
-- [`ControlOperationResult`](#libtmux-control-hpp-controloperationresult)
-  - [`ControlOperationResult::attribution`](#libtmux-control-hpp-controloperationresult-attribution)
-  - [`ControlOperationResult::block`](#libtmux-control-hpp-controloperationresult-block)
 - [`ControlRequestResult`](#libtmux-control-hpp-controlrequestresult)
-  - [`ControlRequestResult::operations`](#libtmux-control-hpp-controlrequestresult-operations)
+  - [`ControlRequestResult::blocks`](#libtmux-control-hpp-controlrequestresult-blocks)
   - [`ControlRequestResult::connection_error`](#libtmux-control-hpp-controlrequestresult-connection-error)
 - [`ConnectionOptions`](#libtmux-control-hpp-connectionoptions)
   - [`ConnectionOptions::tmux_binary`](#libtmux-control-hpp-connectionoptions-tmux-binary)
@@ -4370,8 +4680,8 @@ Decode tmux's control protocol.  A control-mode stream interleaves command reply
   - [`Connection::Connection`](#libtmux-control-hpp-connection-connection-3)
   - [`Connection::operator=`](#libtmux-control-hpp-connection-operator-2)
   - [`Connection::execute`](#libtmux-control-hpp-connection-execute)
-  - [`Connection::execute`](#libtmux-control-hpp-connection-execute-2)
   - [`Connection::take_notifications`](#libtmux-control-hpp-connection-take-notifications)
+  - [`Connection::watch_notifications`](#libtmux-control-hpp-connection-watch-notifications)
   - [`Connection::wait_for_notifications`](#libtmux-control-hpp-connection-wait-for-notifications)
   - [`Connection::notification_fd`](#libtmux-control-hpp-connection-notification-fd)
   - [`Connection::set_pane_output`](#libtmux-control-hpp-connection-set-pane-output)
@@ -4383,14 +4693,11 @@ Decode tmux's control protocol.  A control-mode stream interleaves command reply
   - [`kDefaultRetainedReplyBytes`](#libtmux-control-hpp-free-symbols-kdefaultretainedreplybytes)
   - [`kDefaultLineBytes`](#libtmux-control-hpp-free-symbols-kdefaultlinebytes)
   - [`Event`](#libtmux-control-hpp-free-symbols-event)
-  - [`to_string`](#libtmux-control-hpp-free-symbols-to-string)
-  - [`parse`](#libtmux-control-hpp-free-symbols-parse)
-  - [`parse`](#libtmux-control-hpp-free-symbols-parse-2)
 
 <a id="libtmux-control-hpp-protocolerror"></a>
 ### `ProtocolError`
 
-Why a decode stopped. The stream is terminal for its connection: a caller cannot resynchronise a control stream, only start a new one.
+Why a control operation stopped. The stream is terminal after a protocol failure: a caller cannot resynchronise it, only start a new one. `delivery` says whether the affected request was untouched, fully written, answered, or left indeterminate.
 
 ```cpp
 struct ProtocolError;
@@ -4401,6 +4708,13 @@ struct ProtocolError;
 
 ```cpp
 std::string message;
+```
+
+<a id="libtmux-control-hpp-protocolerror-delivery"></a>
+#### `ProtocolError::delivery`
+
+```cpp
+DeliveryStatus delivery{DeliveryStatus::indeterminate};
 ```
 
 <a id="libtmux-control-hpp-controlterminal"></a>
@@ -4480,161 +4794,6 @@ bool body_truncated{false};
 std::size_t body_bytes{0};
 ```
 
-<a id="libtmux-control-hpp-notification"></a>
-### `Notification`
-
-```cpp
-struct Notification;
-```
-
-<a id="libtmux-control-hpp-notification-body"></a>
-#### `Notification::body`
-
-```cpp
-std::vector<std::byte> body;
-```
-
-<a id="libtmux-control-hpp-notificationkind"></a>
-### `NotificationKind`
-
-What a notification is, once its name and arguments have been read.  `unknown` is not a failure. tmux has only ever added notifications across the range this library supports — nineteen at 3.2a, twenty-one from 3.4 — so a name this build does not know is a newer tmux, and the body is still there to read. That is also why this is a kind and fields rather than a variant: an exhaustive `std::visit` would turn every such addition into a caller-breaking change.
-
-```cpp
-enum class NotificationKind : std::uint8_t;
-```
-
-<a id="libtmux-control-hpp-notificationkind-unknown"></a>
-#### `NotificationKind::unknown` — `unknown,`
-
-<a id="libtmux-control-hpp-notificationkind-output"></a>
-#### `NotificationKind::output` — `output,`
-
-<a id="libtmux-control-hpp-notificationkind-extended-output"></a>
-#### `NotificationKind::extended_output` — `extended_output,`
-
-<a id="libtmux-control-hpp-notificationkind-paused"></a>
-#### `NotificationKind::paused` — `paused,`
-
-<a id="libtmux-control-hpp-notificationkind-resumed"></a>
-#### `NotificationKind::resumed` — `resumed,`
-
-<a id="libtmux-control-hpp-notificationkind-sessions-changed"></a>
-#### `NotificationKind::sessions_changed` — `sessions_changed,`
-
-<a id="libtmux-control-hpp-notificationkind-session-changed"></a>
-#### `NotificationKind::session_changed` — `session_changed,`
-
-<a id="libtmux-control-hpp-notificationkind-session-renamed"></a>
-#### `NotificationKind::session_renamed` — `session_renamed,`
-
-<a id="libtmux-control-hpp-notificationkind-session-window-changed"></a>
-#### `NotificationKind::session_window_changed` — `session_window_changed,`
-
-<a id="libtmux-control-hpp-notificationkind-client-detached"></a>
-#### `NotificationKind::client_detached` — `client_detached,`
-
-<a id="libtmux-control-hpp-notificationkind-client-session-changed"></a>
-#### `NotificationKind::client_session_changed` — `client_session_changed,`
-
-<a id="libtmux-control-hpp-notificationkind-window-add"></a>
-#### `NotificationKind::window_add` — `window_add,`
-
-<a id="libtmux-control-hpp-notificationkind-window-close"></a>
-#### `NotificationKind::window_close` — `window_close,`
-
-<a id="libtmux-control-hpp-notificationkind-window-renamed"></a>
-#### `NotificationKind::window_renamed` — `window_renamed,`
-
-<a id="libtmux-control-hpp-notificationkind-window-pane-changed"></a>
-#### `NotificationKind::window_pane_changed` — `window_pane_changed,`
-
-<a id="libtmux-control-hpp-notificationkind-unlinked-window-add"></a>
-#### `NotificationKind::unlinked_window_add` — `unlinked_window_add,`
-
-<a id="libtmux-control-hpp-notificationkind-unlinked-window-close"></a>
-#### `NotificationKind::unlinked_window_close` — `unlinked_window_close,`
-
-<a id="libtmux-control-hpp-notificationkind-unlinked-window-renamed"></a>
-#### `NotificationKind::unlinked_window_renamed` — `unlinked_window_renamed,`
-
-<a id="libtmux-control-hpp-notificationkind-pane-mode-changed"></a>
-#### `NotificationKind::pane_mode_changed` — `pane_mode_changed,`
-
-<a id="libtmux-control-hpp-notificationkind-paste-buffer-changed"></a>
-#### `NotificationKind::paste_buffer_changed` — `paste_buffer_changed,`
-
-<a id="libtmux-control-hpp-notificationkind-paste-buffer-deleted"></a>
-#### `NotificationKind::paste_buffer_deleted` — `paste_buffer_deleted,`
-
-<a id="libtmux-control-hpp-notificationkind-subscription-changed"></a>
-#### `NotificationKind::subscription_changed` — `subscription_changed,`
-
-<a id="libtmux-control-hpp-parsednotification"></a>
-### `ParsedNotification`
-
-A notification's arguments, as views into the notification it was read from.  tmux types its arguments by prefix — `$0` a session, `@1` a window, `%2` a pane — so each lands in the field it belongs to and the others stay empty. `payload` is the pane bytes of an output notification, already unescaped; it is empty for every other kind.  Everything here borrows. The notification must outlive it, which is why there is no overload taking a temporary.
-
-```cpp
-struct ParsedNotification;
-```
-
-<a id="libtmux-control-hpp-parsednotification-kind"></a>
-#### `ParsedNotification::kind`
-
-```cpp
-NotificationKind kind{NotificationKind::unknown};
-```
-
-<a id="libtmux-control-hpp-parsednotification-name"></a>
-#### `ParsedNotification::name`
-
-```cpp
-std::string_view name{};
-```
-
-<a id="libtmux-control-hpp-parsednotification-session"></a>
-#### `ParsedNotification::session`
-
-```cpp
-std::string_view session{};
-```
-
-<a id="libtmux-control-hpp-parsednotification-window"></a>
-#### `ParsedNotification::window`
-
-```cpp
-std::string_view window{};
-```
-
-<a id="libtmux-control-hpp-parsednotification-pane"></a>
-#### `ParsedNotification::pane`
-
-```cpp
-std::string_view pane{};
-```
-
-<a id="libtmux-control-hpp-parsednotification-text"></a>
-#### `ParsedNotification::text`
-
-```cpp
-std::string_view text{};
-```
-
-<a id="libtmux-control-hpp-parsednotification-payload"></a>
-#### `ParsedNotification::payload`
-
-```cpp
-std::span<const std::byte> payload{};
-```
-
-<a id="libtmux-control-hpp-parsednotification-age"></a>
-#### `ParsedNotification::age`
-
-```cpp
-std::optional<std::uint64_t> age{};
-```
-Milliseconds this output was behind when tmux wrote it. Only `extended_output` carries one.
-
 <a id="libtmux-control-hpp-parser"></a>
 ### `Parser`
 
@@ -4671,22 +4830,6 @@ expected<std::vector<Event>, ProtocolError> feed(std::span<const std::byte> byte
 expected<void, ProtocolError> finish();
 ```
 
-<a id="libtmux-control-hpp-attribution"></a>
-### `Attribution`
-
-```cpp
-enum class Attribution : std::uint8_t;
-```
-
-<a id="libtmux-control-hpp-attribution-exact"></a>
-#### `Attribution::exact` — `exact,`
-
-<a id="libtmux-control-hpp-attribution-skipped"></a>
-#### `Attribution::skipped` — `skipped,`
-
-<a id="libtmux-control-hpp-attribution-unknown"></a>
-#### `Attribution::unknown` — `unknown,`
-
 <a id="libtmux-control-hpp-controlcommand"></a>
 ### `ControlCommand`
 
@@ -4715,27 +4858,6 @@ struct ControlRequest;
 std::vector<ControlCommand> group;
 ```
 
-<a id="libtmux-control-hpp-controloperationresult"></a>
-### `ControlOperationResult`
-
-```cpp
-struct ControlOperationResult;
-```
-
-<a id="libtmux-control-hpp-controloperationresult-attribution"></a>
-#### `ControlOperationResult::attribution`
-
-```cpp
-Attribution attribution{Attribution::unknown};
-```
-
-<a id="libtmux-control-hpp-controloperationresult-block"></a>
-#### `ControlOperationResult::block`
-
-```cpp
-std::optional<ControlBlock> block;
-```
-
 <a id="libtmux-control-hpp-controlrequestresult"></a>
 ### `ControlRequestResult`
 
@@ -4743,12 +4865,13 @@ std::optional<ControlBlock> block;
 struct ControlRequestResult;
 ```
 
-<a id="libtmux-control-hpp-controlrequestresult-operations"></a>
-#### `ControlRequestResult::operations`
+<a id="libtmux-control-hpp-controlrequestresult-blocks"></a>
+#### `ControlRequestResult::blocks`
 
 ```cpp
-std::vector<ControlOperationResult> operations;
+std::vector<ControlBlock> blocks;
 ```
+Every synchronous reply block tmux emitted for this request, in wire order. tmux does not put a request or operation ID on its guards, so a command alias or inserted command may make this differ from `group`.
 
 <a id="libtmux-control-hpp-controlrequestresult-connection-error"></a>
 #### `ControlRequestResult::connection_error`
@@ -4805,7 +4928,7 @@ std::chrono::milliseconds shutdown_timeout{2000};
 ```cpp
 std::size_t retained_reply_bytes{kDefaultRetainedReplyBytes};
 ```
-Passed to the decoder. Raise the first to hold a bigger capture; the second bounds a line that never ends and wants raising only if tmux grows a longer one.
+Passed to the decoder. Raise the first to hold a bigger capture; the second bounds a line that never ends. A connection accepts zero (unbounded) or at least 128 bytes, which leaves room for its private request boundary.
 
 <a id="libtmux-control-hpp-connectionoptions-line-bytes"></a>
 #### `ConnectionOptions::line_bytes`
@@ -4985,15 +5108,7 @@ Connection& operator=(const Connection&) = delete;
 ```cpp
 ControlRequestResult execute(ControlRequest request, std::chrono::steady_clock::time_point deadline);
 ```
-Rejects direct commands whose reply count is not implied by `group`. This overload does not inspect live aliases; use the exact-count overload.
-
-<a id="libtmux-control-hpp-connection-execute-2"></a>
-#### `Connection::execute`
-
-```cpp
-ControlRequestResult execute(ControlRequest request, std::size_t expected_operations, std::chrono::steady_clock::time_point deadline);
-```
-The exact flag-1 block count, including synchronous inserts; flag-0 blocks do not count. A mismatch can misattribute concurrent replies and violates this overload's precondition; custom aliases need their expanded count.
+Completes at this request's private protocol boundary and preserves every guarded block before it. This is wire evidence, not a final command result: tmux may end a block before a waiting job or file operation later reports unguarded output or failure. Use `Server::run` when final success or failure is required.
 
 <a id="libtmux-control-hpp-connection-take-notifications"></a>
 #### `Connection::take_notifications`
@@ -5001,7 +5116,15 @@ The exact flag-1 block count, including synchronous inserts; flag-0 blocks do no
 ```cpp
 [[nodiscard]] std::vector<Notification> take_notifications();
 ```
-Everything tmux has said since the last call, returned at once.  Taking drains: what comes back will not come back again. It says nothing about what happens next, so an empty result does not mean the stream has gone quiet, and a later one is new traffic rather than a repeat. Wait for the next event with `wait_for_notifications` rather than polling for one.
+Every outside-block event tmux has written since the last call.  Taking drains: what comes back will not come back again. It says nothing about what happens next, so an empty result does not mean the stream has gone quiet, and a later one is new traffic rather than a repeat. Wait for the next event with `wait_for_notifications` rather than polling for one.
+
+<a id="libtmux-control-hpp-connection-watch-notifications"></a>
+#### `Connection::watch_notifications`
+
+```cpp
+[[nodiscard]] NotificationWatch watch_notifications();
+```
+Open an independent cursor at the next outside-block event. Unlike the legacy taking methods above, watches do not steal events from each other.
 
 <a id="libtmux-control-hpp-connection-wait-for-notifications"></a>
 #### `Connection::wait_for_notifications`
@@ -5009,7 +5132,7 @@ Everything tmux has said since the last call, returned at once.  Taking drains: 
 ```cpp
 [[nodiscard]] std::vector<Notification> wait_for_notifications(std::chrono::steady_clock::time_point deadline);
 ```
-The same, but waits for something to arrive.  `take_notifications` returns immediately, so a caller reacting to tmux had to call it in a loop and sleep between — which either wakes too often or reacts too late, and picks that trade with no idea how long the next event will take. This blocks until at least one notification is available, the connection fails, or the deadline passes, and returns whatever it has.  An empty result means the deadline passed or the stream ended; the two are told apart by asking `execute` or `shutdown`, which report the failure. Notifications already buffered are returned without waiting at all.
+The same, but waits for something to arrive.  `take_notifications` returns immediately, so a caller reacting to tmux had to call it in a loop and sleep between — which either wakes too often or reacts too late, and picks that trade with no idea how long the next event will take. This blocks until at least one event is available, the connection fails, or the deadline passes, and returns whatever it has.  An empty result means the deadline passed or the stream ended; the two are told apart by asking `execute` or `shutdown`, which report the failure. Events already buffered are returned without waiting at all.
 
 <a id="libtmux-control-hpp-connection-notification-fd"></a>
 #### `Connection::notification_fd`
@@ -5041,7 +5164,7 @@ Everything tmux says until the deadline, as one loop rather than two.  Borrows t
 ```cpp
 [[nodiscard]] std::size_t dropped_notifications() const noexcept;
 ```
-How many notifications were discarded to keep the buffer bounded, which is what distinguishes a quiet connection from one that outran its reader.
+How many outside-block events this Connection's legacy taking cursor missed to keep the shared log bounded. Each watch has its own count.
 
 <a id="libtmux-control-hpp-connection-native-child-pid"></a>
 #### `Connection::native_child_pid`
@@ -5082,21 +5205,336 @@ inline constexpr std::size_t kDefaultLineBytes = 1024U * 1024U;
 using Event = std::variant<ControlBlock, Notification>;
 ```
 
-<a id="libtmux-control-hpp-free-symbols-to-string"></a>
+<a id="libtmux-notification-hpp"></a>
+## `libtmux/notification.hpp`
+
+Events tmux emits outside guarded control reply blocks.  Most are protocol notifications. A wait-capable command may also print delayed output or errors there, without a request identifier. Raw bytes preserve that ambiguity; `parse` adds borrowed views only for known notification shapes.
+
+**Symbols:**
+
+- [`Notification`](#libtmux-notification-hpp-notification)
+  - [`Notification::body`](#libtmux-notification-hpp-notification-body)
+- [`NotificationKind`](#libtmux-notification-hpp-notificationkind)
+  - [`NotificationKind::unknown`](#libtmux-notification-hpp-notificationkind-unknown)
+  - [`NotificationKind::output`](#libtmux-notification-hpp-notificationkind-output)
+  - [`NotificationKind::extended_output`](#libtmux-notification-hpp-notificationkind-extended-output)
+  - [`NotificationKind::paused`](#libtmux-notification-hpp-notificationkind-paused)
+  - [`NotificationKind::resumed`](#libtmux-notification-hpp-notificationkind-resumed)
+  - [`NotificationKind::sessions_changed`](#libtmux-notification-hpp-notificationkind-sessions-changed)
+  - [`NotificationKind::session_changed`](#libtmux-notification-hpp-notificationkind-session-changed)
+  - [`NotificationKind::session_renamed`](#libtmux-notification-hpp-notificationkind-session-renamed)
+  - [`NotificationKind::session_window_changed`](#libtmux-notification-hpp-notificationkind-session-window-changed)
+  - [`NotificationKind::client_detached`](#libtmux-notification-hpp-notificationkind-client-detached)
+  - [`NotificationKind::client_session_changed`](#libtmux-notification-hpp-notificationkind-client-session-changed)
+  - [`NotificationKind::window_add`](#libtmux-notification-hpp-notificationkind-window-add)
+  - [`NotificationKind::window_close`](#libtmux-notification-hpp-notificationkind-window-close)
+  - [`NotificationKind::window_renamed`](#libtmux-notification-hpp-notificationkind-window-renamed)
+  - [`NotificationKind::window_pane_changed`](#libtmux-notification-hpp-notificationkind-window-pane-changed)
+  - [`NotificationKind::unlinked_window_add`](#libtmux-notification-hpp-notificationkind-unlinked-window-add)
+  - [`NotificationKind::unlinked_window_close`](#libtmux-notification-hpp-notificationkind-unlinked-window-close)
+  - [`NotificationKind::unlinked_window_renamed`](#libtmux-notification-hpp-notificationkind-unlinked-window-renamed)
+  - [`NotificationKind::pane_mode_changed`](#libtmux-notification-hpp-notificationkind-pane-mode-changed)
+  - [`NotificationKind::paste_buffer_changed`](#libtmux-notification-hpp-notificationkind-paste-buffer-changed)
+  - [`NotificationKind::paste_buffer_deleted`](#libtmux-notification-hpp-notificationkind-paste-buffer-deleted)
+  - [`NotificationKind::subscription_changed`](#libtmux-notification-hpp-notificationkind-subscription-changed)
+  - [`NotificationKind::config_error`](#libtmux-notification-hpp-notificationkind-config-error)
+  - [`NotificationKind::exit`](#libtmux-notification-hpp-notificationkind-exit)
+  - [`NotificationKind::layout_change`](#libtmux-notification-hpp-notificationkind-layout-change)
+  - [`NotificationKind::message`](#libtmux-notification-hpp-notificationkind-message)
+- [`ParsedNotification`](#libtmux-notification-hpp-parsednotification)
+  - [`ParsedNotification::kind`](#libtmux-notification-hpp-parsednotification-kind)
+  - [`ParsedNotification::name`](#libtmux-notification-hpp-parsednotification-name)
+  - [`ParsedNotification::session`](#libtmux-notification-hpp-parsednotification-session)
+  - [`ParsedNotification::window`](#libtmux-notification-hpp-parsednotification-window)
+  - [`ParsedNotification::pane`](#libtmux-notification-hpp-parsednotification-pane)
+  - [`ParsedNotification::text`](#libtmux-notification-hpp-parsednotification-text)
+  - [`ParsedNotification::payload`](#libtmux-notification-hpp-parsednotification-payload)
+  - [`ParsedNotification::age`](#libtmux-notification-hpp-parsednotification-age)
+- [`NotificationWatch`](#libtmux-notification-hpp-notificationwatch)
+  - [`NotificationWatch::NotificationWatch`](#libtmux-notification-hpp-notificationwatch-notificationwatch)
+  - [`NotificationWatch::~NotificationWatch`](#libtmux-notification-hpp-notificationwatch-notificationwatch-2)
+  - [`NotificationWatch::NotificationWatch`](#libtmux-notification-hpp-notificationwatch-notificationwatch-3)
+  - [`NotificationWatch::operator=`](#libtmux-notification-hpp-notificationwatch-operator)
+  - [`NotificationWatch::NotificationWatch`](#libtmux-notification-hpp-notificationwatch-notificationwatch-4)
+  - [`NotificationWatch::operator=`](#libtmux-notification-hpp-notificationwatch-operator-2)
+  - [`NotificationWatch::take_notifications`](#libtmux-notification-hpp-notificationwatch-take-notifications)
+  - [`NotificationWatch::wait_for_notifications`](#libtmux-notification-hpp-notificationwatch-wait-for-notifications)
+  - [`NotificationWatch::notification_fd`](#libtmux-notification-hpp-notificationwatch-notification-fd)
+  - [`NotificationWatch::dropped_notifications`](#libtmux-notification-hpp-notificationwatch-dropped-notifications)
+- [`Free symbols`](#libtmux-notification-hpp-free-symbols)
+  - [`to_string`](#libtmux-notification-hpp-free-symbols-to-string)
+  - [`parse`](#libtmux-notification-hpp-free-symbols-parse)
+  - [`parse`](#libtmux-notification-hpp-free-symbols-parse-2)
+
+<a id="libtmux-notification-hpp-notification"></a>
+### `Notification`
+
+```cpp
+struct Notification;
+```
+
+<a id="libtmux-notification-hpp-notification-body"></a>
+#### `Notification::body`
+
+```cpp
+std::vector<std::byte> body;
+```
+Compatibility name for one outside-block control event. Unknown content is not proof that tmux emitted a notification rather than delayed output.
+
+<a id="libtmux-notification-hpp-notificationkind"></a>
+### `NotificationKind`
+
+What a notification is, once its name and arguments have been read.  `unknown` is not a failure. The body may be a notification added by a newer tmux or unguarded delayed command output. A kind and fields keep additions from breaking an exhaustive `std::visit` in caller code.
+
+```cpp
+enum class NotificationKind : std::uint8_t;
+```
+
+<a id="libtmux-notification-hpp-notificationkind-unknown"></a>
+#### `NotificationKind::unknown` — `unknown,`
+
+<a id="libtmux-notification-hpp-notificationkind-output"></a>
+#### `NotificationKind::output` — `output,`
+
+<a id="libtmux-notification-hpp-notificationkind-extended-output"></a>
+#### `NotificationKind::extended_output` — `extended_output,`
+
+<a id="libtmux-notification-hpp-notificationkind-paused"></a>
+#### `NotificationKind::paused` — `paused,`
+
+<a id="libtmux-notification-hpp-notificationkind-resumed"></a>
+#### `NotificationKind::resumed` — `resumed,`
+
+<a id="libtmux-notification-hpp-notificationkind-sessions-changed"></a>
+#### `NotificationKind::sessions_changed` — `sessions_changed,`
+
+<a id="libtmux-notification-hpp-notificationkind-session-changed"></a>
+#### `NotificationKind::session_changed` — `session_changed,`
+
+<a id="libtmux-notification-hpp-notificationkind-session-renamed"></a>
+#### `NotificationKind::session_renamed` — `session_renamed,`
+
+<a id="libtmux-notification-hpp-notificationkind-session-window-changed"></a>
+#### `NotificationKind::session_window_changed` — `session_window_changed,`
+
+<a id="libtmux-notification-hpp-notificationkind-client-detached"></a>
+#### `NotificationKind::client_detached` — `client_detached,`
+
+<a id="libtmux-notification-hpp-notificationkind-client-session-changed"></a>
+#### `NotificationKind::client_session_changed` — `client_session_changed,`
+
+<a id="libtmux-notification-hpp-notificationkind-window-add"></a>
+#### `NotificationKind::window_add` — `window_add,`
+
+<a id="libtmux-notification-hpp-notificationkind-window-close"></a>
+#### `NotificationKind::window_close` — `window_close,`
+
+<a id="libtmux-notification-hpp-notificationkind-window-renamed"></a>
+#### `NotificationKind::window_renamed` — `window_renamed,`
+
+<a id="libtmux-notification-hpp-notificationkind-window-pane-changed"></a>
+#### `NotificationKind::window_pane_changed` — `window_pane_changed,`
+
+<a id="libtmux-notification-hpp-notificationkind-unlinked-window-add"></a>
+#### `NotificationKind::unlinked_window_add` — `unlinked_window_add,`
+
+<a id="libtmux-notification-hpp-notificationkind-unlinked-window-close"></a>
+#### `NotificationKind::unlinked_window_close` — `unlinked_window_close,`
+
+<a id="libtmux-notification-hpp-notificationkind-unlinked-window-renamed"></a>
+#### `NotificationKind::unlinked_window_renamed` — `unlinked_window_renamed,`
+
+<a id="libtmux-notification-hpp-notificationkind-pane-mode-changed"></a>
+#### `NotificationKind::pane_mode_changed` — `pane_mode_changed,`
+
+<a id="libtmux-notification-hpp-notificationkind-paste-buffer-changed"></a>
+#### `NotificationKind::paste_buffer_changed` — `paste_buffer_changed,`
+
+<a id="libtmux-notification-hpp-notificationkind-paste-buffer-deleted"></a>
+#### `NotificationKind::paste_buffer_deleted` — `paste_buffer_deleted,`
+
+<a id="libtmux-notification-hpp-notificationkind-subscription-changed"></a>
+#### `NotificationKind::subscription_changed` — `subscription_changed,`
+
+<a id="libtmux-notification-hpp-notificationkind-config-error"></a>
+#### `NotificationKind::config_error` — `config_error,`
+
+<a id="libtmux-notification-hpp-notificationkind-exit"></a>
+#### `NotificationKind::exit` — `exit,`
+
+<a id="libtmux-notification-hpp-notificationkind-layout-change"></a>
+#### `NotificationKind::layout_change` — `layout_change,`
+
+<a id="libtmux-notification-hpp-notificationkind-message"></a>
+#### `NotificationKind::message` — `message,`
+
+<a id="libtmux-notification-hpp-parsednotification"></a>
+### `ParsedNotification`
+
+A notification's arguments, as views into the notification it was read from.  tmux types its arguments by prefix — `$0` a session, `@1` a window, `%2` a pane — so each lands in the field it belongs to and the others stay empty. `payload` is the pane bytes of an output notification, already unescaped; it is empty for every other kind.  Everything here borrows. The notification must outlive it, which is why there is no overload taking a temporary.
+
+```cpp
+struct ParsedNotification;
+```
+
+<a id="libtmux-notification-hpp-parsednotification-kind"></a>
+#### `ParsedNotification::kind`
+
+```cpp
+NotificationKind kind{NotificationKind::unknown};
+```
+
+<a id="libtmux-notification-hpp-parsednotification-name"></a>
+#### `ParsedNotification::name`
+
+```cpp
+std::string_view name{};
+```
+
+<a id="libtmux-notification-hpp-parsednotification-session"></a>
+#### `ParsedNotification::session`
+
+```cpp
+std::string_view session{};
+```
+
+<a id="libtmux-notification-hpp-parsednotification-window"></a>
+#### `ParsedNotification::window`
+
+```cpp
+std::string_view window{};
+```
+
+<a id="libtmux-notification-hpp-parsednotification-pane"></a>
+#### `ParsedNotification::pane`
+
+```cpp
+std::string_view pane{};
+```
+
+<a id="libtmux-notification-hpp-parsednotification-text"></a>
+#### `ParsedNotification::text`
+
+```cpp
+std::string_view text{};
+```
+
+<a id="libtmux-notification-hpp-parsednotification-payload"></a>
+#### `ParsedNotification::payload`
+
+```cpp
+std::span<const std::byte> payload{};
+```
+
+<a id="libtmux-notification-hpp-parsednotification-age"></a>
+#### `ParsedNotification::age`
+
+```cpp
+std::optional<std::uint64_t> age{};
+```
+Milliseconds this output was behind when tmux wrote it. Only `extended_output` carries one.
+
+<a id="libtmux-notification-hpp-notificationwatch"></a>
+### `NotificationWatch`
+
+One independent view of outside-block events emitted after opening.  Taking from one watch never drains another watch or the Connection's legacy event queue. The retained log is shared and bounded; this watch's dropped count reports only events this watch actually missed.  A watch retains the stream state. It can drain already-buffered events after its Connection is moved or destroyed; waits then wake as a closed stream.
+
+```cpp
+class NotificationWatch final;
+```
+
+<a id="libtmux-notification-hpp-notificationwatch-notificationwatch"></a>
+#### `NotificationWatch::NotificationWatch`
+
+```cpp
+NotificationWatch() noexcept;
+```
+
+<a id="libtmux-notification-hpp-notificationwatch-notificationwatch-2"></a>
+#### `NotificationWatch::~NotificationWatch`
+
+```cpp
+~NotificationWatch() noexcept;
+```
+
+<a id="libtmux-notification-hpp-notificationwatch-notificationwatch-3"></a>
+#### `NotificationWatch::NotificationWatch`
+
+```cpp
+NotificationWatch(NotificationWatch&&) noexcept;
+```
+
+<a id="libtmux-notification-hpp-notificationwatch-operator"></a>
+#### `NotificationWatch::operator=`
+
+```cpp
+NotificationWatch& operator=(NotificationWatch&&) noexcept;
+```
+
+<a id="libtmux-notification-hpp-notificationwatch-notificationwatch-4"></a>
+#### `NotificationWatch::NotificationWatch`
+
+```cpp
+NotificationWatch(const NotificationWatch&) = delete;
+```
+
+<a id="libtmux-notification-hpp-notificationwatch-operator-2"></a>
+#### `NotificationWatch::operator=`
+
+```cpp
+NotificationWatch& operator=(const NotificationWatch&) = delete;
+```
+
+<a id="libtmux-notification-hpp-notificationwatch-take-notifications"></a>
+#### `NotificationWatch::take_notifications`
+
+```cpp
+[[nodiscard]] std::vector<Notification> take_notifications();
+```
+Everything this watch has not taken yet, returned without waiting.
+
+<a id="libtmux-notification-hpp-notificationwatch-wait-for-notifications"></a>
+#### `NotificationWatch::wait_for_notifications`
+
+```cpp
+[[nodiscard]] std::vector<Notification> wait_for_notifications(std::chrono::steady_clock::time_point deadline);
+```
+Wait for this watch to have an event, for the stream to close, or for the deadline. An empty result means one of the latter two happened.
+
+<a id="libtmux-notification-hpp-notificationwatch-notification-fd"></a>
+#### `NotificationWatch::notification_fd`
+
+```cpp
+[[nodiscard]] int notification_fd() const noexcept;
+```
+Readable when this watch has something to take or its stream has closed. Do not read it; taking all available events clears this watch's byte while the stream is open, and closure remains readable. `-1` means the pipe could not be created or the watch is empty/moved from.
+
+<a id="libtmux-notification-hpp-notificationwatch-dropped-notifications"></a>
+#### `NotificationWatch::dropped_notifications`
+
+```cpp
+[[nodiscard]] std::size_t dropped_notifications() const noexcept;
+```
+Events evicted before this watch took them, excluding events consumed by other cursors and events emitted before this watch opened.
+
+<a id="libtmux-notification-hpp-free-symbols"></a>
+### `Free symbols`
+
+<a id="libtmux-notification-hpp-free-symbols-to-string"></a>
 #### `to_string`
 
 ```cpp
 [[nodiscard]] std::string_view to_string(NotificationKind kind) noexcept;
 ```
 
-<a id="libtmux-control-hpp-free-symbols-parse"></a>
+<a id="libtmux-notification-hpp-free-symbols-parse"></a>
 #### `parse`
 
 ```cpp
 [[nodiscard]] ParsedNotification parse(const Notification& notification);
 ```
 
-<a id="libtmux-control-hpp-free-symbols-parse-2"></a>
+<a id="libtmux-notification-hpp-free-symbols-parse-2"></a>
 #### `parse`
 
 ```cpp
@@ -5114,6 +5552,7 @@ Build one tmux command sequence from several commands.  tmux accepts multiple co
   - [`CommandBatch::add`](#libtmux-batch-hpp-commandbatch-add)
   - [`CommandBatch::size`](#libtmux-batch-hpp-commandbatch-size)
   - [`CommandBatch::empty`](#libtmux-batch-hpp-commandbatch-empty)
+  - [`CommandBatch::request`](#libtmux-batch-hpp-commandbatch-request)
   - [`CommandBatch::argv`](#libtmux-batch-hpp-commandbatch-argv)
   - [`CommandBatch::commands`](#libtmux-batch-hpp-commandbatch-commands)
 - [`Free symbols`](#libtmux-batch-hpp-free-symbols)
@@ -5130,7 +5569,7 @@ class CommandBatch;
 #### `CommandBatch::add`
 
 ```cpp
-bool add(std::vector<std::string> command);
+bool add(CommandRequest command);
 ```
 Append one command. An empty command is rejected rather than emitted, because an empty argv between separators makes tmux read the next command's name as an argument.
 
@@ -5148,19 +5587,26 @@ Append one command. An empty command is rejected rather than emitted, because an
 [[nodiscard]] bool empty() const noexcept;
 ```
 
+<a id="libtmux-batch-hpp-commandbatch-request"></a>
+#### `CommandBatch::request`
+
+```cpp
+[[nodiscard]] CommandRequest request() const;
+```
+Render the whole batch as one argv. A single command renders with no separator, so a batch of one is byte-identical to running it alone.
+
 <a id="libtmux-batch-hpp-commandbatch-argv"></a>
 #### `CommandBatch::argv`
 
 ```cpp
 [[nodiscard]] std::vector<std::string> argv() const;
 ```
-Render the whole batch as one argv. A single command renders with no separator, so a batch of one is byte-identical to running it alone.
 
 <a id="libtmux-batch-hpp-commandbatch-commands"></a>
 #### `CommandBatch::commands`
 
 ```cpp
-[[nodiscard]] const std::vector<std::vector<std::string>>& commands() const noexcept;
+[[nodiscard]] const std::vector<CommandRequest>& commands() const noexcept;
 ```
 
 <a id="libtmux-batch-hpp-free-symbols"></a>
@@ -6144,7 +6590,7 @@ A factory rather than an alias: an alias template cannot deduce its argument, so
 <a id="libtmux-abi-hpp"></a>
 ## `libtmux/abi.hpp`
 
-Binary identity.  The C++20 and C++23 builds are not ABI-compatible: every type that carries a result differs in layout because the underlying expected differs. Linking objects from both produces a program that appears to build and then reads the wrong bytes.  An inline namespace whose name encodes the choice makes that a link error naming the missing symbol instead. Callers still write `libtmux::Server`; the namespace is inline, so it is invisible in source and decisive in the mangled name.
+Binary identity.  The C++20 and C++23 builds are not ABI-compatible: every type that carries a result differs in layout because the underlying expected differs. Linking objects from both produces a program that appears to build and then reads the wrong bytes.  An inline namespace whose name encodes the ABI revision and expected choice makes incompatibility a link error. Callers still write `libtmux::Server`; the namespace is inline in source and decisive in the mangled name.
 
 **Symbols:**
 
@@ -6160,7 +6606,7 @@ Binary identity.  The C++20 and C++23 builds are not ABI-compatible: every type 
 #### `LIBTMUX_ABI_NAMESPACE`
 
 ```cpp
-#define LIBTMUX_ABI_NAMESPACE v1_cxx20
+#define LIBTMUX_ABI_NAMESPACE v2_cxx20
 ```
 Available when `defined(LIBTMUX_USE_TL_EXPECTED)`.
 
@@ -6168,7 +6614,7 @@ Available when `defined(LIBTMUX_USE_TL_EXPECTED)`.
 #### `LIBTMUX_ABI_NAMESPACE`
 
 ```cpp
-#define LIBTMUX_ABI_NAMESPACE v1_cxx23
+#define LIBTMUX_ABI_NAMESPACE v2_cxx23
 ```
 Available when `!(defined(LIBTMUX_USE_TL_EXPECTED))`.
 

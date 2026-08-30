@@ -38,10 +38,8 @@ CATALOGUE: t.Final = (
     Mutation(
         mutation_id="format-before-terminator",
         path="src/snapshot.cpp",
-        find='    const auto terminator = std::ranges::find(request, "--");\n'
-        '    request.insert(terminator, {"-F", format_request(fields)});',
-        replace='    request.emplace_back("-F");\n'
-        "    request.push_back(format_request(fields));",
+        find='      if (!inserted && argument.value() == "--") {',
+        replace="      if (false) {",
         target="libtmux_backend_seam_test",
         test_regex=r"^libtmux[.]backend_seam$",
         guards="a creation call carrying a shell command still answers with a "
@@ -69,25 +67,12 @@ CATALOGUE: t.Final = (
         "is refused",
     ),
     Mutation(
-        mutation_id="control-batch-keeps-its-shape",
-        path="src/control_backend.cpp",
-        find="  for (const std::vector<std::string>& command : batch.commands()) {\n"
-        "    request.group.push_back(ControlCommand{command});\n"
-        "  }",
-        replace="  request.group.push_back(ControlCommand{batch.argv()});",
-        target="libtmux_backend_seam_test",
-        test_regex=r"^libtmux[.]backend_seam$",
-        guards="every command in a batch runs over a control connection, "
-        "rather than the separator arriving escaped and the rest read as "
-        "arguments to the first",
-    ),
-    Mutation(
         mutation_id="control-options-use-server-route",
-        path="src/control_backend.cpp",
+        path="src/server.cpp",
         find="  options.socket_path = std::move(socket_path);",
         replace="  static_cast<void>(socket_path);",
-        target="libtmux_backend_seam_test",
-        test_regex=r"^libtmux[.]backend_seam$",
+        target="libtmux_client_test",
+        test_regex=r"^libtmux[.]client[.]",
         guards="caller control policy is preserved while the Server's socket "
         "remains the route used by the connection",
     ),
@@ -106,12 +91,70 @@ CATALOGUE: t.Final = (
     Mutation(
         mutation_id="tmux37-unnamed-break-guard",
         path="src/entities.cpp",
-        find='        "#{&&:#{==:#{version},3.7},#{>:#{window_panes},1}}",',
-        replace='        "#{&&:#{==:#{version},3.7a},#{>:#{window_panes},1}}",',
+        find=(" " * 30) + "\" '#{==:#{version},3.7}' { \" + native +",
+        replace=(" " * 30) + "\" '#{==:#{version},3.7a}' { \" + native +",
         target="libtmux_backend_seam_test",
         test_regex=r"^libtmux[.]backend_seam$",
         guards="raw tmux 3.7 receives a name before an unnamed multi-pane "
         "break can crash its server",
+    ),
+    Mutation(
+        mutation_id="unnamed-only-pane-stays-put",
+        path="src/entities.cpp",
+        find=(
+            '      "if-shell", "-F", "-t", target, '
+            '"#{==:#{window_panes},1}", current, guarded};'
+        ),
+        replace=(
+            '      "if-shell", "-F", "-t", target, '
+            '"#{==:#{window_panes},0}", current, guarded};'
+        ),
+        target="libtmux_backend_seam_test",
+        test_regex=r"^libtmux[.]backend_seam$",
+        guards="an only-pane unnamed break returns its existing window rather than "
+        "moving it to tmux's implicit target session",
+    ),
+    Mutation(
+        mutation_id="named-only-pane-stays-put",
+        path="src/entities.cpp",
+        find=(
+            '      "if-shell", "-F", "-t", target, '
+            '"#{==:#{window_panes},1}", retained, native};'
+        ),
+        replace=(
+            '      "if-shell", "-F", "-t", target, '
+            '"#{==:#{window_panes},0}", retained, native};'
+        ),
+        target="libtmux_backend_seam_test",
+        test_regex=r"^libtmux[.]backend_seam$",
+        guards="naming an only-pane window renames it in place rather than moving "
+        "it to tmux's implicit target session",
+    ),
+    Mutation(
+        mutation_id="unnamed-break-report-keeps-source-session",
+        path="src/entities.cpp",
+        find="      created.session_id() != owner) {",
+        replace="        false) {",
+        target="libtmux_backend_seam_test",
+        test_regex=r"^libtmux[.]backend_seam$",
+        guards="an unnamed break rejects a window report from a session other than "
+        "the explicit destination",
+    ),
+    Mutation(
+        mutation_id="named-break-report-keeps-source-session",
+        path="src/entities.cpp",
+        find=(
+            "  auto created = named_break_report(executor, *std::move(broken), "
+            "pane.id(), {}, owner);"
+        ),
+        replace=(
+            "  auto created = named_break_report(executor, *std::move(broken), "
+            "pane.id());"
+        ),
+        target="libtmux_backend_seam_test",
+        test_regex=r"^libtmux[.]backend_seam$",
+        guards="a named break rejects a window report from a session other than "
+        "the explicit destination",
     ),
     Mutation(
         mutation_id="tmux37-named-break-repair",
@@ -131,13 +174,188 @@ CATALOGUE: t.Final = (
     ),
     Mutation(
         mutation_id="notification-bound",
-        path="src/notification_buffer.hpp",
+        path="src/notification_stream.hpp",
         find="inline constexpr std::size_t kMaximumNotifications = 4096U;",
         replace="inline constexpr std::size_t kMaximumNotifications = 100000000U;",
         target="libtmux_backend_seam_test",
         test_regex=r"^libtmux[.]backend_seam$",
         guards="a caller that never drains gets a bounded buffer and a count "
         "of what was dropped",
+    ),
+    Mutation(
+        mutation_id="operation-single-publication",
+        path="src/operation_state.hpp",
+        find=(
+            "      if (outcome_) {\n"
+            "        return false;\n"
+            "      }\n"
+            "      outcome_ = std::move(published_outcome);"
+        ),
+        replace=(
+            "      if (false) {\n"
+            "        return false;\n"
+            "      }\n"
+            "      outcome_ = std::move(published_outcome);"
+        ),
+        target="libtmux_operation_state_test",
+        test_regex=(
+            r"^libtmux[.]operation_state[.]OperationState[.]"
+            r"ConcurrentPublicationChoosesOneImmutableOutcome$"
+        ),
+        guards="exactly one racing terminal event fixes the owning result",
+    ),
+    Mutation(
+        mutation_id="operation-cancellation-source-owned",
+        path="src/operation_state.hpp",
+        find=("      cancellation_requested_ = true;\n      hooks = hooks_;"),
+        replace=(
+            "      outcome_ = make_abandoned_outcome<T>();\n"
+            "      cancellation_requested_ = true;\n"
+            "      hooks = hooks_;"
+        ),
+        target="libtmux_operation_state_test",
+        test_regex=(
+            r"^libtmux[.]operation_state[.]OperationState[.]"
+            r"CancellationIsOnlyARequestUntilTheSourcePublishes$"
+        ),
+        guards="caller cancellation wakes the source without publishing outcome",
+    ),
+    Mutation(
+        mutation_id="operation-registration-recheck",
+        path="src/operation_state.hpp",
+        find=(
+            "  if (registered && state->outcome_published()) {\n"
+            "    static_cast<void>(mailbox.enqueue(token));\n"
+            "  }\n"
+        ),
+        replace="  static_cast<void>(registered);\n",
+        target="libtmux_completion_queue_fault_test",
+        test_regex=(
+            r"^libtmux[.]completion_queue[.]"
+            r"PublicationDuringRegistrationRechecks$"
+        ),
+        guards="publication before callback registration still reaches its queue",
+    ),
+    Mutation(
+        mutation_id="operation-source-retention",
+        path="src/operation_state.hpp",
+        find=(
+            "  [[nodiscard]] bool publish(OperationResult<T>&& result) {\n"
+            "    return state_ && state_->publish(std::move(result));\n"
+            "  }"
+        ),
+        replace=(
+            "  [[nodiscard]] bool publish(OperationResult<T>&& result) {\n"
+            "    const bool published =\n"
+            "        state_ && state_->publish(std::move(result));\n"
+            "    if (published) {\n"
+            "      state_.reset();\n"
+            "    }\n"
+            "    return published;\n"
+            "  }"
+        ),
+        target="libtmux_operation_state_test",
+        test_regex=(
+            r"^libtmux[.]operation_state[.]OperationState[.]"
+            r"AdmissionReleasesAfterObserverAndTransportFinish$"
+        ),
+        guards="the source retains transport state through final retirement",
+    ),
+    Mutation(
+        mutation_id="operation-source-publish-by-value",
+        path="src/operation_state.hpp",
+        find=(
+            "  [[nodiscard]] bool publish(OperationResult<T>&& result) {\n"
+            "    return state_ && state_->publish(std::move(result));\n"
+            "  }"
+        ),
+        replace=(
+            "  [[nodiscard]] bool publish(OperationResult<T> result) {\n"
+            "    return state_ && state_->publish(std::move(result));\n"
+            "  }"
+        ),
+        target="libtmux_operation_state_test",
+        test_regex=(
+            r"^libtmux[.]operation_state[.]OperationState[.]"
+            r"PublicationDoesNotMoveAWholeExpected$"
+        ),
+        guards="publication moves the active alternative, not its expected wrapper",
+    ),
+    Mutation(
+        mutation_id="operation-retirement-publishes",
+        path="src/operation_state.hpp",
+        find="      if (!outcome_) {\n",
+        replace="      if (false) {\n",
+        target="libtmux_operation_state_test",
+        test_regex=(
+            r"^libtmux[.]operation_state[.]OperationCallback[.]"
+            r"SourceDestructionPublishesTransportFailure$"
+        ),
+        guards="retirement leaves every observer with a terminal outcome",
+    ),
+    Mutation(
+        mutation_id="operation-retirement-notifies-blocking",
+        path="src/operation_state.hpp",
+        find=(
+            "    if (outcome_published) {\n"
+            "      outcome_changed_.notify_all();\n"
+            "    }\n"
+        ),
+        replace="    static_cast<void>(outcome_published);\n",
+        target="libtmux_operation_state_test",
+        test_regex=(
+            r"^libtmux[.]operation_state[.]OperationState[.]"
+            r"RetirementWakesABlockedObserver$"
+        ),
+        guards="retirement wakes an observer that is already blocked for its outcome",
+    ),
+    Mutation(
+        mutation_id="completion-detach-unlinks-ready",
+        path="src/completion_queue.cpp",
+        find=(
+            "    if (record->second->enqueued) {\n"
+            "      core->unlink_ready(token.value, *record->second);\n"
+            "    }\n"
+        ),
+        replace="",
+        target="libtmux_operation_state_test",
+        test_regex=(
+            r"^libtmux[.]operation_state[.]CompletionQueue[.]"
+            r"EnqueueAndDetachOverlapLeaveNoReadyRecord$"
+        ),
+        guards="detaching ready work removes its queue link under the same lock",
+    ),
+    Mutation(
+        mutation_id="completion-dispatch-claim",
+        path="src/completion_queue.cpp",
+        find=(
+            "    bool available = false;\n"
+            "    owns_ = dispatching_.compare_exchange_strong(\n"
+            "        available, true, std::memory_order_acquire, "
+            "std::memory_order_relaxed);\n"
+        ),
+        replace=(
+            "    dispatching_.store(true, std::memory_order_release);\n"
+            "    owns_ = true;\n"
+        ),
+        target="libtmux_operation_state_test",
+        test_regex=(
+            r"^libtmux[.]operation_state[.]CompletionQueue[.]"
+            r"(CallbackReentry|CaptureDestruction)DoesNotOverlapDispatch$"
+        ),
+        guards="nested callback destruction cannot claim the active dispatcher",
+    ),
+    Mutation(
+        mutation_id="completion-run-ready-cutoff",
+        path="src/completion_queue.cpp",
+        find="    cutoff_generation = core->last_ready_generation;",
+        replace="    cutoff_generation = core->last_ready_generation + 1U;",
+        target="libtmux_operation_state_test",
+        test_regex=(
+            r"^libtmux[.]operation_state[.]CompletionQueue[.]"
+            r"RunReadyDefersWorkEnqueuedByTheCurrentBatch$"
+        ),
+        guards="one run_ready call dispatches only the records ready when it began",
     ),
     Mutation(
         mutation_id="legacy-empty-lookup",
@@ -248,5 +466,70 @@ CATALOGUE: t.Final = (
         presets=("windows-psmux",),
         guards="exact cleanup succeeds after removing its sessions while preserving a "
         "nested prefix",
+    ),
+    Mutation(
+        mutation_id="engine-refusal-holds-no-slot",
+        path="src/process_engine.cpp",
+        find=(
+            "    auto refused = make_operation<ProcessReply>("
+            "std::make_shared<UnadmittedHooks>());"
+        ),
+        replace=(
+            "    auto refused = make_operation<ProcessReply>("
+            "std::make_shared<ChannelHooks>(channel_));"
+        ),
+        target="libtmux_process_engine_test",
+        test_regex=r"^libtmux[.]process_engine[.]ProcessEngine[.]ARefusalDoesNotReturnASlotItNeverHeld$",
+        guards="a refused submission gives back no admission, so the bound does "
+        "not walk to zero under sustained overload",
+    ),
+    Mutation(
+        mutation_id="engine-threads-own-nothing",
+        path="src/process_engine.cpp",
+        find=(
+            "  engine->launcher_ = std::thread{[owner = engine.get()] { "
+            "owner->launch_loop(); }};"
+        ),
+        replace=(
+            "  engine->launcher_ = std::thread{[owner = engine] { "
+            "owner->launch_loop(); }};"
+        ),
+        target="libtmux_process_engine_test",
+        test_regex=r"^libtmux[.]process_engine[.]ProcessEngine[.]EndsWhenTheLastHolderLetsGo$",
+        guards="the engine's own threads hold no reference to it, so it is "
+        "destroyed when the last caller lets go",
+    ),
+    Mutation(
+        mutation_id="engine-waits-for-its-launches",
+        path="src/process_engine.cpp",
+        find=(
+            "      if (closing_ && live.empty() && pending_.empty() && "
+            "launching_ == 0U) {"
+        ),
+        replace="      if (closing_ && live.empty() && pending_.empty()) {",
+        target="libtmux_process_engine_test",
+        test_regex=r"^libtmux[.]process_engine[.]ProcessEngine[.]ShutdownWaitsForALaunchAlreadyInFlight$",
+        guards="the reactor waits for a launch in flight rather than returning "
+        "and stranding the child it is about to be handed",
+    ),
+    Mutation(
+        mutation_id="engine-shutdown-starts-nothing",
+        path="src/process_engine.cpp",
+        find="  if (withdrawn || closing) {",
+        replace="  if (withdrawn && closing) {",
+        target="libtmux_process_engine_test",
+        test_regex=r"^libtmux[.]process_engine[.]ProcessEngine[.]ShutdownDoesNotStartWorkItIsAboutToEnd$",
+        guards="closing does not start the commands it is about to end, which "
+        "would run them against a real server for nothing",
+    ),
+    Mutation(
+        mutation_id="submitted-command-keeps-its-bound",
+        path="src/async.cpp",
+        find="    state->allowed_bytes = started->allowed_bytes;",
+        replace="    state->allowed_bytes = detail::default_capture_limit;",
+        target="libtmux_server_contract_test",
+        test_regex=r"^libtmux[.]server_contract[.]ServerContract[.]ASubmissionTakesTheBoundTheCallerGaveIt$",
+        guards="a truncation diagnostic names the bound the caller passed, not "
+        "the one that was never in force",
     ),
 )

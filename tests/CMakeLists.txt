@@ -400,6 +400,119 @@ gtest_discover_tests(
 # White-box: this one reaches into the private transport header, which is how
 # it can substitute an executor at all. It links no test support because it
 # never starts a tmux.
+add_executable(libtmux_operation_state_test operation_state_test.cpp)
+target_include_directories(
+  libtmux_operation_state_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_link_libraries(
+  libtmux_operation_state_test
+  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+target_compile_options(
+  libtmux_operation_state_test PRIVATE -fno-sanitize-recover=undefined)
+
+gtest_discover_tests(
+  libtmux_operation_state_test
+  TEST_PREFIX libtmux.operation_state.
+  PROPERTIES LABELS concurrency TIMEOUT 30)
+
+# TSan supplies strong global allocation operators of its own. The dedicated
+# fault-injection executable overrides those operators, so its proofs run in
+# every other lane while the queue's concurrency tests remain instrumented.
+if(NOT LIBTMUX_ENABLE_THREAD_SANITIZER)
+  add_executable(libtmux_completion_queue_fault_test completion_queue_fault_test.cpp)
+  target_include_directories(
+    libtmux_completion_queue_fault_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
+  target_link_libraries(
+    libtmux_completion_queue_fault_test
+    PRIVATE libtmux_build_options libtmux::libtmux)
+  target_compile_options(
+    libtmux_completion_queue_fault_test PRIVATE -fno-sanitize-recover=undefined)
+
+  add_test(
+    NAME libtmux.completion_queue.EnqueueDoesNotAllocate
+    COMMAND libtmux_completion_queue_fault_test enqueue)
+  add_test(
+    NAME libtmux.completion_queue.InsertionFailureDestroysAfterUnlock
+    COMMAND libtmux_completion_queue_fault_test insertion)
+  add_test(
+    NAME libtmux.completion_queue.PublicationDuringRegistrationRechecks
+    COMMAND libtmux_completion_queue_fault_test registration)
+  set_tests_properties(
+    libtmux.completion_queue.EnqueueDoesNotAllocate
+    libtmux.completion_queue.InsertionFailureDestroysAfterUnlock
+    libtmux.completion_queue.PublicationDuringRegistrationRechecks
+    PROPERTIES LABELS concurrency TIMEOUT 5)
+endif()
+
+# POSIX only: the child's signal mask and dispositions are what this proves,
+# and Windows starts its children through a different launcher entirely.
+if(NOT WIN32)
+  add_executable(libtmux_spawn_signals_test spawn_signals_test.cpp)
+  target_include_directories(
+    libtmux_spawn_signals_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
+  target_link_libraries(
+    libtmux_spawn_signals_test
+    PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+  target_compile_options(
+    libtmux_spawn_signals_test PRIVATE -fno-sanitize-recover=undefined)
+
+  gtest_discover_tests(
+    libtmux_spawn_signals_test
+    TEST_PREFIX libtmux.spawn_signals.
+    PROPERTIES LABELS "libtmux" TIMEOUT 30)
+endif()
+
+# White-box: the child owner is private, and what it owns — pipes, signals,
+# a reap — is not observable through the runner's result.
+if(NOT WIN32)
+  add_executable(libtmux_posix_child_test posix_child_test.cpp)
+  target_include_directories(
+    libtmux_posix_child_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
+  target_link_libraries(
+    libtmux_posix_child_test
+    PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+  target_compile_options(
+    libtmux_posix_child_test PRIVATE -fno-sanitize-recover=undefined)
+
+  gtest_discover_tests(
+    libtmux_posix_child_test
+    TEST_PREFIX libtmux.posix_child.
+    PROPERTIES LABELS "libtmux" TIMEOUT 30)
+endif()
+
+# The psmux rules are pure string logic, so they are tested wherever this
+# builds rather than only where psmux runs.
+add_executable(libtmux_psmux_rules_test psmux_rules_test.cpp)
+target_include_directories(
+  libtmux_psmux_rules_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_link_libraries(
+  libtmux_psmux_rules_test
+  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+target_compile_options(
+  libtmux_psmux_rules_test PRIVATE -fno-sanitize-recover=undefined)
+
+gtest_discover_tests(
+  libtmux_psmux_rules_test
+  TEST_PREFIX libtmux.psmux_rules.
+  PROPERTIES LABELS "libtmux" TIMEOUT 30)
+
+# The asynchronous engine. White-box: it is private, and what it owns —
+# threads, pipes, a reap — is not observable through its result alone.
+if(NOT WIN32)
+  add_executable(libtmux_process_engine_test process_engine_test.cpp)
+  target_include_directories(
+    libtmux_process_engine_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
+  target_link_libraries(
+    libtmux_process_engine_test
+    PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+  target_compile_options(
+    libtmux_process_engine_test PRIVATE -fno-sanitize-recover=undefined)
+
+  gtest_discover_tests(
+    libtmux_process_engine_test
+    TEST_PREFIX libtmux.process_engine.
+    PROPERTIES LABELS "concurrency" TIMEOUT 60)
+endif()
+
 add_executable(libtmux_backend_seam_test backend_seam_test.cpp)
 target_include_directories(
   libtmux_backend_seam_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
@@ -413,18 +526,14 @@ add_test(NAME libtmux.backend_seam COMMAND libtmux_backend_seam_test)
 set_tests_properties(
   libtmux.backend_seam PROPERTIES LABELS "libtmux" TIMEOUT 30)
 
-add_executable(libtmux_control_dispatch_test control_dispatch_test.cpp)
+add_executable(command_engine_exit_probe command_engine_exit_probe.cpp)
+target_include_directories(
+  command_engine_exit_probe PRIVATE "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(
-  libtmux_control_dispatch_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
-          libtmux_test_support)
-target_compile_options(
-  libtmux_control_dispatch_test PRIVATE -fno-sanitize-recover=undefined)
-
-add_test(NAME libtmux.control_dispatch COMMAND libtmux_control_dispatch_test)
+  command_engine_exit_probe PRIVATE libtmux_build_options libtmux::libtmux)
+add_test(NAME libtmux.command_engine.exit_detaches COMMAND command_engine_exit_probe)
 set_tests_properties(
-  libtmux.control_dispatch
-  PROPERTIES LABELS "libtmux;real-tmux;concurrency" TIMEOUT 60)
+  libtmux.command_engine.exit_detaches PROPERTIES LABELS "concurrency" TIMEOUT 3)
 
 add_executable(libtmux_client_test integration/client_test.cpp)
 target_link_libraries(

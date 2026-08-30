@@ -59,21 +59,32 @@ stream ending.
 signal that output was dropped, and it names the pane. Nothing else reports
 the gap.
 
+**This library never stops reading the socket, and that is not a preference.**
+tmux counts a control client with 512 bytes or more of pending protocol output
+as unable to accept, and while every attached client is one, the server stops
+reading the pane at all — the backpressure lands on the program running inside
+it, which blocks in its own writes. A control client that lets its socket fill
+therefore freezes the pane it was watching. `NotificationStream::push` drops
+its oldest retained notification rather than waiting for a reader, so the
+reader thread always drains; a caller who falls behind loses notifications and
+is told the exact range they lost. Adding backpressure here would move a
+consumer's slowness into somebody's shell.
+
 ## Delivered surface
 
 `Server::control_with_options(session, options)` opens the raw stream without
 making the caller rebuild the Server's socket route.
-`Server::over_control_with_options(session, options)` applies the same policy
-to the entity-oriented surface. In both
-forms the Server overrides `socket_path`, the argument overrides
-`session_name`, and the caller's executable, deadlines, limits,
-`pane_output`, and `pause_after` are preserved.
+The Server overrides `socket_path`, the argument overrides `session_name`, and
+the caller's executable, deadlines, limits, `pane_output`, and `pause_after`
+are preserved.
 
 `Connection::set_pane_output` mutes or resumes one pane, and
 `parse(Notification)` turns every known notification into typed borrowed
 fields while preserving unknown additions. `NotificationRange` drains those
 events to a deadline, and `notification_fd()` lets an external POSIX event loop
-wake without polling.
+wake without polling. `watch_notifications` gives each additional consumer its
+own cursor, wait, loss count, and readiness descriptor over the same bounded
+retained log, so one consumer cannot drain another's events.
 
 ## Related
 

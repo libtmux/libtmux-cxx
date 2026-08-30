@@ -68,7 +68,7 @@ TEST(KeyBindings, ATableNameThatCouldNotBeReadBackIsRefused) {
   const auto spaced = server.bind_key("my table", "X", {"display-message", "x"});
   ASSERT_FALSE(spaced.has_value());
   EXPECT_EQ(spaced.error().kind, libtmux::FailureKind::validation);
-  EXPECT_FALSE(spaced.error().dispatched);
+  EXPECT_EQ(spaced.error().delivery, libtmux::DeliveryStatus::not_started);
   EXPECT_EQ(listing(server).find("my table"), std::string::npos);
 
   for (const auto& refused :
@@ -76,7 +76,7 @@ TEST(KeyBindings, ATableNameThatCouldNotBeReadBackIsRefused) {
         server.bind_key("tbl", "X", {}), server.unbind_key("my table", "X")}) {
     ASSERT_FALSE(refused.has_value());
     EXPECT_EQ(refused.error().kind, libtmux::FailureKind::validation);
-    EXPECT_FALSE(refused.error().dispatched);
+    EXPECT_EQ(refused.error().delivery, libtmux::DeliveryStatus::not_started);
   }
 
   // An empty key is refused by tmux rather than here: it says `unknown key`
@@ -85,7 +85,7 @@ TEST(KeyBindings, ATableNameThatCouldNotBeReadBackIsRefused) {
   const auto blank = server.bind_key("tbl", "", {"display-message", "x"});
   ASSERT_FALSE(blank.has_value());
   EXPECT_EQ(blank.error().kind, libtmux::FailureKind::refused);
-  EXPECT_TRUE(blank.error().dispatched);
+  EXPECT_NE(blank.error().delivery, libtmux::DeliveryStatus::not_started);
 }
 
 TEST(KeyBindings, AnUnknownKeyIsTmuxsToRefuse) {
@@ -100,7 +100,7 @@ TEST(KeyBindings, AnUnknownKeyIsTmuxsToRefuse) {
       server.bind_key("spiketable", "No Such Key", {"display-message", "never"});
   ASSERT_FALSE(refused.has_value());
   EXPECT_EQ(refused.error().kind, libtmux::FailureKind::refused);
-  EXPECT_TRUE(refused.error().dispatched);
+  EXPECT_NE(refused.error().delivery, libtmux::DeliveryStatus::not_started);
   EXPECT_NE(refused.error().diagnostic.find("No Such Key"), std::string::npos);
 }
 

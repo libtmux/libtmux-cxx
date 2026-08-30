@@ -38,7 +38,8 @@ server-side `command-alias` redefine a built-in command.
 | [`entities.hpp`](entities.hpp) | `Session`, `Window`, `Pane`, `Client`, `Buffer`, and the option structs their creators take |
 | [`socket.hpp`](socket.hpp) | How a server is addressed, and what makes an address valid |
 | [`target.hpp`](target.hpp) | The id-based targets every operation is addressed by |
-| [`command.hpp`](command.hpp) | `CommandFailure`, `FailureKind`, `DispatchPhase` — the one error type |
+| [`delivery.hpp`](delivery.hpp) | `DeliveryStatus` — whether a failed command was not started, written, answered, or left indeterminate |
+| [`command.hpp`](command.hpp) | `CommandFailure`, `FailureKind` — the one command error type |
 
 ### Asking questions
 
@@ -57,7 +58,8 @@ server-side `command-alias` redefine a built-in command.
 |---|---|
 | [`batch.hpp`](batch.hpp) | One tmux invocation, one fail-fast group |
 | [`chain.hpp`](chain.hpp) | Validated as it is built; a bad target never reaches tmux |
-| [`control.hpp`](control.hpp) | `Connection` — one held-open POSIX connection, a reply block per command |
+| [`control.hpp`](control.hpp) | `Connection` — one held-open POSIX stream of guarded blocks and outside-block events |
+| [`notification.hpp`](notification.hpp) | Raw and parsed notifications, plus independent consumer watches |
 | [`keys.hpp`](keys.hpp) | Key names, kept apart from the text a pane is sent |
 | [`options.hpp`](options.hpp) | Options at the scope that holds them, and what "inherited" means |
 

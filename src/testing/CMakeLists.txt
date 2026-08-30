@@ -17,7 +17,9 @@ target_include_directories(
   PUBLIC "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>"
          "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
   # `process.hpp` is implementation, not part of what this target promises.
-  PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  # The parent directory is on the path for `spawn_signals.hpp`; a quoted
+  # include still finds this directory's own `process.hpp` first.
+  PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${PROJECT_SOURCE_DIR}/src")
 
 target_link_libraries(libtmux_testing PUBLIC libtmux::libtmux)
 target_compile_features(libtmux_testing PUBLIC cxx_std_${LIBTMUX_CXX_STANDARD})

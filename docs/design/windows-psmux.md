@@ -30,8 +30,8 @@ assuming. A caller asks what a route serves before choosing one.
 - **Typed option and hook access.** psmux keeps that state in separate
   per-session servers and cannot target it atomically, so a read or write
   cannot be attributed to the scope the caller named.
-- **Control mode.** `control_with_options` and `over_control_with_options` are
-  rejected before a control client is launched.
+- **Control mode.** `control_with_options` is rejected before a control client
+  is launched.
 - **Pane input, capture, search and streaming**, which is why the MCP server
   advertises only `inspect_tmux`, `list_sessions`, `list_windows` and
   `list_session_panes` there.

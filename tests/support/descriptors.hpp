@@ -12,10 +12,15 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
+#include <optional>
+#include <string>
 
 #if defined(__linux__)
 #include <filesystem>
 #include <iterator>
+#include <sys/ioctl.h>
+#include <unistd.h>
 #else
 #include <fcntl.h>
 #include <sys/resource.h>
@@ -48,6 +53,37 @@ namespace libtmux::test {
   }
   return open;
 #endif
+}
+
+[[nodiscard]] inline std::optional<int>
+queued_child_stdin_bytes(std::int64_t child_pid) {
+#if defined(__linux__)
+  std::error_code error;
+  const auto child_input = std::filesystem::read_symlink(
+      "/proc/" + std::to_string(child_pid) + "/fd/0", error);
+  if (error) {
+    return std::nullopt;
+  }
+  for (const auto& entry :
+       std::filesystem::directory_iterator{"/proc/self/fd", error}) {
+    if (error) {
+      return std::nullopt;
+    }
+    std::error_code link_error;
+    const auto input = std::filesystem::read_symlink(entry.path(), link_error);
+    if (link_error || input != child_input) {
+      continue;
+    }
+    int queued = 0;
+    const auto descriptor = std::stoi(entry.path().filename().string());
+    if (::ioctl(descriptor, FIONREAD, &queued) == 0) {
+      return queued;
+    }
+  }
+#else
+  static_cast<void>(child_pid);
+#endif
+  return std::nullopt;
 }
 
 } // namespace libtmux::test

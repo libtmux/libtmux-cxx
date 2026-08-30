@@ -49,7 +49,7 @@ private:
     if (!snapshot->parse()) {
       return unexpected(CommandFailure{
           .kind = FailureKind::refused,
-          .dispatched = true,
+          .delivery = DeliveryStatus::replied,
           .exit_code = 0,
           .diagnostic = "tmux output did not match the fields asked for"});
     }
@@ -104,7 +104,7 @@ inline void append_display_message_text(std::vector<std::string>& command,
 // filtering still work; reaching tmux cannot.
 [[nodiscard]] inline CommandFailure disconnected() {
   return CommandFailure{.kind = FailureKind::validation,
-                        .dispatched = false,
+                        .delivery = DeliveryStatus::not_started,
                         .exit_code = 0,
                         .diagnostic =
                             "this snapshot has no connection to a tmux server"};
@@ -146,7 +146,7 @@ list_entities(std::shared_ptr<const Backend> backend, std::vector<std::string> r
 // here rather than handing back an entity whose id is the empty string.
 template <typename Entity>
 [[nodiscard]] expected<Entity, CommandFailure>
-one_entity(std::shared_ptr<const Backend> backend, std::vector<std::string> request,
+one_entity(std::shared_ptr<const Backend> backend, CommandRequest request,
            FormatArgument placement, std::string_view target,
            std::string_view expected_identity = {}, SessionRoute route = {},
            std::optional<ExecutionPolicy> call_policy = std::nullopt) {
@@ -175,7 +175,7 @@ one_entity(std::shared_ptr<const Backend> backend, std::vector<std::string> requ
   if (rows.size() != 1 || rows.front().front().empty() ||
       (!expected_identity.empty() && rows.front().front() != expected_identity)) {
     return unexpected(CommandFailure{.kind = FailureKind::missing,
-                                     .dispatched = true,
+                                     .delivery = DeliveryStatus::replied,
                                      .exit_code = 0,
                                      .diagnostic = "tmux has no " +
                                                    std::string{Entity::kNoun} + " " +
@@ -192,19 +192,20 @@ one_entity(std::shared_ptr<const Backend> backend, std::vector<std::string> requ
 // has to be caught here. The value is unconstrained: an empty one sets the
 // variable to empty, which is a thing a caller may mean.
 [[nodiscard]] inline expected<void, CommandFailure>
-append_environment(std::vector<std::string>& command,
+append_environment(CommandRequest& command,
                    const std::vector<std::pair<std::string, std::string>>& variables) {
   for (const auto& [name, value] : variables) {
     if (name.empty() || name.find('=') != std::string::npos) {
       return unexpected(CommandFailure{
           .kind = FailureKind::validation,
-          .dispatched = false,
+          .delivery = DeliveryStatus::not_started,
           .exit_code = 0,
           .diagnostic = "an environment variable name cannot be empty or hold "
                         "an '=': tmux would accept it and set nothing"});
     }
     command.emplace_back("-e");
-    command.push_back(name + "=" + value);
+    command.push_back(CommandArgument::sensitive_range(name + "=" + value,
+                                                       name.size() + 1U, value.size()));
   }
   return {};
 }
@@ -283,7 +284,7 @@ expand_format(const std::shared_ptr<const Backend>& backend, std::string_view ta
   opening += kFormatSeparator;
   if (!answer.starts_with(opening)) {
     return unexpected(CommandFailure{.kind = FailureKind::missing,
-                                     .dispatched = true,
+                                     .delivery = DeliveryStatus::replied,
                                      .exit_code = 0,
                                      .diagnostic = "tmux has no " + std::string{noun} +
                                                    " " + std::string{target}});

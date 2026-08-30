@@ -161,7 +161,7 @@ TEST(Environment, ANameTmuxWouldSilentlyIgnoreIsRefused) {
     const auto refused = session->new_window(options);
     ASSERT_FALSE(refused.has_value()) << "accepted " << bad.first;
     EXPECT_EQ(refused.error().kind, libtmux::FailureKind::validation);
-    EXPECT_FALSE(refused.error().dispatched);
+    EXPECT_EQ(refused.error().delivery, libtmux::DeliveryStatus::not_started);
   }
 
   // Nothing was made while proving it.

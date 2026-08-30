@@ -15,8 +15,11 @@
 #include "libtmux/batch.hpp"
 #include "libtmux/capabilities.hpp"
 #include "libtmux/command.hpp"
-#include "libtmux/control.hpp"
 #include "libtmux/expected.hpp"
+#include "process.hpp"
+#if !defined(_WIN32)
+#include "process_engine.hpp"
+#endif
 #include "libtmux/version.hpp"
 #include <chrono>
 #include <cstddef>
@@ -32,10 +35,17 @@ class Server;
 
 namespace detail {
 
+class SocketAlias;
+
+struct PreparedAttach {
+  std::vector<std::string> argv;
+  std::shared_ptr<const SocketAlias> route;
+};
+
 // The command as one line, which is what a person reads in a log or in a
 // diagnostic. Bounded: a format request is long, and a caller wanting all of
 // it has the argv already.
-[[nodiscard]] std::string rendered_command(const std::vector<std::string>& command);
+[[nodiscard]] std::string rendered_command(const CommandRequest& command);
 
 class Backend {
 public:
@@ -51,14 +61,13 @@ public:
   // No default argument: a default on a virtual function binds to the static
   // type, so an override could silently disagree about what "no timeout" is.
   [[nodiscard]] virtual expected<std::string, CommandFailure>
-  run(const std::vector<std::string>& command,
-      std::optional<std::chrono::milliseconds> timeout,
+  run(const CommandRequest& command, std::optional<std::chrono::milliseconds> timeout,
       std::optional<std::size_t> output_limit) const = 0;
 
   // Route an entity command through its owning psmux session. POSIX backends
   // already have one server-wide namespace, so their ordinary run is exact.
   [[nodiscard]] virtual expected<std::string, CommandFailure>
-  run_in_session(const std::vector<std::string>& command, std::string_view session_id,
+  run_in_session(const CommandRequest& command, std::string_view session_id,
                  std::string_view session_name,
                  std::optional<std::chrono::milliseconds> timeout,
                  std::optional<std::size_t> output_limit) const {
@@ -77,33 +86,42 @@ public:
   }
 
   [[nodiscard]] expected<std::string, CommandFailure>
-  run(const std::vector<std::string>& command) const {
+  run(const CommandRequest& command) const {
     return run(command, std::nullopt, std::nullopt);
   }
 
   // A batch, with its structure intact.
   //
-  // Flattening it to one argv is right for a transport that execs directly:
-  // tmux reads a bare `;` element as the separator. It is wrong for control
-  // mode, which writes a line and escapes every byte of every argument, so a
-  // flattened separator arrives as a literal semicolon and the whole batch
-  // collapses into one command with the rest as junk arguments. That reported
-  // success, which is why the transport is asked rather than told.
+  // tmux reads a bare `;` argv element as the separator. Keeping the batch
+  // virtual lets a custom executor preserve the same fail-fast contract.
   [[nodiscard]] virtual expected<std::string, CommandFailure>
   run_batch(const CommandBatch& batch, std::optional<std::chrono::milliseconds> timeout,
             std::optional<std::size_t> output_limit) const {
-    return run(batch.argv(), timeout, output_limit);
+    return run(batch.request(), timeout, output_limit);
   }
 
   // The `-L name` or `-S path` pair that selects the server.
   [[nodiscard]] virtual const std::vector<std::string>& connection() const noexcept = 0;
 
-  // Which server this talks to: a resolved socket path on POSIX and a logical
-  // psmux selector on Windows. Empty identifies no server, even itself.
+  // Which server this talks to: a device-and-inode incarnation on POSIX and a
+  // logical psmux selector on Windows. Empty identifies no server, even itself.
   //
   // On POSIX the selector cannot serve here: `-L work` and `-S <its path>`
   // select one server and must compare as one.
   [[nodiscard]] virtual std::string_view identity() const noexcept { return {}; }
+
+  // The route used to open a control client. POSIX identity names an inode,
+  // not this path.
+  [[nodiscard]] virtual std::string_view socket_path() const noexcept { return {}; }
+
+  // Retains the socket alias across backend handoff.
+  [[nodiscard]] virtual std::shared_ptr<const SocketAlias>
+  socket_alias() const noexcept {
+    return {};
+  }
+
+  [[nodiscard]] virtual expected<PreparedAttach, CommandFailure>
+  prepare_attach(std::string_view target) const;
 
   // Unknown custom executors fail capability checks closed. Concrete package
   // backends override this with the routing contract they implement.
@@ -113,39 +131,23 @@ public:
   // so the executor answers.
   [[nodiscard]] virtual expected<Version, CommandFailure> version() const = 0;
 
-  // What tmux has said on its own initiative since the last call. A transport
-  // that runs a process per command hears nothing between them and answers
-  // with nothing; a connection that stays open hears everything.
-  [[nodiscard]] virtual std::vector<Notification> take_notifications() const {
-    return {};
-  }
-  [[nodiscard]] virtual std::size_t dropped_notifications() const noexcept { return 0; }
-
-  // A synchronous tmux command inserted by this one writes to subprocess
-  // stdout, but control mode frames it as the next reply block.
-  [[nodiscard]] virtual expected<std::string, CommandFailure>
-  run_inserted(const std::vector<std::string>& command,
-               std::optional<std::chrono::milliseconds> timeout,
-               std::optional<std::size_t> output_limit) const {
-    return run(command, timeout, output_limit);
-  }
-
-  // The observer this backend was built with, so a Server that opens a
-  // connection over the same selector keeps watching the same way.
-  [[nodiscard]] const CommandObserver& observer() const noexcept { return observer_; }
-
   // What a call that names no timeout of its own gets. Applied where a caller
   // reaches the library, not here: this layer keeps taking `nullopt` to mean
   // no deadline, which is what `wait_for` needs to be able to ask for.
   [[nodiscard]] const ExecutionPolicy& policy() const noexcept { return policy_; }
 
 protected:
+  [[nodiscard]] expected<std::string, CommandFailure>
+  report_failure(const CommandRequest& command, CommandFailure failure) const;
+
   // Render a command the way tmux received it and hand it to the observer, if
   // there is one. Called after the command finishes and outside any lock.
-  void observe(const std::vector<std::string>& command,
-               const CommandFailure* failure) const;
+  void observe(const CommandRequest& command, const CommandFailure* failure) const;
 
 private:
+  [[nodiscard]] CommandFailure redact(CommandFailure failure,
+                                      const CommandRequest& command) const;
+
   CommandObserver observer_;
   ExecutionPolicy policy_;
 };
@@ -170,21 +172,29 @@ private:
 // tmux in a child process: the only executor this library binds to.
 class SubprocessBackend final : public Backend {
 public:
-  explicit SubprocessBackend(std::vector<std::string> connection,
-                             CommandObserver observer = {},
-                             ExecutionPolicy policy = {});
+  [[nodiscard]] static expected<std::shared_ptr<const SubprocessBackend>,
+                                CommandFailure>
+  open(std::vector<std::string> connection, CommandObserver observer = {},
+       ExecutionPolicy policy = {});
 
   // Declaring an override hides the base's other overload, and the
   // one-argument form is how most callers spell "no timeout".
   using Backend::run;
 
   [[nodiscard]] expected<std::string, CommandFailure>
-  run(const std::vector<std::string>& command,
-      std::optional<std::chrono::milliseconds> timeout,
+  run(const CommandRequest& command, std::optional<std::chrono::milliseconds> timeout,
       std::optional<std::size_t> output_limit) const override;
 
+#if defined(_WIN32)
   [[nodiscard]] expected<std::string, CommandFailure>
-  run_in_session(const std::vector<std::string>& command, std::string_view session_id,
+  run_cancellable(const CommandRequest& command,
+                  std::optional<std::chrono::milliseconds> timeout,
+                  std::optional<std::size_t> output_limit,
+                  const CancellationProbe& cancelled) const;
+#endif
+
+  [[nodiscard]] expected<std::string, CommandFailure>
+  run_in_session(const CommandRequest& command, std::string_view session_id,
                  std::string_view session_name,
                  std::optional<std::chrono::milliseconds> timeout,
                  std::optional<std::size_t> output_limit) const override;
@@ -201,6 +211,15 @@ public:
     return identity_;
   }
 
+  [[nodiscard]] std::string_view socket_path() const noexcept override {
+    return socket_missing_ ? std::string_view{} : std::string_view{socket_path_};
+  }
+
+  [[nodiscard]] std::shared_ptr<const SocketAlias>
+  socket_alias() const noexcept override {
+    return socket_alias_;
+  }
+
   [[nodiscard]] ServerCapabilities capabilities() const noexcept override {
 #if defined(_WIN32)
     return {.implementation = ServerImplementation::psmux,
@@ -211,22 +230,72 @@ public:
 #endif
   }
 
+#if !defined(_WIN32)
+  // What a started command still needs: the operation to wait on, and the
+  // bound its answer was captured against. Working that bound out again at
+  // the waiting end is how a caller's own limit goes missing from truncation.
+  struct Started final {
+    Operation<ProcessReply> running;
+    std::size_t allowed_bytes{0U};
+  };
+
+  // Send a command and keep the operation. The half of running a command that
+  // has to happen now; interpret is the half that can happen later.
+  [[nodiscard]] expected<Started, CommandFailure>
+  start(const CommandRequest& command, std::optional<std::chrono::milliseconds> timeout,
+        std::optional<std::size_t> output_limit) const;
+#endif
+
+  // The tmux invocation a command becomes: the connection, the UTF-8 flag
+  // every listing depends on, the argument escaping, and the capture bound.
+  [[nodiscard]] ProcessRequest
+  build_request(const CommandRequest& command, std::optional<std::string_view> session,
+                std::optional<std::chrono::milliseconds> timeout,
+                std::optional<std::size_t> output_limit) const;
+
+  // What a reply means: the capture bound, the exit status, the diagnostic
+  // tmux wrote, and the observer. All of it belongs to whoever is consuming
+  // the answer rather than to the thread that read the pipe, which is why an
+  // operation nobody has waited on yet can still carry it.
+  [[nodiscard]] expected<std::string, CommandFailure>
+  interpret(const CommandRequest& command, std::size_t allowed_bytes,
+            ProcessReply reply) const;
+
+  // The same, for a transport that failed before there was a reply.
+  [[nodiscard]] expected<std::string, CommandFailure>
+  interpret_failure(const CommandRequest& command, CommandFailure failure) const;
+
   // `tmux -V` answers without connecting, so this works against a socket with
   // no server on it.
   [[nodiscard]] expected<Version, CommandFailure> version() const override;
 
+  [[nodiscard]] expected<PreparedAttach, CommandFailure>
+  prepare_attach(std::string_view target) const override;
+
 private:
+  SubprocessBackend(std::vector<std::string> connection, std::string socket_path,
+                    std::string identity,
+                    std::shared_ptr<const SocketAlias> socket_alias,
+                    bool socket_missing, CommandObserver observer,
+                    ExecutionPolicy policy);
+
   [[nodiscard]] expected<std::string, CommandFailure>
-  run_scoped(const std::vector<std::string>& command,
-             std::optional<std::string_view> session,
+  run_scoped(const CommandRequest& command, std::optional<std::string_view> session,
              std::optional<std::chrono::milliseconds> timeout,
              std::optional<std::size_t> output_limit) const;
 
   std::vector<std::string> connection_;
-  // Resolved once, at construction: the answer depends on `TMUX_TMPDIR` and on
-  // the filesystem, and a server that changed which tmux it meant partway
-  // through its life would be worse than one that cannot say.
+  // Captured once, at construction. Keeping the alias alive keeps the inode
+  // from being reused and prevents this handle from following a replacement.
   std::string identity_;
+  std::string socket_path_;
+  std::shared_ptr<const SocketAlias> socket_alias_;
+  bool socket_missing_{};
+#if !defined(_WIN32)
+  // Shared with every other backend in the process. Holding it is what keeps
+  // it alive; the last handle to let go is what shuts it down.
+  std::shared_ptr<ProcessEngine> engine_;
+#endif
 };
 
 // Build a Server over any backend. The only way to reach the private

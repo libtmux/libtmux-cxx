@@ -283,7 +283,7 @@ TEST(Entity, AnAnswerThatDoesNotFitIsReportedNotCut) {
   ASSERT_FALSE(cut.has_value())
       << "a capture of " << cut->size() << " bytes fitted 1024";
   EXPECT_EQ(cut.error().kind, FailureKind::truncated);
-  EXPECT_TRUE(cut.error().dispatched);
+  EXPECT_NE(cut.error().delivery, libtmux::DeliveryStatus::not_started);
   EXPECT_NE(cut.error().diagnostic.find("1024"), std::string::npos);
 
   // Room enough, and the whole thing arrives.
@@ -481,7 +481,33 @@ TEST(Entity, BreakingAnOnlyPanePreservesItsWindow) {
   ASSERT_TRUE(broken.has_value()) << broken.error().diagnostic;
   EXPECT_EQ(broken->id(), original->id());
   EXPECT_EQ(broken->name(), "original");
-  EXPECT_EQ(broken->session_id(), destination->id());
+  EXPECT_EQ(broken->session_id(), source.id());
+  const auto moved = pane->refresh();
+  ASSERT_TRUE(moved.has_value()) << moved.error().diagnostic;
+  EXPECT_EQ(moved->window_id(), original->id());
+}
+
+TEST(Entity, NamingAnOnlyPaneRenamesItInPlace) {
+  LIBTMUX_REQUIRES_TMUX(3, 6, "break-pane's created-window report");
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const Session source = only_session(server);
+
+  const auto original = source.active_window();
+  ASSERT_TRUE(original.has_value()) << original.error().diagnostic;
+  const auto pane = original->active_pane();
+  ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
+
+  const auto destination = server.new_session("destination");
+  ASSERT_TRUE(destination.has_value()) << destination.error().diagnostic;
+  constexpr std::string_view requested = "#{session_name}#,},comma";
+  const auto broken = pane->break_out(requested);
+
+  ASSERT_TRUE(broken.has_value()) << broken.error().diagnostic;
+  EXPECT_EQ(broken->id(), original->id());
+  EXPECT_EQ(broken->name(), requested);
+  EXPECT_EQ(broken->session_id(), source.id());
   const auto moved = pane->refresh();
   ASSERT_TRUE(moved.has_value()) << moved.error().diagnostic;
   EXPECT_EQ(moved->window_id(), original->id());
@@ -544,7 +570,7 @@ TEST(Entity, RawTmux37RejectsHooksBeforeNameRepair) {
     const auto broken = pane->break_out("roomy");
 
     ASSERT_FALSE(broken.has_value());
-    EXPECT_TRUE(broken.error().dispatched);
+    EXPECT_NE(broken.error().delivery, libtmux::DeliveryStatus::not_started);
     EXPECT_NE(broken.error().diagnostic.find("name repair failed"), std::string::npos)
         << broken.error().diagnostic;
     const auto marker = server.run({"display-message", "-p", "still-alive"});
@@ -761,7 +787,7 @@ TEST(Entity, ARecordedSnapshotFiltersButCannotAct) {
   const auto killed = editing.kill();
   ASSERT_FALSE(killed.has_value());
   EXPECT_EQ(killed.error().kind, FailureKind::validation);
-  EXPECT_FALSE(killed.error().dispatched);
+  EXPECT_EQ(killed.error().delivery, libtmux::DeliveryStatus::not_started);
 }
 
 TEST(Entity, ANewSessionComesBackAsASession) {

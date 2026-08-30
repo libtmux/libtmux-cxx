@@ -109,13 +109,8 @@ TEST(ControlConnection, GivesEachCommandItsOwnReplyBlock) {
   const auto result = connection.execute(
       std::move(request), std::chrono::steady_clock::now() + std::chrono::seconds{5});
   ASSERT_FALSE(result.connection_error.has_value()) << result.connection_error->message;
-  ASSERT_EQ(result.operations.size(), 1U);
-  // Attribution is exact because control mode framed a reply for this command
-  // rather than leaving one exit status to cover a group.
-  EXPECT_EQ(result.operations[0].attribution, libtmux::Attribution::exact);
-  ASSERT_TRUE(result.operations[0].block.has_value());
-  EXPECT_NE(text_of(result.operations[0].block->body).find("streamed"),
-            std::string::npos);
+  ASSERT_EQ(result.blocks.size(), 1U);
+  EXPECT_NE(text_of(result.blocks[0].body).find("streamed"), std::string::npos);
 
   const auto closed =
       connection.shutdown(std::chrono::steady_clock::now() + std::chrono::seconds{5});
