@@ -8,7 +8,6 @@
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
-#include <future>
 #include <memory>
 #include <string>
 #include <thread>
@@ -42,6 +41,51 @@ std::string text(const std::vector<std::byte>& value) {
   return result;
 }
 
+class ScopedPathRemoval final {
+public:
+  explicit ScopedPathRemoval(std::filesystem::path path) noexcept
+      : path_{std::move(path)} {}
+
+  ~ScopedPathRemoval() {
+    std::error_code ignored;
+    static_cast<void>(std::filesystem::remove(path_, ignored));
+  }
+
+  ScopedPathRemoval(const ScopedPathRemoval&) = delete;
+  ScopedPathRemoval& operator=(const ScopedPathRemoval&) = delete;
+
+private:
+  std::filesystem::path path_;
+};
+
+class ScopedEngineClose final {
+public:
+  explicit ScopedEngineClose(std::shared_ptr<ProcessEngine> engine) noexcept
+      : engine_{std::move(engine)} {}
+
+  ~ScopedEngineClose() { close(); }
+
+  ScopedEngineClose(const ScopedEngineClose&) = delete;
+  ScopedEngineClose& operator=(const ScopedEngineClose&) = delete;
+
+  void close() {
+    if (engine_) {
+      static_cast<void>(engine_->close());
+      engine_.reset();
+    }
+  }
+
+private:
+  std::shared_ptr<ProcessEngine> engine_;
+};
+
+struct RetirementObservation final {
+  std::atomic<int> calls{0};
+  std::atomic<int> status_result{0};
+  std::atomic<int> status_error{0};
+  std::atomic_bool ready{false};
+};
+
 TEST(ProcessEngine, AnswersOneProcessThroughSyncWait) {
   auto engine = ProcessEngine::start();
   ASSERT_TRUE(engine.has_value()) << engine.error().diagnostic;
@@ -59,43 +103,59 @@ TEST(ProcessEngine, TransportRetirementFiresOnceAfterPublishingAndReaping) {
   auto engine = ProcessEngine::start();
   ASSERT_TRUE(engine.has_value()) << engine.error().diagnostic;
 
-  std::string pid_template = "/tmp/libtmux-process-engine-retirement-XXXXXX";
+  std::string pid_template = (std::filesystem::temp_directory_path() /
+                              "libtmux-process-engine-retirement-XXXXXX")
+                                 .string();
   const int pid_descriptor = ::mkstemp(pid_template.data());
   ASSERT_GE(pid_descriptor, 0);
+  ScopedPathRemoval remove_pid_file{pid_template};
   ASSERT_EQ(::close(pid_descriptor), 0);
-  std::promise<std::pair<int, int>> retired;
-  auto retired_result = retired.get_future();
-  auto calls = std::make_shared<int>(0);
+  auto retired = std::make_shared<RetirementObservation>();
+  ScopedEngineClose close_engine{*engine};
+  auto request = shell("printf $$ > \"$1\"; printf retired");
+  request.arguments.push_back({"libtmux-retirement-test"});
+  request.arguments.push_back({pid_template});
   auto running = (*engine)->submit(
-      shell("printf $$ > " + pid_template + "; printf retired"),
-      [pid_template, calls, &retired, owned = std::make_unique<int>(1)]() mutable {
-        *calls += *owned;
+      std::move(request),
+      [pid_template, retired, owned = std::make_unique<int>(1)]() mutable {
+        if (retired->calls.fetch_add(*owned, std::memory_order_relaxed) != 0) {
+          return;
+        }
         int child_pid = -1;
         if (FILE* pid_file = std::fopen(pid_template.c_str(), "r")) {
           static_cast<void>(std::fscanf(pid_file, "%d", &child_pid));
           static_cast<void>(std::fclose(pid_file));
         }
+        int status_result = 0;
+        int status_error = EINVAL;
         if (child_pid <= 0) {
-          retired.set_value({0, EINVAL});
-          return;
+          retired->status_result.store(status_result, std::memory_order_relaxed);
+          retired->status_error.store(status_error, std::memory_order_relaxed);
+        } else {
+          errno = 0;
+          status_result = ::waitpid(child_pid, nullptr, WNOHANG);
+          status_error = errno;
+          retired->status_result.store(status_result, std::memory_order_relaxed);
+          retired->status_error.store(status_error, std::memory_order_relaxed);
         }
-        errno = 0;
-        const int status_result = ::waitpid(child_pid, nullptr, WNOHANG);
-        retired.set_value({status_result, errno});
+        retired->ready.store(true, std::memory_order_release);
       });
 
   auto reply = sync_wait(std::move(running));
   ASSERT_TRUE(reply.has_value()) << reply.error().diagnostic;
   EXPECT_EQ(text(reply->stdout_bytes), "retired");
-  ASSERT_EQ(retired_result.wait_for(std::chrono::seconds{1}),
-            std::future_status::ready);
-  const auto [status_result, status_error] = retired_result.get();
-  EXPECT_EQ(status_result, -1);
-  EXPECT_EQ(status_error, ECHILD);
-  EXPECT_EQ(*calls, 1);
-  static_cast<void>((*engine)->close());
-  EXPECT_EQ(*calls, 1);
-  EXPECT_TRUE(std::filesystem::remove(pid_template));
+  const auto retirement_deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds{1};
+  while (!retired->ready.load(std::memory_order_acquire) &&
+         std::chrono::steady_clock::now() < retirement_deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds{1});
+  }
+  ASSERT_TRUE(retired->ready.load(std::memory_order_acquire));
+  EXPECT_EQ(retired->status_result.load(std::memory_order_relaxed), -1);
+  EXPECT_EQ(retired->status_error.load(std::memory_order_relaxed), ECHILD);
+  EXPECT_EQ(retired->calls.load(std::memory_order_relaxed), 1);
+  close_engine.close();
+  EXPECT_EQ(retired->calls.load(std::memory_order_relaxed), 1);
 }
 
 TEST(ProcessEngine, RefusedTransportRetirementFiresOnce) {
