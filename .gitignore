@@ -54,3 +54,8 @@ venv/
 # left in the checkout should not be committed by accident.
 /scratch/
 *.log
+
+# Agent work plans.
+/docs/superpowers/
+/plans/
+/superpowers/
