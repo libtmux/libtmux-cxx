@@ -588,9 +588,12 @@ target_include_directories(
   command_engine_exit_probe PRIVATE "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(
   command_engine_exit_probe PRIVATE libtmux_build_options libtmux::libtmux)
-add_test(NAME libtmux.command_engine.exit_detaches COMMAND command_engine_exit_probe)
+add_test(
+  NAME libtmux.command_engine.custom_backend_rejected
+  COMMAND command_engine_exit_probe)
 set_tests_properties(
-  libtmux.command_engine.exit_detaches PROPERTIES LABELS "concurrency" TIMEOUT 3)
+  libtmux.command_engine.custom_backend_rejected
+  PROPERTIES LABELS "concurrency" TIMEOUT 3)
 
 add_executable(libtmux_client_test integration/client_test.cpp)
 target_link_libraries(
@@ -649,6 +652,8 @@ target_link_libraries(
   libtmux_server_contract_test
   PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
+target_include_directories(
+  libtmux_server_contract_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
 target_compile_options(
   libtmux_server_contract_test PRIVATE -fno-sanitize-recover=undefined)
 

@@ -13,12 +13,13 @@
 
 #include "libtmux/command.hpp"
 #include "libtmux/expected.hpp"
+#include "move_only_function.hpp"
 #include "operation_state.hpp"
 
 LIBTMUX_NAMESPACE_BEGIN
 namespace detail {
 
-class Backend;
+class SubprocessBackend;
 
 struct CommandEngineConfig final {
   std::size_t operation_limit{256U};
@@ -39,12 +40,13 @@ private:
 };
 
 struct PendingCommand final {
-  std::shared_ptr<const Backend> backend;
+  std::shared_ptr<const SubprocessBackend> backend;
   CommandRequest command;
   std::optional<std::chrono::milliseconds> timeout;
   std::optional<std::size_t> output_limit;
   OperationSource<std::string> source;
   std::optional<std::chrono::steady_clock::time_point> deadline;
+  MoveOnlyFunction<void()> retirement_hook;
 };
 
 class CommandEngine final {
@@ -57,10 +59,12 @@ public:
   CommandEngine& operator=(const CommandEngine&) = delete;
 
   [[nodiscard]] Operation<std::string>
-  submit(std::shared_ptr<const Backend> backend, CommandRequest command,
+  submit(std::shared_ptr<const SubprocessBackend> backend, CommandRequest command,
          std::optional<std::chrono::milliseconds> timeout,
-         std::optional<std::size_t> output_limit);
+         std::optional<std::size_t> output_limit,
+         MoveOnlyFunction<void()> retirement_hook = {});
 
+  void request_stop() noexcept;
   void close();
 
 private:
@@ -71,12 +75,12 @@ private:
   std::mutex mutex_;
   std::condition_variable ready_;
   std::deque<PendingCommand> pending_;
-  bool closing_{false};
+  bool stop_requested_{false};
+  bool close_joining_{false};
+  bool terminal_{false};
+  std::condition_variable terminal_ready_;
   std::vector<std::thread> workers_;
 };
-
-[[nodiscard]] expected<std::shared_ptr<CommandEngine>, CommandFailure>
-shared_command_engine();
 
 } // namespace detail
 LIBTMUX_NAMESPACE_END

@@ -22,7 +22,6 @@ namespace detail {
 
 namespace {
 
-#if defined(_WIN32)
 FailureKind kind_of(ProcessError::Kind kind) noexcept {
   switch (kind) {
   case ProcessError::Kind::validation:
@@ -40,7 +39,6 @@ FailureKind kind_of(ProcessError::Kind kind) noexcept {
   }
   return FailureKind::spawn;
 }
-#endif
 
 // tmux reads a trailing `;` on an argument as a command separator, so an
 // argument that ends in one arrives truncated — and, in a batch, whatever
@@ -230,17 +228,6 @@ SubprocessBackend::open(std::vector<std::string> connection, CommandObserver obs
       std::move(endpoint->connection), std::move(endpoint->socket_path),
       std::move(endpoint->identity), std::move(endpoint->alias), endpoint->missing,
       std::move(observer), policy}};
-#if !defined(_WIN32)
-  auto engine = shared_engine();
-  if (!engine.has_value()) {
-    return unexpected(
-        CommandFailure{.kind = FailureKind::pipe,
-                       .delivery = DeliveryStatus::not_started,
-                       .exit_code = 0,
-                       .diagnostic = std::move(engine.error().diagnostic)});
-  }
-  backend->engine_ = std::move(*engine);
-#endif
   return std::shared_ptr<const SubprocessBackend>{std::move(backend)};
 }
 
@@ -262,6 +249,35 @@ SubprocessBackend::run(const CommandRequest& command,
                        std::optional<std::chrono::milliseconds> timeout,
                        std::optional<std::size_t> output_limit) const {
   return run_scoped(command, std::nullopt, timeout, output_limit);
+}
+
+expected<std::string, CommandFailure>
+SubprocessBackend::run_unobserved(const CommandRequest& command,
+                                  std::optional<std::chrono::milliseconds> timeout,
+                                  std::optional<std::size_t> output_limit) const {
+  const bool version_query =
+      command.size() == 1U && command.arguments().front().value() == "-V";
+  if (socket_missing_ && !version_query) {
+    return interpret_failure_unobserved(
+        command,
+        CommandFailure{
+            .kind = FailureKind::missing,
+            .delivery = DeliveryStatus::not_started,
+            .exit_code = 0,
+            .diagnostic =
+                "this handle predates the socket; reopen it after the server starts"});
+  }
+  ProcessRequest request = build_request(command, std::nullopt, timeout, output_limit);
+  const auto allowed_bytes = request.capture_limit;
+  auto reply = run_process(request);
+  if (!reply.has_value()) {
+    return interpret_failure_unobserved(
+        command, CommandFailure{.kind = kind_of(reply.error().kind),
+                                .delivery = reply.error().delivery,
+                                .exit_code = -1,
+                                .diagnostic = std::move(reply.error().diagnostic)});
+  }
+  return interpret_unobserved(command, allowed_bytes, *std::move(reply));
 }
 
 #if defined(_WIN32)
@@ -291,6 +307,34 @@ expected<std::string, CommandFailure> SubprocessBackend::run_cancellable(
                                          .diagnostic = reply.error().diagnostic});
   }
   return interpret(command, allowed_bytes, *std::move(reply));
+}
+
+expected<std::string, CommandFailure> SubprocessBackend::run_cancellable_unobserved(
+    const CommandRequest& command, std::optional<std::chrono::milliseconds> timeout,
+    std::optional<std::size_t> output_limit, const CancellationProbe& cancelled) const {
+  const bool version_query =
+      command.size() == 1U && command.arguments().front().value() == "-V";
+  if (socket_missing_ && !version_query) {
+    return interpret_failure_unobserved(
+        command,
+        CommandFailure{
+            .kind = FailureKind::missing,
+            .delivery = DeliveryStatus::not_started,
+            .exit_code = 0,
+            .diagnostic =
+                "this handle predates the socket; reopen it after the server starts"});
+  }
+  ProcessRequest request = build_request(command, std::nullopt, timeout, output_limit);
+  const auto allowed_bytes = request.capture_limit;
+  auto reply = run_process(request, cancelled);
+  if (!reply.has_value()) {
+    return interpret_failure_unobserved(
+        command, CommandFailure{.kind = kind_of(reply.error().kind),
+                                .delivery = reply.error().delivery,
+                                .exit_code = -1,
+                                .diagnostic = std::move(reply.error().diagnostic)});
+  }
+  return interpret_unobserved(command, allowed_bytes, *std::move(reply));
 }
 #endif
 
@@ -382,31 +426,17 @@ expected<bool, CommandFailure> SubprocessBackend::session_belongs(
 #endif
 }
 
-#if !defined(_WIN32)
-expected<SubprocessBackend::Started, CommandFailure>
-SubprocessBackend::start(const CommandRequest& command,
-                         std::optional<std::chrono::milliseconds> timeout,
-                         std::optional<std::size_t> output_limit) const {
-  const bool version_query =
-      command.size() == 1U && command.arguments().front().value() == "-V";
-  if (socket_missing_ && !version_query) {
-    auto refused = interpret_failure(
-        command,
-        CommandFailure{
-            .kind = FailureKind::missing,
-            .delivery = DeliveryStatus::not_started,
-            .exit_code = 0,
-            .diagnostic =
-                "this handle predates the socket; reopen it after the server starts"});
-    return unexpected(std::move(refused.error()));
+expected<void, CommandFailure> SubprocessBackend::async_preflight() const {
+  if (!socket_missing_) {
+    return {};
   }
-  ProcessRequest request = build_request(command, std::nullopt, timeout, output_limit);
-  // Read before the request is handed over, because the engine takes it.
-  const auto allowed_bytes = request.capture_limit;
-  return Started{.running = engine_->submit(std::move(request)),
-                 .allowed_bytes = allowed_bytes};
+  return unexpected(CommandFailure{
+      .kind = FailureKind::missing,
+      .delivery = DeliveryStatus::not_started,
+      .exit_code = 0,
+      .diagnostic =
+          "this handle predates the socket; reopen it after the server starts"});
 }
-#endif
 
 ProcessRequest
 SubprocessBackend::build_request(const CommandRequest& command,
@@ -479,22 +509,13 @@ SubprocessBackend::run_scoped(const CommandRequest& command,
 
   // Read before the request is handed over, because the engine takes it.
   const auto allowed_bytes = request.capture_limit;
-#if defined(_WIN32)
-  // The engine is POSIX until the completion-port path exists, so this stays
-  // on the runner that blocks the calling thread.
-  const auto reply = run_process(request);
+  auto reply = run_process(request);
   if (!reply.has_value()) {
     return reported(CommandFailure{.kind = kind_of(reply.error().kind),
                                    .delivery = reply.error().delivery,
                                    .exit_code = -1,
-                                   .diagnostic = reply.error().diagnostic});
+                                   .diagnostic = std::move(reply.error().diagnostic)});
   }
-#else
-  const auto reply = sync_wait(engine_->submit(std::move(request)));
-  if (!reply.has_value()) {
-    return reported(reply.error());
-  }
-#endif
 
   return interpret(command, allowed_bytes, *std::move(reply));
 }
@@ -506,22 +527,49 @@ SubprocessBackend::interpret_failure(const CommandRequest& command,
 }
 
 expected<std::string, CommandFailure>
+SubprocessBackend::interpret_failure_unobserved(const CommandRequest& command,
+                                                CommandFailure failure) const {
+  return unexpected(redact(std::move(failure), command));
+}
+
+expected<std::string, CommandFailure>
 SubprocessBackend::interpret(const CommandRequest& command, std::size_t allowed_bytes,
                              ProcessReply reply) const {
+  return interpret_reply(command, allowed_bytes, std::move(reply), true);
+}
+
+expected<std::string, CommandFailure>
+SubprocessBackend::interpret_unobserved(const CommandRequest& command,
+                                        std::size_t allowed_bytes,
+                                        ProcessReply reply) const {
+  return interpret_reply(command, allowed_bytes, std::move(reply), false);
+}
+
+expected<std::string, CommandFailure>
+SubprocessBackend::interpret_reply(const CommandRequest& command,
+                                   std::size_t allowed_bytes, ProcessReply reply,
+                                   bool notify_observer) const {
   const auto reported = [this, &command](CommandFailure failure) {
     return report_failure(command, std::move(failure));
+  };
+  const auto failed = [this, &command, notify_observer,
+                       &reported](CommandFailure failure) {
+    if (notify_observer) {
+      return reported(std::move(failure));
+    }
+    return interpret_failure_unobserved(command, std::move(failure));
   };
   const ProcessReply* const reply_ptr = &reply;
   if (reply_ptr->output_truncated) {
     // The runner bounds what it will hold. Returning the prefix as a complete
     // answer is the one outcome a caller cannot detect: the last line is cut
     // mid-way and looks like data.
-    return reported(CommandFailure{.kind = FailureKind::truncated,
-                                   .delivery = DeliveryStatus::replied,
-                                   .exit_code = 0,
-                                   .diagnostic = "tmux produced more output than the " +
-                                                 std::to_string(allowed_bytes) +
-                                                 " byte limit this call allowed for"});
+    return failed(CommandFailure{.kind = FailureKind::truncated,
+                                 .delivery = DeliveryStatus::replied,
+                                 .exit_code = 0,
+                                 .diagnostic = "tmux produced more output than the " +
+                                               std::to_string(allowed_bytes) +
+                                               " byte limit this call allowed for"});
   }
 
   std::string out = text(reply_ptr->stdout_bytes);
@@ -543,12 +591,14 @@ SubprocessBackend::interpret(const CommandRequest& command, std::size_t allowed_
     // And which command it was: on its own, "can't find session: work" leaves
     // the reader to work out where in their program it came from.
     diagnostic += " (running: " + rendered_command(command) + ")";
-    return reported(CommandFailure{.kind = FailureKind::refused,
-                                   .delivery = DeliveryStatus::replied,
-                                   .exit_code = exited == nullptr ? -1 : exited->code,
-                                   .diagnostic = std::move(diagnostic)});
+    return failed(CommandFailure{.kind = FailureKind::refused,
+                                 .delivery = DeliveryStatus::replied,
+                                 .exit_code = exited == nullptr ? -1 : exited->code,
+                                 .diagnostic = std::move(diagnostic)});
   }
-  observe(command, nullptr);
+  if (notify_observer) {
+    observe(command, nullptr);
+  }
   return out;
 }
 

@@ -41,6 +41,8 @@ struct EngineConfig final {
   std::size_t operation_limit{256U};
   // A private scheduling seam for deterministic admission-race coverage.
   std::function<void()> admission_gate{};
+  // A private pre-spawn seam for deterministic FIFO launch coverage.
+  std::function<void(const ProcessRequest&)> launch_observer{};
 };
 
 // What shutdown could not finish, so a caller is told rather than assured.
@@ -158,11 +160,13 @@ public:
   [[nodiscard]] Operation<ProcessReply>
   submit(ProcessRequest request, MoveOnlyFunction<void()> retirement_hook = {});
 
+  void request_stop() noexcept;
   [[nodiscard]] EngineShutdown close();
 
 private:
-  explicit ProcessEngine(std::shared_ptr<EngineChannel> channel,
-                         std::function<void()> admission_gate) noexcept;
+  explicit ProcessEngine(
+      std::shared_ptr<EngineChannel> channel, std::function<void()> admission_gate,
+      std::function<void(const ProcessRequest&)> launch_observer) noexcept;
 
   void launch_loop();
   void launch_one(EnginePending work, bool stopping,
@@ -172,6 +176,7 @@ private:
 
   std::shared_ptr<EngineChannel> channel_;
   std::function<void()> admission_gate_;
+  std::function<void(const ProcessRequest&)> launch_observer_;
 
   std::mutex mutex_;
   std::condition_variable launch_ready_;
@@ -195,13 +200,10 @@ private:
   std::thread reactor_;
 };
 
-// One engine for the process, not one for each Server.
-//
-// It exists while some caller holds it and is gone when the last lets go, so
-// the two threads are the cost of using this library at all rather than a toll
-// on every connection opened. Nothing static owns it: the weak reference below
-// holds no engine, so there is no destruction order to get wrong.
-[[nodiscard]] expected<std::shared_ptr<ProcessEngine>, ProcessError> shared_engine();
+void set_runtime_launch_observer_for_test(
+    std::function<void(const ProcessRequest&)> observer);
+void fail_next_runtime_start_for_test();
+void fail_next_runtime_subscription_for_test();
 
 } // namespace detail
 LIBTMUX_NAMESPACE_END

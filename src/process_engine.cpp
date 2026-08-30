@@ -126,7 +126,8 @@ ProcessEngine::start(EngineConfig config) {
   // The threads hold a raw reference on purpose. Owning the engine would keep
   // it alive for as long as they run, which is until it is destroyed.
   std::shared_ptr<ProcessEngine> engine{
-      new ProcessEngine{std::move(channel), std::move(config.admission_gate)}};
+      new ProcessEngine{std::move(channel), std::move(config.admission_gate),
+                        std::move(config.launch_observer)}};
   engine->launcher_ = std::thread{[owner = engine.get()] { owner->launch_loop(); }};
   engine->reactor_ = std::thread{[owner = engine.get()] { owner->reactor_loop(); }};
   return engine;
@@ -224,9 +225,11 @@ std::optional<EngineFailure> EngineChannel::failure() const noexcept {
   return failure_;
 }
 
-ProcessEngine::ProcessEngine(std::shared_ptr<EngineChannel> channel,
-                             std::function<void()> admission_gate) noexcept
-    : channel_{std::move(channel)}, admission_gate_{std::move(admission_gate)} {}
+ProcessEngine::ProcessEngine(
+    std::shared_ptr<EngineChannel> channel, std::function<void()> admission_gate,
+    std::function<void(const ProcessRequest&)> launch_observer) noexcept
+    : channel_{std::move(channel)}, admission_gate_{std::move(admission_gate)},
+      launch_observer_{std::move(launch_observer)} {}
 
 ProcessEngine::~ProcessEngine() { static_cast<void>(close()); }
 
@@ -358,6 +361,13 @@ void ProcessEngine::launch_one(EnginePending work, bool stopping,
         render_request(work.request), std::make_error_code(std::errc::timed_out))))));
     retire_transport(work.source, work.retirement_hook);
     return;
+  }
+  if (launch_observer_) {
+    try {
+      launch_observer_(work.request);
+    } catch (...) {
+      // A test observer cannot be allowed to terminate the launch lane.
+    }
   }
   auto launch_gate = channel_->gate_launch();
   if (launch_gate.failure()) {
@@ -617,6 +627,15 @@ void ProcessEngine::reactor_loop() {
   }
 }
 
+void ProcessEngine::request_stop() noexcept {
+  {
+    std::lock_guard lock{mutex_};
+    stop_requested_ = true;
+  }
+  launch_ready_.notify_all();
+  channel_->wake();
+}
+
 EngineShutdown ProcessEngine::close() {
   {
     std::unique_lock lock{mutex_};
@@ -647,21 +666,6 @@ EngineShutdown ProcessEngine::close() {
   }
   terminal_ready_.notify_all();
   return report;
-}
-
-expected<std::shared_ptr<ProcessEngine>, ProcessError> shared_engine() {
-  static std::mutex guard;
-  static std::weak_ptr<ProcessEngine> held;
-  std::lock_guard lock{guard};
-  if (auto engine = held.lock()) {
-    return engine;
-  }
-  auto started = ProcessEngine::start();
-  if (!started.has_value()) {
-    return unexpected(std::move(started.error()));
-  }
-  held = *started;
-  return started;
 }
 
 } // namespace detail

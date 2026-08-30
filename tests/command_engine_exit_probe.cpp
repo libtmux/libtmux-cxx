@@ -45,11 +45,17 @@ int main() {
   using namespace std::chrono_literals;
   auto backend = std::make_shared<BlockingBackend>();
   const auto server = libtmux::detail::server_over(backend);
-  {
-    auto submitted = server.submit({"display-message", "-p", "detached"});
-    if (!submitted.has_value() || !backend->started.try_acquire_for(1s)) {
-      return 1;
-    }
+  auto runtime = libtmux::CommandRuntime::start();
+  if (!runtime.has_value()) {
+    return 1;
   }
-  return 0;
+  auto submitted =
+      server.try_submit(*runtime, {"display-message", "-p", "must not run"});
+  if (submitted.has_value() ||
+      submitted.error().kind != libtmux::FailureKind::unsupported ||
+      backend->started.try_acquire_for(100ms)) {
+    return 1;
+  }
+  const auto closed = runtime->close();
+  return closed.transports_stopped && closed.safe_to_unload ? 0 : 1;
 }

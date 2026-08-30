@@ -16,11 +16,8 @@
 #include "libtmux/capabilities.hpp"
 #include "libtmux/command.hpp"
 #include "libtmux/expected.hpp"
-#include "process.hpp"
-#if !defined(_WIN32)
-#include "process_engine.hpp"
-#endif
 #include "libtmux/version.hpp"
+#include "process.hpp"
 #include <chrono>
 #include <cstddef>
 #include <memory>
@@ -136,6 +133,13 @@ public:
   // no deadline, which is what `wait_for` needs to be able to ask for.
   [[nodiscard]] const ExecutionPolicy& policy() const noexcept { return policy_; }
 
+  [[nodiscard]] std::optional<CommandObserver> command_observer() const {
+    if (!observer_) {
+      return std::nullopt;
+    }
+    return observer_;
+  }
+
 protected:
   [[nodiscard]] expected<std::string, CommandFailure>
   report_failure(const CommandRequest& command, CommandFailure failure) const;
@@ -143,11 +147,10 @@ protected:
   // Render a command the way tmux received it and hand it to the observer, if
   // there is one. Called after the command finishes and outside any lock.
   void observe(const CommandRequest& command, const CommandFailure* failure) const;
-
-private:
   [[nodiscard]] CommandFailure redact(CommandFailure failure,
                                       const CommandRequest& command) const;
 
+private:
   CommandObserver observer_;
   ExecutionPolicy policy_;
 };
@@ -185,12 +188,23 @@ public:
   run(const CommandRequest& command, std::optional<std::chrono::milliseconds> timeout,
       std::optional<std::size_t> output_limit) const override;
 
+  [[nodiscard]] expected<std::string, CommandFailure>
+  run_unobserved(const CommandRequest& command,
+                 std::optional<std::chrono::milliseconds> timeout,
+                 std::optional<std::size_t> output_limit) const;
+
 #if defined(_WIN32)
   [[nodiscard]] expected<std::string, CommandFailure>
   run_cancellable(const CommandRequest& command,
                   std::optional<std::chrono::milliseconds> timeout,
                   std::optional<std::size_t> output_limit,
                   const CancellationProbe& cancelled) const;
+
+  [[nodiscard]] expected<std::string, CommandFailure>
+  run_cancellable_unobserved(const CommandRequest& command,
+                             std::optional<std::chrono::milliseconds> timeout,
+                             std::optional<std::size_t> output_limit,
+                             const CancellationProbe& cancelled) const;
 #endif
 
   [[nodiscard]] expected<std::string, CommandFailure>
@@ -230,21 +244,7 @@ public:
 #endif
   }
 
-#if !defined(_WIN32)
-  // What a started command still needs: the operation to wait on, and the
-  // bound its answer was captured against. Working that bound out again at
-  // the waiting end is how a caller's own limit goes missing from truncation.
-  struct Started final {
-    Operation<ProcessReply> running;
-    std::size_t allowed_bytes{0U};
-  };
-
-  // Send a command and keep the operation. The half of running a command that
-  // has to happen now; interpret is the half that can happen later.
-  [[nodiscard]] expected<Started, CommandFailure>
-  start(const CommandRequest& command, std::optional<std::chrono::milliseconds> timeout,
-        std::optional<std::size_t> output_limit) const;
-#endif
+  [[nodiscard]] expected<void, CommandFailure> async_preflight() const;
 
   // The tmux invocation a command becomes: the connection, the UTF-8 flag
   // every listing depends on, the argument escaping, and the capture bound.
@@ -265,6 +265,14 @@ public:
   [[nodiscard]] expected<std::string, CommandFailure>
   interpret_failure(const CommandRequest& command, CommandFailure failure) const;
 
+  [[nodiscard]] expected<std::string, CommandFailure>
+  interpret_unobserved(const CommandRequest& command, std::size_t allowed_bytes,
+                       ProcessReply reply) const;
+
+  [[nodiscard]] expected<std::string, CommandFailure>
+  interpret_failure_unobserved(const CommandRequest& command,
+                               CommandFailure failure) const;
+
   // `tmux -V` answers without connecting, so this works against a socket with
   // no server on it.
   [[nodiscard]] expected<Version, CommandFailure> version() const override;
@@ -284,6 +292,10 @@ private:
              std::optional<std::chrono::milliseconds> timeout,
              std::optional<std::size_t> output_limit) const;
 
+  [[nodiscard]] expected<std::string, CommandFailure>
+  interpret_reply(const CommandRequest& command, std::size_t allowed_bytes,
+                  ProcessReply reply, bool notify_observer) const;
+
   std::vector<std::string> connection_;
   // Captured once, at construction. Keeping the alias alive keeps the inode
   // from being reused and prevents this handle from following a replacement.
@@ -291,11 +303,6 @@ private:
   std::string socket_path_;
   std::shared_ptr<const SocketAlias> socket_alias_;
   bool socket_missing_{};
-#if !defined(_WIN32)
-  // Shared with every other backend in the process. Holding it is what keeps
-  // it alive; the last handle to let go is what shuts it down.
-  std::shared_ptr<ProcessEngine> engine_;
-#endif
 };
 
 // Build a Server over any backend. The only way to reach the private

@@ -507,6 +507,8 @@ public:
     return token_.has_value() && cancellation_.observing(*token_);
   }
 
+  [[nodiscard]] bool registered() const noexcept { return token_.has_value(); }
+
   void detach() noexcept {
     if (token_) {
       mailbox_.detach(*token_);

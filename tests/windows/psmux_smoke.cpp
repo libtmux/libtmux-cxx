@@ -980,21 +980,26 @@ int main() {
     return EXIT_FAILURE;
   }
 
+  auto runtime = libtmux::CommandRuntime::start();
+  if (!runtime) {
+    report_command("CommandRuntime::start failed", runtime.error());
+    return EXIT_FAILURE;
+  }
   const std::string completion_channel = socket_name + "-submit-completion";
   DelayedSignal completion_fallback{socket_name, completion_channel, 2s};
   const auto submit_started = std::chrono::steady_clock::now();
-  auto submitted = server.submit({"wait-for", completion_channel}, 10s);
+  auto submitted = server.try_submit(*runtime, {"wait-for", completion_channel}, 10s);
   const auto submit_took = std::chrono::steady_clock::now() - submit_started;
   const auto completion_signal =
       raw_psmux(socket_name, {"wait-for", "-S", completion_channel});
   completion_fallback.stop();
   if (!submitted) {
-    report_command("Server::submit rejected a psmux waiter", submitted.error());
+    report_command("Server::try_submit rejected a psmux waiter", submitted.error());
     return EXIT_FAILURE;
   }
   auto completed = std::move(*submitted).wait();
   if (!require(submit_took < 500ms,
-               "Server::submit must return before psmux completes") ||
+               "Server::try_submit must return before psmux completes") ||
       !require(completion_signal && completion_signal->exit_code == 0,
                "could not release the submitted psmux waiter") ||
       !require(completed.has_value(),
@@ -1009,12 +1014,13 @@ int main() {
                "could not configure the cancellation marker")) {
     return EXIT_FAILURE;
   }
-  auto cancellable = server.submit(
+  auto cancellable = server.try_submit(
+      *runtime,
       {"run-shell", "Set-Content -LiteralPath $env:LIBTMUX_CXX_CANCELLATION_MARKER "
                     "-Value started; Start-Sleep -Seconds 30"},
       10s);
   if (!cancellable.has_value()) {
-    report_command("Server::submit rejected a cancellable psmux waiter",
+    report_command("Server::try_submit rejected a cancellable psmux waiter",
                    cancellable.error());
     return EXIT_FAILURE;
   }
@@ -1038,6 +1044,13 @@ int main() {
       !require(marker_unset, "could not clear the cancellation marker") ||
       !require(cancellation_marker_cleanup.finish(),
                "could not remove the cancellation marker")) {
+    return EXIT_FAILURE;
+  }
+  const auto runtime_shutdown = runtime->close();
+  if (!require(runtime_shutdown.transports_stopped,
+               "the explicit command runtime did not stop its workers") ||
+      !require(runtime_shutdown.safe_to_unload,
+               "the explicit command runtime retained completed work")) {
     return EXIT_FAILURE;
   }
 
