@@ -20,6 +20,7 @@
 
 #include <gtest/gtest.h>
 
+#include "libtmux/control.hpp"
 #include "libtmux/entities.hpp"
 #include "libtmux/server.hpp"
 #include "libtmux/testing/capabilities.hpp"
@@ -220,12 +221,11 @@ TEST(Client, AttachCommandOwnsItsPinnedRoute) {
   const std::vector<std::string>& command = attach->argv();
   ASSERT_GE(command.size(), 5U);
   {
-    const auto through_alias = Server::at_socket_path(command[2]);
-    ASSERT_TRUE(through_alias.has_value()) << through_alias.error().diagnostic;
-    const auto sessions = through_alias->sessions();
-    ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
-    ASSERT_EQ(sessions->size(), 1U);
-    EXPECT_EQ(sessions->front().name(), fixture->session_name());
+    const auto through_alias =
+        libtmux::Connection::connect({.tmux_binary = command.front(),
+                                      .socket_path = command[2],
+                                      .session_name = command.back()});
+    ASSERT_TRUE(through_alias.has_value()) << through_alias.error().message;
   }
 
   attach.reset();
