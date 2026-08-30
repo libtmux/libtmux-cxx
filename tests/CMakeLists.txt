@@ -526,6 +526,15 @@ add_test(NAME libtmux.backend_seam COMMAND libtmux_backend_seam_test)
 set_tests_properties(
   libtmux.backend_seam PROPERTIES LABELS "libtmux" TIMEOUT 30)
 
+add_executable(command_engine_exit_probe command_engine_exit_probe.cpp)
+target_include_directories(
+  command_engine_exit_probe PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_link_libraries(
+  command_engine_exit_probe PRIVATE libtmux_build_options libtmux::libtmux)
+add_test(NAME libtmux.command_engine.exit_detaches COMMAND command_engine_exit_probe)
+set_tests_properties(
+  libtmux.command_engine.exit_detaches PROPERTIES LABELS "concurrency" TIMEOUT 3)
+
 add_executable(libtmux_client_test integration/client_test.cpp)
 target_link_libraries(
   libtmux_client_test

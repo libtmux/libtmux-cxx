@@ -196,11 +196,16 @@ void CommandEngine::close() {
 }
 
 expected<std::shared_ptr<CommandEngine>, CommandFailure> shared_command_engine() {
-  static const auto held = CommandEngine::start();
-  if (!held.has_value()) {
-    return unexpected(held.error());
+  // Process exit is the one shutdown boundary that can safely abandon an
+  // uninterruptible custom backend. Destroying this singleton there would
+  // instead join that call forever after its operation had been detached.
+  static const auto* held =
+      new expected<std::shared_ptr<CommandEngine>, CommandFailure>{
+          CommandEngine::start()};
+  if (!held->has_value()) {
+    return unexpected(held->error());
   }
-  return *held;
+  return **held;
 }
 
 } // namespace detail
