@@ -488,42 +488,45 @@ public:
 
   Subscription(Subscription&& other) noexcept
       : cancellation_{std::move(other.cancellation_)},
-        mailbox_{std::move(other.mailbox_)}, token_{std::exchange(other.token_, {})} {}
+        mailbox_{std::move(other.mailbox_)},
+        token_{std::exchange(other.token_, std::nullopt)} {}
 
   Subscription& operator=(Subscription&& other) noexcept {
     if (this != &other) {
       detach();
       cancellation_ = std::move(other.cancellation_);
       mailbox_ = std::move(other.mailbox_);
-      token_ = std::exchange(other.token_, {});
+      token_ = std::exchange(other.token_, std::nullopt);
     }
     return *this;
   }
 
   [[nodiscard]] bool request_cancel() const { return cancellation_.request_cancel(); }
 
-  [[nodiscard]] bool observing() const { return cancellation_.observing(token_); }
+  [[nodiscard]] bool observing() const {
+    return token_.has_value() && cancellation_.observing(*token_);
+  }
 
   void detach() noexcept {
-    if (token_.value != 0U) {
-      mailbox_.detach(token_);
-      cancellation_ = {};
-      mailbox_ = {};
-      token_ = {};
+    if (token_) {
+      mailbox_.detach(*token_);
     }
+    cancellation_ = {};
+    mailbox_ = {};
+    token_.reset();
   }
 
 private:
   friend class Operation<T>;
 
   Subscription(OperationCancellation<T> cancellation, WeakCompletionMailbox mailbox,
-               CompletionToken token) noexcept
+               std::optional<CompletionToken> token) noexcept
       : cancellation_{std::move(cancellation)}, mailbox_{std::move(mailbox)},
-        token_{token} {}
+        token_{std::move(token)} {}
 
   OperationCancellation<T> cancellation_;
   WeakCompletionMailbox mailbox_;
-  CompletionToken token_{};
+  std::optional<CompletionToken> token_;
 };
 
 template <typename T>
@@ -542,7 +545,8 @@ Subscription<T> Operation<T>::subscribe(CompletionQueue& queue,
   if (registered && state->outcome_published()) {
     static_cast<void>(mailbox.enqueue(token));
   }
-  return Subscription<T>{std::move(cancellation), std::move(mailbox), token};
+  return Subscription<T>{std::move(cancellation), std::move(mailbox),
+                         registered ? std::optional{token} : std::nullopt};
 }
 
 template <typename T> class OperationSource final {
