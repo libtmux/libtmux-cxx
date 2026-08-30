@@ -84,10 +84,6 @@ struct Pipe final {
   return {error_number, std::generic_category()};
 }
 
-[[nodiscard]] bool contains_nul(std::string_view value) {
-  return value.find('\0') != std::string_view::npos;
-}
-
 [[nodiscard]] std::string escape_diagnostic_value(std::string_view value) {
   constexpr std::string_view hexadecimal{"0123456789abcdef"};
   std::string escaped;
@@ -181,25 +177,11 @@ struct Pipe final {
 }
 
 [[nodiscard]] bool request_is_valid(const ProcessRequest& request) {
-  const auto executable = libtmux_path::command_string(request.executable);
-  if (executable.empty() || contains_nul(executable)) {
-    return false;
-  }
-  for (const auto& argument : request.arguments) {
-    if (contains_nul(argument.value)) {
-      return false;
-    }
-  }
-  for (const auto& [name, value] : request.environment) {
-    if (name.empty() || name.find('=') != std::string::npos || contains_nul(name) ||
-        (value.has_value() && contains_nul(*value))) {
-      return false;
-    }
-  }
   // Handing a child a terminal it does not have is a request that cannot be
   // honoured, not a failure of the spawn.
-  return request.stdio != StdioPolicy::inherit_terminal ||
-         (::isatty(STDIN_FILENO) != 0 && ::isatty(STDOUT_FILENO) != 0);
+  return process_request_is_valid(request) &&
+         (request.stdio != StdioPolicy::inherit_terminal ||
+          (::isatty(STDIN_FILENO) != 0 && ::isatty(STDOUT_FILENO) != 0));
 }
 
 [[nodiscard]] ProcessError::Kind spawn_error_kind(int error_number) {

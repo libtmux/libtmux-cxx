@@ -202,6 +202,15 @@ private:
 
 void set_runtime_launch_observer_for_test(
     std::function<void(const ProcessRequest&)> observer);
+enum class RuntimeFailurePoint {
+  completion_queue,
+  result_publication,
+  observer_enqueue,
+  engine_shutdown,
+  close,
+};
+void fail_next_runtime_action_for_test(RuntimeFailurePoint point);
+void set_runtime_completion_observer_for_test(std::function<void()> observer);
 void fail_next_runtime_start_for_test();
 void fail_next_runtime_subscription_for_test();
 

@@ -17,6 +17,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -233,6 +234,8 @@ struct Observation final {
 #if !defined(_WIN32)
 std::mutex launch_observer_mutex;
 std::function<void(const detail::ProcessRequest&)> runtime_launch_observer;
+std::function<void()> runtime_completion_observer;
+std::optional<detail::RuntimeFailurePoint> runtime_action_failure;
 bool fail_runtime_start{};
 bool fail_runtime_subscription{};
 
@@ -251,6 +254,29 @@ copy_runtime_launch_observer() {
   std::lock_guard lock{launch_observer_mutex};
   return std::exchange(fail_runtime_subscription, false);
 }
+
+[[nodiscard]] bool consume_runtime_action_failure(detail::RuntimeFailurePoint point) {
+  std::lock_guard lock{launch_observer_mutex};
+  if (runtime_action_failure != point) {
+    return false;
+  }
+  runtime_action_failure.reset();
+  return true;
+}
+
+void notify_runtime_completion_observer() noexcept {
+  std::function<void()> observer;
+  try {
+    {
+      std::lock_guard lock{launch_observer_mutex};
+      observer = runtime_completion_observer;
+    }
+    if (observer) {
+      observer();
+    }
+  } catch (...) {
+  }
+}
 #endif
 
 } // namespace
@@ -262,6 +288,16 @@ void set_runtime_launch_observer_for_test(
     std::function<void(const ProcessRequest&)> observer) {
   std::lock_guard lock{launch_observer_mutex};
   runtime_launch_observer = std::move(observer);
+}
+
+void fail_next_runtime_action_for_test(RuntimeFailurePoint point) {
+  std::lock_guard lock{launch_observer_mutex};
+  runtime_action_failure = point;
+}
+
+void set_runtime_completion_observer_for_test(std::function<void()> observer) {
+  std::lock_guard lock{launch_observer_mutex};
+  runtime_completion_observer = std::move(observer);
 }
 
 void fail_next_runtime_start_for_test() {
@@ -370,15 +406,22 @@ struct CommandRuntime::State final {
     if (!preflight.has_value()) {
       return refuse(std::move(preflight.error()));
     }
+
+    const ExecutionPolicy& policy = subprocess->policy();
+    const auto deadline = timeout.has_value() ? timeout : policy.timeout;
+    const auto allowed = output_limit.has_value() ? output_limit : policy.output_limit;
+    detail::ProcessRequest request =
+        subprocess->build_request(command, std::nullopt, deadline, allowed);
+    if (!detail::process_request_is_valid(request)) {
+      return refuse(immediate_failure(
+          FailureKind::validation,
+          "an asynchronous command contains a value that cannot be executed"));
+    }
     if (ledger_->full()) {
       return refuse(immediate_failure(
           FailureKind::overloaded,
           "the command runtime has more work in flight than it accepts"));
     }
-
-    const ExecutionPolicy& policy = subprocess->policy();
-    const auto deadline = timeout.has_value() ? timeout : policy.timeout;
-    const auto allowed = output_limit.has_value() ? output_limit : policy.output_limit;
     auto lease = std::make_shared<RuntimeLease>(ledger_);
     auto result =
         detail::make_operation<std::string>(std::make_shared<ResultHooks>(lease));
@@ -388,10 +431,10 @@ struct CommandRuntime::State final {
     auto operation_state = std::make_unique<CommandOperation::State>();
     operation_state->result = std::move(result.operation);
     operation_state->result_lease = lease;
+    auto result_source = std::make_shared<detail::OperationSource<std::string>>(
+        std::move(result.source));
 
 #if !defined(_WIN32)
-    detail::ProcessRequest request =
-        subprocess->build_request(command, std::nullopt, deadline, allowed);
     const std::size_t allowed_bytes = request.capture_limit;
 #endif
 
@@ -416,8 +459,7 @@ struct CommandRuntime::State final {
 #if !defined(_WIN32)
     detail::OperationCallback<detail::ProcessReply> callback{
         [this, id, subprocess, command = std::move(command), allowed_bytes,
-         source = std::move(result.source), lease, observation, observer_mailbox,
-         observer_token,
+         source = result_source, lease, observation, observer_mailbox, observer_token,
          conversion_failure = accepted_internal_failure(
              "the runtime could not translate this command result")](
             detail::OperationResult<detail::ProcessReply> reply) mutable {
@@ -428,20 +470,19 @@ struct CommandRuntime::State final {
                                                                std::move(reply.error()))
                     : subprocess->interpret_unobserved(command, allowed_bytes,
                                                        *std::move(reply));
-            finish_completion(id, source, lease, observation, observer_mailbox,
+            finish_completion(id, *source, lease, observation, observer_mailbox,
                               observer_token, std::move(answer));
             return;
           } catch (...) {
           }
-          finish_completion(id, source, lease, observation, observer_mailbox,
+          finish_completion(id, *source, lease, observation, observer_mailbox,
                             observer_token, unexpected(std::move(conversion_failure)));
         }};
 #else
     detail::OperationCallback<std::string> callback{
-        [this, id, source = std::move(result.source), lease, observation,
-         observer_mailbox,
+        [this, id, source = result_source, lease, observation, observer_mailbox,
          observer_token](detail::OperationResult<std::string> answer) mutable {
-          finish_completion(id, source, lease, observation, observer_mailbox,
+          finish_completion(id, *source, lease, observation, observer_mailbox,
                             observer_token, std::move(answer));
         }};
 #endif
@@ -476,19 +517,16 @@ struct CommandRuntime::State final {
                                 });
 #endif
     } catch (...) {
-      lease->complete();
       lease->finish_transport();
-      if (observation) {
-        observation->failed = true;
-      }
-      if (observer_token.has_value()) {
-        static_cast<void>(observer_mailbox.enqueue(*observer_token));
-      }
-      notify_completion();
+      finish_completion(
+          id, *result_source, lease, observation, observer_mailbox, observer_token,
+          unexpected(accepted_internal_failure(
+              "the runtime could not hand an accepted command to its engine")));
       return CommandOperation{std::move(operation_state)};
     }
     operation_state->cancellation = running.cancellation();
 
+    bool subscription_registered = false;
     {
       std::lock_guard task_lock{tasks_mutex_};
       detail::Subscription<RuntimeRawReply> subscription;
@@ -500,29 +538,20 @@ struct CommandRuntime::State final {
 #endif
         subscription = std::move(running).subscribe(completions_, std::move(callback));
       } catch (...) {
-        lease->complete();
-        if (observation) {
-          observation->failed = true;
-        }
-        if (observer_token.has_value()) {
-          static_cast<void>(observer_mailbox.enqueue(*observer_token));
-        }
-        notify_completion();
-        return CommandOperation{std::move(operation_state)};
       }
-      if (!subscription.registered()) {
+      if (subscription.registered()) {
+        tasks_.push_back(Task{.id = id, .subscription = std::move(subscription)});
+        subscription_registered = true;
+      } else {
         static_cast<void>(subscription.request_cancel());
-        lease->complete();
-        if (observation) {
-          observation->failed = true;
-        }
-        if (observer_token.has_value()) {
-          static_cast<void>(observer_mailbox.enqueue(*observer_token));
-        }
-        notify_completion();
-        return CommandOperation{std::move(operation_state)};
       }
-      tasks_.push_back(Task{.id = id, .subscription = std::move(subscription)});
+    }
+    if (!subscription_registered) {
+      finish_completion(id, *result_source, lease, observation, observer_mailbox,
+                        observer_token,
+                        unexpected(accepted_internal_failure(
+                            "the runtime could not track an accepted command")));
+      return CommandOperation{std::move(operation_state)};
     }
     notify_completion();
     return CommandOperation{std::move(operation_state)};
@@ -543,57 +572,78 @@ struct CommandRuntime::State final {
   }
 
   [[nodiscard]] CommandRuntimeShutdown close() {
-    {
+    for (;;) {
       std::unique_lock lifecycle_lock{lifecycle_mutex_};
       if (terminal_) {
         return terminal_report_;
       }
       if (close_joining_) {
-        lifecycle_ready_.wait(lifecycle_lock, [this] { return terminal_; });
-        return terminal_report_;
+        lifecycle_ready_.wait(lifecycle_lock,
+                              [this] { return terminal_ || !close_joining_; });
+        continue;
       }
       close_joining_ = true;
+      break;
     }
 
-    request_stop();
-    bool transports_stopped = true;
+    try {
+      request_stop();
+      bool transports_stopped = true;
 #if !defined(_WIN32)
-    const auto engine_report = engine_->close();
-    transports_stopped = engine_report.complete;
-    if (!engine_report.complete) {
-      store_lifecycle_failure(immediate_failure(
-          FailureKind::pipe,
-          "the process runtime could not retire every accepted child"));
-    }
+      const auto engine_report = engine_->close();
+      transports_stopped = engine_report.complete;
+      if (consume_runtime_action_failure(
+              detail::RuntimeFailurePoint::engine_shutdown)) {
+        transports_stopped = false;
+      }
+      if (!transports_stopped) {
+        store_lifecycle_failure(accepted_internal_failure(
+            "the process runtime could not retire every accepted child"));
+      }
 #else
-    engine_->close();
+      engine_->close();
 #endif
-    {
-      std::lock_guard completion_lock{completion_mutex_};
-      finish_completion_thread_ = true;
-      completion_wake_ = true;
-    }
-    completion_ready_.notify_all();
-    if (completion_thread_.joinable()) {
-      completion_thread_.join();
-    }
+#if !defined(_WIN32)
+      if (consume_runtime_action_failure(detail::RuntimeFailurePoint::close)) {
+        throw std::runtime_error{"injected runtime close failure"};
+      }
+#endif
+      {
+        std::lock_guard completion_lock{completion_mutex_};
+        finish_completion_thread_ = true;
+        completion_wake_ = true;
+      }
+      completion_ready_.notify_all();
+      if (completion_thread_.joinable()) {
+        completion_thread_.join();
+      }
 
-    const auto final_snapshot = ledger_->snapshot();
-    CommandRuntimeShutdown report{
-        .pending_results = final_snapshot.pending_results,
-        .pending_observers = final_snapshot.pending_observers,
-        .transports_stopped = transports_stopped,
-        .safe_to_unload = transports_stopped && final_snapshot.pending_results == 0U &&
-                          final_snapshot.pending_observers == 0U &&
-                          active_dispatchers_.load(std::memory_order_relaxed) == 0U,
-        .failure = lifecycle_failure()};
-    {
-      std::lock_guard lifecycle_lock{lifecycle_mutex_};
-      terminal_report_ = report;
-      terminal_ = true;
+      const auto final_snapshot = ledger_->snapshot();
+      CommandRuntimeShutdown report{
+          .pending_results = final_snapshot.pending_results,
+          .pending_observers = final_snapshot.pending_observers,
+          .transports_stopped = transports_stopped,
+          .safe_to_unload = transports_stopped &&
+                            final_snapshot.pending_results == 0U &&
+                            final_snapshot.pending_observers == 0U &&
+                            active_dispatchers_.load(std::memory_order_relaxed) == 0U,
+          .failure = lifecycle_failure()};
+      {
+        std::lock_guard lifecycle_lock{lifecycle_mutex_};
+        terminal_report_ = report;
+        terminal_ = true;
+        close_joining_ = false;
+      }
+      lifecycle_ready_.notify_all();
+      return report;
+    } catch (...) {
+      {
+        std::lock_guard lifecycle_lock{lifecycle_mutex_};
+        close_joining_ = false;
+      }
+      lifecycle_ready_.notify_all();
+      throw;
     }
-    lifecycle_ready_.notify_all();
-    return report;
   }
 
   [[nodiscard]] CommandRuntimeSnapshot snapshot() const noexcept {
@@ -632,10 +682,16 @@ private:
         completion_wake_ = false;
       }
       try {
+#if !defined(_WIN32)
+        if (consume_runtime_action_failure(
+                detail::RuntimeFailurePoint::completion_queue)) {
+          throw std::runtime_error{"injected completion queue failure"};
+        }
+#endif
         static_cast<void>(completions_.run_ready());
       } catch (...) {
-        store_lifecycle_failure(immediate_failure(
-            FailureKind::pipe, "the runtime completion queue failed"));
+        store_lifecycle_failure(
+            accepted_internal_failure("the runtime completion queue failed"));
         std::lock_guard lock{completion_mutex_};
         completion_wake_ = true;
       }
@@ -657,7 +713,8 @@ private:
                          const detail::WeakCompletionMailbox& observer_mailbox,
                          std::optional<detail::CompletionToken> observer_token,
                          expected<std::string, CommandFailure> answer) noexcept {
-    lease->complete();
+    const auto publication_failure =
+        accepted_internal_failure("the runtime could not publish a command result");
     try {
       if (observation) {
         observation->failed = !answer.has_value();
@@ -665,17 +722,48 @@ private:
           observation->failure = answer.error();
         }
       }
+#if !defined(_WIN32)
+      if (consume_runtime_action_failure(
+              detail::RuntimeFailurePoint::result_publication)) {
+        throw std::runtime_error{"injected result publication failure"};
+      }
+#endif
       static_cast<void>(source.publish(std::move(answer)));
     } catch (...) {
       if (observation) {
         observation->failed = true;
+        try {
+          observation->failure = publication_failure;
+        } catch (...) {
+        }
       }
-      store_lifecycle_failure(immediate_failure(
-          FailureKind::pipe, "the runtime could not publish a command result"));
+      try {
+        static_cast<void>(
+            source.publish(unexpected(CommandFailure{publication_failure})));
+      } catch (...) {
+      }
+      store_lifecycle_failure(publication_failure);
     }
     source.retire();
+    bool observer_ready = true;
     if (observer_token.has_value()) {
-      static_cast<void>(observer_mailbox.enqueue(*observer_token));
+#if !defined(_WIN32)
+      observer_ready = !consume_runtime_action_failure(
+                           detail::RuntimeFailurePoint::observer_enqueue) &&
+                       observer_mailbox.enqueue(*observer_token);
+#else
+      observer_ready = observer_mailbox.enqueue(*observer_token);
+#endif
+      if (!observer_ready) {
+        store_lifecycle_failure(accepted_internal_failure(
+            "the runtime could not queue a command observation"));
+      }
+    }
+    if (observer_ready) {
+      lease->complete();
+#if !defined(_WIN32)
+      notify_runtime_completion_observer();
+#endif
     }
     {
       std::lock_guard task_lock{tasks_mutex_};
@@ -688,11 +776,11 @@ private:
     notify_completion();
   }
 
-  void store_lifecycle_failure(CommandFailure failure) noexcept {
+  void store_lifecycle_failure(const CommandFailure& failure) noexcept {
     try {
       std::lock_guard lock{failure_mutex_};
       if (!lifecycle_failure_.has_value()) {
-        lifecycle_failure_ = std::move(failure);
+        lifecycle_failure_ = failure;
       }
     } catch (...) {
     }

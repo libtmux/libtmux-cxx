@@ -221,10 +221,6 @@ struct PreparedRequest final {
   return kind == ProcessError::Kind::spawn ? "spawn" : "pre-exec";
 }
 
-[[nodiscard]] bool contains_nul(std::string_view value) {
-  return value.find('\0') != std::string_view::npos;
-}
-
 [[nodiscard]] std::string escape_diagnostic_value(std::string_view value) {
   constexpr std::string_view hexadecimal{"0123456789abcdef"};
   std::string escaped;
@@ -296,20 +292,8 @@ validate_request(const ProcessRequest& request) {
                       std::make_error_code(std::errc::invalid_argument));
   };
 
-  const auto executable = libtmux_path::command_string(request.executable);
-  if (executable.empty() || contains_nul(executable)) {
+  if (!process_request_is_valid(request)) {
     return invalid();
-  }
-  for (const auto& argument : request.arguments) {
-    if (contains_nul(argument.value)) {
-      return invalid();
-    }
-  }
-  for (const auto& [name, value] : request.environment) {
-    if (name.empty() || name.find('=') != std::string::npos || contains_nul(name) ||
-        (value.has_value() && contains_nul(*value))) {
-      return invalid();
-    }
   }
   if (request.stdio == StdioPolicy::inherit_terminal &&
       (!is_console(::GetStdHandle(STD_INPUT_HANDLE)) ||
