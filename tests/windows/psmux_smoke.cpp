@@ -989,24 +989,36 @@ int main() {
   }
 
   const std::string cancellation_channel = socket_name + "-submit-cancellation";
+  const std::string cancellation_started_channel = cancellation_channel + "-started";
   DelayedSignal cancellation_fallback{socket_name, cancellation_channel, 2s};
-  auto cancellable = server.submit({"wait-for", cancellation_channel}, 10s);
-  std::this_thread::sleep_for(200ms);
-  const bool cancellation_requested =
-      cancellable.has_value() && cancellable->request_cancel();
-  std::optional<libtmux::expected<std::string, CommandFailure>> cancelled;
-  if (cancellable.has_value()) {
-    cancelled = std::move(*cancellable).wait();
+  auto cancellable = server.submit({"wait-for", "-S", cancellation_started_channel, ";",
+                                    "wait-for", cancellation_channel},
+                                   10s);
+  if (!cancellable.has_value()) {
+    report_command("Server::submit rejected a cancellable psmux waiter",
+                   cancellable.error());
+    return EXIT_FAILURE;
   }
+  const auto cancellation_started =
+      raw_psmux(socket_name, {"wait-for", cancellation_started_channel}, 2s);
+  if (!require(cancellation_started && cancellation_started->exit_code == 0,
+               "the cancellable psmux waiter did not prove it started")) {
+    static_cast<void>(raw_psmux(socket_name, {"wait-for", "-S", cancellation_channel}));
+    cancellation_fallback.stop();
+    static_cast<void>(std::move(*cancellable).wait());
+    return EXIT_FAILURE;
+  }
+  const bool cancellation_requested = cancellable->request_cancel();
+  auto cancelled = std::move(*cancellable).wait();
   const auto cancellation_cleanup =
       raw_psmux(socket_name, {"wait-for", "-S", cancellation_channel});
   cancellation_fallback.stop();
   if (!require(cancellation_requested,
                "a running submitted psmux command must accept cancellation") ||
       !require(
-          cancelled.has_value() && !cancelled->has_value() &&
-              cancelled->error().kind == libtmux::FailureKind::cancelled &&
-              cancelled->error().delivery == libtmux::DeliveryStatus::indeterminate,
+          !cancelled.has_value() &&
+              cancelled.error().kind == libtmux::FailureKind::cancelled &&
+              cancelled.error().delivery == libtmux::DeliveryStatus::indeterminate,
           "a cancelled submitted psmux command must report indeterminate delivery") ||
       !require(cancellation_cleanup && cancellation_cleanup->exit_code == 0,
                "could not release the cancelled psmux wait channel")) {

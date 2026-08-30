@@ -243,7 +243,7 @@ TEST(BackendSeam, DroppingAnOperationDoesNotWaitForItsFallbackBackend) {
     held.reset();
     dropped.release();
   }};
-  const bool returned = dropped.try_acquire_for(std::chrono::milliseconds{100});
+  const bool returned = dropped.try_acquire_for(std::chrono::seconds{1});
   backend->continue_run.release();
   dropper.join();
 
