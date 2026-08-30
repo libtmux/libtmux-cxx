@@ -56,7 +56,7 @@ The connection root.  A Server names which tmux server to talk to and how to rea
   - [`Server::at_default`](#libtmux-server-hpp-server-at-default)
   - [`Server::capabilities`](#libtmux-server-hpp-server-capabilities)
   - [`Server::run`](#libtmux-server-hpp-server-run)
-  - [`Server::submit`](#libtmux-server-hpp-server-submit)
+  - [`Server::try_submit`](#libtmux-server-hpp-server-try-submit)
   - [`Server::run_batch`](#libtmux-server-hpp-server-run-batch)
   - [`Server::run_chain`](#libtmux-server-hpp-server-run-chain)
   - [`Server::control`](#libtmux-server-hpp-server-control)
@@ -152,13 +152,13 @@ The local backend contract; no command runs. `tmux_version()` separately queries
 ```
 Run one command and return its standard output.  The timeout still rides on the call: how long a caller will wait is a property of what they asked for, and listing sessions does not share a deadline with attaching a client. Unset takes the server's `ExecutionPolicy`, which is thirty seconds rather than forever — a floor, not a guess at what this particular command needs. `output_limit` bounds how much of tmux's answer this call will hold. Past it the command reports `truncated` rather than returning a prefix that reads like a complete answer. Unset uses the package default, which is ample for every listing and can be too small for a long scrollback.
 
-<a id="libtmux-server-hpp-server-submit"></a>
-#### `Server::submit`
+<a id="libtmux-server-hpp-server-try-submit"></a>
+#### `Server::try_submit`
 
 ```cpp
-[[nodiscard]] expected<CommandOperation, CommandFailure> submit(CommandRequest command, std::optional<std::chrono::milliseconds> timeout = {}, std::optional<std::size_t> output_limit = {}) const;
+[[nodiscard]] expected<CommandOperation, CommandFailure> try_submit(CommandRuntime& runtime, CommandRequest command, std::optional<std::chrono::milliseconds> timeout = {}, std::optional<std::size_t> output_limit = {}) const;
 ```
-Send a command without waiting for it. The answer is the same one `run` gives, bounded per call by the same two arguments; what differs is that a program with several questions can ask them all before collecting any. The bounds matter more here, not less: the one long question in a batch is exactly the one that needs its own. See `libtmux/async.hpp`.
+Admit one command to an explicit bounded runtime without waiting for it. A refusal before admission is returned here; an admitted command carries every later transport or tmux failure in its operation.
 
 <a id="libtmux-server-hpp-server-run-batch"></a>
 #### `Server::run_batch`
@@ -464,10 +464,39 @@ A hook set globally is not reported by the unscoped listing, so reading it back 
 <a id="libtmux-async-hpp"></a>
 ## `libtmux/async.hpp`
 
-A command that has been sent and not yet answered.  `Server::submit` returns one instead of blocking, so a program with several questions for tmux asks them all and then collects. The waiting is the caller's to do and to order; the engine underneath runs them at once on threads it owns, whatever number of them there are.  An operation is answered once. Dropping one without waiting stops observing it; it does not stop the command, which tmux may already have run.
+Explicit bounded ownership for asynchronous Server commands. Results and global observations remain independent after admission.
 
 **Symbols:**
 
+- [`CommandRuntimeConfig`](#libtmux-async-hpp-commandruntimeconfig)
+  - [`CommandRuntimeConfig::capacity`](#libtmux-async-hpp-commandruntimeconfig-capacity)
+- [`CommandRuntimeSnapshot`](#libtmux-async-hpp-commandruntimesnapshot)
+  - [`CommandRuntimeSnapshot::capacity`](#libtmux-async-hpp-commandruntimesnapshot-capacity)
+  - [`CommandRuntimeSnapshot::in_flight`](#libtmux-async-hpp-commandruntimesnapshot-in-flight)
+  - [`CommandRuntimeSnapshot::pending_results`](#libtmux-async-hpp-commandruntimesnapshot-pending-results)
+  - [`CommandRuntimeSnapshot::pending_observers`](#libtmux-async-hpp-commandruntimesnapshot-pending-observers)
+  - [`CommandRuntimeSnapshot::accepted`](#libtmux-async-hpp-commandruntimesnapshot-accepted)
+  - [`CommandRuntimeSnapshot::refused`](#libtmux-async-hpp-commandruntimesnapshot-refused)
+  - [`CommandRuntimeSnapshot::completed`](#libtmux-async-hpp-commandruntimesnapshot-completed)
+  - [`CommandRuntimeSnapshot::accepting`](#libtmux-async-hpp-commandruntimesnapshot-accepting)
+- [`CommandRuntimeShutdown`](#libtmux-async-hpp-commandruntimeshutdown)
+  - [`CommandRuntimeShutdown::pending_results`](#libtmux-async-hpp-commandruntimeshutdown-pending-results)
+  - [`CommandRuntimeShutdown::pending_observers`](#libtmux-async-hpp-commandruntimeshutdown-pending-observers)
+  - [`CommandRuntimeShutdown::transports_stopped`](#libtmux-async-hpp-commandruntimeshutdown-transports-stopped)
+  - [`CommandRuntimeShutdown::safe_to_unload`](#libtmux-async-hpp-commandruntimeshutdown-safe-to-unload)
+  - [`CommandRuntimeShutdown::failure`](#libtmux-async-hpp-commandruntimeshutdown-failure)
+- [`CommandRuntime`](#libtmux-async-hpp-commandruntime)
+  - [`CommandRuntime::start`](#libtmux-async-hpp-commandruntime-start)
+  - [`CommandRuntime::CommandRuntime`](#libtmux-async-hpp-commandruntime-commandruntime)
+  - [`CommandRuntime::operator=`](#libtmux-async-hpp-commandruntime-operator)
+  - [`CommandRuntime::CommandRuntime`](#libtmux-async-hpp-commandruntime-commandruntime-2)
+  - [`CommandRuntime::operator=`](#libtmux-async-hpp-commandruntime-operator-2)
+  - [`CommandRuntime::~CommandRuntime`](#libtmux-async-hpp-commandruntime-commandruntime-3)
+  - [`CommandRuntime::request_stop`](#libtmux-async-hpp-commandruntime-request-stop)
+  - [`CommandRuntime::close`](#libtmux-async-hpp-commandruntime-close)
+  - [`CommandRuntime::snapshot`](#libtmux-async-hpp-commandruntime-snapshot)
+  - [`CommandRuntime::dispatch_ready`](#libtmux-async-hpp-commandruntime-dispatch-ready)
+  - [`CommandRuntime::discard_ready`](#libtmux-async-hpp-commandruntime-discard-ready)
 - [`CommandOperation`](#libtmux-async-hpp-commandoperation)
   - [`CommandOperation::CommandOperation`](#libtmux-async-hpp-commandoperation-commandoperation)
   - [`CommandOperation::operator=`](#libtmux-async-hpp-commandoperation-operator)
@@ -475,10 +504,243 @@ A command that has been sent and not yet answered.  `Server::submit` returns one
   - [`CommandOperation::operator=`](#libtmux-async-hpp-commandoperation-operator-2)
   - [`CommandOperation::~CommandOperation`](#libtmux-async-hpp-commandoperation-commandoperation-3)
   - [`CommandOperation::wait`](#libtmux-async-hpp-commandoperation-wait)
+  - [`CommandOperation::detach`](#libtmux-async-hpp-commandoperation-detach)
   - [`CommandOperation::request_cancel`](#libtmux-async-hpp-commandoperation-request-cancel)
+
+<a id="libtmux-async-hpp-commandruntimeconfig"></a>
+### `CommandRuntimeConfig`
+
+The maximum number of accepted commands retaining any lifecycle leg. `start` rejects zero with `DeliveryStatus::not_started`.
+
+```cpp
+struct CommandRuntimeConfig final;
+```
+
+<a id="libtmux-async-hpp-commandruntimeconfig-capacity"></a>
+#### `CommandRuntimeConfig::capacity`
+
+```cpp
+std::size_t capacity{256U};
+```
+
+<a id="libtmux-async-hpp-commandruntimesnapshot"></a>
+### `CommandRuntimeSnapshot`
+
+A lock-consistent instant; values may change immediately after it is read. Admission, refusal, and completion totals are monotonic.
+
+```cpp
+struct CommandRuntimeSnapshot final;
+```
+
+<a id="libtmux-async-hpp-commandruntimesnapshot-capacity"></a>
+#### `CommandRuntimeSnapshot::capacity`
+
+```cpp
+std::size_t capacity{};
+```
+
+<a id="libtmux-async-hpp-commandruntimesnapshot-in-flight"></a>
+#### `CommandRuntimeSnapshot::in_flight`
+
+```cpp
+std::size_t in_flight{};
+```
+Accepted commands retaining transport, result, or observer work.
+
+<a id="libtmux-async-hpp-commandruntimesnapshot-pending-results"></a>
+#### `CommandRuntimeSnapshot::pending_results`
+
+```cpp
+std::size_t pending_results{};
+```
+Result handles not yet waited, detached, or destroyed.
+
+<a id="libtmux-async-hpp-commandruntimesnapshot-pending-observers"></a>
+#### `CommandRuntimeSnapshot::pending_observers`
+
+```cpp
+std::size_t pending_observers{};
+```
+Observer records not yet claimed for dispatch or discarded, ready or not.
+
+<a id="libtmux-async-hpp-commandruntimesnapshot-accepted"></a>
+#### `CommandRuntimeSnapshot::accepted`
+
+```cpp
+std::uint64_t accepted{};
+```
+Commands admitted since startup.
+
+<a id="libtmux-async-hpp-commandruntimesnapshot-refused"></a>
+#### `CommandRuntimeSnapshot::refused`
+
+```cpp
+std::uint64_t refused{};
+```
+Commands refused before admission since startup.
+
+<a id="libtmux-async-hpp-commandruntimesnapshot-completed"></a>
+#### `CommandRuntimeSnapshot::completed`
+
+```cpp
+std::uint64_t completed{};
+```
+Accepted results whose observer record, when present, is also ready.
+
+<a id="libtmux-async-hpp-commandruntimesnapshot-accepting"></a>
+#### `CommandRuntimeSnapshot::accepting`
+
+```cpp
+bool accepting{};
+```
+True while neither stop nor close has ended admission.
+
+<a id="libtmux-async-hpp-commandruntimeshutdown"></a>
+### `CommandRuntimeShutdown`
+
+The first successful `close` report; every later call returns this value. Discharge result and observer work first when `safe_to_unload` must be true.
+
+```cpp
+struct CommandRuntimeShutdown final;
+```
+
+<a id="libtmux-async-hpp-commandruntimeshutdown-pending-results"></a>
+#### `CommandRuntimeShutdown::pending_results`
+
+```cpp
+std::size_t pending_results{};
+```
+Result obligations outstanding when the first close succeeded.
+
+<a id="libtmux-async-hpp-commandruntimeshutdown-pending-observers"></a>
+#### `CommandRuntimeShutdown::pending_observers`
+
+```cpp
+std::size_t pending_observers{};
+```
+Observer obligations outstanding when the first close succeeded.
+
+<a id="libtmux-async-hpp-commandruntimeshutdown-transports-stopped"></a>
+#### `CommandRuntimeShutdown::transports_stopped`
+
+```cpp
+bool transports_stopped{};
+```
+Whether every owned child and transport thread retired.
+
+<a id="libtmux-async-hpp-commandruntimeshutdown-safe-to-unload"></a>
+#### `CommandRuntimeShutdown::safe_to_unload`
+
+```cpp
+bool safe_to_unload{};
+```
+True only when transports and pending work ended and no caller-side dispatch or discard, including callback-target teardown, remains active.
+
+<a id="libtmux-async-hpp-commandruntimeshutdown-failure"></a>
+#### `CommandRuntimeShutdown::failure`
+
+```cpp
+std::optional<CommandFailure> failure;
+```
+The first runtime lifecycle failure; an operation may also carry it.
+
+<a id="libtmux-async-hpp-commandruntime"></a>
+### `CommandRuntime`
+
+Move-only owner of the transport threads, admission bound, and observations. Runtime operations, including `try_submit`, may race; move and destruction may not.
+
+```cpp
+class CommandRuntime final;
+```
+
+<a id="libtmux-async-hpp-commandruntime-start"></a>
+#### `CommandRuntime::start`
+
+```cpp
+static expected<CommandRuntime, CommandFailure> start(CommandRuntimeConfig config = {});
+```
+Starts the bounded transport; startup failures are not-started values.
+
+<a id="libtmux-async-hpp-commandruntime-commandruntime"></a>
+#### `CommandRuntime::CommandRuntime`
+
+```cpp
+CommandRuntime(CommandRuntime&&) noexcept;
+```
+
+<a id="libtmux-async-hpp-commandruntime-operator"></a>
+#### `CommandRuntime::operator=`
+
+```cpp
+CommandRuntime& operator=(CommandRuntime&&) noexcept;
+```
+
+<a id="libtmux-async-hpp-commandruntime-commandruntime-2"></a>
+#### `CommandRuntime::CommandRuntime`
+
+```cpp
+CommandRuntime(const CommandRuntime&) = delete;
+```
+
+<a id="libtmux-async-hpp-commandruntime-operator-2"></a>
+#### `CommandRuntime::operator=`
+
+```cpp
+CommandRuntime& operator=(const CommandRuntime&) = delete;
+```
+
+<a id="libtmux-async-hpp-commandruntime-commandruntime-3"></a>
+#### `CommandRuntime::~CommandRuntime`
+
+```cpp
+~CommandRuntime();
+```
+Stops and joins owned threads; pending observers are discarded, not invoked. Call `close` first when its terminal report matters.
+
+<a id="libtmux-async-hpp-commandruntime-request-stop"></a>
+#### `CommandRuntime::request_stop`
+
+```cpp
+void request_stop() noexcept;
+```
+Stops admission and requests cancellation without waiting.
+
+<a id="libtmux-async-hpp-commandruntime-close"></a>
+#### `CommandRuntime::close`
+
+```cpp
+[[nodiscard]] CommandRuntimeShutdown close();
+```
+Joins every owned thread without invoking or discarding observers. The first successful report is cached; a throwing shutdown can be retried.
+
+<a id="libtmux-async-hpp-commandruntime-snapshot"></a>
+#### `CommandRuntime::snapshot`
+
+```cpp
+[[nodiscard]] CommandRuntimeSnapshot snapshot() const noexcept;
+```
+Reads one lock-consistent instant without waiting for work.
+
+<a id="libtmux-async-hpp-commandruntime-dispatch-ready"></a>
+#### `CommandRuntime::dispatch_ready`
+
+```cpp
+[[nodiscard]] std::size_t dispatch_ready();
+```
+Runs one snapshot of ready observers on this thread and returns its count. A callback exception releases that record, propagates, and leaves later records.
+
+<a id="libtmux-async-hpp-commandruntime-discard-ready"></a>
+#### `CommandRuntime::discard_ready`
+
+```cpp
+[[nodiscard]] std::size_t discard_ready();
+```
+Releases ready observer obligations without invoking callbacks. Only one dispatch or discard call runs at once; competitors return zero.
 
 <a id="libtmux-async-hpp-commandoperation"></a>
 ### `CommandOperation`
+
+Move-only result handle for one admitted command; its methods are not concurrent. Destruction releases its result without cancelling the command. It may outlive the runtime without retaining runtime threads.
 
 ```cpp
 class CommandOperation final;
@@ -525,7 +787,15 @@ CommandOperation& operator=(const CommandOperation&) = delete;
 ```cpp
 [[nodiscard]] expected<std::string, CommandFailure> wait() &&;
 ```
-What tmux said, once it has said it. The same answer `Server::run` gives, including the bound on how much of it is kept and what a non-zero exit means. Consumed once: the operation is spent afterwards.
+Consumes the same bounded answer `Server::run` gives. Waiting never dispatches the Server's global observer.
+
+<a id="libtmux-async-hpp-commandoperation-detach"></a>
+#### `CommandOperation::detach`
+
+```cpp
+void detach() && noexcept;
+```
+Releases the result obligation without cancelling the command. The Server's global observer remains a runtime obligation.
 
 <a id="libtmux-async-hpp-commandoperation-request-cancel"></a>
 #### `CommandOperation::request_cancel`
@@ -533,7 +803,7 @@ What tmux said, once it has said it. The same answer `Server::run` gives, includ
 ```cpp
 [[nodiscard]] bool request_cancel();
 ```
-Ask for the command to be withdrawn. A request rather than an outcome: tmux may answer first, and whether it acted is reported by the failure's delivery rather than guessed at here.
+Requests withdrawal; false means no live transport cancellation remains. The eventual result's delivery says whether tmux may have acted.
 
 <a id="libtmux-capabilities-hpp"></a>
 ## `libtmux/capabilities.hpp`
@@ -4532,7 +4802,7 @@ Absent leaves the transport's own bound, which is one megabyte.
 ```cpp
 using CommandObserver = std::function<void(std::string_view command, const CommandFailure* failure)>;
 ```
-Told about every command, as it finishes.  There is otherwise no way to see what this library ran: a caller debugging a tmux interaction has only the failures, and nothing at all when things succeed. The command is rendered as tmux received it, with any argument marked sensitive replaced.  Called on the thread that ran the command, while nothing is held, so an observer that itself calls tmux does not deadlock — but one shared between threads has to say so itself. Both callback arguments expire on return.
+Told about every command, as it finishes.  There is otherwise no way to see what this library ran: a caller debugging a tmux interaction has only the failures, and nothing at all when things succeed. The command is rendered as tmux received it, with any argument marked sensitive replaced.  Synchronous calls invoke it on their caller's thread. Asynchronous calls invoke it only on the thread calling `CommandRuntime::dispatch_ready`. No internal lock is held; a shared observer must synchronise itself. Both callback arguments expire on return.
 
 <a id="libtmux-options-hpp"></a>
 ## `libtmux/options.hpp`

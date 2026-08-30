@@ -10,10 +10,13 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <unistd.h>
@@ -226,6 +229,77 @@ int main() {
     }
   }
   // #endregion errors
+
+  // #region async
+  std::size_t observed = 0U;
+  auto async_server = libtmux::Server::at_socket_path(
+      scratch.socket_path().string(),
+      [&observed](std::string_view, const libtmux::CommandFailure*) { ++observed; });
+  if (!async_server.has_value()) {
+    std::fprintf(stderr, "%s\n", async_server.error().diagnostic.c_str());
+    return 1;
+  }
+
+  auto started_runtime =
+      libtmux::CommandRuntime::start(libtmux::CommandRuntimeConfig{.capacity = 1U});
+  if (!started_runtime.has_value()) {
+    std::fprintf(stderr, "%s\n", started_runtime.error().diagnostic.c_str());
+    return 1;
+  }
+  auto runtime = *std::move(started_runtime);
+  const auto wait_for_completion = [&runtime](std::uint64_t wanted) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+    while (runtime.snapshot().completed < wanted &&
+           std::chrono::steady_clock::now() < deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds{10});
+    }
+    return runtime.snapshot().completed >= wanted;
+  };
+
+  auto submitted =
+      async_server->try_submit(runtime, {"display-message", "-p", "async result"});
+  if (!submitted.has_value()) { // Refused before admission.
+    std::fprintf(stderr, "%s\n", submitted.error().diagnostic.c_str());
+    return 1;
+  }
+  auto result = std::move(*submitted).wait();
+  if (!result.has_value()) { // Failed after admission.
+    std::fprintf(stderr, "%s\n", result.error().diagnostic.c_str());
+    return 1;
+  }
+  if (!wait_for_completion(1U)) {
+    return 1;
+  }
+
+  const auto held = runtime.snapshot();
+  std::printf("%zu/%zu slot(s), %zu observation(s) pending\n", held.in_flight,
+              held.capacity, held.pending_observers);
+  std::printf("dispatched %zu observation(s)\n", runtime.dispatch_ready());
+
+  auto detached =
+      async_server->try_submit(runtime, {"display-message", "-p", "detached"});
+  if (!detached.has_value()) {
+    std::fprintf(stderr, "%s\n", detached.error().diagnostic.c_str());
+    return 1;
+  }
+  std::move(*detached).detach(); // Keep no result; the observation remains.
+  if (!wait_for_completion(2U)) {
+    return 1;
+  }
+  std::printf("discarded %zu observation(s)\n", runtime.discard_ready());
+
+  const auto shutdown = runtime.close();
+  if (shutdown.failure.has_value()) {
+    std::fprintf(stderr, "%s\n", shutdown.failure->diagnostic.c_str());
+    return 1;
+  }
+  std::printf("runtime stopped: %s; safe to unload: %s; observed: %zu\n",
+              shutdown.transports_stopped ? "yes" : "no",
+              shutdown.safe_to_unload ? "yes" : "no", observed);
+  if (!shutdown.transports_stopped || !shutdown.safe_to_unload || observed != 1U) {
+    return 1;
+  }
+  // #endregion async
 
   // #region escape
   // Anything tmux knows and this library does not name yet: ask it directly,
