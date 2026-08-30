@@ -640,7 +640,7 @@ struct CommandRuntime::State final {
 #endif
 #if !defined(_WIN32)
       if (consume_runtime_action_failure(detail::RuntimeFailurePoint::close)) {
-        throw std::runtime_error{"injected runtime close failure"};
+        throw detail::RuntimeFailurePoint::close;
       }
 #endif
       {
@@ -716,7 +716,7 @@ private:
 #if !defined(_WIN32)
         if (consume_runtime_action_failure(
                 detail::RuntimeFailurePoint::completion_queue)) {
-          throw std::runtime_error{"injected completion queue failure"};
+          throw detail::RuntimeFailurePoint::completion_queue;
         }
 #endif
         static_cast<void>(completions_.run_ready());
@@ -756,7 +756,7 @@ private:
 #if !defined(_WIN32)
       if (consume_runtime_action_failure(
               detail::RuntimeFailurePoint::result_publication)) {
-        throw std::runtime_error{"injected result publication failure"};
+        throw detail::RuntimeFailurePoint::result_publication;
       }
 #endif
       static_cast<void>(source.publish(std::move(answer)));

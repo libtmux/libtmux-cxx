@@ -49,6 +49,8 @@ bool wait_until(const std::function<bool()>& predicate,
   return predicate();
 }
 
+struct ObserverFailure final {};
+
 struct ObserverTeardownState final {
   std::binary_semaphore started{0};
   std::binary_semaphore release{0};
@@ -738,7 +740,7 @@ TEST(ServerContract, ObserverExceptionsReleaseCapacityBeforeLeavingDispatch) {
       [&calls](std::string_view, const libtmux::CommandFailure*) {
         ++calls;
         if (calls == 1U) {
-          throw std::runtime_error{"observer failed"};
+          throw ObserverFailure{};
         }
       });
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
@@ -751,7 +753,7 @@ TEST(ServerContract, ObserverExceptionsReleaseCapacityBeforeLeavingDispatch) {
   EXPECT_TRUE(std::move(*second).wait().has_value());
   ASSERT_TRUE(wait_until([&runtime] { return runtime.snapshot().completed == 2U; }));
 
-  EXPECT_THROW(static_cast<void>(runtime.dispatch_ready()), std::runtime_error);
+  EXPECT_THROW(static_cast<void>(runtime.dispatch_ready()), ObserverFailure);
   EXPECT_EQ(runtime.snapshot().in_flight, 1U);
   EXPECT_EQ(runtime.snapshot().pending_observers, 1U);
   EXPECT_EQ(runtime.dispatch_ready(), 1U);
@@ -917,7 +919,7 @@ TEST(ServerContract, AFailedCloseClaimDoesNotStrandAnotherCaller) {
     start.arrive_and_wait();
     try {
       return std::optional{runtime.close()};
-    } catch (const std::runtime_error&) {
+    } catch (libtmux::detail::RuntimeFailurePoint) {
       return std::optional<libtmux::CommandRuntimeShutdown>{};
     }
   };
