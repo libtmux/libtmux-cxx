@@ -80,6 +80,12 @@ failure by throwing.)
 | **Platforms** | Linux, macOS; experimental x64 desktop Windows support with Visual Studio 2022 through [psmux] |
 | **Dependencies** | None for the library |
 
+POSIX child launches do not inherit unrelated descriptors. glibc 2.34 and
+newer use native close-from actions, and macOS uses CLOEXEC-default. Other
+Linux builds use numeric close actions; that fallback assumes no concurrent
+privileged increase of the hard descriptor limit. Ordinary concurrent
+allocation and soft-limit changes remain covered.
+
 ## Installation
 
 Nothing to install alongside it: the library has no dependencies. Pick

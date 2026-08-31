@@ -11,7 +11,9 @@ namespace detail {
 using SpawnDescriptorPolicyTestHook = void (*)(int);
 
 // Keeps descriptors supplied by spawn actions and, when requested, inherited
-// standard streams. Every other descriptor is closed in the child.
+// standard streams. Native policies close every other descriptor. The Linux
+// numeric fallback assumes no concurrent privileged hard-limit increase;
+// ordinary concurrent allocation and soft-limit changes remain covered.
 [[nodiscard]] expected<void, int>
 apply_spawn_descriptor_policy(posix_spawn_file_actions_t& actions,
                               posix_spawnattr_t& attributes,
