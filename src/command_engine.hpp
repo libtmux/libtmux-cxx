@@ -89,13 +89,12 @@ private:
     [[nodiscard]] ProcessTransportEntry notification() noexcept {
       return ProcessTransportEntry{.context = this, .notify = notify};
     }
+    void advance() noexcept;
 
   private:
     static void notify(void* context) noexcept {
       static_cast<EntryGuard*>(context)->advance();
     }
-    void advance() noexcept;
-
     CommandEngine& engine_;
     std::uint64_t order_{};
     bool advanced_{};

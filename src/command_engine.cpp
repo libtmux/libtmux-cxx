@@ -191,6 +191,7 @@ void CommandEngine::worker_loop() {
     }
     EntryGuard entry{*this, work.order};
     if (withdrawn) {
+      entry.advance();
       static_cast<void>(work.source.publish(
           unexpected(cancelled(DeliveryStatus::not_started,
                                "the caller withdrew the command before it started"))));
@@ -198,6 +199,7 @@ void CommandEngine::worker_loop() {
       continue;
     }
     if (work.deadline.has_value() && Clock::now() >= *work.deadline) {
+      entry.advance();
       static_cast<void>(work.source.publish(unexpected(timed_out())));
       retire(work.source, work.retirement_hook);
       continue;
@@ -230,6 +232,7 @@ void CommandEngine::worker_loop() {
       }
     } catch (...) {
     }
+    entry.advance();
     try {
       static_cast<void>(work.source.publish(std::move(answer)));
     } catch (...) {

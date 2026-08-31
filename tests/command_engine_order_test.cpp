@@ -252,6 +252,93 @@ TEST(CommandEngineOrder, SkipsCancelledAndExpiredWorkBeforeEntry) {
   (*engine)->close();
 }
 
+enum class PreEntryOutcome { cancelled, expired, failed };
+
+void expect_pre_entry_turn_before_retirement(PreEntryOutcome outcome) {
+  std::binary_semaphore first_dequeued{0};
+  std::binary_semaphore release_first{0};
+  std::binary_semaphore retirement_started{0};
+  std::binary_semaphore finish_retirement{0};
+  std::binary_semaphore next_entered{0};
+  auto engine = CommandEngine::start(CommandEngineConfig{
+      .operation_limit = 2U,
+      .worker_count = 2U,
+      .dequeue_observer =
+          [&](const CommandRequest& command) {
+            if (command.arguments().front().value() == "first") {
+              first_dequeued.release();
+              release_first.acquire();
+            }
+          },
+      .runner =
+          [&](const CommandRequest& command, std::optional<std::chrono::milliseconds>,
+              std::optional<std::size_t>, const std::function<bool()>&,
+              ProcessTransportEntry entry) -> expected<std::string, CommandFailure> {
+        if (command.arguments().front().value() == "first") {
+          return unexpected(CommandFailure{
+              .kind = FailureKind::spawn,
+              .delivery = DeliveryStatus::not_started,
+              .exit_code = 0,
+              .diagnostic = "controlled pre-entry failure",
+          });
+        }
+        entry.entered();
+        next_entered.release();
+        return "next";
+      },
+  });
+  ASSERT_TRUE(engine.has_value()) << engine.error().diagnostic;
+
+  const auto timeout = outcome == PreEntryOutcome::expired
+                           ? std::optional<std::chrono::milliseconds>{0ms}
+                           : std::nullopt;
+  auto first = (*engine)->submit({}, {"first"}, timeout, std::nullopt, [&] {
+    retirement_started.release();
+    finish_retirement.acquire();
+  });
+  if (!first_dequeued.try_acquire_for(2s)) {
+    release_first.release();
+    finish_retirement.release();
+    (*engine)->close();
+    FAIL() << "the first command was not dequeued";
+  }
+  auto next = (*engine)->submit({}, {"next"}, std::nullopt, std::nullopt);
+  if (outcome == PreEntryOutcome::cancelled) {
+    EXPECT_TRUE(first.request_cancel());
+  }
+  release_first.release();
+  const bool retirement_blocked = retirement_started.try_acquire_for(2s);
+  const bool entered_before_retirement =
+      retirement_blocked && next_entered.try_acquire_for(2s);
+  finish_retirement.release();
+
+  auto first_answer = sync_wait(std::move(first));
+  auto next_answer = sync_wait(std::move(next));
+  EXPECT_TRUE(retirement_blocked);
+  EXPECT_TRUE(entered_before_retirement);
+  ASSERT_FALSE(first_answer.has_value());
+  EXPECT_EQ(first_answer.error().delivery, DeliveryStatus::not_started);
+  EXPECT_EQ(first_answer.error().kind,
+            outcome == PreEntryOutcome::cancelled ? FailureKind::cancelled
+            : outcome == PreEntryOutcome::expired ? FailureKind::timeout
+                                                  : FailureKind::spawn);
+  ASSERT_TRUE(next_answer.has_value()) << next_answer.error().diagnostic;
+  EXPECT_EQ(*next_answer, "next");
+  (*engine)->close();
+}
+
+TEST(CommandEngineOrder, CancelledWorkAdvancesBeforeRetirement) {
+  expect_pre_entry_turn_before_retirement(PreEntryOutcome::cancelled);
+}
+
+TEST(CommandEngineOrder, ExpiredWorkAdvancesBeforeRetirement) {
+  expect_pre_entry_turn_before_retirement(PreEntryOutcome::expired);
+}
+
+TEST(CommandEngineOrder, PreEntryFailureAdvancesBeforeRetirement) {
+  expect_pre_entry_turn_before_retirement(PreEntryOutcome::failed);
+}
+
 TEST(CommandEngineOrder, StopWakesAWorkerWaitingForItsTurn) {
   std::binary_semaphore first_dequeued{0};
   std::binary_semaphore second_dequeued{0};
