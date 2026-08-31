@@ -430,8 +430,12 @@ struct CommandRuntime::State final {
   submit(std::shared_ptr<const detail::Backend> backend, CommandRequest command,
          std::optional<std::chrono::milliseconds> timeout,
          std::optional<std::size_t> output_limit) {
-    // Serialise preflight, admission, engine submission, and task registration as
-    // one transaction so engine queue order matches runtime admission order.
+    // The submission lock makes preflight, admission, engine submission, and task
+    // registration one transaction. Refusals before lease admission own no runtime
+    // slot. Once the engine accepts a command, later setup failures complete the
+    // returned operation because the transport may already have run. Registering
+    // the subscription before releasing this lock preserves transport-entry order
+    // across concurrent callers.
     std::lock_guard submission_lock{submission_mutex_};
     const auto refuse =
         [this](CommandFailure failure) -> expected<CommandOperation, CommandFailure> {
