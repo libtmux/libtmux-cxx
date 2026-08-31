@@ -73,6 +73,13 @@ void CommandChannel::release() noexcept {
   }
 }
 
+void CommandEngine::EntryGuard::advance() noexcept {
+  if (!advanced_) {
+    advanced_ = true;
+    engine_.advance_entry(order_);
+  }
+}
+
 expected<std::shared_ptr<CommandEngine>, CommandFailure>
 CommandEngine::start(CommandEngineConfig config) {
   if (config.worker_count == 0U) {
@@ -83,7 +90,9 @@ CommandEngine::start(CommandEngineConfig config) {
                        .diagnostic = "the command engine needs at least one worker"});
   }
   auto channel = std::make_shared<CommandChannel>(config.operation_limit);
-  std::shared_ptr<CommandEngine> engine{new CommandEngine{std::move(channel)}};
+  std::shared_ptr<CommandEngine> engine{
+      new CommandEngine{std::move(channel), std::move(config.dequeue_observer),
+                        std::move(config.runner)}};
   engine->workers_.reserve(config.worker_count);
   for (std::size_t index = 0; index < config.worker_count; ++index) {
     engine->workers_.emplace_back([owner = engine.get()] { owner->worker_loop(); });
@@ -91,8 +100,16 @@ CommandEngine::start(CommandEngineConfig config) {
   return engine;
 }
 
-CommandEngine::CommandEngine(std::shared_ptr<CommandChannel> channel) noexcept
-    : channel_{std::move(channel)} {}
+CommandEngine::CommandEngine(
+    std::shared_ptr<CommandChannel> channel,
+    std::function<void(const CommandRequest&)> dequeue_observer,
+    std::function<expected<std::string, CommandFailure>(
+        const CommandRequest&, std::optional<std::chrono::milliseconds>,
+        std::optional<std::size_t>, const std::function<bool()>&,
+        ProcessTransportEntry)>
+        runner) noexcept
+    : channel_{std::move(channel)}, dequeue_observer_{std::move(dequeue_observer)},
+      runner_{std::move(runner)} {}
 
 CommandEngine::~CommandEngine() { close(); }
 
@@ -120,13 +137,15 @@ Operation<std::string> CommandEngine::submit(
     std::lock_guard lock{mutex_};
     if (!stop_requested_) {
       started.source.mark_dispatching();
-      pending_.push_back(PendingCommand{.backend = std::move(backend),
+      pending_.push_back(PendingCommand{.order = next_order_,
+                                        .backend = std::move(backend),
                                         .command = std::move(command),
                                         .timeout = timeout,
                                         .output_limit = output_limit,
                                         .source = std::move(started.source),
                                         .deadline = deadline,
                                         .retirement_hook = std::move(retirement_hook)});
+      ++next_order_;
       ready_.notify_one();
       return std::move(started.operation);
     }
@@ -151,17 +170,30 @@ void CommandEngine::worker_loop() {
       pending_.pop_front();
     }
 
-    const bool withdrawn = work.source.cancel_requested();
+    if (dequeue_observer_) {
+      dequeue_observer_(work.command);
+    }
+
     bool stopping = false;
     {
-      std::lock_guard lock{mutex_};
+      std::unique_lock lock{mutex_};
+      entry_ready_.wait(
+          lock, [this, &work] { return stop_requested_ || work.order == next_entry_; });
       stopping = stop_requested_;
     }
-    if (withdrawn || stopping) {
-      static_cast<void>(work.source.publish(unexpected(
-          cancelled(DeliveryStatus::not_started,
-                    withdrawn ? "the caller withdrew the command before it started"
-                              : "the command engine closed before this started"))));
+    const bool withdrawn = work.source.cancel_requested();
+    if (stopping) {
+      static_cast<void>(work.source.publish(
+          unexpected(cancelled(DeliveryStatus::not_started,
+                               "the command engine closed before this started"))));
+      retire(work.source, work.retirement_hook);
+      continue;
+    }
+    EntryGuard entry{*this, work.order};
+    if (withdrawn) {
+      static_cast<void>(work.source.publish(
+          unexpected(cancelled(DeliveryStatus::not_started,
+                               "the caller withdrew the command before it started"))));
       retire(work.source, work.retirement_hook);
       continue;
     }
@@ -182,14 +214,20 @@ void CommandEngine::worker_loop() {
         .exit_code = 0,
         .diagnostic = "the command worker could not finish this command"});
     try {
+      if (runner_) {
+        answer = runner_(
+            work.command, work.timeout, work.output_limit,
+            [&work] { return work.source.cancel_requested(); }, entry.notification());
+      } else {
 #if defined(_WIN32)
-      answer = work.backend->run_cancellable_unobserved(
-          work.command, work.timeout, work.output_limit,
-          [&work] { return work.source.cancel_requested(); });
+        answer = work.backend->run_cancellable_unobserved(
+            work.command, work.timeout, work.output_limit,
+            [&work] { return work.source.cancel_requested(); }, entry.notification());
 #else
-      answer =
-          work.backend->run_unobserved(work.command, work.timeout, work.output_limit);
+        answer =
+            work.backend->run_unobserved(work.command, work.timeout, work.output_limit);
 #endif
+      }
     } catch (...) {
     }
     try {
@@ -201,12 +239,24 @@ void CommandEngine::worker_loop() {
   }
 }
 
+void CommandEngine::advance_entry(std::uint64_t order) noexcept {
+  {
+    std::lock_guard lock{mutex_};
+    if (order != next_entry_) {
+      return;
+    }
+    ++next_entry_;
+  }
+  entry_ready_.notify_all();
+}
+
 void CommandEngine::request_stop() noexcept {
   {
     std::lock_guard lock{mutex_};
     stop_requested_ = true;
   }
   ready_.notify_all();
+  entry_ready_.notify_all();
 }
 
 void CommandEngine::close() {
@@ -223,6 +273,7 @@ void CommandEngine::close() {
     close_joining_ = true;
   }
   ready_.notify_all();
+  entry_ready_.notify_all();
   for (auto& worker : workers_) {
     if (worker.joinable()) {
       worker.join();

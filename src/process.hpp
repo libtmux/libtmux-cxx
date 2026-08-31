@@ -48,6 +48,19 @@ struct ProcessError {
   bool output_truncated;
 };
 
+// A private, non-owning notification at the platform transport boundary.
+// Windows calls it immediately after a suspended child resumes.
+struct ProcessTransportEntry final {
+  void* context{};
+  void (*notify)(void*) noexcept {};
+
+  void entered() const noexcept {
+    if (notify != nullptr) {
+      notify(context);
+    }
+  }
+};
+
 [[nodiscard]] inline bool process_request_is_valid(const ProcessRequest& request) {
   const auto contains_nul = [](std::string_view value) {
     return value.find('\0') != std::string_view::npos;
@@ -78,6 +91,10 @@ using CancellationProbe = std::function<bool()>;
 
 [[nodiscard]] expected<ProcessReply, ProcessError>
 run_process(const ProcessRequest& request, const CancellationProbe& cancelled);
+
+[[nodiscard]] expected<ProcessReply, ProcessError>
+run_process(const ProcessRequest& request, const CancellationProbe& cancelled,
+            ProcessTransportEntry entry);
 #endif
 
 } // namespace detail

@@ -311,7 +311,8 @@ expected<std::string, CommandFailure> SubprocessBackend::run_cancellable(
 
 expected<std::string, CommandFailure> SubprocessBackend::run_cancellable_unobserved(
     const CommandRequest& command, std::optional<std::chrono::milliseconds> timeout,
-    std::optional<std::size_t> output_limit, const CancellationProbe& cancelled) const {
+    std::optional<std::size_t> output_limit, const CancellationProbe& cancelled,
+    ProcessTransportEntry entry) const {
   const bool version_query =
       command.size() == 1U && command.arguments().front().value() == "-V";
   if (socket_missing_ && !version_query) {
@@ -326,7 +327,7 @@ expected<std::string, CommandFailure> SubprocessBackend::run_cancellable_unobser
   }
   ProcessRequest request = build_request(command, std::nullopt, timeout, output_limit);
   const auto allowed_bytes = request.capture_limit;
-  auto reply = run_process(request, cancelled);
+  auto reply = run_process(request, cancelled, entry);
   if (!reply.has_value()) {
     return interpret_failure_unobserved(
         command, CommandFailure{.kind = kind_of(reply.error().kind),

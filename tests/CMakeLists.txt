@@ -583,6 +583,22 @@ add_test(NAME libtmux.backend_seam COMMAND libtmux_backend_seam_test)
 set_tests_properties(
   libtmux.backend_seam PROPERTIES LABELS "libtmux" TIMEOUT 30)
 
+# Portable coverage for the two-worker Windows command topology. The runner is
+# private and controlled, so launch establishment can be paused without tmux.
+add_executable(libtmux_command_engine_order_test command_engine_order_test.cpp)
+target_include_directories(
+  libtmux_command_engine_order_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_link_libraries(
+  libtmux_command_engine_order_test
+  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+target_compile_options(
+  libtmux_command_engine_order_test PRIVATE -fno-sanitize-recover=undefined)
+
+gtest_discover_tests(
+  libtmux_command_engine_order_test
+  TEST_PREFIX libtmux.command_engine.
+  PROPERTIES LABELS "concurrency" TIMEOUT 30)
+
 add_executable(command_engine_exit_probe command_engine_exit_probe.cpp)
 target_include_directories(
   command_engine_exit_probe PRIVATE "${PROJECT_SOURCE_DIR}/src")

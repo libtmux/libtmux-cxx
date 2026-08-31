@@ -200,11 +200,10 @@ public:
                   std::optional<std::size_t> output_limit,
                   const CancellationProbe& cancelled) const;
 
-  [[nodiscard]] expected<std::string, CommandFailure>
-  run_cancellable_unobserved(const CommandRequest& command,
-                             std::optional<std::chrono::milliseconds> timeout,
-                             std::optional<std::size_t> output_limit,
-                             const CancellationProbe& cancelled) const;
+  [[nodiscard]] expected<std::string, CommandFailure> run_cancellable_unobserved(
+      const CommandRequest& command, std::optional<std::chrono::milliseconds> timeout,
+      std::optional<std::size_t> output_limit, const CancellationProbe& cancelled,
+      ProcessTransportEntry entry) const;
 #endif
 
   [[nodiscard]] expected<std::string, CommandFailure>
