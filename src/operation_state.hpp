@@ -120,6 +120,72 @@ public:
   virtual void release_admission() noexcept = 0;
 };
 
+// Handles keep this relay alive without retaining the operation result. The
+// wake hook ends at transport retirement; only disposition state outlives it.
+class OperationRelay final {
+public:
+  explicit OperationRelay(std::shared_ptr<OperationHooks> hooks) noexcept
+      : hooks_{std::move(hooks)} {
+    assert(hooks_);
+  }
+
+  [[nodiscard]] bool request_cancel() {
+    std::shared_ptr<OperationHooks> hooks;
+    {
+      std::lock_guard lock{mutex_};
+      if (cancellation_requested_ || outcome_published_ || retired_) {
+        return false;
+      }
+      cancellation_requested_ = true;
+      hooks = hooks_;
+    }
+    hooks->wake_reactor();
+    return true;
+  }
+
+  [[nodiscard]] bool cancel_requested() const {
+    std::lock_guard lock{mutex_};
+    return cancellation_requested_;
+  }
+
+  void mark_outcome_published() {
+    std::lock_guard lock{mutex_};
+    outcome_published_ = true;
+  }
+
+  void select_callback(CompletionToken token) {
+    std::lock_guard lock{mutex_};
+    assert(!observer_token_.has_value());
+    observer_token_ = token;
+  }
+
+  void finish_callback(CompletionToken token) noexcept {
+    std::lock_guard lock{mutex_};
+    if (observer_token_ == token) {
+      observer_token_.reset();
+    }
+  }
+
+  [[nodiscard]] bool observing_callback(CompletionToken token) const {
+    std::lock_guard lock{mutex_};
+    return observer_token_ == token;
+  }
+
+  void retire() noexcept {
+    std::lock_guard lock{mutex_};
+    retired_ = true;
+    hooks_.reset();
+  }
+
+private:
+  mutable std::mutex mutex_;
+  std::shared_ptr<OperationHooks> hooks_;
+  std::optional<CompletionToken> observer_token_;
+  bool cancellation_requested_{false};
+  bool outcome_published_{false};
+  bool retired_{false};
+};
+
 template <typename T> class OperationState;
 template <typename T> class Operation;
 template <typename T> class OperationCancellation;
@@ -140,7 +206,8 @@ template <typename T>
 template <typename T> class OperationState final {
 public:
   explicit OperationState(std::shared_ptr<OperationHooks> hooks)
-      : abandoned_outcome_{make_abandoned_outcome<T>()}, hooks_{std::move(hooks)} {
+      : abandoned_outcome_{make_abandoned_outcome<T>()}, hooks_{std::move(hooks)},
+        relay_{std::make_shared<OperationRelay>(hooks_)} {
     assert(hooks_);
   }
 
@@ -155,6 +222,7 @@ public:
       if (outcome_) {
         return false;
       }
+      relay_->mark_outcome_published();
       outcome_ = std::move(published_outcome);
       discarded_outcome = std::move(abandoned_outcome_);
       if (observer_ == ObserverPhase::callback) {
@@ -170,25 +238,9 @@ public:
     return true;
   }
 
-  [[nodiscard]] bool request_cancel() {
-    std::shared_ptr<OperationHooks> hooks;
-    {
-      std::lock_guard lock{mutex_};
-      if (cancellation_requested_ || outcome_ ||
-          transport_ == TransportPhase::retired) {
-        return false;
-      }
-      cancellation_requested_ = true;
-      hooks = hooks_;
-    }
-    hooks->wake_reactor();
-    return true;
-  }
+  [[nodiscard]] bool request_cancel() { return relay_->request_cancel(); }
 
-  [[nodiscard]] bool cancel_requested() const {
-    std::lock_guard lock{mutex_};
-    return cancellation_requested_;
-  }
+  [[nodiscard]] bool cancel_requested() const { return relay_->cancel_requested(); }
 
   [[nodiscard]] bool outcome_published() const {
     std::lock_guard lock{mutex_};
@@ -212,6 +264,7 @@ public:
     observer_ = ObserverPhase::callback;
     observer_token_ = token;
     observer_mailbox_ = std::move(mailbox);
+    relay_->select_callback(token);
   }
 
   [[nodiscard]] OperationResult<T> wait_and_take() {
@@ -239,6 +292,7 @@ public:
       assert(observer_ == ObserverPhase::callback);
       assert(observer_token_ == token);
       observer_ = ObserverPhase::delivered;
+      relay_->finish_callback(token);
       observer_token_ = {};
       observer_mailbox_ = {};
       release = release_hook_locked();
@@ -249,11 +303,6 @@ public:
     return move_result_alternative(*outcome_);
   }
 
-  [[nodiscard]] bool observing_callback(CompletionToken token) const {
-    std::lock_guard lock{mutex_};
-    return observer_ == ObserverPhase::callback && observer_token_ == token;
-  }
-
   void detach_callback(CompletionToken token) noexcept {
     std::shared_ptr<OperationHooks> release;
     {
@@ -262,6 +311,7 @@ public:
         return;
       }
       observer_ = ObserverPhase::detached;
+      relay_->finish_callback(token);
       observer_token_ = {};
       observer_mailbox_ = {};
       release = release_hook_locked();
@@ -303,6 +353,7 @@ public:
                                           ? DeliveryStatus::not_started
                                           : DeliveryStatus::indeterminate;
       transport_ = TransportPhase::retired;
+      relay_->retire();
       if (!outcome_) {
         assert(abandoned_outcome_);
         assert(!abandoned_outcome_->has_value());
@@ -331,6 +382,8 @@ public:
   }
 
 private:
+  friend class OperationCancellation<T>;
+
   void advance_transport(TransportPhase phase) {
     std::lock_guard lock{mutex_};
     assert(transport_ <= phase);
@@ -353,11 +406,11 @@ private:
   std::unique_ptr<OperationResult<T>> outcome_;
   std::unique_ptr<OperationResult<T>> abandoned_outcome_;
   std::shared_ptr<OperationHooks> hooks_;
+  std::shared_ptr<OperationRelay> relay_;
   CompletionToken observer_token_{};
   WeakCompletionMailbox observer_mailbox_;
   ObserverPhase observer_{ObserverPhase::unselected};
   TransportPhase transport_{TransportPhase::queued};
-  bool cancellation_requested_{false};
   bool admission_released_{false};
 };
 
@@ -366,8 +419,7 @@ public:
   OperationCancellation() noexcept = default;
 
   [[nodiscard]] bool request_cancel() const {
-    const auto state = state_.lock();
-    return state && state->request_cancel();
+    return relay_ && relay_->request_cancel();
   }
 
 private:
@@ -376,14 +428,13 @@ private:
 
   explicit OperationCancellation(
       const std::shared_ptr<OperationState<T>>& state) noexcept
-      : state_{state} {}
+      : relay_{state->relay_} {}
 
   [[nodiscard]] bool observing(CompletionToken token) const {
-    const auto state = state_.lock();
-    return state && state->observing_callback(token);
+    return relay_ && relay_->observing_callback(token);
   }
 
-  std::weak_ptr<OperationState<T>> state_;
+  std::shared_ptr<OperationRelay> relay_;
 };
 
 template <typename T> class Operation final {
