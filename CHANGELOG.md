@@ -9,6 +9,15 @@ was recorded as it landed.
 
 ## Unreleased
 
+## 0.1.0-alpha.6 (2026-08-31)
+
+This is a source- and ABI-breaking alpha. Asynchronous commands now run under
+a caller-owned bounded runtime with explicit admission, cancellation,
+observation, and shutdown, while POSIX execution preserves causal failures and
+one tmux server incarnation. Independent notification watches, bounded control
+framing, descriptor-isolated child launches, and the experimental Windows
+preview follow the same fail-closed ownership rules.
+
 ### Breaking
 
 - `LIBTMUX_ABI_NAMESPACE` advances to `v2_cxx20` and `v2_cxx23`.
