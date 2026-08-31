@@ -44,6 +44,7 @@ public:
   }
 
   void unlink_ready(std::uint64_t token, Record& record) noexcept {
+    static_cast<void>(token);
     assert(record.enqueued);
     if (record.previous_ready) {
       const auto previous = records.find(*record.previous_ready);
