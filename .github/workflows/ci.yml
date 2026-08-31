@@ -190,6 +190,11 @@ jobs:
           cmake --build --preset windows-psmux
           ctest --preset windows-psmux --no-tests=error
 
+      - name: Build and run the native Windows smoke in Release
+        run: |
+          cmake --build build/windows-psmux --config Release
+          ctest --test-dir build/windows-psmux -C Release --no-tests=error
+
       - name: Kill the Windows psmux safety mutations
         run: |
           python -m tools.mutate `
