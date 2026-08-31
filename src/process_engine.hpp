@@ -34,6 +34,11 @@
 LIBTMUX_NAMESPACE_BEGIN
 namespace detail {
 
+enum class EngineReactorEvent {
+  waiting_for_launch,
+  exited,
+};
+
 struct EngineConfig final {
   // Accepted work in flight. Submission past this is refused rather than
   // queued, so a caller learns immediately instead of waiting behind a bound
@@ -43,6 +48,8 @@ struct EngineConfig final {
   std::function<void()> admission_gate{};
   // A private pre-spawn seam for deterministic FIFO launch coverage.
   std::function<void(const ProcessRequest&)> launch_observer{};
+  // A private scheduling seam for deterministic reactor shutdown coverage.
+  std::function<void(EngineReactorEvent)> reactor_observer{};
 };
 
 // What shutdown could not finish, so a caller is told rather than assured.
@@ -166,7 +173,8 @@ public:
 private:
   explicit ProcessEngine(
       std::shared_ptr<EngineChannel> channel, std::function<void()> admission_gate,
-      std::function<void(const ProcessRequest&)> launch_observer) noexcept;
+      std::function<void(const ProcessRequest&)> launch_observer,
+      std::function<void(EngineReactorEvent)> reactor_observer) noexcept;
 
   void launch_loop();
   void launch_one(EnginePending work, bool stopping,
@@ -177,6 +185,7 @@ private:
   std::shared_ptr<EngineChannel> channel_;
   std::function<void()> admission_gate_;
   std::function<void(const ProcessRequest&)> launch_observer_;
+  std::function<void(EngineReactorEvent)> reactor_observer_;
 
   std::mutex mutex_;
   std::condition_variable launch_ready_;

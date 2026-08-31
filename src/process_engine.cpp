@@ -91,6 +91,33 @@ void retire_transport(OperationSource<ProcessReply>& source,
   }
 }
 
+void observe_reactor(const std::function<void(EngineReactorEvent)>& observer,
+                     EngineReactorEvent event) noexcept {
+  if (!observer) {
+    return;
+  }
+  try {
+    observer(event);
+  } catch (...) {
+    // A test observer cannot be allowed to terminate the reactor.
+  }
+}
+
+class ReactorExitObservation final {
+public:
+  explicit ReactorExitObservation(
+      const std::function<void(EngineReactorEvent)>& observer) noexcept
+      : observer_{observer} {}
+
+  ~ReactorExitObservation() { observe_reactor(observer_, EngineReactorEvent::exited); }
+
+  ReactorExitObservation(const ReactorExitObservation&) = delete;
+  ReactorExitObservation& operator=(const ReactorExitObservation&) = delete;
+
+private:
+  const std::function<void(EngineReactorEvent)>& observer_;
+};
+
 } // namespace
 
 expected<std::shared_ptr<ProcessEngine>, ProcessError>
@@ -125,9 +152,9 @@ ProcessEngine::start(EngineConfig config) {
       std::make_shared<EngineChannel>(config.operation_limit, wake[0], wake[1]);
   // The threads hold a raw reference on purpose. Owning the engine would keep
   // it alive for as long as they run, which is until it is destroyed.
-  std::shared_ptr<ProcessEngine> engine{
-      new ProcessEngine{std::move(channel), std::move(config.admission_gate),
-                        std::move(config.launch_observer)}};
+  std::shared_ptr<ProcessEngine> engine{new ProcessEngine{
+      std::move(channel), std::move(config.admission_gate),
+      std::move(config.launch_observer), std::move(config.reactor_observer)}};
   engine->launcher_ = std::thread{[owner = engine.get()] { owner->launch_loop(); }};
   engine->reactor_ = std::thread{[owner = engine.get()] { owner->reactor_loop(); }};
   return engine;
@@ -227,9 +254,11 @@ std::optional<EngineFailure> EngineChannel::failure() const noexcept {
 
 ProcessEngine::ProcessEngine(
     std::shared_ptr<EngineChannel> channel, std::function<void()> admission_gate,
-    std::function<void(const ProcessRequest&)> launch_observer) noexcept
+    std::function<void(const ProcessRequest&)> launch_observer,
+    std::function<void(EngineReactorEvent)> reactor_observer) noexcept
     : channel_{std::move(channel)}, admission_gate_{std::move(admission_gate)},
-      launch_observer_{std::move(launch_observer)} {}
+      launch_observer_{std::move(launch_observer)},
+      reactor_observer_{std::move(reactor_observer)} {}
 
 ProcessEngine::~ProcessEngine() { static_cast<void>(close()); }
 
@@ -422,12 +451,15 @@ void ProcessEngine::fail(EngineFailure failure) {
 }
 
 void ProcessEngine::reactor_loop() {
+  ReactorExitObservation observe_exit{reactor_observer_};
   std::vector<EngineLive> live;
+  bool launch_wait_observed = false;
   for (;;) {
     if (auto channel_failure = channel_->failure()) {
       fail(*channel_failure);
     }
     bool stopping = false;
+    bool waiting_for_launch = false;
     std::optional<EngineFailure> engine_failure;
     {
       std::lock_guard lock{mutex_};
@@ -439,8 +471,14 @@ void ProcessEngine::reactor_loop() {
           launching_ == 0U) {
         return;
       }
+      waiting_for_launch = (stop_requested_ || failure_) && live.empty() &&
+                           pending_.empty() && launching_ != 0U;
       stopping = stop_requested_;
       engine_failure = failure_;
+    }
+    if (waiting_for_launch && !launch_wait_observed) {
+      observe_reactor(reactor_observer_, EngineReactorEvent::waiting_for_launch);
+      launch_wait_observed = true;
     }
 
     std::vector<pollfd> watched;
