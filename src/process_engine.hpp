@@ -222,6 +222,7 @@ void fail_next_runtime_action_for_test(RuntimeFailurePoint point);
 void set_runtime_completion_observer_for_test(std::function<void()> observer);
 void fail_next_runtime_start_for_test();
 void fail_next_runtime_subscription_for_test();
+void force_runtime_windows_validation_for_test(bool enabled);
 
 } // namespace detail
 LIBTMUX_NAMESPACE_END

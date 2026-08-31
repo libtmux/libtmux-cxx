@@ -12,6 +12,7 @@
 
 #include "libtmux/expected.hpp"
 #include "path.hpp"
+#include "process_validation.hpp"
 
 #include <windows.h>
 
@@ -23,6 +24,7 @@
 #include <cwchar>
 #include <limits>
 #include <map>
+#include <new>
 #include <optional>
 #include <span>
 #include <string>
@@ -286,13 +288,33 @@ struct PreparedRequest final {
 
 [[nodiscard]] std::optional<ProcessError>
 validate_request(const ProcessRequest& request) {
-  const auto invalid = [&]() {
-    return make_error(ProcessError::Kind::validation, DeliveryStatus::not_started,
-                      "validation", request,
-                      std::make_error_code(std::errc::invalid_argument));
+  const auto invalid = [&](std::errc cause = std::errc::invalid_argument) {
+    try {
+      return make_error(ProcessError::Kind::validation, DeliveryStatus::not_started,
+                        "validation", request, std::make_error_code(cause));
+    } catch (const std::bad_alloc&) {
+      throw;
+    } catch (...) {
+      return ProcessError{
+          .kind = ProcessError::Kind::validation,
+          .delivery = DeliveryStatus::not_started,
+          .diagnostic = "validation failure: malformed executable encoding",
+      };
+    }
   };
 
-  if (!process_request_is_valid(request)) {
+  ProcessValidationResult validation;
+  try {
+    validation = validate_process_request(request, ProcessValidationMode::windows);
+  } catch (const std::bad_alloc&) {
+    return make_error(ProcessError::Kind::pre_exec, DeliveryStatus::not_started,
+                      "validation", request,
+                      std::make_error_code(std::errc::not_enough_memory));
+  }
+  if (validation.failure == ProcessValidationFailure::command_line_too_long) {
+    return invalid(std::errc::argument_list_too_long);
+  }
+  if (validation.failure != ProcessValidationFailure::none) {
     return invalid();
   }
   if (request.stdio == StdioPolicy::inherit_terminal &&
@@ -526,12 +548,6 @@ prepare_request(const ProcessRequest& request) {
     }
     append_quoted_argument(command_line, argument);
   }
-  if (command_line.size() >= 32767U) {
-    return unexpected(make_error(
-        ProcessError::Kind::validation, DeliveryStatus::not_started, "validation",
-        request, std::make_error_code(std::errc::argument_list_too_long)));
-  }
-
   return PreparedRequest{
       .executable = std::move(*resolved_executable),
       .command_line = std::move(command_line),

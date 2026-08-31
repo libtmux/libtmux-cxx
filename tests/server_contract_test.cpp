@@ -115,6 +115,18 @@ private:
   std::binary_semaphore& release_;
   bool released_{};
 };
+
+class RuntimeWindowsValidation final {
+public:
+  RuntimeWindowsValidation() {
+    libtmux::detail::force_runtime_windows_validation_for_test(true);
+  }
+  ~RuntimeWindowsValidation() {
+    libtmux::detail::force_runtime_windows_validation_for_test(false);
+  }
+  RuntimeWindowsValidation(const RuntimeWindowsValidation&) = delete;
+  RuntimeWindowsValidation& operator=(const RuntimeWindowsValidation&) = delete;
+};
 #endif
 
 #if defined(__linux__)
@@ -415,6 +427,91 @@ TEST(ServerContract, ImmediateFailuresNeverConsumeAdmissionOrObservation) {
   EXPECT_EQ(snapshot.completed, 1U);
   EXPECT_EQ(observed, 1U);
   EXPECT_EQ(runtime.dispatch_ready(), 0U);
+}
+
+TEST(ServerContract, WindowsStructuralRefusalPrecedesRuntimeAdmission) {
+#if defined(_WIN32)
+  GTEST_SKIP() << "the portable Windows validation seam runs in its POSIX lane";
+#else
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  std::size_t observed = 0U;
+  auto server = Server::at_socket_path(
+      fixture->socket_path().string(),
+      [&observed](std::string_view, const libtmux::CommandFailure*) { ++observed; });
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+  auto runtime = start_runtime({.capacity = 1U});
+  const RuntimeWindowsValidation windows_rules;
+  libtmux::CommandRequest malformed{"display-message", "-p"};
+  malformed.emplace_back(std::string{"\xff", 1U});
+
+  auto refused = server->try_submit(runtime, std::move(malformed));
+
+  ASSERT_FALSE(refused.has_value());
+  EXPECT_EQ(refused.error().kind, libtmux::FailureKind::validation);
+  EXPECT_EQ(refused.error().delivery, DeliveryStatus::not_started);
+  const auto snapshot = runtime.snapshot();
+  EXPECT_EQ(snapshot.accepted, 0U);
+  EXPECT_EQ(snapshot.completed, 0U);
+  EXPECT_EQ(snapshot.refused, 1U);
+  EXPECT_EQ(snapshot.in_flight, 0U);
+  EXPECT_EQ(snapshot.pending_results, 0U);
+  EXPECT_EQ(snapshot.pending_observers, 0U);
+  EXPECT_EQ(runtime.dispatch_ready(), 0U);
+  EXPECT_EQ(observed, 0U);
+
+  auto accepted =
+      server->try_submit(runtime, {"display-message", "-p", "after-refusal"});
+  ASSERT_TRUE(accepted.has_value()) << accepted.error().diagnostic;
+  EXPECT_TRUE(std::move(*accepted).wait().has_value());
+  EXPECT_EQ(runtime.dispatch_ready(), 1U);
+  EXPECT_EQ(observed, 1U);
+#endif
+}
+
+TEST(ServerContract, WindowsCommandLineLimitPrecedesRuntimeAdmission) {
+#if defined(_WIN32)
+  GTEST_SKIP() << "the portable Windows validation seam runs in its POSIX lane";
+#else
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  auto runtime = start_runtime({.capacity = 1U});
+  const RuntimeWindowsValidation windows_rules;
+
+  auto refused =
+      server.try_submit(runtime, {"display-message", "-p", std::string(32767U, 'x')});
+
+  ASSERT_FALSE(refused.has_value());
+  EXPECT_EQ(refused.error().kind, libtmux::FailureKind::validation);
+  EXPECT_EQ(refused.error().delivery, DeliveryStatus::not_started);
+  const auto snapshot = runtime.snapshot();
+  EXPECT_EQ(snapshot.accepted, 0U);
+  EXPECT_EQ(snapshot.completed, 0U);
+  EXPECT_EQ(snapshot.refused, 1U);
+  EXPECT_EQ(snapshot.in_flight, 0U);
+  EXPECT_EQ(snapshot.pending_results, 0U);
+  EXPECT_EQ(snapshot.pending_observers, 0U);
+#endif
+}
+
+TEST(ServerContract, PosixRuntimeAcceptsNonUtf8Arguments) {
+#if defined(_WIN32)
+  GTEST_SKIP() << "POSIX argv is the contract under test";
+#else
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  auto runtime = start_runtime({.capacity = 1U});
+  libtmux::CommandRequest arbitrary{"display-message", "-p"};
+  arbitrary.emplace_back(std::string{"\xff", 1U});
+
+  auto accepted = server.try_submit(runtime, std::move(arbitrary));
+
+  ASSERT_TRUE(accepted.has_value()) << accepted.error().diagnostic;
+  EXPECT_EQ(runtime.snapshot().accepted, 1U);
+  static_cast<void>(std::move(*accepted).wait());
+#endif
 }
 
 TEST(ServerContract, ZeroCapacityRefusesRuntimeStartup) {

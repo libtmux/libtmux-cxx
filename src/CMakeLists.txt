@@ -4,7 +4,8 @@ include(GNUInstallDirs)
 
 set(LIBTMUX_SOURCES
     version.cpp server.cpp backend.cpp snapshot.cpp entities.cpp
-    socket_identity.cpp control.cpp completion_queue.cpp command_engine.cpp async.cpp)
+    socket_identity.cpp control.cpp completion_queue.cpp command_engine.cpp async.cpp
+    process_validation.cpp)
 if(WIN32)
   list(APPEND LIBTMUX_SOURCES process_windows.cpp connection_windows.cpp)
 else()

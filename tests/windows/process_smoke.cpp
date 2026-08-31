@@ -514,6 +514,43 @@ void test_environment(const std::filesystem::path& self, Checks& checks) {
                checks, "environment replacement and removal must ignore name case");
 }
 
+void test_utf8_validation(const std::filesystem::path& self, Checks& checks) {
+  std::vector<std::pair<std::string, ProcessRequest>> cases;
+  auto argument = request_for(self, {std::string{kStreamsMode}, "0"});
+  argument.arguments.back().value = "\xc0\x80";
+  cases.emplace_back("argument", std::move(argument));
+  auto environment_name = request_for(self, {std::string{kStreamsMode}, "0"});
+  environment_name.environment = {{"\xed\xa0\x80", std::string{"value"}}};
+  cases.emplace_back("environment name", std::move(environment_name));
+  auto environment_value = request_for(self, {std::string{kStreamsMode}, "0"});
+  environment_value.environment = {
+      {"LIBTMUX_INVALID_UTF8", std::string{"\xf4\x90\x80\x80"}}};
+  cases.emplace_back("environment value", std::move(environment_value));
+
+  for (const auto& [field, request] : cases) {
+    const auto reply = run_process(request);
+    checks.require(!reply.has_value(), "malformed UTF-8 " + field + " must fail");
+    if (!reply.has_value()) {
+      checks.require(reply.error().kind == ProcessError::Kind::validation,
+                     "malformed UTF-8 " + field + " must be validation");
+      checks.require(reply.error().delivery == DeliveryStatus::not_started,
+                     "malformed UTF-8 " + field + " must not launch");
+    }
+  }
+}
+
+void test_command_line_limit(const std::filesystem::path& self, Checks& checks) {
+  auto request = request_for(self, {std::string(32767U, 'x')});
+  const auto reply = run_process(request);
+  if (checks.require(!reply.has_value(),
+                     "an overlong Windows command line must fail before launch")) {
+    checks.require(reply.error().kind == ProcessError::Kind::validation,
+                   "an overlong Windows command line must be validation");
+    checks.require(reply.error().delivery == DeliveryStatus::not_started,
+                   "an overlong Windows command line must not launch");
+  }
+}
+
 void test_streams_and_exit(const std::filesystem::path& self, Checks& checks) {
   const auto reply = run_process(request_for(self, {std::string{kStreamsMode}, "37"}));
   if (!reply.has_value()) {
@@ -655,6 +692,8 @@ int wmain(int argc, wchar_t* argv[]) {
   test_argv(*self, checks);
   test_repaired_pathext(checks);
   test_environment(*self, checks);
+  test_utf8_validation(*self, checks);
+  test_command_line_limit(*self, checks);
   test_streams_and_exit(*self, checks);
   test_output_limit(*self, checks);
   test_missing_executable(*self, checks);

@@ -599,6 +599,20 @@ gtest_discover_tests(
   TEST_PREFIX libtmux.command_engine.
   PROPERTIES LABELS "concurrency" TIMEOUT 30)
 
+add_executable(libtmux_process_validation_test process_validation_test.cpp)
+target_include_directories(
+  libtmux_process_validation_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_link_libraries(
+  libtmux_process_validation_test
+  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+target_compile_options(
+  libtmux_process_validation_test PRIVATE -fno-sanitize-recover=undefined)
+
+gtest_discover_tests(
+  libtmux_process_validation_test
+  TEST_PREFIX libtmux.process_validation.
+  PROPERTIES LABELS "libtmux" TIMEOUT 30)
+
 add_executable(command_engine_exit_probe command_engine_exit_probe.cpp)
 target_include_directories(
   command_engine_exit_probe PRIVATE "${PROJECT_SOURCE_DIR}/src")

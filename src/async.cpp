@@ -5,6 +5,7 @@
 #include "completion_queue.hpp"
 #include "operation_state.hpp"
 #include "process.hpp"
+#include "process_validation.hpp"
 #if !defined(_WIN32)
 #include "process_engine.hpp"
 #endif
@@ -16,6 +17,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -276,6 +278,7 @@ std::function<void()> runtime_completion_observer;
 std::optional<detail::RuntimeFailurePoint> runtime_action_failure;
 bool fail_runtime_start{};
 bool fail_runtime_subscription{};
+bool force_windows_validation{};
 
 [[nodiscard]] std::function<void(const detail::ProcessRequest&)>
 copy_runtime_launch_observer() {
@@ -291,6 +294,11 @@ copy_runtime_launch_observer() {
 [[nodiscard]] bool consume_runtime_subscription_failure() {
   std::lock_guard lock{launch_observer_mutex};
   return std::exchange(fail_runtime_subscription, false);
+}
+
+[[nodiscard]] bool use_windows_validation_for_test() {
+  std::lock_guard lock{launch_observer_mutex};
+  return force_windows_validation;
 }
 
 [[nodiscard]] bool consume_runtime_action_failure(detail::RuntimeFailurePoint point) {
@@ -346,6 +354,11 @@ void fail_next_runtime_start_for_test() {
 void fail_next_runtime_subscription_for_test() {
   std::lock_guard lock{launch_observer_mutex};
   fail_runtime_subscription = true;
+}
+
+void force_runtime_windows_validation_for_test(bool enabled) {
+  std::lock_guard lock{launch_observer_mutex};
+  force_windows_validation = enabled;
 }
 
 } // namespace detail
@@ -450,12 +463,36 @@ struct CommandRuntime::State final {
     const ExecutionPolicy& policy = subprocess->policy();
     const auto deadline = timeout.has_value() ? timeout : policy.timeout;
     const auto allowed = output_limit.has_value() ? output_limit : policy.output_limit;
-    detail::ProcessRequest request =
-        subprocess->build_request(command, std::nullopt, deadline, allowed);
-    if (!detail::process_request_is_valid(request)) {
+    detail::ProcessRequest request;
+    detail::ProcessValidationResult validation;
+    try {
+      request = subprocess->build_request(command, std::nullopt, deadline, allowed);
+#if defined(_WIN32)
+      constexpr auto validation_mode = detail::ProcessValidationMode::windows;
+#else
+      const auto validation_mode = use_windows_validation_for_test()
+                                       ? detail::ProcessValidationMode::windows
+                                       : detail::ProcessValidationMode::posix;
+#endif
+      validation = detail::validate_process_request(request, validation_mode);
+    } catch (const std::bad_alloc&) {
+      return refuse(immediate_failure(FailureKind::pipe, "preflight failed"));
+    }
+    switch (validation.failure) {
+    case detail::ProcessValidationFailure::none:
+      break;
+    case detail::ProcessValidationFailure::structure:
       return refuse(immediate_failure(
           FailureKind::validation,
           "an asynchronous command contains a value that cannot be executed"));
+    case detail::ProcessValidationFailure::malformed_utf8:
+      return refuse(immediate_failure(
+          FailureKind::validation,
+          "an asynchronous Windows command contains malformed UTF-8"));
+    case detail::ProcessValidationFailure::command_line_too_long:
+      return refuse(immediate_failure(
+          FailureKind::validation,
+          "an asynchronous Windows command line exceeds 32,767 wide characters"));
     }
     if (ledger_->full()) {
       return refuse(immediate_failure(
