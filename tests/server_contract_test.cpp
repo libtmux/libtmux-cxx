@@ -464,6 +464,7 @@ TEST(ServerContract, WindowsStructuralRefusalPrecedesRuntimeAdmission) {
       server->try_submit(runtime, {"display-message", "-p", "after-refusal"});
   ASSERT_TRUE(accepted.has_value()) << accepted.error().diagnostic;
   EXPECT_TRUE(std::move(*accepted).wait().has_value());
+  ASSERT_TRUE(wait_until([&runtime] { return runtime.snapshot().completed == 1U; }));
   EXPECT_EQ(runtime.dispatch_ready(), 1U);
   EXPECT_EQ(observed, 1U);
 #endif
