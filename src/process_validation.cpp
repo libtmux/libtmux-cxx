@@ -28,6 +28,17 @@ struct Utf8Measure final {
   return byte >= 0x80U && byte <= 0xbfU;
 }
 
+[[nodiscard]] bool valid_three_byte_second(unsigned char first,
+                                           unsigned char second) noexcept {
+  if (first == 0xe0U) {
+    return second >= 0xa0U && second <= 0xbfU;
+  }
+  if (first == 0xedU) {
+    return second >= 0x80U && second <= 0x9fU;
+  }
+  return continuation(second);
+}
+
 [[nodiscard]] Utf8Measure measure_quoted_utf8(std::string_view value) noexcept {
   std::size_t quoted_size = 1U;
   std::size_t backslashes = 0U;
@@ -43,12 +54,7 @@ struct Utf8Measure final {
     } else if (first >= 0xe0U && first <= 0xefU && index + 2U < value.size()) {
       const auto second = static_cast<unsigned char>(value[index + 1U]);
       const auto third = static_cast<unsigned char>(value[index + 2U]);
-      const bool second_valid =
-          (first == 0xe0U && second >= 0xa0U && second <= 0xbfU) ||
-          (first == 0xedU && second >= 0x80U && second <= 0x9fU) ||
-          (((first >= 0xe1U && first <= 0xecU) || (first >= 0xeeU && first <= 0xefU)) &&
-           continuation(second));
-      if (!second_valid || !continuation(third)) {
+      if (!valid_three_byte_second(first, second) || !continuation(third)) {
         return {};
       }
       encoded_size = 3U;
