@@ -671,6 +671,20 @@ TEST(OperationCallback, SourceDestructionPublishesTransportFailure) {
   EXPECT_EQ(hooks->releases.load(std::memory_order_relaxed), 1);
 }
 
+TEST(OperationState, DefaultOperationHasAnInertCancellationHandle) {
+  const Operation<int> operation;
+
+  EXPECT_FALSE(operation.cancellation().request_cancel());
+}
+
+TEST(OperationState, MovedFromOperationHasAnInertCancellationHandle) {
+  auto hooks = std::make_shared<RecordingHooks>();
+  auto started = make_operation<int>(hooks);
+  const Operation<int> owner{std::move(started.operation)};
+
+  EXPECT_FALSE(started.operation.cancellation().request_cancel());
+}
+
 TEST(OperationState, CancellationIsOnlyARequestUntilTheSourcePublishes) {
   auto hooks = std::make_shared<RecordingHooks>();
   auto started = make_operation<int>(hooks);

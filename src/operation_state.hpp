@@ -457,6 +457,9 @@ public:
   [[nodiscard]] bool request_cancel() { return state_ && state_->request_cancel(); }
 
   [[nodiscard]] OperationCancellation<T> cancellation() const noexcept {
+    if (!state_) {
+      return {};
+    }
     return OperationCancellation<T>{state_};
   }
 
