@@ -417,6 +417,8 @@ struct CommandRuntime::State final {
   submit(std::shared_ptr<const detail::Backend> backend, CommandRequest command,
          std::optional<std::chrono::milliseconds> timeout,
          std::optional<std::size_t> output_limit) {
+    // Hold one admission lock through task registration so engine-queued commands
+    // preserve runtime admission order.
     std::lock_guard submission_lock{submission_mutex_};
     const auto refuse =
         [this](CommandFailure failure) -> expected<CommandOperation, CommandFailure> {
