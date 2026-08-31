@@ -189,12 +189,14 @@ CATALOGUE: t.Final = (
             "      if (outcome_) {\n"
             "        return false;\n"
             "      }\n"
+            "      relay_->mark_outcome_published();\n"
             "      outcome_ = std::move(published_outcome);"
         ),
         replace=(
             "      if (false) {\n"
             "        return false;\n"
             "      }\n"
+            "      relay_->mark_outcome_published();\n"
             "      outcome_ = std::move(published_outcome);"
         ),
         target="libtmux_operation_state_test",
@@ -207,11 +209,16 @@ CATALOGUE: t.Final = (
     Mutation(
         mutation_id="operation-cancellation-source-owned",
         path="src/operation_state.hpp",
-        find=("      cancellation_requested_ = true;\n      hooks = hooks_;"),
+        find=(
+            "  [[nodiscard]] bool request_cancel() { return relay_->request_cancel(); }"
+        ),
         replace=(
-            "      outcome_ = make_abandoned_outcome<T>();\n"
-            "      cancellation_requested_ = true;\n"
-            "      hooks = hooks_;"
+            "  [[nodiscard]] bool request_cancel() {\n"
+            "    const bool requested = relay_->request_cancel();\n"
+            "    auto abandoned = make_abandoned_outcome<T>();\n"
+            "    static_cast<void>(publish(std::move(*abandoned)));\n"
+            "    return requested;\n"
+            "  }"
         ),
         target="libtmux_operation_state_test",
         test_regex=(
