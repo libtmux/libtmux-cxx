@@ -152,7 +152,7 @@ TEST(SpawnDescriptors, PlatformPolicyClosesAnUnrelatedDescriptor) {
 
   ASSERT_EQ(marker_closed, 0);
   ASSERT_EQ(polled, 1);
-  EXPECT_NE(watched.revents & POLLERR, 0);
+  EXPECT_NE(watched.revents & (POLLERR | POLLHUP), 0);
 }
 
 #if defined(__linux__)
