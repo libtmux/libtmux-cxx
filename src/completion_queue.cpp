@@ -7,6 +7,7 @@
 #include <optional>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 LIBTMUX_NAMESPACE_BEGIN
 namespace detail {
@@ -189,6 +190,26 @@ bool CompletionQueue::register_record(CompletionToken token,
   return true;
 }
 
+bool CompletionQueue::push_ready(MoveOnlyFunction<void()> callback) {
+  const auto core = core_;
+  auto record = std::make_unique<CompletionQueueCore::Record>(std::move(callback));
+  {
+    std::unique_lock lock{core->mutex};
+    if (core->closed) {
+      return false;
+    }
+    const auto token = core->next_token++;
+    const auto [position, inserted] = core->records.try_emplace(token);
+    if (!inserted) {
+      return false;
+    }
+    position->second = std::move(record);
+    core->link_ready(token, *position->second);
+  }
+  core->ready_changed.notify_one();
+  return true;
+}
+
 bool CompletionQueue::run_one() {
   const auto core = core_;
   DispatchClaim dispatch{core->dispatching};
@@ -256,6 +277,25 @@ std::size_t CompletionQueue::run_ready() {
     ++dispatched;
   }
   return dispatched;
+}
+
+std::size_t CompletionQueue::discard_ready() {
+  const auto core = core_;
+  DispatchClaim dispatch{core->dispatching};
+  if (!dispatch.owns()) {
+    return 0U;
+  }
+
+  std::vector<std::unique_ptr<CompletionQueueCore::Record>> discarded;
+  {
+    std::unique_lock lock{core->mutex};
+    discarded.reserve(core->ready_count);
+    while (core->ready_count != 0U) {
+      auto claimed = core->claim_ready();
+      discarded.push_back(std::move(claimed.mapped()));
+    }
+  }
+  return discarded.size();
 }
 
 void CompletionQueue::detach(CompletionToken token) { mailbox().detach(token); }

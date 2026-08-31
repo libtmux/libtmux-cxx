@@ -40,6 +40,7 @@ using libtmux::detail::CompletionQueue;
 using libtmux::detail::CompletionToken;
 using libtmux::detail::make_operation;
 using libtmux::detail::Operation;
+using libtmux::detail::OperationCancellation;
 using libtmux::detail::OperationHooks;
 using libtmux::detail::OperationResult;
 using libtmux::detail::Subscription;
@@ -118,6 +119,27 @@ TEST(CompletionQueue, ATokenCanBeEnqueuedAfterItsRecordAppears) {
   EXPECT_TRUE(mailbox.enqueue(token));
   EXPECT_TRUE(queue.run_one());
   EXPECT_EQ(calls, 1);
+}
+
+TEST(CompletionQueue, PushReadyRegistersAndMakesTheRecordReady) {
+  CompletionQueue queue;
+  int calls = 0;
+
+  ASSERT_TRUE(queue.push_ready([&] { ++calls; }));
+
+  EXPECT_EQ(queue.run_ready(), 1U);
+  EXPECT_EQ(calls, 1);
+}
+
+TEST(CompletionQueue, DiscardReadyDoesNotInvokeCallbacks) {
+  CompletionQueue queue;
+  int calls = 0;
+  ASSERT_TRUE(queue.push_ready([&] { ++calls; }));
+  ASSERT_TRUE(queue.push_ready([&] { ++calls; }));
+
+  EXPECT_EQ(queue.discard_ready(), 2U);
+  EXPECT_EQ(calls, 0);
+  EXPECT_EQ(queue.run_ready(), 0U);
 }
 
 struct CaptureThread final {
@@ -340,6 +362,23 @@ public:
   std::atomic<int> releases{0};
 };
 
+class QueueReenteringHooks final : public OperationHooks {
+public:
+  explicit QueueReenteringHooks(CompletionQueue& queue) noexcept : queue_{queue} {}
+
+  void wake_reactor() noexcept override {}
+
+  void release_admission() noexcept override {
+    static_cast<void>(queue_.next_token());
+    ++releases;
+  }
+
+  int releases{0};
+
+private:
+  CompletionQueue& queue_;
+};
+
 TEST(OperationCallback, PublicationBeforeSubscribeSurvivesTheRecheck) {
   CompletionQueue queue;
   auto hooks = std::make_shared<RecordingHooks>();
@@ -558,6 +597,57 @@ TEST(OperationCallback, CallbackExceptionsKeepDeliveryTerminal) {
   EXPECT_EQ(hooks->releases.load(std::memory_order_relaxed), 1);
 }
 
+TEST(OperationCallback, ThrowingObserverReleasesOwnershipBeforeUserCode) {
+  CompletionQueue queue;
+  auto first_hooks = std::make_shared<RecordingHooks>();
+  auto second_hooks = std::make_shared<RecordingHooks>();
+  std::weak_ptr<RecordingHooks> first_watched = first_hooks;
+  auto first = make_operation<int>(first_hooks);
+  auto second = make_operation<int>(second_hooks);
+  int later_calls = 0;
+  auto first_subscription =
+      std::move(first.operation).subscribe(queue, [&](OperationResult<int>) {
+        EXPECT_TRUE(first_watched.expired());
+        throw CallerFailure{};
+      });
+  auto second_subscription =
+      std::move(second.operation).subscribe(queue, [&](OperationResult<int>) {
+        ++later_calls;
+      });
+  ASSERT_TRUE(first.source.publish(OperationResult<int>{79}));
+  ASSERT_TRUE(second.source.publish(OperationResult<int>{83}));
+  first.source.retire();
+  second.source.retire();
+  first.source = {};
+  second.source = {};
+  first_hooks.reset();
+
+  EXPECT_THROW(static_cast<void>(queue.run_ready()), CallerFailure);
+  EXPECT_EQ(queue.run_ready(), 1U);
+  EXPECT_EQ(later_calls, 1);
+  EXPECT_FALSE(first_subscription.observing());
+  EXPECT_FALSE(second_subscription.observing());
+  EXPECT_EQ(second_hooks->releases.load(std::memory_order_relaxed), 1);
+}
+
+TEST(OperationCallback, DiscardReadyReleasesObserverWithoutCallingIt) {
+  CompletionQueue queue;
+  auto hooks = std::make_shared<QueueReenteringHooks>(queue);
+  auto started = make_operation<int>(hooks);
+  int calls = 0;
+  auto subscription =
+      std::move(started.operation).subscribe(queue, [&](OperationResult<int>) {
+        ++calls;
+      });
+  ASSERT_TRUE(started.source.publish(OperationResult<int>{87}));
+  started.source.retire();
+
+  EXPECT_EQ(queue.discard_ready(), 1U);
+  EXPECT_EQ(calls, 0);
+  EXPECT_FALSE(subscription.observing());
+  EXPECT_EQ(hooks->releases, 1);
+}
+
 TEST(OperationCallback, SourceDestructionPublishesTransportFailure) {
   CompletionQueue queue;
   auto hooks = std::make_shared<RecordingHooks>();
@@ -581,6 +671,20 @@ TEST(OperationCallback, SourceDestructionPublishesTransportFailure) {
   EXPECT_EQ(hooks->releases.load(std::memory_order_relaxed), 1);
 }
 
+TEST(OperationState, DefaultOperationHasAnInertCancellationHandle) {
+  const Operation<int> operation;
+
+  EXPECT_FALSE(operation.cancellation().request_cancel());
+}
+
+TEST(OperationState, MovedFromOperationHasAnInertCancellationHandle) {
+  auto hooks = std::make_shared<RecordingHooks>();
+  auto started = make_operation<int>(hooks);
+  const Operation<int> owner{std::move(started.operation)};
+
+  EXPECT_FALSE(started.operation.cancellation().request_cancel());
+}
+
 TEST(OperationState, CancellationIsOnlyARequestUntilTheSourcePublishes) {
   auto hooks = std::make_shared<RecordingHooks>();
   auto started = make_operation<int>(hooks);
@@ -600,6 +704,25 @@ TEST(OperationState, CancellationIsOnlyARequestUntilTheSourcePublishes) {
   ASSERT_FALSE(result.has_value());
   EXPECT_EQ(result.error().kind, FailureKind::timeout);
   EXPECT_EQ(hooks->releases.load(std::memory_order_relaxed), 1);
+}
+
+TEST(OperationState, CancellationHandleExpiresWithoutATrueOwner) {
+  OperationCancellation<std::shared_ptr<int>> cancellation;
+  std::weak_ptr<int> watched;
+  {
+    auto hooks = std::make_shared<RecordingHooks>();
+    auto payload = std::make_shared<int>(89);
+    watched = payload;
+    auto started = make_operation<std::shared_ptr<int>>(hooks);
+    cancellation = started.operation.cancellation();
+    ASSERT_TRUE(started.source.publish(
+        OperationResult<std::shared_ptr<int>>{std::move(payload)}));
+    started.operation = {};
+    started.source = {};
+  }
+
+  EXPECT_TRUE(watched.expired()) << "the cancellation relay retained operation state";
+  EXPECT_FALSE(cancellation.request_cancel());
 }
 
 TEST(OperationState, AReplyCanBeatARequestedCancellation) {

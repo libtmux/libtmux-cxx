@@ -101,14 +101,13 @@ public:
       std::optional<std::chrono::milliseconds> timeout = {},
       std::optional<std::size_t> output_limit = {}) const;
 
-  // Send a command without waiting for it. The answer is the same one `run`
-  // gives, bounded per call by the same two arguments; what differs is that a
-  // program with several questions can ask them all before collecting any.
-  // The bounds matter more here, not less: the one long question in a batch
-  // is exactly the one that needs its own. See `libtmux/async.hpp`.
+  // Admit one command to an explicit bounded runtime without waiting for it.
+  // A refusal before admission is returned here; an admitted command carries
+  // every later transport or tmux failure in its operation.
   [[nodiscard]] expected<CommandOperation, CommandFailure>
-  submit(CommandRequest command, std::optional<std::chrono::milliseconds> timeout = {},
-         std::optional<std::size_t> output_limit = {}) const;
+  try_submit(CommandRuntime& runtime, CommandRequest command,
+             std::optional<std::chrono::milliseconds> timeout = {},
+             std::optional<std::size_t> output_limit = {}) const;
 
   // Run several commands in one invocation. tmux runs a batch fail-fast, so a
   // failed batch is partially applied rather than rolled back, and one exit

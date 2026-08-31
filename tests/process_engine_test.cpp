@@ -4,13 +4,19 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <cerrno>
 #include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <memory>
+#include <optional>
+#include <semaphore>
 #include <string>
 #include <thread>
 #include <vector>
 
+#include <sys/wait.h>
 #include <unistd.h>
 
 namespace {
@@ -38,6 +44,101 @@ std::string text(const std::vector<std::byte>& value) {
   return result;
 }
 
+class ScopedPathRemoval final {
+public:
+  explicit ScopedPathRemoval(std::filesystem::path path) noexcept
+      : path_{std::move(path)} {}
+
+  ~ScopedPathRemoval() {
+    std::error_code ignored;
+    static_cast<void>(std::filesystem::remove(path_, ignored));
+  }
+
+  ScopedPathRemoval(const ScopedPathRemoval&) = delete;
+  ScopedPathRemoval& operator=(const ScopedPathRemoval&) = delete;
+
+private:
+  std::filesystem::path path_;
+};
+
+class ScopedEngineClose final {
+public:
+  explicit ScopedEngineClose(std::shared_ptr<ProcessEngine> engine) noexcept
+      : engine_{std::move(engine)} {}
+
+  ~ScopedEngineClose() { close(); }
+
+  ScopedEngineClose(const ScopedEngineClose&) = delete;
+  ScopedEngineClose& operator=(const ScopedEngineClose&) = delete;
+
+  void close() {
+    if (engine_) {
+      static_cast<void>(engine_->close());
+      engine_.reset();
+    }
+  }
+
+private:
+  std::shared_ptr<ProcessEngine> engine_;
+};
+
+struct RetirementObservation final {
+  std::atomic<int> calls{0};
+  std::atomic<int> status_result{0};
+  std::atomic<int> status_error{0};
+  std::atomic_bool ready{false};
+};
+
+class LaunchShutdownBarrier final {
+public:
+  void hold_launch() {
+    launch_withheld_.release();
+    continue_launch_.acquire();
+  }
+
+  void observe(libtmux::detail::EngineReactorEvent event) {
+    const auto event_index = event_count_.fetch_add(1U, std::memory_order_relaxed);
+    if (event_index != 0U) {
+      return;
+    }
+    first_event_.store(event, std::memory_order_relaxed);
+    event_reached_.release();
+    if (event == libtmux::detail::EngineReactorEvent::waiting_for_launch) {
+      continue_reactor_.acquire();
+    }
+  }
+
+  [[nodiscard]] bool wait_until_launch_is_withheld() {
+    return launch_withheld_.try_acquire_for(std::chrono::seconds{2});
+  }
+
+  [[nodiscard]] std::optional<libtmux::detail::EngineReactorEvent>
+  wait_for_reactor_event() {
+    if (!event_reached_.try_acquire_for(std::chrono::seconds{2})) {
+      return std::nullopt;
+    }
+    return first_event_.load(std::memory_order_relaxed);
+  }
+
+  void release() {
+    continue_reactor_.release();
+    continue_launch_.release();
+  }
+
+  [[nodiscard]] std::size_t event_count() const noexcept {
+    return event_count_.load(std::memory_order_relaxed);
+  }
+
+private:
+  std::binary_semaphore launch_withheld_{0};
+  std::binary_semaphore event_reached_{0};
+  std::binary_semaphore continue_reactor_{0};
+  std::binary_semaphore continue_launch_{0};
+  std::atomic<libtmux::detail::EngineReactorEvent> first_event_{
+      libtmux::detail::EngineReactorEvent::exited};
+  std::atomic_size_t event_count_{0U};
+};
+
 TEST(ProcessEngine, AnswersOneProcessThroughSyncWait) {
   auto engine = ProcessEngine::start();
   ASSERT_TRUE(engine.has_value()) << engine.error().diagnostic;
@@ -49,6 +150,82 @@ TEST(ProcessEngine, AnswersOneProcessThroughSyncWait) {
   EXPECT_EQ(text(reply->stderr_bytes), "err");
   ASSERT_TRUE(std::holds_alternative<Exited>(reply->termination));
   EXPECT_EQ(std::get<Exited>(reply->termination).code, 0);
+}
+
+TEST(ProcessEngine, TransportRetirementFiresOnceAfterPublishingAndReaping) {
+  auto engine = ProcessEngine::start();
+  ASSERT_TRUE(engine.has_value()) << engine.error().diagnostic;
+
+  std::string pid_template = (std::filesystem::temp_directory_path() /
+                              "libtmux-process-engine-retirement-XXXXXX")
+                                 .string();
+  const int pid_descriptor = ::mkstemp(pid_template.data());
+  ASSERT_GE(pid_descriptor, 0);
+  ScopedPathRemoval remove_pid_file{pid_template};
+  ASSERT_EQ(::close(pid_descriptor), 0);
+  auto retired = std::make_shared<RetirementObservation>();
+  ScopedEngineClose close_engine{*engine};
+  auto request = shell("printf $$ > \"$1\"; printf retired");
+  request.arguments.push_back({"libtmux-retirement-test"});
+  request.arguments.push_back({pid_template});
+  auto running = (*engine)->submit(
+      std::move(request),
+      [pid_template, retired, owned = std::make_unique<int>(1)]() mutable {
+        if (retired->calls.fetch_add(*owned, std::memory_order_relaxed) != 0) {
+          return;
+        }
+        int child_pid = -1;
+        if (FILE* pid_file = std::fopen(pid_template.c_str(), "r")) {
+          static_cast<void>(std::fscanf(pid_file, "%d", &child_pid));
+          static_cast<void>(std::fclose(pid_file));
+        }
+        int status_result = 0;
+        int status_error = EINVAL;
+        if (child_pid <= 0) {
+          retired->status_result.store(status_result, std::memory_order_relaxed);
+          retired->status_error.store(status_error, std::memory_order_relaxed);
+        } else {
+          errno = 0;
+          status_result = ::waitpid(child_pid, nullptr, WNOHANG);
+          status_error = errno;
+          retired->status_result.store(status_result, std::memory_order_relaxed);
+          retired->status_error.store(status_error, std::memory_order_relaxed);
+        }
+        retired->ready.store(true, std::memory_order_release);
+      });
+
+  auto reply = sync_wait(std::move(running));
+  ASSERT_TRUE(reply.has_value()) << reply.error().diagnostic;
+  EXPECT_EQ(text(reply->stdout_bytes), "retired");
+  const auto retirement_deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds{1};
+  while (!retired->ready.load(std::memory_order_acquire) &&
+         std::chrono::steady_clock::now() < retirement_deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds{1});
+  }
+  ASSERT_TRUE(retired->ready.load(std::memory_order_acquire));
+  EXPECT_EQ(retired->status_result.load(std::memory_order_relaxed), -1);
+  EXPECT_EQ(retired->status_error.load(std::memory_order_relaxed), ECHILD);
+  EXPECT_EQ(retired->calls.load(std::memory_order_relaxed), 1);
+  close_engine.close();
+  EXPECT_EQ(retired->calls.load(std::memory_order_relaxed), 1);
+}
+
+TEST(ProcessEngine, RefusedTransportRetirementFiresOnce) {
+  auto engine =
+      ProcessEngine::start(libtmux::detail::EngineConfig{.operation_limit = 0U});
+  ASSERT_TRUE(engine.has_value()) << engine.error().diagnostic;
+  int calls = 0;
+
+  auto refused = (*engine)->submit(
+      shell("true"), [owned = std::make_unique<int>(1), &calls] { calls += *owned; });
+
+  auto reply = sync_wait(std::move(refused));
+  ASSERT_FALSE(reply.has_value());
+  EXPECT_EQ(reply.error().kind, libtmux::FailureKind::overloaded);
+  EXPECT_EQ(calls, 1);
+  static_cast<void>((*engine)->close());
+  EXPECT_EQ(calls, 1);
 }
 
 // The whole point: many children, still two threads.
@@ -289,23 +466,65 @@ TEST(ProcessEngine, ShutdownDoesNotStartWorkItIsAboutToEnd) {
   EXPECT_GT(never_started, 0) << "every queued command was started, then ended";
 }
 
-// Work being launched is in neither queue: the launch lane has taken it and
-// the reactor has not been handed it yet. A reactor that reads that gap as
-// nothing left returns, and the child it was about to own is never waited for
-// by anyone. Repeated because the window is the width of one process
-// creation.
 TEST(ProcessEngine, ShutdownWaitsForALaunchAlreadyInFlight) {
-  for (int attempt = 0; attempt < 32; ++attempt) {
-    Operation<ProcessReply> running;
-    {
-      auto engine = ProcessEngine::start();
-      ASSERT_TRUE(engine.has_value()) << engine.error().diagnostic;
-      running = (*engine)->submit(shell("sleep 5"));
-      static_cast<void>((*engine)->close());
-    }
-    auto reply = sync_wait(std::move(running));
-    EXPECT_FALSE(reply.has_value());
+  LaunchShutdownBarrier barrier;
+  auto engine = ProcessEngine::start(
+      {.launch_observer = [&barrier](const ProcessRequest&) { barrier.hold_launch(); },
+       .reactor_observer =
+           [&barrier](libtmux::detail::EngineReactorEvent event) {
+             barrier.observe(event);
+           }});
+  ASSERT_TRUE(engine.has_value()) << engine.error().diagnostic;
+
+  std::string executable_template =
+      (std::filesystem::temp_directory_path() / "libtmux-process-engine-launch-XXXXXX")
+          .string();
+  const int executable_descriptor = ::mkstemp(executable_template.data());
+  ASSERT_GE(executable_descriptor, 0);
+  ScopedPathRemoval remove_executable{executable_template};
+  ASSERT_EQ(::close(executable_descriptor), 0);
+  ASSERT_TRUE(std::filesystem::remove(executable_template));
+  ASSERT_NO_THROW(std::filesystem::create_symlink(executable_template + "-missing",
+                                                  executable_template));
+  auto request = shell("sleep 30");
+  request.executable = executable_template;
+  auto running = (*engine)->submit(std::move(request));
+
+  const bool launch_withheld = barrier.wait_until_launch_is_withheld();
+  if (!launch_withheld) {
+    barrier.release();
+    FAIL() << "the launch lane did not take the accepted request";
+    return;
   }
+  std::optional<libtmux::detail::EngineShutdown> shutdown;
+  std::thread closer{[&] { shutdown = (*engine)->close(); }};
+  const auto first_event = barrier.wait_for_reactor_event();
+  std::error_code executable_error;
+  bool executable_enabled = false;
+  if (first_event &&
+      *first_event == libtmux::detail::EngineReactorEvent::waiting_for_launch &&
+      std::filesystem::remove(executable_template, executable_error)) {
+    std::filesystem::create_symlink("/bin/sh", executable_template, executable_error);
+    executable_enabled = !executable_error;
+  }
+  barrier.release();
+  closer.join();
+  auto reply = sync_wait(std::move(running));
+
+  ASSERT_TRUE(first_event.has_value())
+      << "the reactor did not inspect shutdown while launch was withheld";
+  EXPECT_EQ(*first_event, libtmux::detail::EngineReactorEvent::waiting_for_launch);
+  EXPECT_TRUE(executable_enabled)
+      << (executable_error ? executable_error.message()
+                           : "the reactor exited before enabling the executable");
+  ASSERT_TRUE(shutdown.has_value());
+  EXPECT_EQ(shutdown->operations_published, 1U);
+  EXPECT_EQ(shutdown->children_reaped, 1U);
+  EXPECT_TRUE(shutdown->complete);
+  ASSERT_FALSE(reply.has_value());
+  EXPECT_EQ(reply.error().kind, libtmux::FailureKind::cancelled);
+  EXPECT_EQ(reply.error().delivery, libtmux::DeliveryStatus::indeterminate);
+  EXPECT_EQ(barrier.event_count(), 2U);
 }
 
 } // namespace

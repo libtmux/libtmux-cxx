@@ -2,6 +2,7 @@
 
 #include "libtmux/expected.hpp"
 #include "notification_stream.hpp"
+#include "spawn_descriptors.hpp"
 #include "spawn_signals.hpp"
 #include <algorithm>
 #include <array>
@@ -307,22 +308,6 @@ expected<SpawnedClient, ProtocolError> spawn_client(const ConnectionOptions& opt
   if (result != 0) {
     return fail_actions("posix_spawn_file_actions_adddup2(stderr)", result);
   }
-#if defined(__GLIBC__) && defined(__USE_MISC)
-  result = ::posix_spawn_file_actions_addclosefrom_np(&actions, 3);
-  if (result != 0) {
-    return fail_actions("posix_spawn_file_actions_addclosefrom_np", result);
-  }
-#else
-  for (const auto descriptor :
-       {(*input_pipe)[0], (*input_pipe)[1], (*output_pipe)[0], (*output_pipe)[1],
-        (*error_pipe)[0], (*error_pipe)[1]}) {
-    result = ::posix_spawn_file_actions_addclose(&actions, descriptor);
-    if (result != 0) {
-      return fail_actions("posix_spawn_file_actions_addclose", result);
-    }
-  }
-#endif
-
   posix_spawnattr_t attributes;
   result = ::posix_spawnattr_init(&attributes);
   if (result != 0) {
@@ -341,6 +326,11 @@ expected<SpawnedClient, ProtocolError> spawn_client(const ConnectionOptions& opt
   result = ::posix_spawnattr_setpgroup(&attributes, 0);
   if (result != 0) {
     return fail_attributes("posix_spawnattr_setpgroup", result);
+  }
+  const auto descriptor_policy =
+      detail::apply_spawn_descriptor_policy(actions, attributes, false);
+  if (!descriptor_policy) {
+    return fail_attributes("posix spawn descriptor policy", descriptor_policy.error());
   }
 
   // tmux takes these as one comma-separated list. `no-output` and

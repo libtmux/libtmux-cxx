@@ -82,6 +82,42 @@ private:
       std::min<std::chrono::milliseconds::rep>(remaining.count(), 1000));
 }
 
+void retire_transport(OperationSource<ProcessReply>& source,
+                      MoveOnlyFunction<void()>& retirement_hook) {
+  source.retire();
+  if (retirement_hook) {
+    auto hook = std::move(retirement_hook);
+    hook();
+  }
+}
+
+void observe_reactor(const std::function<void(EngineReactorEvent)>& observer,
+                     EngineReactorEvent event) noexcept {
+  if (!observer) {
+    return;
+  }
+  try {
+    observer(event);
+  } catch (...) {
+    // A test observer cannot be allowed to terminate the reactor.
+  }
+}
+
+class ReactorExitObservation final {
+public:
+  explicit ReactorExitObservation(
+      const std::function<void(EngineReactorEvent)>& observer) noexcept
+      : observer_{observer} {}
+
+  ~ReactorExitObservation() { observe_reactor(observer_, EngineReactorEvent::exited); }
+
+  ReactorExitObservation(const ReactorExitObservation&) = delete;
+  ReactorExitObservation& operator=(const ReactorExitObservation&) = delete;
+
+private:
+  const std::function<void(EngineReactorEvent)>& observer_;
+};
+
 } // namespace
 
 expected<std::shared_ptr<ProcessEngine>, ProcessError>
@@ -100,15 +136,25 @@ ProcessEngine::start(EngineConfig config) {
   for (const int descriptor : wake) {
     const auto descriptor_flags = ::fcntl(descriptor, F_GETFD);
     const auto status_flags = ::fcntl(descriptor, F_GETFL);
-    static_cast<void>(::fcntl(descriptor, F_SETFD, descriptor_flags | FD_CLOEXEC));
-    static_cast<void>(::fcntl(descriptor, F_SETFL, status_flags | O_NONBLOCK));
+    if (descriptor_flags < 0 || status_flags < 0 ||
+        ::fcntl(descriptor, F_SETFD, descriptor_flags | FD_CLOEXEC) != 0 ||
+        ::fcntl(descriptor, F_SETFL, status_flags | O_NONBLOCK) != 0) {
+      const auto error_number = errno;
+      static_cast<void>(::close(wake[0]));
+      static_cast<void>(::close(wake[1]));
+      return unexpected(process_error(
+          ProcessError::Kind::pipe, DeliveryStatus::not_started, "engine wake fcntl",
+          "process engine", std::error_code{error_number, std::generic_category()}));
+    }
   }
 #endif
   auto channel =
       std::make_shared<EngineChannel>(config.operation_limit, wake[0], wake[1]);
   // The threads hold a raw reference on purpose. Owning the engine would keep
   // it alive for as long as they run, which is until it is destroyed.
-  std::shared_ptr<ProcessEngine> engine{new ProcessEngine{std::move(channel)}};
+  std::shared_ptr<ProcessEngine> engine{new ProcessEngine{
+      std::move(channel), std::move(config.admission_gate),
+      std::move(config.launch_observer), std::move(config.reactor_observer)}};
   engine->launcher_ = std::thread{[owner = engine.get()] { owner->launch_loop(); }};
   engine->reactor_ = std::thread{[owner = engine.get()] { owner->reactor_loop(); }};
   return engine;
@@ -128,13 +174,16 @@ EngineChannel::~EngineChannel() {
   }
 }
 
-bool EngineChannel::admit() noexcept {
+EngineAdmission EngineChannel::admit() noexcept {
   std::lock_guard lock{mutex_};
+  if (failure_) {
+    return EngineAdmission{.failure = failure_};
+  }
   if (in_flight_ >= operation_limit_) {
-    return false;
+    return {};
   }
   ++in_flight_;
-  return true;
+  return EngineAdmission{.accepted = true};
 }
 
 void EngineChannel::release() noexcept {
@@ -144,78 +193,160 @@ void EngineChannel::release() noexcept {
   }
 }
 
+EngineLaunchGate EngineChannel::gate_launch() noexcept {
+  std::unique_lock lock{mutex_};
+  return EngineLaunchGate{std::move(lock), failure_};
+}
+
 void EngineChannel::wake() noexcept {
   const char byte = 1;
-  while (::write(wake_write_, &byte, 1) < 0 && errno == EINTR) {
+  for (;;) {
+    const auto count = ::write(wake_write_, &byte, 1);
+    if (count == 1) {
+      return;
+    }
+    if (count < 0 && errno == EINTR) {
+      continue;
+    }
+    if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+      return;
+    }
+    fail("engine wake write", count < 0 ? errno : EIO);
+    return;
   }
 }
 
 void EngineChannel::drain() noexcept {
   std::array<char, 64> buffer{};
-  while (::read(wake_read_, buffer.data(), buffer.size()) > 0) {
+  for (;;) {
+    const auto count = ::read(wake_read_, buffer.data(), buffer.size());
+    if (count > 0) {
+      continue;
+    }
+    if (count == 0) {
+      fail("engine wake read", EPIPE);
+      return;
+    }
+    if (errno == EINTR) {
+      continue;
+    }
+    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      return;
+    }
+    fail("engine wake read", errno);
+    return;
   }
 }
 
-ProcessEngine::ProcessEngine(std::shared_ptr<EngineChannel> channel) noexcept
-    : channel_{std::move(channel)} {}
+void EngineChannel::fail(std::string_view operation, int error_number) noexcept {
+  std::lock_guard lock{mutex_};
+  if (!failure_) {
+    failure_ =
+        EngineFailure{.operation = operation,
+                      .cause = std::error_code{error_number, std::generic_category()}};
+  }
+}
+
+std::optional<EngineFailure> EngineChannel::failure() const noexcept {
+  std::lock_guard lock{mutex_};
+  return failure_;
+}
+
+ProcessEngine::ProcessEngine(
+    std::shared_ptr<EngineChannel> channel, std::function<void()> admission_gate,
+    std::function<void(const ProcessRequest&)> launch_observer,
+    std::function<void(EngineReactorEvent)> reactor_observer) noexcept
+    : channel_{std::move(channel)}, admission_gate_{std::move(admission_gate)},
+      launch_observer_{std::move(launch_observer)},
+      reactor_observer_{std::move(reactor_observer)} {}
 
 ProcessEngine::~ProcessEngine() { static_cast<void>(close()); }
 
-Operation<ProcessReply> ProcessEngine::submit(ProcessRequest request) {
-  if (!channel_->admit()) {
+Operation<ProcessReply>
+ProcessEngine::submit(ProcessRequest request,
+                      MoveOnlyFunction<void()> retirement_hook) {
+  const auto admission = channel_->admit();
+  if (!admission.accepted) {
     auto refused = make_operation<ProcessReply>(std::make_shared<UnadmittedHooks>());
-    static_cast<void>(refused.source.publish(unexpected(CommandFailure{
-        .kind = FailureKind::overloaded,
-        .delivery = DeliveryStatus::not_started,
-        .exit_code = 0,
-        .diagnostic = "the process engine has more work in flight than it accepts"})));
-    refused.source.retire();
+    if (admission.failure) {
+      fail(*admission.failure);
+      static_cast<void>(refused.source.publish(unexpected(
+          reported(process_error(ProcessError::Kind::pipe, DeliveryStatus::not_started,
+                                 admission.failure->operation, render_request(request),
+                                 admission.failure->cause)))));
+    } else {
+      static_cast<void>(refused.source.publish(unexpected(CommandFailure{
+          .kind = FailureKind::overloaded,
+          .delivery = DeliveryStatus::not_started,
+          .exit_code = 0,
+          .diagnostic =
+              "the process engine has more work in flight than it accepts"})));
+    }
+    retire_transport(refused.source, retirement_hook);
     return std::move(refused.operation);
+  }
+  // Test coordination belongs after admission: this is the interval a fatal
+  // wake may cross before the launch lane sees the queued request.
+  if (admission_gate_) {
+    admission_gate_();
   }
   auto started = make_operation<ProcessReply>(std::make_shared<ChannelHooks>(channel_));
   std::optional<Clock::time_point> deadline;
   if (request.timeout.has_value()) {
     deadline = Clock::now() + *request.timeout;
   }
+  std::optional<EngineFailure> terminal_failure;
   {
     std::lock_guard lock{mutex_};
-    // Accepting under the lock the launch lane reads `closing_` under. Split
-    // apart, a submission that admitted a moment before shutdown lands in a
-    // queue nothing will ever read again.
-    if (!closing_) {
+    // Admission and the stop request share this lock. Split apart, a submission
+    // accepted during shutdown could land in a queue nothing reads again.
+    if (!stop_requested_ && !failure_) {
       started.source.mark_dispatching();
       pending_.push_back(EnginePending{.request = std::move(request),
                                        .source = std::move(started.source),
-                                       .deadline = deadline});
+                                       .deadline = deadline,
+                                       .retirement_hook = std::move(retirement_hook)});
       launch_ready_.notify_one();
       return std::move(started.operation);
     }
+    terminal_failure = failure_;
+  }
+  if (terminal_failure) {
+    static_cast<void>(started.source.publish(unexpected(
+        reported(process_error(ProcessError::Kind::pipe, DeliveryStatus::not_started,
+                               terminal_failure->operation, render_request(request),
+                               terminal_failure->cause)))));
+    retire_transport(started.source, retirement_hook);
+    return std::move(started.operation);
   }
   static_cast<void>(started.source.publish(unexpected(CommandFailure{
       .kind = FailureKind::cancelled,
       .delivery = DeliveryStatus::not_started,
       .exit_code = 0,
       .diagnostic = "the process engine closed before this was accepted"})));
-  started.source.retire();
+  retire_transport(started.source, retirement_hook);
   return std::move(started.operation);
 }
 
 void ProcessEngine::launch_loop() {
   for (;;) {
     EnginePending work;
-    bool closing = false;
+    bool stopping = false;
+    std::optional<EngineFailure> failure;
     {
       std::unique_lock lock{mutex_};
-      launch_ready_.wait(lock, [this] { return closing_ || !pending_.empty(); });
+      launch_ready_.wait(
+          lock, [this] { return stop_requested_ || failure_ || !pending_.empty(); });
       if (pending_.empty()) {
         return;
       }
       work = std::move(pending_.front());
       pending_.pop_front();
-      closing = closing_;
+      stopping = stop_requested_;
+      failure = failure_;
       ++launching_;
     }
-    launch_one(std::move(work), closing);
+    launch_one(std::move(work), stopping, std::move(failure));
     {
       std::lock_guard lock{mutex_};
       --launching_;
@@ -223,62 +354,131 @@ void ProcessEngine::launch_loop() {
     // Whatever came of it, the reactor has a reason to look again: a child to
     // own, or one fewer launch standing between it and being finished.
     channel_->wake();
+    if (auto channel_failure = channel_->failure()) {
+      fail(*channel_failure);
+    }
   }
 }
 
-void ProcessEngine::launch_one(EnginePending work, bool closing) {
+void ProcessEngine::launch_one(EnginePending work, bool stopping,
+                               std::optional<EngineFailure> failure) {
   // Withdrawn before anything started, or closed before anything started:
   // either way nothing starts, and this is the one cancellation that costs a
   // caller nothing to retry. Starting it would run the command for real --
   // side effects and all -- to end it a moment later and report it cancelled.
   const bool withdrawn = work.source.cancel_requested();
-  if (withdrawn || closing) {
+  if (failure) {
+    static_cast<void>(work.source.publish(unexpected(reported(process_error(
+        ProcessError::Kind::pipe, DeliveryStatus::not_started, failure->operation,
+        render_request(work.request), failure->cause)))));
+    retire_transport(work.source, work.retirement_hook);
+    return;
+  }
+  if (withdrawn || stopping) {
     static_cast<void>(work.source.publish(unexpected(CommandFailure{
         .kind = FailureKind::cancelled,
         .delivery = DeliveryStatus::not_started,
         .exit_code = 0,
         .diagnostic = withdrawn ? "the caller withdrew the command before it started"
                                 : "the process engine closed before this started"})));
-    work.source.retire();
+    retire_transport(work.source, work.retirement_hook);
     return;
   }
   if (work.deadline.has_value() && Clock::now() >= *work.deadline) {
     static_cast<void>(work.source.publish(unexpected(reported(process_error(
         ProcessError::Kind::timeout, DeliveryStatus::not_started, "timeout",
         render_request(work.request), std::make_error_code(std::errc::timed_out))))));
-    work.source.retire();
+    retire_transport(work.source, work.retirement_hook);
+    return;
+  }
+  if (launch_observer_) {
+    try {
+      launch_observer_(work.request);
+    } catch (...) {
+      // A test observer cannot be allowed to terminate the launch lane.
+    }
+  }
+  auto launch_gate = channel_->gate_launch();
+  if (launch_gate.failure()) {
+    const auto channel_failure = *launch_gate.failure();
+    launch_gate.unlock();
+    static_cast<void>(work.source.publish(unexpected(
+        reported(process_error(ProcessError::Kind::pipe, DeliveryStatus::not_started,
+                               channel_failure.operation, render_request(work.request),
+                               channel_failure.cause)))));
+    retire_transport(work.source, work.retirement_hook);
     return;
   }
   // Only creation happens here. Everything the child needs afterwards goes
   // with it to the reactor, so a launch that blocks stalls nothing else.
   auto launched = PosixChild::launch(work.request);
+  launch_gate.unlock();
   if (!launched.has_value()) {
     static_cast<void>(
         work.source.publish(unexpected(reported(std::move(launched.error())))));
-    work.source.retire();
+    retire_transport(work.source, work.retirement_hook);
     return;
   }
   work.source.mark_active();
+  std::optional<ProcessError> teardown_failure;
+  if (const auto teardown = launched->spawn_teardown_error(); teardown != 0) {
+    teardown_failure =
+        process_error(ProcessError::Kind::pipe, DeliveryStatus::indeterminate, "pipe",
+                      launched->rendered_request(),
+                      std::error_code{teardown, std::generic_category()});
+  }
   std::lock_guard lock{mutex_};
   arrived_.push_back(EngineLive{.child = std::move(*launched),
                                 .source = std::move(work.source),
-                                .deadline = work.deadline});
+                                .deadline = work.deadline,
+                                .failure = std::move(teardown_failure),
+                                .retirement_hook = std::move(work.retirement_hook)});
+}
+
+void ProcessEngine::fail(EngineFailure failure) {
+  bool stored = false;
+  {
+    std::lock_guard lock{mutex_};
+    if (!failure_) {
+      failure_ = failure;
+      stored = true;
+    }
+  }
+  if (stored) {
+    launch_ready_.notify_all();
+    channel_->wake();
+  }
 }
 
 void ProcessEngine::reactor_loop() {
+  ReactorExitObservation observe_exit{reactor_observer_};
   std::vector<EngineLive> live;
-  bool shutting_down = false;
+  bool launch_wait_observed = false;
   for (;;) {
+    if (auto channel_failure = channel_->failure()) {
+      fail(*channel_failure);
+    }
+    bool stopping = false;
+    bool waiting_for_launch = false;
+    std::optional<EngineFailure> engine_failure;
     {
       std::lock_guard lock{mutex_};
       for (auto& arrival : arrived_) {
         live.push_back(std::move(arrival));
       }
       arrived_.clear();
-      if (closing_ && live.empty() && pending_.empty() && launching_ == 0U) {
+      if ((stop_requested_ || failure_) && live.empty() && pending_.empty() &&
+          launching_ == 0U) {
         return;
       }
-      shutting_down = closing_;
+      waiting_for_launch = (stop_requested_ || failure_) && live.empty() &&
+                           pending_.empty() && launching_ != 0U;
+      stopping = stop_requested_;
+      engine_failure = failure_;
+    }
+    if (waiting_for_launch && !launch_wait_observed) {
+      observe_reactor(reactor_observer_, EngineReactorEvent::waiting_for_launch);
+      launch_wait_observed = true;
     }
 
     std::vector<pollfd> watched;
@@ -304,7 +504,7 @@ void ProcessEngine::reactor_loop() {
       }
       // A child being ended is checked on the short turn whatever else is in
       // the set: it is about to be signalled again, reaped and published.
-      if (one.terminate_deadline.has_value()) {
+      if (one.failure || one.terminate_deadline.has_value()) {
         asks_after_exit = true;
       }
     }
@@ -313,46 +513,97 @@ void ProcessEngine::reactor_loop() {
       if (one.deadline.has_value()) {
         boundary = std::min(boundary, *one.deadline);
       }
+      if (one.exit_drain_deadline != Clock::time_point::max()) {
+        boundary = std::min(boundary, one.exit_drain_deadline);
+      }
+      if (one.terminate_deadline.has_value()) {
+        boundary = std::min(boundary, *one.terminate_deadline);
+      }
     }
     // Children are signalled after this wait, so a closing engine must not
     // enter it: the decision to end them is already made, and sleeping on it
     // is what made teardown cost a whole quantum.
-    if (shutting_down) {
+    if (stopping || engine_failure) {
       boundary = Clock::now();
     }
-    static_cast<void>(::poll(watched.data(), static_cast<nfds_t>(watched.size()),
-                             poll_timeout(boundary)));
-    channel_->drain();
+    int poll_result = 0;
+    do {
+      poll_result = ::poll(watched.data(), static_cast<nfds_t>(watched.size()),
+                           poll_timeout(boundary));
+    } while (poll_result < 0 && errno == EINTR);
+    if (poll_result < 0) {
+      const auto error_number = errno;
+      channel_->fail("pipe poll", error_number);
+      if (auto channel_failure = channel_->failure()) {
+        fail(*channel_failure);
+      }
+    } else {
+      channel_->drain();
+      if (auto channel_failure = channel_->failure()) {
+        fail(*channel_failure);
+      }
+    }
+    {
+      std::lock_guard lock{mutex_};
+      engine_failure = failure_;
+    }
 
     for (auto& one : live) {
-      static_cast<void>(one.child.drain_once(ChildStream::stdout_stream, boundary,
-                                             DeliveryStatus::indeterminate));
-      static_cast<void>(one.child.drain_once(ChildStream::stderr_stream, boundary,
-                                             DeliveryStatus::indeterminate));
-      static_cast<void>(one.child.update_status(DeliveryStatus::indeterminate));
+      const auto retain = [&one](std::optional<ProcessError> failure) {
+        if (failure && !one.failure) {
+          one.failure = std::move(*failure);
+        }
+      };
+      if (engine_failure && !one.failure) {
+        one.failure =
+            process_error(ProcessError::Kind::pipe, DeliveryStatus::indeterminate,
+                          engine_failure->operation, one.child.rendered_request(),
+                          engine_failure->cause);
+      }
+      retain(one.child.drain_once(ChildStream::stdout_stream, boundary,
+                                  DeliveryStatus::indeterminate));
+      retain(one.child.drain_once(ChildStream::stderr_stream, boundary,
+                                  DeliveryStatus::indeterminate));
+      retain(one.child.update_status(DeliveryStatus::indeterminate));
 
-      const bool finished = one.child.status() != ChildStatus::running;
+      bool finished = one.child.status() != ChildStatus::running;
+      const bool expired = one.deadline.has_value() && Clock::now() >= *one.deadline;
+      const bool cancelled = one.source.cancel_requested();
+      // Closing ends what is running rather than waiting for it: a teardown
+      // that waits takes as long as the slowest command anyone had in flight.
+      if (!finished && !one.failure && (expired || cancelled || stopping) &&
+          !one.terminate_deadline.has_value()) {
+        auto signal_failure =
+            one.child.signal_group(SIGTERM, DeliveryStatus::indeterminate);
+        one.terminate_deadline =
+            Clock::now() + (signal_failure ? Clock::duration::zero() : terminate_grace);
+        retain(std::move(signal_failure));
+        one.withdrawn = cancelled && !expired;
+        one.abandoned = stopping && !cancelled && !expired;
+      }
+      if (!finished && !one.failure && one.terminate_deadline.has_value() &&
+          !one.killed && Clock::now() >= *one.terminate_deadline) {
+        auto signal_failure =
+            one.child.signal_group(SIGKILL, DeliveryStatus::indeterminate);
+        one.killed = !signal_failure;
+        retain(std::move(signal_failure));
+      }
+      if (!finished && one.failure && !one.killed) {
+        auto signal_failure =
+            one.child.signal_group(SIGKILL, DeliveryStatus::indeterminate);
+        one.killed = !signal_failure;
+        retain(std::move(signal_failure));
+      }
+      if (!finished && one.killed) {
+        retain(one.child.wait_for_exit(DeliveryStatus::indeterminate));
+      }
+
+      finished = one.child.status() != ChildStatus::running;
       if (finished && one.exit_drain_deadline == Clock::time_point::max()) {
         one.exit_drain_deadline = Clock::now() + post_exit_drain;
       }
       if (finished && Clock::now() >= one.exit_drain_deadline) {
         one.child.close_output();
-      }
-      const bool expired = one.deadline.has_value() && Clock::now() >= *one.deadline;
-      const bool cancelled = one.source.cancel_requested();
-      // Closing ends what is running rather than waiting for it: a teardown
-      // that waits takes as long as the slowest command anyone had in flight.
-      if (!finished && (expired || cancelled || shutting_down) &&
-          !one.terminate_deadline.has_value()) {
-        one.child.signal_group(SIGTERM);
-        one.terminate_deadline = Clock::now() + terminate_grace;
-        one.withdrawn = cancelled && !expired;
-        one.abandoned = shutting_down && !cancelled && !expired;
-      }
-      if (!finished && one.terminate_deadline.has_value() && !one.killed &&
-          Clock::now() >= *one.terminate_deadline) {
-        one.child.signal_group(SIGKILL);
-        one.killed = true;
       }
     }
 
@@ -365,7 +616,13 @@ void ProcessEngine::reactor_loop() {
         return false;
       }
       auto capture = one.child.take_capture();
-      if (one.child.status() == ChildStatus::unknowable) {
+      if (one.failure) {
+        one.failure->stdout_bytes = std::move(capture.stdout_bytes);
+        one.failure->stderr_bytes = std::move(capture.stderr_bytes);
+        one.failure->output_truncated = capture.truncated;
+        static_cast<void>(
+            one.source.publish(unexpected(reported(std::move(*one.failure)))));
+      } else if (one.child.status() == ChildStatus::unknowable) {
         static_cast<void>(one.source.publish(unexpected(reported(
             process_error(ProcessError::Kind::pipe, DeliveryStatus::written, "waitpid",
                           one.child.rendered_request(),
@@ -395,24 +652,40 @@ void ProcessEngine::reactor_loop() {
                          .output_truncated = capture.truncated}));
       }
       one.source.begin_retirement();
-      one.source.retire();
+      retire_transport(one.source, one.retirement_hook);
       {
         std::lock_guard lock{mutex_};
         ++published_;
-        ++reaped_;
+        if (one.child.status() == ChildStatus::exited) {
+          ++reaped_;
+        }
       }
       return true;
     });
   }
 }
 
-EngineShutdown ProcessEngine::close() {
+void ProcessEngine::request_stop() noexcept {
   {
     std::lock_guard lock{mutex_};
-    if (closing_) {
-      return EngineShutdown{published_, reaped_, pending_.empty()};
+    stop_requested_ = true;
+  }
+  launch_ready_.notify_all();
+  channel_->wake();
+}
+
+EngineShutdown ProcessEngine::close() {
+  {
+    std::unique_lock lock{mutex_};
+    if (terminal_) {
+      return terminal_shutdown_;
     }
-    closing_ = true;
+    if (close_joining_) {
+      terminal_ready_.wait(lock, [this] { return terminal_; });
+      return terminal_shutdown_;
+    }
+    stop_requested_ = true;
+    close_joining_ = true;
   }
   launch_ready_.notify_all();
   channel_->wake();
@@ -422,23 +695,15 @@ EngineShutdown ProcessEngine::close() {
   if (reactor_.joinable()) {
     reactor_.join();
   }
-  std::lock_guard lock{mutex_};
-  return EngineShutdown{published_, reaped_, true};
-}
-
-expected<std::shared_ptr<ProcessEngine>, ProcessError> shared_engine() {
-  static std::mutex guard;
-  static std::weak_ptr<ProcessEngine> held;
-  std::lock_guard lock{guard};
-  if (auto engine = held.lock()) {
-    return engine;
+  EngineShutdown report;
+  {
+    std::lock_guard lock{mutex_};
+    terminal_shutdown_ = EngineShutdown{published_, reaped_, published_ == reaped_};
+    terminal_ = true;
+    report = terminal_shutdown_;
   }
-  auto started = ProcessEngine::start();
-  if (!started.has_value()) {
-    return unexpected(std::move(started.error()));
-  }
-  held = *started;
-  return started;
+  terminal_ready_.notify_all();
+  return report;
 }
 
 } // namespace detail

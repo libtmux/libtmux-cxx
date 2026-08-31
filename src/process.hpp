@@ -10,10 +10,12 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 #include <vector>
 
+#include "path.hpp"
 #include "transport_values.hpp"
 
 LIBTMUX_NAMESPACE_BEGIN
@@ -46,6 +48,41 @@ struct ProcessError {
   bool output_truncated;
 };
 
+// A private, non-owning notification at the platform transport boundary.
+// Windows calls it immediately after a suspended child resumes.
+struct ProcessTransportEntry final {
+  void* context{};
+  void (*notify)(void*) noexcept {};
+
+  void entered() const noexcept {
+    if (notify != nullptr) {
+      notify(context);
+    }
+  }
+};
+
+[[nodiscard]] inline bool process_request_is_valid(const ProcessRequest& request) {
+  const auto contains_nul = [](std::string_view value) {
+    return value.find('\0') != std::string_view::npos;
+  };
+  const auto executable = libtmux_path::command_string(request.executable);
+  if (executable.empty() || contains_nul(executable)) {
+    return false;
+  }
+  for (const auto& argument : request.arguments) {
+    if (contains_nul(argument.value)) {
+      return false;
+    }
+  }
+  for (const auto& [name, value] : request.environment) {
+    if (name.empty() || name.find('=') != std::string::npos || contains_nul(name) ||
+        (value.has_value() && contains_nul(*value))) {
+      return false;
+    }
+  }
+  return true;
+}
+
 [[nodiscard]] expected<ProcessReply, ProcessError>
 run_process(const ProcessRequest& request);
 
@@ -54,6 +91,10 @@ using CancellationProbe = std::function<bool()>;
 
 [[nodiscard]] expected<ProcessReply, ProcessError>
 run_process(const ProcessRequest& request, const CancellationProbe& cancelled);
+
+[[nodiscard]] expected<ProcessReply, ProcessError>
+run_process(const ProcessRequest& request, const CancellationProbe& cancelled,
+            ProcessTransportEntry entry);
 #endif
 
 } // namespace detail

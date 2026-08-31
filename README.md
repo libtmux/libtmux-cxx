@@ -63,9 +63,9 @@ failure by throwing.)
 - **Two standards.** C++23 over `std::expected`, or C++20 over pinned
   `tl::expected`, each in its own ABI namespace so they cannot be mixed by
   accident.
-- **A faster transport for typed entities.**
-  [Control mode](#batches-chains-and-control-mode) keeps one connection open —
-  about 4.6× faster per listing.
+- **Bounded typed execution.** `Server` commands use bounded subprocesses;
+  [control mode](#batches-chains-and-control-mode) is a separate streaming
+  protocol surface.
 - **An [MCP server](#the-mcp-server)** so an agent can drive tmux directly.
 - **Compile-time refusals.** `pane::active.starts_with("x")` is a build error,
   and [a test proves it stays one](tests/README.md#the-compile-tests-are-the-interesting-ones).
@@ -79,6 +79,12 @@ failure by throwing.)
 | **CMake** | 3.25 |
 | **Platforms** | Linux, macOS; experimental x64 desktop Windows support with Visual Studio 2022 through [psmux] |
 | **Dependencies** | None for the library |
+
+POSIX child launches do not inherit unrelated descriptors. glibc 2.34 and
+newer use native close-from actions, and macOS uses CLOEXEC-default. Other
+Linux builds use numeric close actions; that fallback assumes no concurrent
+privileged increase of the hard descriptor limit. Ordinary concurrent
+allocation and soft-limit changes remain covered.
 
 ## Installation
 
@@ -462,6 +468,144 @@ if (!gone.has_value()) {
 | `replied` | tmux produced a terminal reply |
 | `indeterminate` | the transport cannot prove whether tmux saw or completed it |
 
+### Bounded asynchronous commands
+
+```cpp
+std::size_t observed = 0U;
+auto async_server = libtmux::Server::at_socket_path(
+    scratch.socket_path().string(),
+    [&observed](std::string_view, const libtmux::CommandFailure*) { ++observed; });
+if (!async_server.has_value()) {
+  std::fprintf(stderr, "%s\n", async_server.error().diagnostic.c_str());
+  return 1;
+}
+
+auto started_runtime =
+    libtmux::CommandRuntime::start(libtmux::CommandRuntimeConfig{.capacity = 1U});
+if (!started_runtime.has_value()) {
+  std::fprintf(stderr, "%s\n", started_runtime.error().diagnostic.c_str());
+  return 1;
+}
+auto runtime = *std::move(started_runtime);
+const auto wait_for_completion = [&runtime](std::uint64_t wanted) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+  while (runtime.snapshot().completed < wanted &&
+         std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds{10});
+  }
+  return runtime.snapshot().completed >= wanted;
+};
+
+auto submitted =
+    async_server->try_submit(runtime, {"display-message", "-p", "async result"});
+if (!submitted.has_value()) { // Refused before admission.
+  std::fprintf(stderr, "%s\n", submitted.error().diagnostic.c_str());
+  return 1;
+}
+auto result = std::move(*submitted).wait();
+if (!result.has_value()) { // Failed after admission.
+  std::fprintf(stderr, "%s\n", result.error().diagnostic.c_str());
+  return 1;
+}
+if (!wait_for_completion(1U)) {
+  return 1;
+}
+
+const auto held = runtime.snapshot();
+std::printf("%zu/%zu slot(s), %zu observation(s) pending\n", held.in_flight,
+            held.capacity, held.pending_observers);
+std::printf("dispatched %zu observation(s)\n", runtime.dispatch_ready());
+
+auto detached =
+    async_server->try_submit(runtime, {"display-message", "-p", "detached"});
+if (!detached.has_value()) {
+  std::fprintf(stderr, "%s\n", detached.error().diagnostic.c_str());
+  return 1;
+}
+std::move(*detached).detach(); // Keep no result; the observation remains.
+if (!wait_for_completion(2U)) {
+  return 1;
+}
+std::printf("discarded %zu observation(s)\n", runtime.discard_ready());
+
+const auto shutdown = runtime.close();
+if (shutdown.failure.has_value()) {
+  std::fprintf(stderr, "%s\n", shutdown.failure->diagnostic.c_str());
+  return 1;
+}
+std::printf("runtime stopped: %s; safe to unload: %s; observed: %zu\n",
+            shutdown.transports_stopped ? "yes" : "no",
+            shutdown.safe_to_unload ? "yes" : "no", observed);
+if (!shutdown.transports_stopped || !shutdown.safe_to_unload || observed != 1U) {
+  return 1;
+}
+```
+
+No runtime is hidden in a `Server`. `CommandRuntime::start` creates the
+transport threads and fixes their admission capacity; zero or a startup
+failure returns `unexpected` with `delivery == not_started`. A full runtime
+refuses rather than waiting for a slot.
+
+`Server::try_submit` also returns an outer `unexpected` before admission for a
+moved-from or stopped runtime, an invalid command, an unsupported custom
+backend, a `Server` opened before its socket existed, a full capacity, or a
+failure to register its observer. These create no operation or observer record;
+refusals against a live runtime increment `refused`, while a moved-from runtime
+has no counters. They are safe to retry when their cause is fixed. Once it
+returns a `CommandOperation`, every tmux, transport, cancellation, or runtime
+publication failure is that operation's eventual result. A server that dies
+after its handle captured the socket can therefore be admitted and fail through
+`wait`; its `DeliveryStatus` says what the transport can prove. The runtime also
+preserves its first lifecycle failure in `close().failure`, the only channel
+available when no operation can carry it.
+
+Only commands accepted by `try_submit` enter a `Server`'s global observer.
+Completion enqueues the record but invokes nothing: `wait`, destruction, and
+`detach` leave it for the runtime. `dispatch_ready` invokes one snapshot of
+ready records on its caller's thread; `discard_ready` releases ready records
+without callbacks. Only one dispatch or discard call runs at once, so a
+competing caller returns zero. If a callback throws, its record is already
+released, the exception propagates, and later ready records remain queued.
+
+One capacity slot remains charged until three independent legs end: the
+transport retires, the operation is waited, detached, or destroyed, and its
+observer is claimed for dispatch or discarded. A callback no longer holds the
+slot while it runs, though it still prevents safe module unload. A command with
+no observer starts with that leg complete. Admission is serialised, and
+accepted commands enter the transport in admission order; completion order is
+not fixed, and callers racing from different threads have no priority
+guarantee.
+
+`snapshot` is one lock-consistent instant; it does not wait for command
+completion or runtime work to finish. `accepted`, `refused`, and `completed`
+are cumulative; `completed` means the result was published and its observer
+record, when present, became ready. `in_flight` counts commands retaining any
+of the three legs. The two `pending_*` fields count result and observer
+obligations whether or not their data is ready. `accepting` says stop or close
+has not ended admission; it does not promise that capacity or preflight will
+accept the next command.
+
+`request_stop` stops admission and requests cancellation without joining.
+`close` blocks until runtime threads stop, invokes and discards no observer,
+and returns the same cached report to every concurrent or later caller. A
+throw before a successful report leaves `close` retryable. Because the report
+never refreshes, discharge result and observer obligations before the first
+successful `close` when `safe_to_unload` must be true. That flag means the
+transports stopped, both pending counts reached zero, and no caller-side
+`dispatch_ready` or `discard_ready` call remained active, including observer
+callback-target teardown. It does not mean every command succeeded, and the
+caller must prevent later runtime use before unloading code.
+
+Destroying a runtime stops and joins its threads, discards pending observer
+records without invoking them, and exposes no report. A `CommandOperation` may
+outlive the runtime, but it retains no runtime thread. Use explicit `close`
+when shutdown or module-unload status matters.
+
+The ordinary Linux test presets execute this runtime. Project CI also runs the
+POSIX path with Apple Clang on macOS and the C++20/C++23 experimental Windows
+path against pinned psmux. Windows retains the narrower typed-operation limits
+described in [Windows through psmux](#windows-through-psmux).
+
 ### Escape hatch
 
 ```cpp
@@ -512,11 +656,12 @@ chain.new_window("a:b", "unreachable");
 std::printf("chain valid: %s\n", chain.valid() ? "yes" : "no"); // no
 ```
 
-Three ways to send typed work, plus a raw control stream:
+Four ways to send typed work, plus a raw control stream:
 
 | | What it is | Failure |
 |---|---|---|
 | **Call** | One command, one process | Reported on the call |
+| **Async** | One process per accepted command in an explicit runtime | Immediate refusal outside; later failure on the operation |
 | **Batch** | One tmux invocation, one fail-fast group | Partially applied, not rolled back |
 | **Chain** | Validated as it is built | A bad target is caught before tmux is reached |
 | **Control** | One connection held open | Ordered reply blocks before a private request boundary |
@@ -547,6 +692,8 @@ dropped-event count, and readiness descriptor over one shared bounded log.
 | [`Pane`](include/libtmux/entities.hpp) | pane (`%1`, `%2`, …) | Where commands run |
 | [`Client`](include/libtmux/entities.hpp) | an attached terminal | Read-only |
 | [`Buffer`](include/libtmux/entities.hpp) | the server's clipboard | Named text outliving its pane |
+| [`CommandRuntime`](include/libtmux/async.hpp) | bounded asynchronous execution | Owns threads, admission, and observer disposition |
+| [`CommandOperation`](include/libtmux/async.hpp) | one accepted command result | Waited or detached independently of observation |
 | [`Connection`](include/libtmux/control.hpp) | a control-mode session | Guarded blocks, outside-block events |
 | [`NotificationWatch`](include/libtmux/notification.hpp) | one outside-block event consumer | Independent cursor, wait, and readiness descriptor |
 

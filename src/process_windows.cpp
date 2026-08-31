@@ -12,6 +12,7 @@
 
 #include "libtmux/expected.hpp"
 #include "path.hpp"
+#include "process_validation.hpp"
 
 #include <windows.h>
 
@@ -23,6 +24,7 @@
 #include <cwchar>
 #include <limits>
 #include <map>
+#include <new>
 #include <optional>
 #include <span>
 #include <string>
@@ -221,10 +223,6 @@ struct PreparedRequest final {
   return kind == ProcessError::Kind::spawn ? "spawn" : "pre-exec";
 }
 
-[[nodiscard]] bool contains_nul(std::string_view value) {
-  return value.find('\0') != std::string_view::npos;
-}
-
 [[nodiscard]] std::string escape_diagnostic_value(std::string_view value) {
   constexpr std::string_view hexadecimal{"0123456789abcdef"};
   std::string escaped;
@@ -290,26 +288,34 @@ struct PreparedRequest final {
 
 [[nodiscard]] std::optional<ProcessError>
 validate_request(const ProcessRequest& request) {
-  const auto invalid = [&]() {
-    return make_error(ProcessError::Kind::validation, DeliveryStatus::not_started,
-                      "validation", request,
-                      std::make_error_code(std::errc::invalid_argument));
+  const auto invalid = [&](std::errc cause = std::errc::invalid_argument) {
+    try {
+      return make_error(ProcessError::Kind::validation, DeliveryStatus::not_started,
+                        "validation", request, std::make_error_code(cause));
+    } catch (const std::bad_alloc&) {
+      throw;
+    } catch (...) {
+      return ProcessError{
+          .kind = ProcessError::Kind::validation,
+          .delivery = DeliveryStatus::not_started,
+          .diagnostic = "validation failure: malformed executable encoding",
+      };
+    }
   };
 
-  const auto executable = libtmux_path::command_string(request.executable);
-  if (executable.empty() || contains_nul(executable)) {
+  ProcessValidationResult validation;
+  try {
+    validation = validate_process_request(request, ProcessValidationMode::windows);
+  } catch (const std::bad_alloc&) {
+    return make_error(ProcessError::Kind::pre_exec, DeliveryStatus::not_started,
+                      "validation", request,
+                      std::make_error_code(std::errc::not_enough_memory));
+  }
+  if (validation.failure == ProcessValidationFailure::command_line_too_long) {
+    return invalid(std::errc::argument_list_too_long);
+  }
+  if (validation.failure != ProcessValidationFailure::none) {
     return invalid();
-  }
-  for (const auto& argument : request.arguments) {
-    if (contains_nul(argument.value)) {
-      return invalid();
-    }
-  }
-  for (const auto& [name, value] : request.environment) {
-    if (name.empty() || name.find('=') != std::string::npos || contains_nul(name) ||
-        (value.has_value() && contains_nul(*value))) {
-      return invalid();
-    }
   }
   if (request.stdio == StdioPolicy::inherit_terminal &&
       (!is_console(::GetStdHandle(STD_INPUT_HANDLE)) ||
@@ -542,12 +548,6 @@ prepare_request(const ProcessRequest& request) {
     }
     append_quoted_argument(command_line, argument);
   }
-  if (command_line.size() >= 32767U) {
-    return unexpected(make_error(
-        ProcessError::Kind::validation, DeliveryStatus::not_started, "validation",
-        request, std::make_error_code(std::errc::argument_list_too_long)));
-  }
-
   return PreparedRequest{
       .executable = std::move(*resolved_executable),
       .command_line = std::move(command_line),
@@ -751,11 +751,17 @@ void terminate_and_drain(HANDLE job, HANDLE process, OwnedHandle& stdout_read,
 } // namespace
 
 expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) {
-  return run_process(request, [] { return false; });
+  return run_process(request, [] { return false; }, {});
 }
 
 expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request,
                                                  const CancellationProbe& cancelled) {
+  return run_process(request, cancelled, {});
+}
+
+expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request,
+                                                 const CancellationProbe& cancelled,
+                                                 ProcessTransportEntry entry) {
   if (auto validation = validate_request(request)) {
     return unexpected(std::move(*validation));
   }
@@ -888,6 +894,7 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request,
                                  DeliveryStatus::not_started, "resume", request,
                                  windows_error(error), std::move(capture)));
   }
+  entry.entered();
   thread.reset();
 
   Capture capture;

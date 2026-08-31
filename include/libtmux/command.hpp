@@ -177,9 +177,10 @@ private:
 // succeed. The command is rendered as tmux received it, with any argument
 // marked sensitive replaced.
 //
-// Called on the thread that ran the command, while nothing is held, so an
-// observer that itself calls tmux does not deadlock — but one shared between
-// threads has to say so itself. Both callback arguments expire on return.
+// Synchronous calls invoke it on their caller's thread. Asynchronous calls
+// invoke it only on the thread calling `CommandRuntime::dispatch_ready`.
+// No internal lock is held; a shared observer must synchronise itself. Both
+// callback arguments expire on return.
 using CommandObserver =
     std::function<void(std::string_view command, const CommandFailure* failure)>;
 

@@ -436,16 +436,41 @@ if(NOT LIBTMUX_ENABLE_THREAD_SANITIZER)
   add_test(
     NAME libtmux.completion_queue.PublicationDuringRegistrationRechecks
     COMMAND libtmux_completion_queue_fault_test registration)
+  add_test(
+    NAME libtmux.completion_queue.AtomicReadyInsertionDispatches
+    COMMAND libtmux_completion_queue_fault_test ready)
   set_tests_properties(
     libtmux.completion_queue.EnqueueDoesNotAllocate
     libtmux.completion_queue.InsertionFailureDestroysAfterUnlock
     libtmux.completion_queue.PublicationDuringRegistrationRechecks
+    libtmux.completion_queue.AtomicReadyInsertionDispatches
     PROPERTIES LABELS concurrency TIMEOUT 5)
 endif()
 
 # POSIX only: the child's signal mask and dispositions are what this proves,
 # and Windows starts its children through a different launcher entirely.
 if(NOT WIN32)
+  add_executable(libtmux_spawn_descriptors_test spawn_descriptors_test.cpp)
+  target_include_directories(
+    libtmux_spawn_descriptors_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
+  target_link_libraries(
+    libtmux_spawn_descriptors_test
+    PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+  target_compile_options(
+    libtmux_spawn_descriptors_test PRIVATE -fno-sanitize-recover=undefined)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_compile_definitions(
+      libtmux_spawn_descriptors_test
+      PRIVATE LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
+    target_link_options(
+      libtmux_spawn_descriptors_test PRIVATE "-Wl,--wrap=getrlimit")
+  endif()
+
+  gtest_discover_tests(
+    libtmux_spawn_descriptors_test
+    TEST_PREFIX libtmux.spawn_descriptors.
+    PROPERTIES LABELS "libtmux" TIMEOUT 30)
+
   add_executable(libtmux_spawn_signals_test spawn_signals_test.cpp)
   target_include_directories(
     libtmux_spawn_signals_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
@@ -472,6 +497,10 @@ if(NOT WIN32)
     PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
   target_compile_options(
     libtmux_posix_child_test PRIVATE -fno-sanitize-recover=undefined)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_compile_definitions(
+      libtmux_posix_child_test PRIVATE LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
+  endif()
 
   gtest_discover_tests(
     libtmux_posix_child_test
@@ -511,6 +540,34 @@ if(NOT WIN32)
     libtmux_process_engine_test
     TEST_PREFIX libtmux.process_engine.
     PROPERTIES LABELS "concurrency" TIMEOUT 60)
+
+  add_executable(
+    libtmux_process_engine_failure_test process_engine_failure_test.cpp)
+  target_include_directories(
+    libtmux_process_engine_failure_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
+  target_link_libraries(
+    libtmux_process_engine_failure_test
+    PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+  target_compile_options(
+    libtmux_process_engine_failure_test PRIVATE -fno-sanitize-recover=undefined)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(
+      libtmux_process_engine_failure_test
+      PRIVATE
+        "-Wl,--wrap=kill"
+        "-Wl,--wrap=poll"
+        "-Wl,--wrap=posix_spawn_file_actions_destroy"
+        "-Wl,--wrap=posix_spawnp"
+        "-Wl,--wrap=posix_spawnattr_destroy"
+        "-Wl,--wrap=read"
+        "-Wl,--wrap=waitpid"
+        "-Wl,--wrap=write")
+  endif()
+
+  gtest_discover_tests(
+    libtmux_process_engine_failure_test
+    TEST_PREFIX libtmux.process_engine_failure.
+    PROPERTIES LABELS "concurrency" TIMEOUT 60)
 endif()
 
 add_executable(libtmux_backend_seam_test backend_seam_test.cpp)
@@ -526,14 +583,47 @@ add_test(NAME libtmux.backend_seam COMMAND libtmux_backend_seam_test)
 set_tests_properties(
   libtmux.backend_seam PROPERTIES LABELS "libtmux" TIMEOUT 30)
 
+# Portable coverage for the two-worker Windows command topology. The runner is
+# private and controlled, so launch establishment can be paused without tmux.
+add_executable(libtmux_command_engine_order_test command_engine_order_test.cpp)
+target_include_directories(
+  libtmux_command_engine_order_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_link_libraries(
+  libtmux_command_engine_order_test
+  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+target_compile_options(
+  libtmux_command_engine_order_test PRIVATE -fno-sanitize-recover=undefined)
+
+gtest_discover_tests(
+  libtmux_command_engine_order_test
+  TEST_PREFIX libtmux.command_engine.
+  PROPERTIES LABELS "concurrency" TIMEOUT 30)
+
+add_executable(libtmux_process_validation_test process_validation_test.cpp)
+target_include_directories(
+  libtmux_process_validation_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_link_libraries(
+  libtmux_process_validation_test
+  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+target_compile_options(
+  libtmux_process_validation_test PRIVATE -fno-sanitize-recover=undefined)
+
+gtest_discover_tests(
+  libtmux_process_validation_test
+  TEST_PREFIX libtmux.process_validation.
+  PROPERTIES LABELS "libtmux" TIMEOUT 30)
+
 add_executable(command_engine_exit_probe command_engine_exit_probe.cpp)
 target_include_directories(
   command_engine_exit_probe PRIVATE "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(
   command_engine_exit_probe PRIVATE libtmux_build_options libtmux::libtmux)
-add_test(NAME libtmux.command_engine.exit_detaches COMMAND command_engine_exit_probe)
+add_test(
+  NAME libtmux.command_engine.custom_backend_rejected
+  COMMAND command_engine_exit_probe)
 set_tests_properties(
-  libtmux.command_engine.exit_detaches PROPERTIES LABELS "concurrency" TIMEOUT 3)
+  libtmux.command_engine.custom_backend_rejected
+  PROPERTIES LABELS "concurrency" TIMEOUT 3)
 
 add_executable(libtmux_client_test integration/client_test.cpp)
 target_link_libraries(
@@ -592,6 +682,8 @@ target_link_libraries(
   libtmux_server_contract_test
   PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
+target_include_directories(
+  libtmux_server_contract_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
 target_compile_options(
   libtmux_server_contract_test PRIVATE -fno-sanitize-recover=undefined)
 
@@ -648,6 +740,13 @@ foreach(control_case parser integration)
   target_compile_options(
     libtmux_control_${control_case}_test PRIVATE -fno-sanitize-recover=undefined)
 endforeach()
+target_include_directories(
+  libtmux_control_integration_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_compile_definitions(
+    libtmux_control_integration_test
+    PRIVATE LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
+endif()
 
 include(GoogleTest)
 gtest_discover_tests(
@@ -703,7 +802,8 @@ foreach(
   cardinality_refuses_a_produced_element
   capture_lines_refuses_a_temporary
   parse_refuses_a_temporary
-  relation_join_refuses_a_temporary)
+  relation_join_refuses_a_temporary
+  no_implicit_submit)
   add_library(libtmux_compile_${probe} OBJECT EXCLUDE_FROM_ALL compile/${probe}.cpp)
   target_link_libraries(
     libtmux_compile_${probe} PRIVATE libtmux_build_options libtmux::libtmux)

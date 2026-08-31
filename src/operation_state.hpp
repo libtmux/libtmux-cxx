@@ -120,8 +120,75 @@ public:
   virtual void release_admission() noexcept = 0;
 };
 
+// Handles keep this relay alive without retaining the operation result. The
+// wake hook ends at transport retirement; only disposition state outlives it.
+class OperationRelay final {
+public:
+  explicit OperationRelay(std::shared_ptr<OperationHooks> hooks) noexcept
+      : hooks_{std::move(hooks)} {
+    assert(hooks_);
+  }
+
+  [[nodiscard]] bool request_cancel() {
+    std::shared_ptr<OperationHooks> hooks;
+    {
+      std::lock_guard lock{mutex_};
+      if (cancellation_requested_ || outcome_published_ || retired_) {
+        return false;
+      }
+      cancellation_requested_ = true;
+      hooks = hooks_;
+    }
+    hooks->wake_reactor();
+    return true;
+  }
+
+  [[nodiscard]] bool cancel_requested() const {
+    std::lock_guard lock{mutex_};
+    return cancellation_requested_;
+  }
+
+  void mark_outcome_published() {
+    std::lock_guard lock{mutex_};
+    outcome_published_ = true;
+  }
+
+  void select_callback(CompletionToken token) {
+    std::lock_guard lock{mutex_};
+    assert(!observer_token_.has_value());
+    observer_token_ = token;
+  }
+
+  void finish_callback(CompletionToken token) noexcept {
+    std::lock_guard lock{mutex_};
+    if (observer_token_ == token) {
+      observer_token_.reset();
+    }
+  }
+
+  [[nodiscard]] bool observing_callback(CompletionToken token) const {
+    std::lock_guard lock{mutex_};
+    return observer_token_ == token;
+  }
+
+  void retire() noexcept {
+    std::lock_guard lock{mutex_};
+    retired_ = true;
+    hooks_.reset();
+  }
+
+private:
+  mutable std::mutex mutex_;
+  std::shared_ptr<OperationHooks> hooks_;
+  std::optional<CompletionToken> observer_token_;
+  bool cancellation_requested_{false};
+  bool outcome_published_{false};
+  bool retired_{false};
+};
+
 template <typename T> class OperationState;
 template <typename T> class Operation;
+template <typename T> class OperationCancellation;
 template <typename T> class OperationSource;
 template <typename T> class Subscription;
 
@@ -139,7 +206,8 @@ template <typename T>
 template <typename T> class OperationState final {
 public:
   explicit OperationState(std::shared_ptr<OperationHooks> hooks)
-      : abandoned_outcome_{make_abandoned_outcome<T>()}, hooks_{std::move(hooks)} {
+      : abandoned_outcome_{make_abandoned_outcome<T>()}, hooks_{std::move(hooks)},
+        relay_{std::make_shared<OperationRelay>(hooks_)} {
     assert(hooks_);
   }
 
@@ -154,6 +222,7 @@ public:
       if (outcome_) {
         return false;
       }
+      relay_->mark_outcome_published();
       outcome_ = std::move(published_outcome);
       discarded_outcome = std::move(abandoned_outcome_);
       if (observer_ == ObserverPhase::callback) {
@@ -169,25 +238,9 @@ public:
     return true;
   }
 
-  [[nodiscard]] bool request_cancel() {
-    std::shared_ptr<OperationHooks> hooks;
-    {
-      std::lock_guard lock{mutex_};
-      if (cancellation_requested_ || outcome_ ||
-          transport_ == TransportPhase::retired) {
-        return false;
-      }
-      cancellation_requested_ = true;
-      hooks = hooks_;
-    }
-    hooks->wake_reactor();
-    return true;
-  }
+  [[nodiscard]] bool request_cancel() { return relay_->request_cancel(); }
 
-  [[nodiscard]] bool cancel_requested() const {
-    std::lock_guard lock{mutex_};
-    return cancellation_requested_;
-  }
+  [[nodiscard]] bool cancel_requested() const { return relay_->cancel_requested(); }
 
   [[nodiscard]] bool outcome_published() const {
     std::lock_guard lock{mutex_};
@@ -211,6 +264,7 @@ public:
     observer_ = ObserverPhase::callback;
     observer_token_ = token;
     observer_mailbox_ = std::move(mailbox);
+    relay_->select_callback(token);
   }
 
   [[nodiscard]] OperationResult<T> wait_and_take() {
@@ -238,6 +292,7 @@ public:
       assert(observer_ == ObserverPhase::callback);
       assert(observer_token_ == token);
       observer_ = ObserverPhase::delivered;
+      relay_->finish_callback(token);
       observer_token_ = {};
       observer_mailbox_ = {};
       release = release_hook_locked();
@@ -248,11 +303,6 @@ public:
     return move_result_alternative(*outcome_);
   }
 
-  [[nodiscard]] bool observing_callback(CompletionToken token) const {
-    std::lock_guard lock{mutex_};
-    return observer_ == ObserverPhase::callback && observer_token_ == token;
-  }
-
   void detach_callback(CompletionToken token) noexcept {
     std::shared_ptr<OperationHooks> release;
     {
@@ -261,6 +311,7 @@ public:
         return;
       }
       observer_ = ObserverPhase::detached;
+      relay_->finish_callback(token);
       observer_token_ = {};
       observer_mailbox_ = {};
       release = release_hook_locked();
@@ -302,6 +353,7 @@ public:
                                           ? DeliveryStatus::not_started
                                           : DeliveryStatus::indeterminate;
       transport_ = TransportPhase::retired;
+      relay_->retire();
       if (!outcome_) {
         assert(abandoned_outcome_);
         assert(!abandoned_outcome_->has_value());
@@ -330,6 +382,8 @@ public:
   }
 
 private:
+  friend class OperationCancellation<T>;
+
   void advance_transport(TransportPhase phase) {
     std::lock_guard lock{mutex_};
     assert(transport_ <= phase);
@@ -352,12 +406,35 @@ private:
   std::unique_ptr<OperationResult<T>> outcome_;
   std::unique_ptr<OperationResult<T>> abandoned_outcome_;
   std::shared_ptr<OperationHooks> hooks_;
+  std::shared_ptr<OperationRelay> relay_;
   CompletionToken observer_token_{};
   WeakCompletionMailbox observer_mailbox_;
   ObserverPhase observer_{ObserverPhase::unselected};
   TransportPhase transport_{TransportPhase::queued};
-  bool cancellation_requested_{false};
   bool admission_released_{false};
+};
+
+template <typename T> class OperationCancellation final {
+public:
+  OperationCancellation() noexcept = default;
+
+  [[nodiscard]] bool request_cancel() const {
+    return relay_ && relay_->request_cancel();
+  }
+
+private:
+  friend class Operation<T>;
+  friend class Subscription<T>;
+
+  explicit OperationCancellation(
+      const std::shared_ptr<OperationState<T>>& state) noexcept
+      : relay_{state->relay_} {}
+
+  [[nodiscard]] bool observing(CompletionToken token) const {
+    return relay_ && relay_->observing_callback(token);
+  }
+
+  std::shared_ptr<OperationRelay> relay_;
 };
 
 template <typename T> class Operation final {
@@ -378,6 +455,13 @@ public:
   }
 
   [[nodiscard]] bool request_cancel() { return state_ && state_->request_cancel(); }
+
+  [[nodiscard]] OperationCancellation<T> cancellation() const noexcept {
+    if (!state_) {
+      return {};
+    }
+    return OperationCancellation<T>{state_};
+  }
 
   [[nodiscard]] Subscription<T> subscribe(CompletionQueue& queue,
                                           OperationCallback<T> callback) &&;
@@ -457,44 +541,48 @@ public:
   Subscription& operator=(const Subscription&) = delete;
 
   Subscription(Subscription&& other) noexcept
-      : state_{std::move(other.state_)}, mailbox_{std::move(other.mailbox_)},
-        token_{std::exchange(other.token_, {})} {}
+      : cancellation_{std::move(other.cancellation_)},
+        mailbox_{std::move(other.mailbox_)},
+        token_{std::exchange(other.token_, std::nullopt)} {}
 
   Subscription& operator=(Subscription&& other) noexcept {
     if (this != &other) {
       detach();
-      state_ = std::move(other.state_);
+      cancellation_ = std::move(other.cancellation_);
       mailbox_ = std::move(other.mailbox_);
-      token_ = std::exchange(other.token_, {});
+      token_ = std::exchange(other.token_, std::nullopt);
     }
     return *this;
   }
 
-  [[nodiscard]] bool request_cancel() { return state_ && state_->request_cancel(); }
+  [[nodiscard]] bool request_cancel() const { return cancellation_.request_cancel(); }
 
   [[nodiscard]] bool observing() const {
-    return state_ && state_->observing_callback(token_);
+    return token_.has_value() && cancellation_.observing(*token_);
   }
 
+  [[nodiscard]] bool registered() const noexcept { return token_.has_value(); }
+
   void detach() noexcept {
-    if (state_) {
-      mailbox_.detach(token_);
-      state_.reset();
-      mailbox_ = {};
-      token_ = {};
+    if (token_) {
+      mailbox_.detach(*token_);
     }
+    cancellation_ = {};
+    mailbox_ = {};
+    token_.reset();
   }
 
 private:
   friend class Operation<T>;
 
-  Subscription(std::shared_ptr<OperationState<T>> state, WeakCompletionMailbox mailbox,
-               CompletionToken token) noexcept
-      : state_{std::move(state)}, mailbox_{std::move(mailbox)}, token_{token} {}
+  Subscription(OperationCancellation<T> cancellation, WeakCompletionMailbox mailbox,
+               std::optional<CompletionToken> token) noexcept
+      : cancellation_{std::move(cancellation)}, mailbox_{std::move(mailbox)},
+        token_{std::move(token)} {}
 
-  std::shared_ptr<OperationState<T>> state_;
+  OperationCancellation<T> cancellation_;
   WeakCompletionMailbox mailbox_;
-  CompletionToken token_{};
+  std::optional<CompletionToken> token_;
 };
 
 template <typename T>
@@ -504,6 +592,7 @@ Subscription<T> Operation<T>::subscribe(CompletionQueue& queue,
   assert(state_);
   const auto token = queue.next_token();
   auto mailbox = queue.mailbox();
+  auto cancellation = this->cancellation();
   auto state = std::move(state_);
   state->select_callback(token, mailbox);
   ObserverLease<T> lease{state, token};
@@ -512,7 +601,8 @@ Subscription<T> Operation<T>::subscribe(CompletionQueue& queue,
   if (registered && state->outcome_published()) {
     static_cast<void>(mailbox.enqueue(token));
   }
-  return Subscription<T>{std::move(state), std::move(mailbox), token};
+  return Subscription<T>{std::move(cancellation), std::move(mailbox),
+                         registered ? std::optional{token} : std::nullopt};
 }
 
 template <typename T> class OperationSource final {

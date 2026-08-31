@@ -3,8 +3,8 @@
 // The library talks to tmux through one private interface. This test supplies
 // a different implementation of it — one that launches nothing and answers
 // from a script — and drives the whole public surface over it. That proves two
-// things at once: an async executor can be dropped in without
-// touching an installed header, and the exact argv every operation sends,
+// things at once: unsupported async backends fail before dispatch without
+// changing an installed header, and the exact argv every operation sends,
 // which a test against a live server can only observe indirectly.
 
 #include <algorithm>
@@ -14,7 +14,6 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
-#include <semaphore>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -65,10 +64,6 @@ public:
     issued.push_back(command.argv());
     command_timeouts.push_back(timeout);
     command_output_limits.push_back(output_limit);
-    if (gate_run) {
-      run_started.release();
-      continue_run.acquire();
-    }
     std::this_thread::sleep_for(delay);
     if (replies_.empty()) {
       return unexpected(CommandFailure{.kind = FailureKind::refused,
@@ -119,9 +114,6 @@ public:
   mutable std::vector<std::optional<std::size_t>> version_output_limits;
   mutable std::size_t version_queries{};
   std::chrono::milliseconds delay{};
-  bool gate_run{false};
-  mutable std::binary_semaphore run_started{0};
-  mutable std::binary_semaphore continue_run{0};
 
 private:
   mutable std::vector<std::string> replies_;
@@ -212,73 +204,44 @@ TEST(BackendSeam, TheWholeSurfaceRunsOverASubstitutedExecutor) {
   EXPECT_EQ(backend->issued.front().at(1), "-F");
 }
 
-TEST(BackendSeam, SubmissionReturnsBeforeAFallbackBackendAnswers) {
-  auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{"later"});
-  backend->delay = std::chrono::milliseconds{300};
-  const Server server = libtmux::detail::server_over(backend);
-
-  const auto started = std::chrono::steady_clock::now();
-  auto submitted = server.submit({"display-message", "-p", "later"});
-  const auto submit_took = std::chrono::steady_clock::now() - started;
-
-  ASSERT_TRUE(submitted.has_value()) << submitted.error().diagnostic;
-  EXPECT_LT(submit_took, std::chrono::milliseconds{100});
-  auto answer = std::move(*submitted).wait();
-  ASSERT_TRUE(answer.has_value()) << answer.error().diagnostic;
-  EXPECT_EQ(*answer, "later");
-}
-
-TEST(BackendSeam, DroppingAnOperationDoesNotWaitForItsFallbackBackend) {
-  auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{"later"});
-  backend->gate_run = true;
-  const Server server = libtmux::detail::server_over(backend);
-
-  auto submitted = server.submit({"display-message", "-p", "later"});
-  ASSERT_TRUE(submitted.has_value()) << submitted.error().diagnostic;
-  ASSERT_TRUE(backend->run_started.try_acquire_for(std::chrono::seconds{1}));
-
-  std::binary_semaphore dropped{0};
-  std::thread dropper{[operation = std::move(*submitted), &dropped]() mutable {
-    std::optional<libtmux::CommandOperation> held{std::move(operation)};
-    held.reset();
-    dropped.release();
-  }};
-  const bool returned = dropped.try_acquire_for(std::chrono::seconds{1});
-  backend->continue_run.release();
-  dropper.join();
-
-  EXPECT_TRUE(returned);
-}
-
-TEST(BackendSeam, QueuedFallbackCancellationPreventsDispatch) {
-  auto first_backend =
-      std::make_shared<ScriptedBackend>(std::vector<std::string>{"first"});
-  auto second_backend =
-      std::make_shared<ScriptedBackend>(std::vector<std::string>{"second"});
-  auto cancelled_backend =
+TEST(BackendSeam, RuntimeBackendMismatchesAreRejectedBeforeAdmission) {
+  auto backend =
       std::make_shared<ScriptedBackend>(std::vector<std::string>{"must not run"});
-  first_backend->delay = std::chrono::milliseconds{300};
-  second_backend->delay = std::chrono::milliseconds{300};
-  const Server first_server = libtmux::detail::server_over(first_backend);
-  const Server second_server = libtmux::detail::server_over(second_backend);
-  const Server cancelled_server = libtmux::detail::server_over(cancelled_backend);
+  const Server server = libtmux::detail::server_over(backend);
+  auto runtime = libtmux::CommandRuntime::start();
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().diagnostic;
 
-  auto first = first_server.submit({"display-message", "-p", "first"});
-  auto second = second_server.submit({"display-message", "-p", "second"});
-  auto cancelled = cancelled_server.submit({"display-message", "-p", "must not run"});
-  ASSERT_TRUE(first.has_value());
-  ASSERT_TRUE(second.has_value());
-  ASSERT_TRUE(cancelled.has_value());
-  EXPECT_TRUE(cancelled->request_cancel());
+  auto submitted =
+      server.try_submit(*runtime, {"display-message", "-p", "must not run"});
 
-  EXPECT_TRUE(std::move(*first).wait().has_value());
-  EXPECT_TRUE(std::move(*second).wait().has_value());
-  auto answer = std::move(*cancelled).wait();
+  ASSERT_FALSE(submitted.has_value());
+  EXPECT_EQ(submitted.error().kind, FailureKind::unsupported);
+  EXPECT_EQ(submitted.error().delivery, libtmux::DeliveryStatus::not_started);
+  EXPECT_TRUE(backend->issued.empty());
+  const auto snapshot = runtime->snapshot();
+  EXPECT_EQ(snapshot.accepted, 0U);
+  EXPECT_EQ(snapshot.refused, 1U);
+  EXPECT_EQ(snapshot.in_flight, 0U);
+}
 
-  ASSERT_FALSE(answer.has_value());
-  EXPECT_EQ(answer.error().kind, FailureKind::cancelled);
-  EXPECT_EQ(answer.error().delivery, libtmux::DeliveryStatus::not_started);
-  EXPECT_TRUE(cancelled_backend->issued.empty());
+TEST(BackendSeam, CustomBackendsAreRejectedBeforeAdmission) {
+  auto backend =
+      std::make_shared<ScriptedBackend>(std::vector<std::string>{"must not run"});
+  backend->declared = {.implementation = libtmux::ServerImplementation::tmux,
+                       .backend = libtmux::BackendKind::subprocess};
+  const Server server = libtmux::detail::server_over(backend);
+  auto runtime = libtmux::CommandRuntime::start();
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().diagnostic;
+
+  auto submitted =
+      server.try_submit(*runtime, {"display-message", "-p", "must not run"});
+
+  ASSERT_FALSE(submitted.has_value());
+  EXPECT_EQ(submitted.error().kind, FailureKind::unsupported);
+  EXPECT_EQ(submitted.error().delivery, libtmux::DeliveryStatus::not_started);
+  EXPECT_TRUE(backend->issued.empty());
+  EXPECT_EQ(runtime->snapshot().accepted, 0U);
+  EXPECT_EQ(runtime->snapshot().refused, 1U);
 }
 
 TEST(BackendSeam, EveryOperationSendsTheArgvItClaimsTo) {

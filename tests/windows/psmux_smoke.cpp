@@ -377,6 +377,109 @@ void report_command(std::string_view message, const CommandFailure& failure) {
   std::cerr << "FAIL: " << message << ": " << failure.diagnostic << '\n';
 }
 
+[[nodiscard]] bool exact_pre_admission_refusal(libtmux::CommandRuntime& runtime,
+                                               std::size_t observed,
+                                               std::string_view description) {
+  const auto snapshot = runtime.snapshot();
+  return require(snapshot.accepted == 0U && snapshot.completed == 0U &&
+                     snapshot.refused == 1U && snapshot.in_flight == 0U &&
+                     snapshot.pending_results == 0U && snapshot.pending_observers == 0U,
+                 std::string{description} + " must not change admitted state") &&
+         require(runtime.dispatch_ready() == 0U && observed == 0U,
+                 std::string{description} + " must queue no callback");
+}
+
+[[nodiscard]] bool test_runtime_validation(std::string_view socket_name) {
+  std::size_t observed = 0U;
+  auto observed_server = Server::at_socket_name(
+      socket_name,
+      [&observed](std::string_view, const CommandFailure*) { ++observed; });
+  if (!observed_server.has_value()) {
+    report_command("could not construct observed validation server",
+                   observed_server.error());
+    return false;
+  }
+
+  auto malformed_runtime = libtmux::CommandRuntime::start({.capacity = 1U});
+  if (!malformed_runtime.has_value()) {
+    report_command("could not start malformed-input runtime",
+                   malformed_runtime.error());
+    return false;
+  }
+  libtmux::CommandRequest malformed{"display-message", "-p"};
+  malformed.emplace_back(std::string{"\xff", 1U});
+  auto malformed_result =
+      observed_server->try_submit(*malformed_runtime, std::move(malformed));
+  if (!require(!malformed_result.has_value() &&
+                   malformed_result.error().kind == libtmux::FailureKind::validation &&
+                   not_started(malformed_result.error()),
+               "malformed Windows argv must be an outer validation refusal") ||
+      !exact_pre_admission_refusal(*malformed_runtime, observed,
+                                   "malformed Windows argv")) {
+    return false;
+  }
+  auto available = observed_server->try_submit(
+      *malformed_runtime, {"display-message", "-p", "after-refusal"});
+  if (!require(available.has_value(),
+               "a refused command must leave the sole runtime slot available")) {
+    return false;
+  }
+  auto available_answer = std::move(*available).wait();
+  if (!require(available_answer.has_value(),
+               "the command admitted after refusal must complete") ||
+      !require(malformed_runtime->dispatch_ready() == 1U && observed == 1U,
+               "the post-refusal command must queue exactly one callback") ||
+      !require(malformed_runtime->close().safe_to_unload,
+               "the malformed-input runtime must close cleanly")) {
+    return false;
+  }
+
+  observed = 0U;
+  const std::string malformed_selector =
+      std::string{socket_name} + std::string{"-\xff", 2U};
+  auto selector_server = Server::at_socket_name(
+      malformed_selector,
+      [&observed](std::string_view, const CommandFailure*) { ++observed; });
+  if (!selector_server.has_value()) {
+    report_command("could not construct malformed-selector server",
+                   selector_server.error());
+    return false;
+  }
+  auto selector_runtime = libtmux::CommandRuntime::start({.capacity = 1U});
+  if (!selector_runtime.has_value()) {
+    report_command("could not start selector runtime", selector_runtime.error());
+    return false;
+  }
+  auto selector_result = selector_server->try_submit(
+      *selector_runtime, {"display-message", "-p", "must not run"});
+  if (!require(!selector_result.has_value() &&
+                   selector_result.error().kind == libtmux::FailureKind::validation &&
+                   not_started(selector_result.error()),
+               "malformed psmux -L must be an outer validation refusal") ||
+      !exact_pre_admission_refusal(*selector_runtime, observed, "malformed psmux -L") ||
+      !require(selector_runtime->close().safe_to_unload,
+               "the malformed-selector runtime must close cleanly")) {
+    return false;
+  }
+
+  observed = 0U;
+  auto length_runtime = libtmux::CommandRuntime::start({.capacity = 1U});
+  if (!length_runtime.has_value()) {
+    report_command("could not start command-line runtime", length_runtime.error());
+    return false;
+  }
+  auto length_result = observed_server->try_submit(
+      *length_runtime, {"display-message", "-p", std::string(32767U, 'x')});
+  return require(!length_result.has_value() &&
+                     length_result.error().kind == libtmux::FailureKind::validation &&
+                     not_started(length_result.error()),
+                 "an overlong Windows command line must be an outer refusal") &&
+         exact_pre_admission_refusal(*length_runtime, observed,
+                                     "overlong Windows command line") &&
+         require(length_runtime->close().safe_to_unload,
+                 "the command-line runtime must close cleanly");
+}
+
 [[nodiscard]] std::string unique_namespace() {
   const auto tick = std::chrono::steady_clock::now().time_since_epoch().count();
   return std::string{kNamespacePrefix} + std::to_string(GetCurrentProcessId()) + "-" +
@@ -980,21 +1083,30 @@ int main() {
     return EXIT_FAILURE;
   }
 
+  if (!test_runtime_validation(socket_name)) {
+    return EXIT_FAILURE;
+  }
+
+  auto runtime = libtmux::CommandRuntime::start();
+  if (!runtime) {
+    report_command("CommandRuntime::start failed", runtime.error());
+    return EXIT_FAILURE;
+  }
   const std::string completion_channel = socket_name + "-submit-completion";
   DelayedSignal completion_fallback{socket_name, completion_channel, 2s};
   const auto submit_started = std::chrono::steady_clock::now();
-  auto submitted = server.submit({"wait-for", completion_channel}, 10s);
+  auto submitted = server.try_submit(*runtime, {"wait-for", completion_channel}, 10s);
   const auto submit_took = std::chrono::steady_clock::now() - submit_started;
   const auto completion_signal =
       raw_psmux(socket_name, {"wait-for", "-S", completion_channel});
   completion_fallback.stop();
   if (!submitted) {
-    report_command("Server::submit rejected a psmux waiter", submitted.error());
+    report_command("Server::try_submit rejected a psmux waiter", submitted.error());
     return EXIT_FAILURE;
   }
   auto completed = std::move(*submitted).wait();
   if (!require(submit_took < 500ms,
-               "Server::submit must return before psmux completes") ||
+               "Server::try_submit must return before psmux completes") ||
       !require(completion_signal && completion_signal->exit_code == 0,
                "could not release the submitted psmux waiter") ||
       !require(completed.has_value(),
@@ -1009,12 +1121,13 @@ int main() {
                "could not configure the cancellation marker")) {
     return EXIT_FAILURE;
   }
-  auto cancellable = server.submit(
+  auto cancellable = server.try_submit(
+      *runtime,
       {"run-shell", "Set-Content -LiteralPath $env:LIBTMUX_CXX_CANCELLATION_MARKER "
                     "-Value started; Start-Sleep -Seconds 30"},
       10s);
   if (!cancellable.has_value()) {
-    report_command("Server::submit rejected a cancellable psmux waiter",
+    report_command("Server::try_submit rejected a cancellable psmux waiter",
                    cancellable.error());
     return EXIT_FAILURE;
   }
@@ -1038,6 +1151,13 @@ int main() {
       !require(marker_unset, "could not clear the cancellation marker") ||
       !require(cancellation_marker_cleanup.finish(),
                "could not remove the cancellation marker")) {
+    return EXIT_FAILURE;
+  }
+  const auto runtime_shutdown = runtime->close();
+  if (!require(runtime_shutdown.transports_stopped,
+               "the explicit command runtime did not stop its workers") ||
+      !require(runtime_shutdown.safe_to_unload,
+               "the explicit command runtime retained completed work")) {
     return EXIT_FAILURE;
   }
 

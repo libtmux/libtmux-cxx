@@ -1,17 +1,23 @@
 // The POSIX child owner, against real processes. Ownership is only proven by
 // actual pipe, signal and reap facts, so nothing here is scripted.
 #include "posix_child.hpp"
+#include "spawn_descriptors.hpp"
 
 #include <gtest/gtest.h>
 
 #include <array>
+#include <cerrno>
+#include <condition_variable>
 #include <csignal>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <variant>
 
+#include <fcntl.h>
 #include <poll.h>
 #if defined(__linux__)
+#include <sys/resource.h>
 #include <sys/syscall.h>
 #endif
 #include <pthread.h>
@@ -27,6 +33,77 @@ using libtmux::detail::PosixChild;
 using libtmux::detail::ProcessError;
 using libtmux::detail::ProcessRequest;
 using libtmux::detail::Signaled;
+
+#if defined(__linux__)
+struct LateMarker final {
+  std::mutex mutex;
+  std::condition_variable changed;
+  std::array<int, 2> descriptors{-1, -1};
+  int error{0};
+  int policy_error{0};
+  rlimit raised_limit{};
+  rlimit restored_limit{};
+  int minimum_descriptor{3};
+  bool raise_soft_limit{false};
+  bool policy_ready{false};
+  bool marker_ready{false};
+  bool cancelled{false};
+
+  void open_after_policy() {
+    std::unique_lock lock{mutex};
+    changed.wait(lock, [this] { return policy_ready || cancelled; });
+    if (cancelled || policy_error != 0) {
+      return;
+    }
+    lock.unlock();
+    if (raise_soft_limit && ::setrlimit(RLIMIT_NOFILE, &raised_limit) != 0) {
+      error = errno;
+    }
+    if (error == 0 && ::pipe(descriptors.data()) != 0) {
+      error = errno;
+    }
+    if (error == 0 && descriptors[0] < minimum_descriptor) {
+      const auto high_descriptor = ::fcntl(descriptors[0], F_DUPFD, minimum_descriptor);
+      if (high_descriptor < minimum_descriptor) {
+        error = errno;
+      } else {
+        const auto low_descriptor = descriptors[0];
+        descriptors[0] = high_descriptor;
+        if (::close(low_descriptor) != 0) {
+          error = errno;
+        }
+      }
+    }
+    if (raise_soft_limit && ::setrlimit(RLIMIT_NOFILE, &restored_limit) != 0 &&
+        error == 0) {
+      error = errno;
+    }
+    lock.lock();
+    marker_ready = true;
+    changed.notify_all();
+  }
+
+  void finish_policy(int result) {
+    std::unique_lock lock{mutex};
+    policy_error = result;
+    policy_ready = true;
+    changed.notify_all();
+    if (result == 0) {
+      changed.wait(lock, [this] { return marker_ready || cancelled; });
+    }
+  }
+
+  void cancel() {
+    std::lock_guard lock{mutex};
+    cancelled = true;
+    changed.notify_all();
+  }
+};
+
+LateMarker* pending_marker = nullptr;
+
+void finish_descriptor_policy(int result) { pending_marker->finish_policy(result); }
+#endif
 
 ProcessRequest shell(std::string script) {
   ProcessRequest request;
@@ -203,6 +280,149 @@ TEST(PosixChild, GivesTheChildAnUnblockedSignalMask) {
   ASSERT_EQ(launched->status(), ChildStatus::exited);
   EXPECT_TRUE(std::holds_alternative<Signaled>(launched->termination()));
 }
+
+#if defined(__linux__)
+TEST(PosixChild, ForcedNumericPolicyDoesNotLeakAConcurrentHighDescriptor) {
+  constexpr rlim_t lowered_soft_limit = 256U;
+  constexpr int minimum_marker_descriptor = 512;
+  rlimit original_limit{};
+  ASSERT_EQ(::getrlimit(RLIMIT_NOFILE, &original_limit), 0);
+  if (original_limit.rlim_max == RLIM_INFINITY ||
+      original_limit.rlim_max <= static_cast<rlim_t>(minimum_marker_descriptor)) {
+    GTEST_SKIP() << "a finite descriptor hard limit above 512 is required";
+  }
+  auto lowered_limit = original_limit;
+  lowered_limit.rlim_cur = lowered_soft_limit;
+  ASSERT_EQ(::setrlimit(RLIMIT_NOFILE, &lowered_limit), 0);
+
+  LateMarker marker;
+  marker.raised_limit = original_limit;
+  marker.raised_limit.rlim_cur = original_limit.rlim_max;
+  marker.restored_limit = lowered_limit;
+  marker.minimum_descriptor = minimum_marker_descriptor;
+  marker.raise_soft_limit = true;
+  pending_marker = &marker;
+  std::thread opener{[&marker] { marker.open_after_policy(); }};
+  libtmux::detail::force_numeric_spawn_descriptor_policy_for_test(
+      finish_descriptor_policy);
+
+  auto launched = PosixChild::launch(shell("printf intended; sleep 30"));
+  libtmux::detail::clear_spawn_descriptor_policy_test_override();
+  marker.cancel();
+  opener.join();
+  pending_marker = nullptr;
+  const auto restore_result = ::setrlimit(RLIMIT_NOFILE, &original_limit);
+
+  if (!launched.has_value()) {
+    for (const auto descriptor : marker.descriptors) {
+      if (descriptor >= 0) {
+        static_cast<void>(::close(descriptor));
+      }
+    }
+    ASSERT_EQ(restore_result, 0);
+#if defined(__GLIBC__)
+    ASSERT_EQ(marker.policy_error, EBADF);
+    ASSERT_EQ(marker.error, 0);
+    ASSERT_EQ(marker.descriptors, (std::array<int, 2>{-1, -1}));
+    EXPECT_EQ(launched.error().kind, ProcessError::Kind::pipe);
+    EXPECT_EQ(launched.error().delivery, libtmux::DeliveryStatus::not_started);
+#else
+    FAIL() << launched.error().diagnostic;
+#endif
+    return;
+  }
+  if (marker.policy_error != 0 || marker.error != 0 ||
+      marker.descriptors[0] < minimum_marker_descriptor || marker.descriptors[1] < 3) {
+    launched->signal_group(SIGKILL);
+    run_to_completion(*launched);
+    for (const auto descriptor : marker.descriptors) {
+      if (descriptor >= 0) {
+        static_cast<void>(::close(descriptor));
+      }
+    }
+    ASSERT_EQ(restore_result, 0);
+    ASSERT_EQ(marker.policy_error, 0);
+    ASSERT_EQ(marker.error, 0);
+    ASSERT_GE(marker.descriptors[0], minimum_marker_descriptor);
+    ASSERT_GE(marker.descriptors[1], 3);
+    return;
+  }
+  ASSERT_EQ(restore_result, 0);
+  ASSERT_EQ(marker.policy_error, 0);
+  ASSERT_EQ(marker.error, 0);
+  ASSERT_GE(marker.descriptors[0], minimum_marker_descriptor);
+  ASSERT_GE(marker.descriptors[1], 3);
+  EXPECT_EQ(::close(marker.descriptors[0]), 0);
+
+  pollfd output{.fd = launched->descriptor(ChildStream::stdout_stream),
+                .events = POLLIN,
+                .revents = 0};
+  const auto output_ready = ::poll(&output, 1, 2000);
+  if (output_ready == 1) {
+    static_cast<void>(launched->drain_once(ChildStream::stdout_stream,
+                                           ChildClock::now() + std::chrono::seconds{1},
+                                           libtmux::DeliveryStatus::indeterminate));
+  }
+  pollfd inherited{.fd = marker.descriptors[1], .events = POLLOUT, .revents = 0};
+  const auto marker_ready = ::poll(&inherited, 1, 1000);
+
+  launched->signal_group(SIGKILL);
+  run_to_completion(*launched);
+  const auto capture = launched->take_capture();
+  static_cast<void>(::close(marker.descriptors[1]));
+
+  ASSERT_EQ(output_ready, 1);
+  EXPECT_EQ(text(capture.stdout_bytes), "intended");
+  ASSERT_EQ(marker_ready, 1);
+  EXPECT_NE(inherited.revents & POLLERR, 0);
+}
+
+#if defined(__GLIBC__)
+TEST(PosixChild, ForcedNumericPolicyRefusesAMarkerAboveALoweredSoftLimit) {
+  constexpr rlim_t lowered_soft_limit = 256U;
+  constexpr int minimum_marker_descriptor = 512;
+  rlimit original_limit{};
+  ASSERT_EQ(::getrlimit(RLIMIT_NOFILE, &original_limit), 0);
+  if (original_limit.rlim_max == RLIM_INFINITY ||
+      original_limit.rlim_max <= static_cast<rlim_t>(minimum_marker_descriptor) ||
+      original_limit.rlim_cur <= static_cast<rlim_t>(minimum_marker_descriptor)) {
+    GTEST_SKIP() << "a finite descriptor hard limit above 512 is required";
+  }
+
+  std::array<int, 2> marker{-1, -1};
+  ASSERT_EQ(::pipe(marker.data()), 0);
+  const auto high_marker = ::fcntl(marker[0], F_DUPFD, minimum_marker_descriptor);
+  ASSERT_GE(high_marker, minimum_marker_descriptor);
+  ASSERT_EQ(::close(marker[0]), 0);
+  marker[0] = high_marker;
+
+  auto lowered_limit = original_limit;
+  lowered_limit.rlim_cur = lowered_soft_limit;
+  ASSERT_EQ(::setrlimit(RLIMIT_NOFILE, &lowered_limit), 0);
+  LateMarker late_marker;
+  pending_marker = &late_marker;
+  std::thread opener{[&late_marker] { late_marker.open_after_policy(); }};
+  libtmux::detail::force_numeric_spawn_descriptor_policy_for_test(
+      finish_descriptor_policy);
+  auto launched = PosixChild::launch(shell("printf intended; sleep 30"));
+  libtmux::detail::clear_spawn_descriptor_policy_test_override();
+  late_marker.cancel();
+  opener.join();
+  pending_marker = nullptr;
+  const auto restore_result = ::setrlimit(RLIMIT_NOFILE, &original_limit);
+
+  ASSERT_EQ(restore_result, 0);
+  ASSERT_GT(marker[0], static_cast<int>(lowered_soft_limit));
+  EXPECT_EQ(::close(marker[0]), 0);
+  EXPECT_EQ(::close(marker[1]), 0);
+  ASSERT_FALSE(launched.has_value());
+  EXPECT_EQ(late_marker.policy_error, EBADF);
+  EXPECT_EQ(late_marker.descriptors, (std::array<int, 2>{-1, -1}));
+  EXPECT_EQ(launched.error().kind, ProcessError::Kind::pipe);
+  EXPECT_EQ(launched.error().delivery, libtmux::DeliveryStatus::not_started);
+}
+#endif
+#endif
 
 // Redaction is a property of the request as it is shown, so it has to hold
 // wherever a diagnostic is built from one.

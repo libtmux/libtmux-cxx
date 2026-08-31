@@ -173,6 +173,32 @@ public:
   return hooks->releases.load(std::memory_order_relaxed) == 1 ? 0 : 7;
 }
 
+[[nodiscard]] int atomic_ready_insertion_dispatches() {
+  libtmux::detail::CompletionQueue queue;
+  std::atomic_bool callback_ran{false};
+  std::atomic_bool inserted{false};
+  std::atomic_bool dispatched{false};
+  libtmux::detail::MoveOnlyFunction<void()> callback{
+      [&] { callback_ran.store(true, std::memory_order_release); }};
+
+  std::thread producer{[&] {
+    block_this_threads_next_allocation();
+    inserted.store(queue.push_ready(std::move(callback)), std::memory_order_release);
+  }};
+  wait_until_allocation_blocks();
+  std::thread consumer{
+      [&] { dispatched.store(queue.run_one(), std::memory_order_release); }};
+  release_blocked_allocation();
+  producer.join();
+  consumer.join();
+
+  return inserted.load(std::memory_order_acquire) &&
+                 dispatched.load(std::memory_order_acquire) &&
+                 callback_ran.load(std::memory_order_acquire)
+             ? 0
+             : 8;
+}
+
 } // namespace
 
 void* operator new(std::size_t size) { return allocate(size); }
@@ -197,6 +223,9 @@ int main(int argc, char** argv) {
   }
   if (mode == "registration") {
     return publication_during_registration_rechecks();
+  }
+  if (mode == "ready") {
+    return atomic_ready_insertion_dispatches();
   }
   return 1;
 }

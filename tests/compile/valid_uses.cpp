@@ -4,6 +4,7 @@
 #include <chrono>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include <libtmux/libtmux.hpp>
@@ -204,6 +205,29 @@ void capabilities_are_available_from_the_umbrella(const libtmux::Server& server)
   const bool can_inspect =
       capabilities.supports(libtmux::ServerFeature::exact_inspection);
   (void)can_inspect;
+}
+
+void asynchronous_commands_name_their_runtime(const libtmux::Server& server) {
+  auto started =
+      libtmux::CommandRuntime::start(libtmux::CommandRuntimeConfig{.capacity = 4U});
+  if (!started.has_value()) {
+    return;
+  }
+  auto runtime = *std::move(started);
+  auto submitted =
+      server.try_submit(runtime, {"display-message", "-p", "explicit runtime"});
+  if (submitted.has_value()) {
+    std::move(*submitted).detach();
+  }
+  const libtmux::CommandRuntimeSnapshot snapshot = runtime.snapshot();
+  const std::size_t dispatched = runtime.dispatch_ready();
+  const std::size_t discarded = runtime.discard_ready();
+  runtime.request_stop();
+  const libtmux::CommandRuntimeShutdown shutdown = runtime.close();
+  (void)snapshot;
+  (void)dispatched;
+  (void)discarded;
+  (void)shutdown;
 }
 
 // Binding a key, with the command as argv rather than a quoted string.

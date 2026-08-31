@@ -56,6 +56,7 @@ server-side `command-alias` redefine a built-in command.
 
 | Header | Holds |
 |---|---|
+| [`async.hpp`](async.hpp) | `CommandRuntime` — explicit bounded thread ownership, admission, results, observers, and shutdown |
 | [`batch.hpp`](batch.hpp) | One tmux invocation, one fail-fast group |
 | [`chain.hpp`](chain.hpp) | Validated as it is built; a bad target never reaches tmux |
 | [`control.hpp`](control.hpp) | `Connection` — one held-open POSIX stream of guarded blocks and outside-block events |

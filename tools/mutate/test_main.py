@@ -2,16 +2,32 @@
 
 from __future__ import annotations
 
+import pathlib
 import subprocess
 import unittest
 from unittest import mock
 
 from tools.mutate import __main__ as mutation_main
-from tools.mutate.runner import Outcome
+from tools.mutate.runner import Mutation, Outcome
 
 
 class MutationMainTest(unittest.TestCase):
     """Keep a green mutation report from hiding a broken restored tree."""
+
+    def operation_mutation(self, mutation_id: str) -> Mutation:
+        """Return one named operation-state mutation."""
+        return next(
+            mutation
+            for mutation in mutation_main.CATALOGUE
+            if mutation.mutation_id == mutation_id
+        )
+
+    def mutation_source(self, mutation_id: str) -> tuple[Mutation, str]:
+        """Return one mutation and the source text it must match."""
+        mutation = self.operation_mutation(mutation_id)
+        repository = pathlib.Path(__file__).parents[2]
+        source = (repository / mutation.path).read_text(encoding="utf-8")
+        return mutation, source
 
     def test_operation_mutations_cover_the_foundation_guards(self) -> None:
         """Keep the four operation-state race ratchets selectable."""
@@ -29,6 +45,23 @@ class MutationMainTest(unittest.TestCase):
                 "operation-source-retention",
             }.issubset(operation_ids)
         )
+
+    def test_single_publication_mutation_matches_the_current_guard(self) -> None:
+        """Keep the publication ratchet bound to one current source guard."""
+        mutation, source = self.mutation_source("operation-single-publication")
+
+        self.assertEqual(source.count(mutation.find), 1)
+
+    def test_cancellation_mutation_targets_the_templated_state(self) -> None:
+        """Keep outcome publication out of the non-template relay mutation."""
+        mutation, source = self.mutation_source("operation-cancellation-source-owned")
+
+        occurrence = source.find(mutation.find)
+        operation_state = source.index(
+            "template <typename T> class OperationState final"
+        )
+        self.assertEqual(source.count(mutation.find), 1)
+        self.assertGreater(occurrence, operation_state)
 
     def run_main_with_restore_status(self, status: int) -> int:
         """Run one mocked mutation and return the command status."""

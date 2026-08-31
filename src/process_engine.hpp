@@ -15,13 +15,18 @@
 #include <condition_variable>
 #include <cstddef>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <string_view>
+#include <system_error>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "libtmux/expected.hpp"
+#include "move_only_function.hpp"
 #include "operation_state.hpp"
 #include "posix_child.hpp"
 #include "process.hpp"
@@ -29,11 +34,22 @@
 LIBTMUX_NAMESPACE_BEGIN
 namespace detail {
 
+enum class EngineReactorEvent {
+  waiting_for_launch,
+  exited,
+};
+
 struct EngineConfig final {
   // Accepted work in flight. Submission past this is refused rather than
   // queued, so a caller learns immediately instead of waiting behind a bound
   // it cannot see.
   std::size_t operation_limit{256U};
+  // A private scheduling seam for deterministic admission-race coverage.
+  std::function<void()> admission_gate{};
+  // A private pre-spawn seam for deterministic FIFO launch coverage.
+  std::function<void(const ProcessRequest&)> launch_observer{};
+  // A private scheduling seam for deterministic reactor shutdown coverage.
+  std::function<void(EngineReactorEvent)> reactor_observer{};
 };
 
 // What shutdown could not finish, so a caller is told rather than assured.
@@ -48,6 +64,7 @@ struct EnginePending final {
   ProcessRequest request;
   OperationSource<ProcessReply> source;
   std::optional<ChildClock::time_point> deadline;
+  MoveOnlyFunction<void()> retirement_hook;
 };
 
 // A child the reactor owns.
@@ -57,11 +74,47 @@ struct EngineLive final {
   std::optional<ChildClock::time_point> deadline;
   ChildClock::time_point exit_drain_deadline{ChildClock::time_point::max()};
   std::optional<ChildClock::time_point> terminate_deadline{};
+  std::optional<ProcessError> failure{};
   bool killed{false};
   // Ended because the caller withdrew, not because a deadline passed.
   bool withdrawn{false};
   // Ended because the engine is closing, which is neither.
   bool abandoned{false};
+  MoveOnlyFunction<void()> retirement_hook;
+};
+
+struct EngineFailure final {
+  std::string_view operation;
+  std::error_code cause;
+};
+
+struct EngineAdmission final {
+  bool accepted{false};
+  std::optional<EngineFailure> failure{};
+};
+
+// A launch and fatal publication share this lock. Once launch has crossed
+// this gate, its posix_spawn happens before a later fatal state can publish.
+class EngineLaunchGate final {
+public:
+  EngineLaunchGate(EngineLaunchGate&&) noexcept = default;
+  EngineLaunchGate& operator=(EngineLaunchGate&&) noexcept = default;
+  EngineLaunchGate(const EngineLaunchGate&) = delete;
+  EngineLaunchGate& operator=(const EngineLaunchGate&) = delete;
+
+  [[nodiscard]] const std::optional<EngineFailure>& failure() const noexcept {
+    return failure_;
+  }
+  void unlock() noexcept { lock_.unlock(); }
+
+private:
+  friend class EngineChannel;
+  EngineLaunchGate(std::unique_lock<std::mutex> lock,
+                   std::optional<EngineFailure> failure) noexcept
+      : lock_{std::move(lock)}, failure_{std::move(failure)} {}
+
+  std::unique_lock<std::mutex> lock_;
+  std::optional<EngineFailure> failure_;
 };
 
 // What a hook may still be holding once the engine is gone.
@@ -80,19 +133,24 @@ public:
 
   // Accepted work in flight, against the bound. A refused caller is told at
   // once rather than queued behind a limit it cannot see.
-  [[nodiscard]] bool admit() noexcept;
+  [[nodiscard]] EngineAdmission admit() noexcept;
   void release() noexcept;
+
+  [[nodiscard]] EngineLaunchGate gate_launch() noexcept;
 
   void wake() noexcept;
   void drain() noexcept;
+  void fail(std::string_view operation, int error_number) noexcept;
+  [[nodiscard]] std::optional<EngineFailure> failure() const noexcept;
   [[nodiscard]] int wake_descriptor() const noexcept { return wake_read_; }
 
 private:
-  std::mutex mutex_;
+  mutable std::mutex mutex_;
   std::size_t operation_limit_;
   std::size_t in_flight_{0U};
   int wake_read_{-1};
   int wake_write_{-1};
+  std::optional<EngineFailure> failure_;
 };
 
 class ProcessEngine final {
@@ -106,18 +164,28 @@ public:
 
   // Never waits. A closed engine or a full admission bound answers at once
   // with an operation that is already published.
-  [[nodiscard]] Operation<ProcessReply> submit(ProcessRequest request);
+  [[nodiscard]] Operation<ProcessReply>
+  submit(ProcessRequest request, MoveOnlyFunction<void()> retirement_hook = {});
 
+  void request_stop() noexcept;
   [[nodiscard]] EngineShutdown close();
 
 private:
-  explicit ProcessEngine(std::shared_ptr<EngineChannel> channel) noexcept;
+  explicit ProcessEngine(
+      std::shared_ptr<EngineChannel> channel, std::function<void()> admission_gate,
+      std::function<void(const ProcessRequest&)> launch_observer,
+      std::function<void(EngineReactorEvent)> reactor_observer) noexcept;
 
   void launch_loop();
-  void launch_one(EnginePending work, bool closing);
+  void launch_one(EnginePending work, bool stopping,
+                  std::optional<EngineFailure> failure);
   void reactor_loop();
+  void fail(EngineFailure failure);
 
   std::shared_ptr<EngineChannel> channel_;
+  std::function<void()> admission_gate_;
+  std::function<void(const ProcessRequest&)> launch_observer_;
+  std::function<void(EngineReactorEvent)> reactor_observer_;
 
   std::mutex mutex_;
   std::condition_variable launch_ready_;
@@ -127,7 +195,12 @@ private:
   // queue while the platform creates the process, and a reactor that read
   // that gap as "nothing left" would return and strand a live child.
   std::size_t launching_{0U};
-  bool closing_{false};
+  bool stop_requested_{false};
+  bool close_joining_{false};
+  bool terminal_{false};
+  std::optional<EngineFailure> failure_;
+  std::condition_variable terminal_ready_;
+  EngineShutdown terminal_shutdown_{};
 
   std::size_t published_{0U};
   std::size_t reaped_{0U};
@@ -136,13 +209,20 @@ private:
   std::thread reactor_;
 };
 
-// One engine for the process, not one for each Server.
-//
-// It exists while some caller holds it and is gone when the last lets go, so
-// the two threads are the cost of using this library at all rather than a toll
-// on every connection opened. Nothing static owns it: the weak reference below
-// holds no engine, so there is no destruction order to get wrong.
-[[nodiscard]] expected<std::shared_ptr<ProcessEngine>, ProcessError> shared_engine();
+void set_runtime_launch_observer_for_test(
+    std::function<void(const ProcessRequest&)> observer);
+enum class RuntimeFailurePoint {
+  completion_queue,
+  result_publication,
+  observer_enqueue,
+  engine_shutdown,
+  close,
+};
+void fail_next_runtime_action_for_test(RuntimeFailurePoint point);
+void set_runtime_completion_observer_for_test(std::function<void()> observer);
+void fail_next_runtime_start_for_test();
+void fail_next_runtime_subscription_for_test();
+void force_runtime_windows_validation_for_test(bool enabled);
 
 } // namespace detail
 LIBTMUX_NAMESPACE_END

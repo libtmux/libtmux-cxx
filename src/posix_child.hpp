@@ -85,10 +85,13 @@ public:
              DeliveryStatus delivery) noexcept;
   [[nodiscard]] std::optional<ProcessError>
   update_status(DeliveryStatus delivery) noexcept;
-  void signal_group(int signal_number) noexcept;
+  std::optional<ProcessError>
+  signal_group(int signal_number,
+               DeliveryStatus delivery = DeliveryStatus::indeterminate) noexcept;
   // Blocks until the child is collected. Only for a caller that has already
   // killed it.
-  void wait_for_exit() noexcept;
+  std::optional<ProcessError>
+  wait_for_exit(DeliveryStatus delivery = DeliveryStatus::indeterminate) noexcept;
   // Closing a stream before it ends means the rest was never read.
   void close_stream(ChildStream stream) noexcept;
   void close_output() noexcept;

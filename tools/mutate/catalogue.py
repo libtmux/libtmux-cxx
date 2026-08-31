@@ -189,12 +189,14 @@ CATALOGUE: t.Final = (
             "      if (outcome_) {\n"
             "        return false;\n"
             "      }\n"
+            "      relay_->mark_outcome_published();\n"
             "      outcome_ = std::move(published_outcome);"
         ),
         replace=(
             "      if (false) {\n"
             "        return false;\n"
             "      }\n"
+            "      relay_->mark_outcome_published();\n"
             "      outcome_ = std::move(published_outcome);"
         ),
         target="libtmux_operation_state_test",
@@ -207,11 +209,16 @@ CATALOGUE: t.Final = (
     Mutation(
         mutation_id="operation-cancellation-source-owned",
         path="src/operation_state.hpp",
-        find=("      cancellation_requested_ = true;\n      hooks = hooks_;"),
+        find=(
+            "  [[nodiscard]] bool request_cancel() { return relay_->request_cancel(); }"
+        ),
         replace=(
-            "      outcome_ = make_abandoned_outcome<T>();\n"
-            "      cancellation_requested_ = true;\n"
-            "      hooks = hooks_;"
+            "  [[nodiscard]] bool request_cancel() {\n"
+            "    const bool requested = relay_->request_cancel();\n"
+            "    auto abandoned = make_abandoned_outcome<T>();\n"
+            "    static_cast<void>(publish(std::move(*abandoned)));\n"
+            "    return requested;\n"
+            "  }"
         ),
         target="libtmux_operation_state_test",
         test_regex=(
@@ -503,10 +510,13 @@ CATALOGUE: t.Final = (
         mutation_id="engine-waits-for-its-launches",
         path="src/process_engine.cpp",
         find=(
-            "      if (closing_ && live.empty() && pending_.empty() && "
-            "launching_ == 0U) {"
+            "      if ((stop_requested_ || failure_) && live.empty() && "
+            "pending_.empty() &&\n          launching_ == 0U) {"
         ),
-        replace="      if (closing_ && live.empty() && pending_.empty()) {",
+        replace=(
+            "      if ((stop_requested_ || failure_) && live.empty() && "
+            "pending_.empty()) {"
+        ),
         target="libtmux_process_engine_test",
         test_regex=r"^libtmux[.]process_engine[.]ProcessEngine[.]ShutdownWaitsForALaunchAlreadyInFlight$",
         guards="the reactor waits for a launch in flight rather than returning "
@@ -515,8 +525,8 @@ CATALOGUE: t.Final = (
     Mutation(
         mutation_id="engine-shutdown-starts-nothing",
         path="src/process_engine.cpp",
-        find="  if (withdrawn || closing) {",
-        replace="  if (withdrawn && closing) {",
+        find="  if (withdrawn || stopping) {",
+        replace="  if (withdrawn && stopping) {",
         target="libtmux_process_engine_test",
         test_regex=r"^libtmux[.]process_engine[.]ProcessEngine[.]ShutdownDoesNotStartWorkItIsAboutToEnd$",
         guards="closing does not start the commands it is about to end, which "
@@ -525,8 +535,8 @@ CATALOGUE: t.Final = (
     Mutation(
         mutation_id="submitted-command-keeps-its-bound",
         path="src/async.cpp",
-        find="    state->allowed_bytes = started->allowed_bytes;",
-        replace="    state->allowed_bytes = detail::default_capture_limit;",
+        find="    const std::size_t allowed_bytes = request.capture_limit;",
+        replace=("    std::size_t allowed_bytes = detail::default_capture_limit;"),
         target="libtmux_server_contract_test",
         test_regex=r"^libtmux[.]server_contract[.]ServerContract[.]ASubmissionTakesTheBoundTheCallerGaveIt$",
         guards="a truncation diagnostic names the bound the caller passed, not "
