@@ -42,6 +42,11 @@ was recorded as it landed.
   `message`. Source-breaking for an exhaustive switch; add the cases or a
   `default`. (#10)
 
+- `Server::try_submit(CommandRuntime&, ...)` replaces
+  `Server::submit(...)`. Source-breaking; replace
+  `server.submit(command)` with `server.try_submit(runtime, command)`, where
+  `runtime` is the successful value from `CommandRuntime::start()`. (#11)
+
 ### Server
 
 - Add `Server::submit`, which returns a move-only `CommandOperation` to cancel
@@ -73,6 +78,44 @@ was recorded as it landed.
 - `Server`, `Connection`, and `ScopedTmuxServer` no longer pass a caller's
   blocked or ignored signals into tmux or pane commands. (#10)
 
+- Add `CommandRuntime`, a move-only owner for bounded asynchronous admission,
+  transport threads, observer disposition, counters, and deterministic
+  shutdown. `CommandRuntimeShutdown::safe_to_unload` is true only after
+  transports, result and observer obligations, and active callback teardown
+  end; prevent later runtime use before unloading. (#11)
+
+- `Server::try_submit` returns refusals before admission. After it returns a
+  `CommandOperation`, tmux, transport, cancellation, and runtime publication
+  failures are that operation's result; custom backends are refused before
+  running. (#11)
+
+- Accepted asynchronous commands enter transport in admission order. One
+  runtime slot remains occupied until its transport, result, and observer
+  obligations all end; `snapshot` exposes current obligations and cumulative
+  admission and completion counts. (#11)
+
+- `CommandOperation::detach` and destruction release only the result
+  obligation. Waiting, detaching, or dropping an operation never dispatches or
+  discards its accepted global observation. (#11)
+
+- Asynchronous `CommandObserver` callbacks run only on the
+  `CommandRuntime::dispatch_ready` caller. `discard_ready` releases them
+  without invocation, and neither path runs under an internal lock or on a
+  transport thread. (#11)
+
+- POSIX asynchronous commands now propagate reactor wake, poll, drain, signal,
+  and child-status failures instead of treating them as success. Synchronous
+  cleanup uses the same delivery classification, and later cleanup does not
+  replace the first failure. (#11)
+
+- POSIX asynchronous commands stop draining output after a bounded post-exit
+  grace when a descendant retains stdout or stderr, so an exited child cannot
+  remain pending on inherited pipes indefinitely. (#11)
+
+- POSIX ordinary and control-mode children no longer inherit unrelated file
+  descriptors. On Linux builds without native close-from support, this assumes
+  no concurrent privileged increase of the hard descriptor limit. (#11)
+
 ### Control mode
 
 - Add `Connection::watch_notifications`, returning independent
@@ -101,6 +144,10 @@ was recorded as it landed.
 - On psmux, `Server::submit` returns before the command completes. Cancelling
   a command proven to have started reports `cancelled` with `indeterminate`
   delivery rather than pretending it never ran. (#10)
+
+- On psmux, `Server::try_submit` returns after admission and before the command
+  completes. Cancelling a command proven to have started reports `cancelled`
+  with `indeterminate` delivery rather than pretending it never ran. (#11)
 
 - A psmux session or window name ending in `.<digits>` is rejected while other
   dotted names remain valid, so a target-shaped name cannot be misread as
