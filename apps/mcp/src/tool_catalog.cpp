@@ -7,6 +7,8 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <filesystem>
 #include <random>
 #include <set>
 #include <string>
@@ -22,6 +24,10 @@
 #include "libtmux/snapshot.hpp"
 #include "tool_support.hpp"
 #include "wait_for_text.hpp"
+
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
 
 namespace libtmux::mcp::detail {
 
@@ -40,21 +46,133 @@ ToolError tmux_error(const CommandFailure& error) {
   return ToolError{error.kind == FailureKind::validation, error.diagnostic};
 }
 
-ShellCommandPayload shell_command_payload(std::string_view command,
-                                          std::string_view nonce) {
-  std::string quoted_command{"'"};
-  for (const char value : command) {
-    quoted_command += value == '\'' ? "'\\''" : std::string{value};
+namespace {
+
+[[nodiscard]] std::string shell_quote(std::string_view value) {
+  std::string quoted{"'"};
+  for (const char character : value) {
+    quoted += character == '\'' ? "'\\''" : std::string{character};
   }
-  quoted_command += '\'';
-  ShellCommandPayload payload;
-  payload.marker = "__LIBTMUX_MCP_DONE_" + std::string{nonce} + "__";
-  payload.text = "printf '\\n%s%s%s:BEGIN\\n' '__LIBTMUX_MCP_DONE_' '" +
-                 std::string{nonce} + "' '__'; ";
-  payload.text += "( eval " + quoted_command + " ); ";
-  payload.text += "printf '\\n%s%s%s:%s\\n' '__LIBTMUX_MCP_DONE_' '" +
-                  std::string{nonce} + "' '__' \"$?\"\n";
-  return payload;
+  quoted += '\'';
+  return quoted;
+}
+
+[[nodiscard]] std::string display_writer(std::string_view tmux_executable,
+                                         std::string_view socket_path,
+                                         std::string_view message) {
+  return shell_quote(tmux_executable) + " -N -S " + shell_quote(socket_path) +
+         " display-message -p " + std::string{message};
+}
+
+[[nodiscard]] std::string
+shell_frame_branch(std::string_view command, std::string_view tmux_executable,
+                   std::string_view socket_path, std::string_view nonce,
+                   std::string_view disable_flags, std::string_view restore_flags) {
+  const std::string marker_parts = "'__LIBTMUX_MCP_DONE_''" + std::string{nonce} + "'";
+  const std::string empty = display_writer(tmux_executable, socket_path, "''");
+  const std::string opening =
+      display_writer(tmux_executable, socket_path, marker_parts + "'__:BEGIN'");
+  const std::string closing =
+      display_writer(tmux_executable, socket_path, marker_parts + "'__:'\"$1\"");
+  const std::string trap_action =
+      "\\set -- \"$?\"; " + empty + "; " + closing + "; \\exit 0";
+  std::string frame{"( "};
+  if (!disable_flags.empty()) {
+    frame += disable_flags;
+    frame += "; ";
+  }
+  frame +=
+      "\\trap " + shell_quote(trap_action) + " 0; " + empty + "; " + opening + "; ( ";
+  if (!restore_flags.empty()) {
+    frame += restore_flags;
+    frame += "; ";
+  }
+  frame += "\\eval " + shell_quote(command) + " ); \\exit \"$?\" )";
+  return frame;
+}
+
+[[nodiscard]] bool valid_shell_nonce(std::string_view nonce) {
+  return nonce.size() == 32U && std::ranges::all_of(nonce, [](const char value) {
+           return (value >= '0' && value <= '9') || (value >= 'a' && value <= 'f');
+         });
+}
+
+} // namespace
+
+libtmux::expected<ShellCommandPayload, ToolError>
+shell_command_payload(std::string_view command, std::string_view tmux_executable,
+                      std::string_view socket_path, ShellNonceFactory next_nonce) {
+  if (!std::filesystem::path{tmux_executable}.is_absolute() || socket_path.empty() ||
+      !next_nonce) {
+    return libtmux::unexpected(
+        ToolError{false, "shell framing requires an absolute tmux endpoint"});
+  }
+  std::set<std::string, std::less<>> seen;
+  for (std::size_t attempt = 0U; attempt < 32U; ++attempt) {
+    const std::string nonce = next_nonce();
+    if (!valid_shell_nonce(nonce) || !seen.emplace(nonce).second) {
+      continue;
+    }
+    ShellCommandPayload payload{.marker = "__LIBTMUX_MCP_DONE_" + nonce + "__",
+                                .text = {}};
+    payload.text =
+        "case $- in\n  *e*x*|*x*e*) " +
+        shell_frame_branch(command, tmux_executable, socket_path, nonce,
+                           "\\set +e; \\set +x", "\\set -e; \\set -x") +
+        " ;;\n  *e*) " +
+        shell_frame_branch(command, tmux_executable, socket_path, nonce, "\\set +e",
+                           "\\set -e") +
+        " ;;\n  *x*) " +
+        shell_frame_branch(command, tmux_executable, socket_path, nonce, "\\set +x",
+                           "\\set -x") +
+        " ;;\n  *) " +
+        shell_frame_branch(command, tmux_executable, socket_path, nonce, {}, {}) +
+        " ;;\nesac\n";
+    if (payload.text.find(payload.marker) == std::string::npos) {
+      return payload;
+    }
+  }
+  return libtmux::unexpected(
+      ToolError{false, "collision-free shell framing could not be constructed"});
+}
+
+libtmux::expected<std::string, ToolError>
+resolve_executable(std::string_view search_path,
+                   const std::filesystem::path& current_directory) {
+#if defined(_WIN32)
+  static_cast<void>(search_path);
+  static_cast<void>(current_directory);
+  return libtmux::unexpected(
+      ToolError{false, "POSIX tmux executable resolution is unavailable"});
+#else
+  std::size_t begin = 0U;
+  while (begin <= search_path.size()) {
+    const std::size_t end = search_path.find(':', begin);
+    const std::string_view component = search_path.substr(
+        begin, end == std::string_view::npos ? std::string_view::npos : end - begin);
+    std::filesystem::path directory =
+        component.empty() ? current_directory : std::filesystem::path{component};
+    if (directory.is_relative()) {
+      directory = current_directory / directory;
+    }
+    const std::filesystem::path candidate = directory / "tmux";
+    std::error_code error;
+    if (std::filesystem::is_regular_file(candidate, error) && !error &&
+        ::access(candidate.c_str(), X_OK) == 0) {
+      const std::filesystem::path canonical =
+          std::filesystem::canonical(candidate, error);
+      if (!error && canonical.is_absolute()) {
+        return canonical.string();
+      }
+    }
+    if (end == std::string_view::npos) {
+      break;
+    }
+    begin = end + 1U;
+  }
+  return libtmux::unexpected(
+      ToolError{false, "tmux executable was not found on the POSIX search path"});
+#endif
 }
 
 std::optional<ShellCommandCompletion>
@@ -659,6 +777,39 @@ pane_target_ids(const std::vector<std::string>& pane_ids) {
     nonce += digits[value & 0x0fU];
   }
   return nonce;
+}
+
+[[nodiscard]] libtmux::expected<std::string, ToolError> resolve_tmux_executable() {
+#if defined(_WIN32)
+  return libtmux::unexpected(
+      ToolError{false, "run_shell_command requires a POSIX tmux endpoint"});
+#else
+  std::string search_path;
+  if (const char* const configured = std::getenv("PATH"); configured != nullptr) {
+    search_path = configured;
+  } else {
+    const std::size_t size = ::confstr(_CS_PATH, nullptr, 0U);
+    if (size == 0U) {
+      return libtmux::unexpected(
+          ToolError{false, "the POSIX executable search path is unavailable"});
+    }
+    std::string fallback(size, '\0');
+    const std::size_t written = ::confstr(_CS_PATH, fallback.data(), fallback.size());
+    if (written == 0U || written > fallback.size()) {
+      return libtmux::unexpected(
+          ToolError{false, "the POSIX executable search path is unavailable"});
+    }
+    fallback.resize(written - 1U);
+    search_path = std::move(fallback);
+  }
+  std::error_code error;
+  const std::filesystem::path current = std::filesystem::current_path(error);
+  if (error) {
+    return libtmux::unexpected(
+        ToolError{false, "the current executable search directory is unavailable"});
+  }
+  return detail::resolve_executable(search_path, current);
+#endif
 }
 
 [[nodiscard]] StructuredValue option_value(const OptionEntry& option) {
@@ -1727,10 +1878,18 @@ pane_target_ids(const std::vector<std::string>& pane_ids) {
         if (!pane.has_value()) {
           return failure(pane.error());
         }
+        const auto tmux_executable = resolve_tmux_executable();
+        if (!tmux_executable.has_value()) {
+          return libtmux::unexpected(tmux_executable.error());
+        }
         const auto payload = detail::shell_command_payload(
-            required(arguments, "command"), shell_command_nonce());
+            required(arguments, "command"), *tmux_executable, server.socket_path(),
+            shell_command_nonce);
+        if (!payload.has_value()) {
+          return libtmux::unexpected(payload.error());
+        }
         Chain dispatch;
-        dispatch.send_text(pane->id(), payload.text);
+        dispatch.send_text(pane->id(), payload->text);
         if (!dispatch.valid()) {
           return libtmux::unexpected(ToolError{true, dispatch.error()});
         }
@@ -1758,7 +1917,7 @@ pane_target_ids(const std::vector<std::string>& pane_ids) {
             return failure(captured.error());
           }
           const auto completed =
-              detail::shell_command_completion(*captured, payload.marker);
+              detail::shell_command_completion(*captured, payload->marker);
           if (completed.has_value()) {
             return detail::output(
                 {{"exit_code", completed->exit_code},

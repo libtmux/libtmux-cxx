@@ -461,6 +461,34 @@ CATALOGUE: t.Final = (
         guards="only the source pane's effective synchronized cohort is configured",
     ),
     Mutation(
+        mutation_id="mcp-shell-marker-collision-retry",
+        path="apps/mcp/src/tool_catalog.cpp",
+        find="    if (payload.text.find(payload.marker) == std::string::npos) {",
+        replace="    if (true) {",
+        target="mcp_tools_test",
+        test_regex=r"^consumer[.]mcp$",
+        guards="a marker candidate embedded anywhere in the complete payload is "
+        "rejected before input is sent",
+    ),
+    Mutation(
+        mutation_id="mcp-shell-frame-output-endpoint",
+        path="apps/mcp/src/tool_catalog.cpp",
+        find=(
+            "  return shell_quote(tmux_executable) + \" -N -S \" + "
+            "shell_quote(socket_path) +\n"
+            "         \" display-message -p \" + std::string{message};"
+        ),
+        replace=(
+            "  static_cast<void>(tmux_executable);\n"
+            "  static_cast<void>(socket_path);\n"
+            "  return \"printf '%s\\\\n' \" + std::string{message};"
+        ),
+        target="mcp_tools_test",
+        test_regex=r"^consumer[.]mcp$",
+        guards="completion records use the resolved exact tmux endpoint rather than "
+        "a shadowable shell output command",
+    ),
+    Mutation(
         mutation_id="mcp-id-held-through-write",
         path="apps/mcp/src/stdio_server.cpp",
         find="      if (response.has_value()) {\n"

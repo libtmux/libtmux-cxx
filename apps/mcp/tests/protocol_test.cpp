@@ -2,15 +2,19 @@
 // private real tmux server underneath.
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <tuple>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -18,6 +22,8 @@
 
 #include <libtmux/server.hpp>
 #include <libtmux/testing/scoped_server.hpp>
+
+#include <unistd.h>
 
 #include "cli.hpp"
 #include "run_server.hpp"
@@ -222,6 +228,66 @@ std::vector<std::string> buffer_names(const std::vector<libtmux::Buffer>& buffer
   return names;
 }
 
+std::string shell_quote(std::string_view value) {
+  std::string quoted{"'"};
+  for (const char character : value) {
+    quoted += character == '\'' ? "'\\''" : std::string{character};
+  }
+  quoted += '\'';
+  return quoted;
+}
+
+std::optional<std::filesystem::path> executable_on_path(std::string_view name) {
+  const char* const configured = std::getenv("PATH");
+  if (configured == nullptr) {
+    return std::nullopt;
+  }
+  const std::string_view search{configured};
+  std::size_t begin = 0U;
+  while (begin <= search.size()) {
+    const std::size_t end = search.find(':', begin);
+    const std::string_view component = search.substr(
+        begin, end == std::string_view::npos ? std::string_view::npos : end - begin);
+    const std::filesystem::path directory = component.empty()
+                                                ? std::filesystem::current_path()
+                                                : std::filesystem::path{component};
+    const std::filesystem::path candidate = directory / name;
+    std::error_code error;
+    if (std::filesystem::is_regular_file(candidate, error) && !error &&
+        ::access(candidate.c_str(), X_OK) == 0) {
+      const std::filesystem::path canonical =
+          std::filesystem::canonical(candidate, error);
+      if (!error) {
+        return canonical;
+      }
+    }
+    if (end == std::string_view::npos) {
+      break;
+    }
+    begin = end + 1U;
+  }
+  return std::nullopt;
+}
+
+bool contains_completion_marker(std::string_view text) {
+  constexpr std::string_view prefix{"__LIBTMUX_MCP_DONE_"};
+  std::size_t begin = text.find(prefix);
+  while (begin != std::string_view::npos) {
+    const std::size_t nonce = begin + prefix.size();
+    if (text.size() >= nonce + 35U &&
+        std::ranges::all_of(text.substr(nonce, 32U),
+                            [](const char value) {
+                              return (value >= '0' && value <= '9') ||
+                                     (value >= 'a' && value <= 'f');
+                            }) &&
+        text.substr(nonce + 32U, 3U) == "__:") {
+      return true;
+    }
+    begin = text.find(prefix, begin + prefix.size());
+  }
+  return false;
+}
+
 class McpProtocol : public testing::Test {
 protected:
   void SetUp() override {
@@ -287,6 +353,73 @@ protected:
       std::this_thread::sleep_for(std::chrono::milliseconds{10});
     }
     return pane.expand(format);
+  }
+
+  void send_shell_and_wait(const libtmux::Server& server, const libtmux::Pane& pane,
+                           const std::filesystem::path& tmux_executable,
+                           std::string command) const {
+    static std::atomic_uint64_t sequence{0U};
+    const std::string channel = "mcp-shell-step-" + std::to_string(++sequence);
+    command += "; " + shell_quote(tmux_executable.string()) + " -N -S " +
+               shell_quote(socket().string()) + " wait-for -S " + shell_quote(channel);
+    ASSERT_TRUE(pane.send_text(command).has_value());
+    ASSERT_TRUE(pane.send_key("Enter").has_value());
+    const auto ready = server.wait_for(channel, std::chrono::seconds{2});
+    ASSERT_TRUE(ready.has_value()) << ready.error().diagnostic;
+  }
+
+  [[nodiscard]] std::string
+  parent_shell_state(const libtmux::Server& server, const libtmux::Pane& pane,
+                     const std::filesystem::path& tmux_executable,
+                     std::string_view label) const {
+    const std::string begin = "MCP_PARENT_BEGIN_" + std::string{label};
+    const std::string end = "MCP_PARENT_END_" + std::string{label};
+    const std::string exact_tmux = shell_quote(tmux_executable.string()) + " -N -S " +
+                                   shell_quote(socket().string());
+    send_shell_and_wait(server, pane, tmux_executable,
+                        exact_tmux + " display-message -p " + shell_quote(begin) +
+                            "; " + exact_tmux +
+                            " display-message -p \"$-|$PWD|${MCP_PARENT_VALUE-}|"
+                            "${MCP_PARENT_EXPORT-}\"; \\trap; " +
+                            exact_tmux + " display-message -p " + shell_quote(end));
+    libtmux::CaptureOptions options;
+    options.whole_history = true;
+    options.join_wrapped = true;
+    const auto capture = pane.capture(options);
+    EXPECT_TRUE(capture.has_value()) << capture.error().diagnostic;
+    if (!capture.has_value()) {
+      return {};
+    }
+    const std::size_t end_position = capture->rfind(end);
+    const std::size_t begin_position = end_position == std::string::npos
+                                           ? std::string::npos
+                                           : capture->rfind(begin, end_position);
+    EXPECT_NE(begin_position, std::string::npos) << *capture;
+    EXPECT_NE(end_position, std::string::npos) << *capture;
+    if (begin_position == std::string::npos || end_position == std::string::npos) {
+      return {};
+    }
+    std::size_t content = begin_position + begin.size();
+    if (content < capture->size() && (*capture)[content] == '\n') {
+      ++content;
+    }
+    const std::string raw = capture->substr(content, end_position - content);
+    std::string stable;
+    std::size_t line_begin = 0U;
+    while (line_begin < raw.size()) {
+      const std::size_t line_end = raw.find('\n', line_begin);
+      const std::size_t length = line_end == std::string::npos
+                                     ? raw.size() - line_begin
+                                     : line_end - line_begin + 1U;
+      if (raw[line_begin] != '+') {
+        stable.append(raw, line_begin, length);
+      }
+      if (line_end == std::string::npos) {
+        break;
+      }
+      line_begin = line_end + 1U;
+    }
+    return stable;
   }
 
   std::unique_ptr<ScopedTmuxServer> fixture_;
@@ -586,6 +719,170 @@ TEST_F(McpProtocol, RunShellCommandWaitsForItsOwnValidCompletionRecord) {
   EXPECT_NE(evicted["result"]["structuredContent"]["text"].get<std::string>().find(
                 "eviction-299"),
             std::string::npos);
+}
+
+TEST_F(McpProtocol, IsolatesCompletionFramingAcrossInstalledPosixShells) {
+  const auto tmux_executable = executable_on_path("tmux");
+  ASSERT_TRUE(tmux_executable.has_value());
+  const libtmux::Server server = connect_server();
+  const std::array<std::string_view, 4> names{"sh", "bash", "dash", "zsh"};
+  const std::array<std::tuple<std::string_view, std::string_view, bool>, 4> flags{{
+      {"neither", "\\set +e; \\set +x", false},
+      {"errexit", "\\set +x; \\set -e", true},
+      {"xtrace", "\\set +e; \\set -x", false},
+      {"both", "\\set +e; \\set +x; \\set -e; \\set -x", true},
+  }};
+  int request_id = 100;
+
+  for (const std::string_view name : names) {
+    const auto shell = executable_on_path(name);
+    if (!shell.has_value()) {
+      std::cout << "Skipping unavailable shell: " << name << '\n';
+      continue;
+    }
+    const auto created = server.run({"new-window", "-d", "-P", "-F", "#{pane_id}", "-t",
+                                     "mcp:", "-n", "frame-" + std::string{name}});
+    ASSERT_TRUE(created.has_value()) << created.error().diagnostic;
+    const std::string pane_id = created->substr(0U, created->find('\n'));
+    auto pane = server.pane(pane_id);
+    ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
+
+    std::string shell_flags{" -i"};
+    if (name == "bash") {
+      shell_flags = " --noprofile --norc -i";
+    } else if (name == "zsh") {
+      shell_flags = " -f -i";
+    }
+    ASSERT_TRUE(pane->send_text("exec " + shell_quote(shell->string()) + shell_flags)
+                    .has_value());
+    ASSERT_TRUE(pane->send_key("Enter").has_value());
+    const auto foreground = wait_for_pane_value(*pane, "#{pane_current_command}",
+                                                shell->filename().string());
+    ASSERT_TRUE(foreground.has_value()) << foreground.error().diagnostic;
+    ASSERT_EQ(*foreground, shell->filename().string());
+
+    const std::filesystem::path state_directory =
+        socket().parent_path() / ("frame-state-" + std::string{name});
+    std::filesystem::create_directories(state_directory);
+    const std::filesystem::path exit_marker = state_directory / "parent-exit";
+    const std::string exit_trap = ": > " + shell_quote(exit_marker.string());
+    std::string traps = "\\trap " + shell_quote(exit_trap) + " 0";
+    if (name == "bash") {
+      traps = "\\trap " + shell_quote(exit_trap) + " EXIT; \\trap ':' ERR DEBUG";
+    } else if (name == "zsh") {
+      traps = "\\trap " + shell_quote(exit_trap) + " EXIT; \\trap ':' ZERR DEBUG";
+    }
+    send_shell_and_wait(
+        server, *pane, *tmux_executable,
+        "PS1=''; printf() { return 97; }; alias printf='false'; "
+        "alias echo='false'; tmux() { return 98; }; "
+        "readonly status rc __tmux_mcp_status; MCP_PARENT_VALUE=kept; "
+        "export MCP_PARENT_EXPORT=kept; mcp_parent_function() { return 0; }; cd " +
+            shell_quote(state_directory.string()) + "; " + traps +
+            "; \\set +e; \\set +x");
+
+    const std::string body = "body-" + std::string{name};
+    const json output = invoke("run_shell_command",
+                               {{"paneId", pane_id},
+                                {"command", "command \\printf '" + body + "\\n'"},
+                                {"timeoutMs", 2000}},
+                               ++request_id);
+    ASSERT_FALSE(output["result"]["isError"].get<bool>()) << output.dump();
+    EXPECT_EQ(output["result"]["structuredContent"]["exit_code"], 0);
+    EXPECT_EQ(output["result"]["structuredContent"]["text"], body + "\n");
+
+    const std::string trailing = "trailing-" + std::string{name};
+    const json no_newline =
+        invoke("run_shell_command",
+               {{"paneId", pane_id},
+                {"command", "command \\printf '" + trailing + "' # trailing comment"},
+                {"timeoutMs", 2000}},
+               ++request_id);
+    ASSERT_FALSE(no_newline["result"]["isError"].get<bool>()) << no_newline.dump();
+    EXPECT_EQ(no_newline["result"]["structuredContent"]["exit_code"], 0);
+    EXPECT_EQ(no_newline["result"]["structuredContent"]["text"], trailing);
+
+    const json syntax =
+        invoke("run_shell_command",
+               {{"paneId", pane_id}, {"command", "if then"}, {"timeoutMs", 2000}},
+               ++request_id);
+    ASSERT_FALSE(syntax["result"]["isError"].get<bool>()) << syntax.dump();
+    EXPECT_NE(syntax["result"]["structuredContent"]["exit_code"], 0);
+
+    const json bare_exit =
+        invoke("run_shell_command",
+               {{"paneId", pane_id}, {"command", "exit 23"}, {"timeoutMs", 2000}},
+               ++request_id);
+    ASSERT_FALSE(bare_exit["result"]["isError"].get<bool>()) << bare_exit.dump();
+    EXPECT_EQ(bare_exit["result"]["structuredContent"]["exit_code"], 23);
+
+    for (const auto& [flag_name, flag_command, inherited_errexit] : flags) {
+      send_shell_and_wait(server, *pane, *tmux_executable, std::string{flag_command});
+      const std::string parent_before =
+          parent_shell_state(server, *pane, *tmux_executable,
+                             std::string{name} + "-" + std::string{flag_name});
+      const std::string checks =
+          "[ \"$PWD\" = " + shell_quote(state_directory.string()) +
+          " ] || exit 90; [ \"$MCP_PARENT_VALUE\" = kept ] || exit 91; "
+          "[ \"$MCP_PARENT_EXPORT\" = kept ] || exit 92; "
+          "mcp_parent_function || exit 93; "
+          "sh -c '[ \"$MCP_PARENT_EXPORT\" = kept ]' || exit 94";
+      const json isolated = invoke(
+          "run_shell_command",
+          {{"paneId", pane_id},
+           {"command", checks + "; mcp_child_function() { return 0; }; \\trap ':' 0; "
+                                "cd /; MCP_PARENT_VALUE=changed; "
+                                "MCP_PARENT_EXPORT=changed; export MCP_PARENT_EXPORT; "
+                                "exit 23"},
+           {"timeoutMs", 2000}},
+          ++request_id);
+      ASSERT_FALSE(isolated["result"]["isError"].get<bool>()) << isolated.dump();
+      EXPECT_EQ(isolated["result"]["structuredContent"]["exit_code"], 23)
+          << name << ' ' << flag_name;
+      EXPECT_FALSE(contains_completion_marker(
+          isolated["result"]["structuredContent"]["text"].get<std::string>()));
+
+      const std::filesystem::path side_effect =
+          state_directory / ("after-false-" + std::string{flag_name});
+      std::error_code ignored;
+      std::filesystem::remove(side_effect, ignored);
+      const json errexit =
+          invoke("run_shell_command",
+                 {{"paneId", pane_id},
+                  {"command", "false; : > " + shell_quote(side_effect.string())},
+                  {"timeoutMs", 2000}},
+                 ++request_id);
+      ASSERT_FALSE(errexit["result"]["isError"].get<bool>()) << errexit.dump();
+      EXPECT_EQ(errexit["result"]["structuredContent"]["exit_code"],
+                inherited_errexit ? 1 : 0)
+          << name << ' ' << flag_name;
+      EXPECT_EQ(std::filesystem::exists(side_effect), !inherited_errexit)
+          << name << ' ' << flag_name;
+      EXPECT_FALSE(contains_completion_marker(
+          errexit["result"]["structuredContent"]["text"].get<std::string>()));
+
+      const json parent_check =
+          invoke("run_shell_command",
+                 {{"paneId", pane_id}, {"command", checks}, {"timeoutMs", 2000}},
+                 ++request_id);
+      ASSERT_FALSE(parent_check["result"]["isError"].get<bool>())
+          << parent_check.dump();
+      EXPECT_EQ(parent_check["result"]["structuredContent"]["exit_code"], 0)
+          << name << ' ' << flag_name;
+      const std::string parent_after =
+          parent_shell_state(server, *pane, *tmux_executable,
+                             std::string{name} + "-" + std::string{flag_name});
+      EXPECT_EQ(parent_after, parent_before) << name << ' ' << flag_name;
+    }
+
+    ASSERT_TRUE(pane->set_option("remain-on-exit", "on").has_value());
+    ASSERT_TRUE(pane->send_text("exit").has_value());
+    ASSERT_TRUE(pane->send_key("Enter").has_value());
+    const auto dead = wait_for_pane_value(*pane, "#{pane_dead}", "1");
+    ASSERT_TRUE(dead.has_value()) << dead.error().diagnostic;
+    ASSERT_EQ(*dead, "1");
+    EXPECT_TRUE(std::filesystem::exists(exit_marker)) << name;
+  }
 }
 
 TEST_F(McpProtocol, RefusesEveryInputToolWhileTheNamedPaneIsModal) {

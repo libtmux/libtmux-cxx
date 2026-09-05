@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstddef>
+#include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -54,8 +56,14 @@ struct PaneInputPreflight {
   std::string foreground_command;
 };
 
-[[nodiscard]] ShellCommandPayload shell_command_payload(std::string_view command,
-                                                        std::string_view nonce);
+using ShellNonceFactory = std::function<std::string()>;
+
+[[nodiscard]] libtmux::expected<ShellCommandPayload, ToolError>
+shell_command_payload(std::string_view command, std::string_view tmux_executable,
+                      std::string_view socket_path, ShellNonceFactory next_nonce);
+[[nodiscard]] libtmux::expected<std::string, ToolError>
+resolve_executable(std::string_view search_path,
+                   const std::filesystem::path& current_directory);
 [[nodiscard]] std::optional<ShellCommandCompletion>
 shell_command_completion(std::string_view capture, std::string_view marker,
                          std::size_t search_begin = 0U);

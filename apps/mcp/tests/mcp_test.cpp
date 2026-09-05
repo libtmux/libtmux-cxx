@@ -4,6 +4,8 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <set>
@@ -140,6 +142,54 @@ std::string pane_input_row(std::string_view pane_id, std::string_view window_id,
   row += '\n';
   return row;
 }
+
+std::size_t occurrences(std::string_view text, std::string_view needle) {
+  std::size_t count = 0U;
+  std::size_t offset = 0U;
+  while ((offset = text.find(needle, offset)) != std::string_view::npos) {
+    ++count;
+    offset += needle.size();
+  }
+  return count;
+}
+
+class ExecutableTree final {
+public:
+  ExecutableTree() {
+    static std::atomic_uint64_t sequence{0U};
+    root_ = std::filesystem::temp_directory_path() /
+            ("libtmux-mcp-executable-" + std::to_string(++sequence));
+    std::filesystem::create_directories(root_);
+  }
+
+  ~ExecutableTree() {
+    std::error_code ignored;
+    std::filesystem::remove_all(root_, ignored);
+  }
+
+  ExecutableTree(const ExecutableTree&) = delete;
+  ExecutableTree& operator=(const ExecutableTree&) = delete;
+
+  [[nodiscard]] const std::filesystem::path& root() const noexcept { return root_; }
+
+  [[nodiscard]] std::filesystem::path executable(std::string_view directory,
+                                                 bool executable = true) const {
+    const std::filesystem::path parent = root_ / directory;
+    std::filesystem::create_directories(parent);
+    const std::filesystem::path path = parent / "tmux";
+    std::ofstream{path} << "fixture\n";
+    std::filesystem::permissions(path,
+                                 std::filesystem::perms::owner_read |
+                                     std::filesystem::perms::owner_write |
+                                     (executable ? std::filesystem::perms::owner_exec
+                                                 : std::filesystem::perms::none),
+                                 std::filesystem::perm_options::replace);
+    return path;
+  }
+
+private:
+  std::filesystem::path root_;
+};
 
 TEST(McpToolsTmux, ListsTheSessionsOfARealServer) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
@@ -360,14 +410,116 @@ TEST(McpTools, PaneInputSnapshotAllowsOnlySupportedSingularPosixShells) {
   }
 }
 
-TEST(McpTools, ShellCommandPayloadHidesItsCompletionMarkerFromInputEcho) {
+TEST(McpTools, ShellCommandPayloadUsesAnIsolatedExactEndpointFrame) {
+  const std::string nonce(32U, 'a');
   const auto payload = libtmux::mcp::detail::shell_command_payload(
-      "printf payload-command", "0123456789abcdef");
-  EXPECT_EQ(payload.marker, "__LIBTMUX_MCP_DONE_0123456789abcdef__");
-  EXPECT_EQ(payload.text.find(payload.marker), std::string::npos);
-  EXPECT_EQ(payload.text.find("__libtmux_mcp_marker"), std::string::npos);
-  EXPECT_EQ(payload.text.find("__libtmux_mcp_status"), std::string::npos);
-  EXPECT_NE(payload.text.find("printf payload-command"), std::string::npos);
+      "true", "/opt/tmux", "/tmp/mcp.sock", [nonce] { return nonce; });
+  ASSERT_TRUE(payload.has_value()) << payload.error().message;
+  EXPECT_EQ(payload->marker, "__LIBTMUX_MCP_DONE_" + nonce + "__");
+  EXPECT_EQ(payload->text.find(payload->marker), std::string::npos);
+  EXPECT_EQ(payload->text.find("printf"), std::string::npos);
+  EXPECT_EQ(payload->text.find("echo"), std::string::npos);
+  EXPECT_EQ(payload->text.find("__libtmux_mcp_status"), std::string::npos);
+  EXPECT_NE(payload->text.find("'/opt/tmux' -N -S '/tmp/mcp.sock' display-message -p"),
+            std::string::npos);
+  EXPECT_EQ(occurrences(payload->text, "\\eval "), 4U);
+  EXPECT_EQ(occurrences(payload->text, "\\trap "), 4U);
+  EXPECT_EQ(occurrences(payload->text, "display-message -p"), 16U);
+  EXPECT_EQ(occurrences(payload->text, "display-message -p ''"), 4U);
+  EXPECT_EQ(occurrences(payload->text, ":BEGIN"), 4U);
+  EXPECT_EQ(occurrences(payload->text, "\\exit 0"), 4U);
+  const std::size_t trap = payload->text.find("\\trap ");
+  const std::size_t opening = payload->text.find(":BEGIN");
+  const std::size_t saved_status = payload->text.find("\\set -- \"$?\"");
+  const std::size_t closing = payload->text.find("\"$1\"");
+  ASSERT_NE(trap, std::string::npos);
+  ASSERT_NE(opening, std::string::npos);
+  ASSERT_NE(saved_status, std::string::npos);
+  ASSERT_NE(closing, std::string::npos);
+  EXPECT_LT(trap, opening);
+  EXPECT_LT(saved_status, closing);
+}
+
+TEST(McpTools, ShellCommandPayloadRetriesEveryCandidateCollision) {
+  const std::string first(32U, '1');
+  const std::string second(32U, '2');
+  const std::string third(32U, '3');
+  const std::string fourth(32U, '4');
+  const auto marker = [](const std::string& nonce) {
+    return "__LIBTMUX_MCP_DONE_" + nonce + "__";
+  };
+  const std::array<std::string, 7> candidates{
+      "short", first, first, second, third, std::string(32U, 'A'), fourth};
+  std::size_t calls = 0U;
+  const auto payload = libtmux::mcp::detail::shell_command_payload(
+      "command " + marker(first), "/tmp/" + marker(second) + "/tmux",
+      "/tmp/" + marker(third) + ".sock", [&] { return candidates.at(calls++); });
+  ASSERT_TRUE(payload.has_value()) << payload.error().message;
+  EXPECT_EQ(calls, candidates.size());
+  EXPECT_EQ(payload->marker, marker(fourth));
+  EXPECT_EQ(payload->text.find(payload->marker), std::string::npos);
+
+  calls = 0U;
+  const auto exhausted = libtmux::mcp::detail::shell_command_payload(
+      "true", "/opt/tmux", "/tmp/mcp.sock", [&] {
+        ++calls;
+        return std::string{"invalid"};
+      });
+  ASSERT_FALSE(exhausted.has_value());
+  EXPECT_EQ(calls, 32U);
+  EXPECT_NE(exhausted.error().message.find("collision-free"), std::string::npos);
+}
+
+TEST(McpTools, ShellCommandPayloadKeepsArbitraryCallerSyntaxInsideEval) {
+  const std::string command = "printf output; echo tail\n'quote' # trailing\nexit 23";
+  const auto payload = libtmux::mcp::detail::shell_command_payload(
+      command, "/opt/tmux", "/tmp/mcp.sock", [] { return std::string(32U, 'b'); });
+  ASSERT_TRUE(payload.has_value()) << payload.error().message;
+  EXPECT_NE(payload->text.find("printf output"), std::string::npos);
+  EXPECT_NE(payload->text.find("echo tail"), std::string::npos);
+  EXPECT_NE(payload->text.find("# trailing"), std::string::npos);
+  EXPECT_NE(payload->text.find("exit 23"), std::string::npos);
+  EXPECT_EQ(payload->text.find(payload->marker), std::string::npos);
+}
+
+TEST(McpTools, ExecutableResolutionUsesPathOrderAndCanonicalFiles) {
+  ExecutableTree tree;
+  const std::filesystem::path first = tree.executable("first");
+  static_cast<void>(tree.executable("second"));
+  const auto resolved = libtmux::mcp::detail::resolve_executable(
+      (tree.root() / "first").string() + ":" + (tree.root() / "second").string(),
+      tree.root());
+  ASSERT_TRUE(resolved.has_value()) << resolved.error().message;
+  EXPECT_EQ(*resolved, std::filesystem::canonical(first).string());
+
+  const std::filesystem::path current = tree.executable("current");
+  const auto empty_component = libtmux::mcp::detail::resolve_executable(
+      ":" + (tree.root() / "second").string(), current.parent_path());
+  ASSERT_TRUE(empty_component.has_value()) << empty_component.error().message;
+  EXPECT_EQ(*empty_component, std::filesystem::canonical(current).string());
+}
+
+TEST(McpTools, ExecutableResolutionSkipsUnusableEntriesAndHasNoFixedFallback) {
+  ExecutableTree tree;
+  static_cast<void>(tree.executable("not-executable", false));
+  std::filesystem::create_directories(tree.root() / "directory" / "tmux");
+  const std::filesystem::path actual = tree.executable("cs-path");
+  const std::filesystem::path link = tree.root() / "linked" / "tmux";
+  std::filesystem::create_directories(link.parent_path());
+  std::filesystem::create_symlink(actual, link);
+  const std::string search = (tree.root() / "not-executable").string() + ":" +
+                             (tree.root() / "directory").string() + ":" +
+                             (tree.root() / "linked").string();
+  const auto resolved = libtmux::mcp::detail::resolve_executable(search, tree.root());
+  ASSERT_TRUE(resolved.has_value()) << resolved.error().message;
+  EXPECT_EQ(*resolved, std::filesystem::canonical(actual).string());
+
+  const auto cs_path = libtmux::mcp::detail::resolve_executable(
+      (tree.root() / "cs-path").string(), tree.root());
+  ASSERT_TRUE(cs_path.has_value()) << cs_path.error().message;
+  EXPECT_EQ(*cs_path, std::filesystem::canonical(actual).string());
+  EXPECT_FALSE(
+      libtmux::mcp::detail::resolve_executable("", tree.root() / "empty").has_value());
 }
 
 TEST(McpTools, ShellCommandCompletionRequiresAnExactBoundedStatusRecord) {
@@ -407,6 +559,13 @@ TEST(McpTools, ShellCommandCompletionRequiresAnExactBoundedStatusRecord) {
             "retained\n");
   EXPECT_FALSE(libtmux::mcp::detail::shell_command_completion(
                    "\n" + marker + ":BEGIN\n\n" + marker + ":0", marker)
+                   .has_value());
+  EXPECT_FALSE(libtmux::mcp::detail::shell_command_completion(
+                   "\n" + marker + "_lookalike:0\n", marker)
+                   .has_value());
+  const std::string old_record = "\n" + marker + ":23\nretained";
+  EXPECT_FALSE(libtmux::mcp::detail::shell_command_completion(
+                   old_record, marker, old_record.find("retained"))
                    .has_value());
 }
 
