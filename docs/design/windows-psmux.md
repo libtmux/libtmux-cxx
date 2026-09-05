@@ -33,7 +33,7 @@ assuming. A caller asks what a route serves before choosing one.
 - **Control mode.** `control_with_options` is rejected before a control client
   is launched.
 - **Pane input, capture, search and streaming.** The MCP server still advertises
-  the same 47-tool catalog as POSIX, but operations psmux cannot provide fail
+  the same 45-tool catalog as POSIX, but operations psmux cannot provide fail
   explicitly as `FailureKind::unsupported` instead of being approximated.
 
 ## An id is only unique beside its session

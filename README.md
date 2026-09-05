@@ -733,7 +733,7 @@ $ cmake --build build/mcp && cmake --install build/mcp --prefix ~/.local
 $ claude mcp add tmux -- ~/.local/bin/libtmux-mcp-server --socket-name libtmux-agent
 ```
 
-The server advertises the same pinned 47-tool capability catalog on POSIX and
+The server advertises the same pinned 45-tool capability catalog on POSIX and
 Windows. On Windows, psmux support remains command-dependent: unsupported
 operations fail at dispatch instead of disappearing from the startup-frozen
 manifest. For the reference implementation, see Python
@@ -956,7 +956,7 @@ This is subprocess compatibility, not transport equivalence. Windows builds
 the dedicated psmux example and the capability-aware MCP server, but not the
 POSIX examples, fuzzers, or `libtmux::testing` fixture. Asking CMake for either
 of the latter two fails during configuration. The Windows MCP catalog exposes
-the same 47 names listed in the MCP guide; the native smoke records which of
+the same 45 names listed in the MCP guide; the native smoke records which of
 those operations psmux 3.3.7 actually supports and requires unsupported
 commands to fail explicitly.
 
