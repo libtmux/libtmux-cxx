@@ -1,5 +1,5 @@
 format
 ======
 
-.. doxygenfile:: format.hpp
+.. doxygenfile:: libtmux/format.hpp
    :project: cxx

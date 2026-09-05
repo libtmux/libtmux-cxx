@@ -1,5 +1,5 @@
 cardinality
 ===========
 
-.. doxygenfile:: cardinality.hpp
+.. doxygenfile:: libtmux/cardinality.hpp
    :project: cxx

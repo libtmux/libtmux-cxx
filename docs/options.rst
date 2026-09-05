@@ -1,5 +1,5 @@
 options
 =======
 
-.. doxygenfile:: options.hpp
+.. doxygenfile:: libtmux/options.hpp
    :project: cxx

@@ -1,5 +1,5 @@
 chain
 =====
 
-.. doxygenfile:: chain.hpp
+.. doxygenfile:: libtmux/chain.hpp
    :project: cxx

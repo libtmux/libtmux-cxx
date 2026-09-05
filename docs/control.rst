@@ -1,5 +1,5 @@
 control
 =======
 
-.. doxygenfile:: control.hpp
+.. doxygenfile:: libtmux/control.hpp
    :project: cxx

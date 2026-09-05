@@ -1,5 +1,5 @@
 snapshot
 ========
 
-.. doxygenfile:: snapshot.hpp
+.. doxygenfile:: libtmux/snapshot.hpp
    :project: cxx

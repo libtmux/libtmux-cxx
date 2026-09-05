@@ -1,5 +1,5 @@
 abi
 ===
 
-.. doxygenfile:: abi.hpp
+.. doxygenfile:: libtmux/abi.hpp
    :project: cxx

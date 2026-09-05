@@ -1,5 +1,5 @@
-filter expr
+filter_expr
 ===========
 
-.. doxygenfile:: filter_expr.hpp
+.. doxygenfile:: libtmux/filter_expr.hpp
    :project: cxx
