@@ -25,28 +25,28 @@
 LIBTMUX_NAMESPACE_BEGIN
 
 enum class StringOp { equals, iequals, contains, starts_with, ends_with };
-// tmux renders a count, a size and an index as text. Comparing them as text
-// puts "9" after "10", so a numeric field is its own kind with its own
-// operations rather than a string field a caller must remember to convert.
+/// tmux renders a count, a size and an index as text. Comparing them as text
+/// puts "9" after "10", so a numeric field is its own kind with its own
+/// operations rather than a string field a caller must remember to convert.
 enum class NumberOp { equals, not_equals, less, less_equal, greater, greater_equal };
 enum class Combine { conjunction, disjunction };
 
-// A field is a named accessor: the name is what a future tmux-format lowering
-// needs, the accessor is what in-memory evaluation needs.
-//
-// The two halves are only as consistent as whoever paired them, and nothing in
-// the type system pairs them. A field naming `pane_title` while reading
-// `pane_current_command` evaluates one way in memory and lowers to another,
-// and the built-in handles avoid that only by taking their name from the
-// entity's own `kFields` array rather than spelling it again.
-//
-// Which is enough here and not enough everywhere. A caller may build a field
-// however they like and get whatever they built — their process, their
-// predicate. What must not follow is a forged pairing crossing a process
-// boundary, so a document arriving from anywhere else is resolved by name
-// against what this library actually queries, and a name it does not know is
-// refused rather than evaluated to nothing. That check lives with the wire
-// format, in the JSON integration, because it is the boundary that needs it.
+/// A field is a named accessor: the name is what a future tmux-format lowering
+/// needs, the accessor is what in-memory evaluation needs.
+///
+/// The two halves are only as consistent as whoever paired them, and nothing in
+/// the type system pairs them. A field naming `pane_title` while reading
+/// `pane_current_command` evaluates one way in memory and lowers to another,
+/// and the built-in handles avoid that only by taking their name from the
+/// entity's own `kFields` array rather than spelling it again.
+///
+/// Which is enough here and not enough everywhere. A caller may build a field
+/// however they like and get whatever they built — their process, their
+/// predicate. What must not follow is a forged pairing crossing a process
+/// boundary, so a document arriving from anywhere else is resolved by name
+/// against what this library actually queries, and a name it does not know is
+/// refused rather than evaluated to nothing. That check lives with the wire
+/// format, in the JSON integration, because it is the boundary that needs it.
 template <typename Entity> struct StringField {
   std::string_view name;
   std::string_view (*read)(const Entity&);
@@ -90,15 +90,15 @@ public:
     std::unique_ptr<FilterExpr> operand;
   };
 
-  // A relation crosses to another entity type, so its child expression cannot
-  // live in this variant. The node keeps the relation name and quantifier for
-  // inspection and owns the evaluation by value.
+  /// A relation crosses to another entity type, so its child expression cannot
+  /// live in this variant. The node keeps the relation name and quantifier for
+  /// inspection and owns the evaluation by value.
   struct RelationTest {
     std::string relation;
     int quantifier;
     std::function<bool(const Entity&)> evaluate;
-    // The child compares another entity, so it cannot live in this variant.
-    // Its lowered form can, which is what keeps a relation translatable.
+    /// The child compares another entity, so it cannot live in this variant.
+    /// Its lowered form can, which is what keeps a relation translatable.
     LoweredExpression child;
   };
 
@@ -209,9 +209,9 @@ private:
   Node node_;
 };
 
-// A typed field handle. Only the operations a field's type actually supports
-// are declared, so `pane::active.starts_with(...)` is a compile error rather
-// than a runtime surprise.
+/// A typed field handle. Only the operations a field's type actually supports
+/// are declared, so `pane::active.starts_with(...)` is a compile error rather
+/// than a runtime surprise.
 template <typename Entity> struct StringFieldHandle {
   StringField<Entity> field;
 
@@ -335,23 +335,23 @@ template <typename Entity>
   return !FilterExpr<Entity>{operand};
 }
 
-// The query vocabulary has a namespace of its own, so a caller composing views
-// can say where an adaptor came from without importing the whole library:
-//
-//   using namespace libtmux::tmuxq;
-//   auto interesting = panes | matching(pane::active);
-//
-// It is a home, not a second surface — `libtmux::matching` below names these
-// same functions, so there is one definition to reason about.
+/// The query vocabulary has a namespace of its own, so a caller composing views
+/// can say where an adaptor came from without importing the whole library:
+///
+///   using namespace libtmux::tmuxq;
+///   auto interesting = panes | matching(pane::active);
+///
+/// It is a home, not a second surface — `libtmux::matching` below names these
+/// same functions, so there is one definition to reason about.
 namespace tmuxq {
 
-// `matching(expr)` is a range adaptor closure so it composes with std views.
+/// `matching(expr)` is a range adaptor closure so it composes with std views.
 template <typename Entity> [[nodiscard]] auto matching(FilterExpr<Entity> expr) {
   return std::views::filter(
       [expr = std::move(expr)](const Entity& entity) { return expr(entity); });
 }
 
-// A bare flag field is a complete question, so it adapts a range directly.
+/// A bare flag field is a complete question, so it adapts a range directly.
 template <typename Entity> [[nodiscard]] auto matching(BoolFieldHandle<Entity> field) {
   return matching(FilterExpr<Entity>{field});
 }

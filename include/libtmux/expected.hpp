@@ -38,8 +38,8 @@ template <typename Error> using unexpected_t = tl::unexpected<Error>;
 template <typename Error> using unexpected_t = std::unexpected<Error>;
 #endif
 
-// A factory rather than an alias: an alias template cannot deduce its argument,
-// so `unexpected(error)` would stop compiling at every call site.
+/// A factory rather than an alias: an alias template cannot deduce its argument,
+/// so `unexpected(error)` would stop compiling at every call site.
 template <typename Error> [[nodiscard]] constexpr auto unexpected(Error&& error) {
   using Decayed = std::decay_t<Error>;
 #if defined(LIBTMUX_USE_TL_EXPECTED)

@@ -38,15 +38,15 @@ using Referenced = std::reference_wrapper<const std::ranges::range_value_t<Range
 // list returned by value — leaves that reference dangling at the semicolon.
 // Requiring a name makes the storage the caller must keep alive visible.
 
-// Both also require the range to yield references. A range whose elements are
-// produced on demand — a transform that returns by value, say — has nothing
-// for the answer to refer to, and the temporary dies with the call.
+/// Both also require the range to yield references. A range whose elements are
+/// produced on demand — a transform that returns by value, say — has nothing
+/// for the answer to refer to, and the temporary dies with the call.
 template <typename Range>
 concept ReferenceRange =
     std::ranges::input_range<Range> &&
     std::is_lvalue_reference_v<std::ranges::range_reference_t<Range>>;
 
-// `first` states that a caller tolerates extras; it never reports several.
+/// `first` states that a caller tolerates extras; it never reports several.
 template <ReferenceRange Range>
 [[nodiscard]] std::optional<Referenced<Range>> first(Range& range) {
   auto iterator = std::ranges::begin(range);
@@ -56,7 +56,7 @@ template <ReferenceRange Range>
   return std::cref(*iterator);
 }
 
-// `exactly_one` states that several is a caller error, and says which one.
+/// `exactly_one` states that several is a caller error, and says which one.
 template <ReferenceRange Range>
 [[nodiscard]] expected<Referenced<Range>, CardinalityError> exactly_one(Range& range) {
   auto iterator = std::ranges::begin(range);

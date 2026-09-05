@@ -20,11 +20,11 @@
 
 LIBTMUX_NAMESPACE_BEGIN
 
-// The lines are views into the text, so text that dies at the semicolon takes
-// them with it — and `pane.capture()` returns its output by value, which makes
-// `capture_lines(*pane.capture())` the natural thing to write and a
-// use-after-free to run. Deleted for an rvalue string only: an lvalue string
-// converts as before, and so does a literal.
+/// The lines are views into the text, so text that dies at the semicolon takes
+/// them with it — and `pane.capture()` returns its output by value, which makes
+/// `capture_lines(*pane.capture())` the natural thing to write and a
+/// use-after-free to run. Deleted for an rvalue string only: an lvalue string
+/// converts as before, and so does a literal.
 template <typename Text>
   requires std::same_as<std::remove_cvref_t<Text>, std::string> &&
                (!std::is_lvalue_reference_v<Text>)
@@ -54,8 +54,8 @@ capture_lines(std::string_view output) {
   return lines;
 }
 
-// Drop the blank rows a pane pads its height with, keeping blank lines that
-// have content below them.
+/// Drop the blank rows a pane pads its height with, keeping blank lines that
+/// have content below them.
 [[nodiscard]] inline std::vector<std::string_view>
 without_trailing_blanks(std::vector<std::string_view> lines) {
   while (!lines.empty() && lines.back().empty()) {

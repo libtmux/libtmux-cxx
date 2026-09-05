@@ -1,0 +1,50 @@
+# Doxygen configuration for libtmux-cxx.
+#
+# XML only. Doxygen's own HTML is never published: Breathe consumes this XML
+# and Sphinx renders it through the same theme as every other libtmux port,
+# so the site stays uniform and no GPL-licensed HTML is ever distributed.
+
+PROJECT_NAME           = libtmux-cxx
+INPUT                  = include
+FILE_PATTERNS          = *.hpp *.h
+RECURSIVE              = YES
+
+GENERATE_HTML          = NO
+GENERATE_LATEX         = NO
+GENERATE_XML           = YES
+XML_PROGRAMLISTING     = NO
+
+# The first sentence of a comment block is its brief description.
+#
+# Without this, a multi-line /// block becomes the detailed description and
+# the brief stays empty — which is what every consumer shows in a listing.
+# The headers document themselves in prose paragraphs, so the first sentence
+# is the summary a reader wants; 261 of them reach the XML with this on and
+# none without.
+JAVADOC_AUTOBRIEF      = YES
+
+# Public API only; the site documents what callers can use.
+EXTRACT_ALL            = NO
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = NO
+HIDE_UNDOC_MEMBERS     = YES
+
+QUIET                  = YES
+WARN_IF_UNDOCUMENTED   = NO
+
+# libtmux wraps every declaration in an ABI-versioned inline namespace via a
+# macro. Without expanding it here Doxygen sees an unbalanced brace and drops
+# every declaration in the file, producing empty XML and a silently empty
+# reference.
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = YES
+PREDEFINED             = LIBTMUX_NAMESPACE_BEGIN="namespace libtmux {" \
+                         LIBTMUX_NAMESPACE_END="}" \
+                         LIBTMUX_EXPORT= \
+                         __cplusplus=202302L
+
+# build-site.sh sets OUTPUT_DIRECTORY so the XML lands in its scratch dir.
+# Doxygen expands $(VAR) from the environment; unset means "cwd", which is
+# what a bare `doxygen Doxyfile` in this checkout should do.
+OUTPUT_DIRECTORY       = $(OUTPUT_DIRECTORY)
