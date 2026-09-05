@@ -249,18 +249,20 @@ TEST(WorkspaceBuilder, ASuppressedCommandIsTypedWithTheSpaceThatHidesIt) {
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
 
-  // Both held back so the text stays on the command line to be read, and
-  // one suppressed: the difference is the leading space a shell configured
-  // for it uses to keep the line out of history.
+  // Both held back in quiet readers so a shell prompt cannot race the text
+  // being measured. One is suppressed: the exact leading space is what a
+  // configured shell uses to keep the line out of history.
   const workspace::Workspace description{
       .session_name = "hidden",
       .windows = {{.name = "work",
                    .panes = {{.shell_commands = {{.text = "echo hidden-marker",
                                                   .enter = false,
-                                                  .suppress_history = true}}},
+                                                  .suppress_history = true}},
+                              .shell = "cat"},
                              {.shell_commands = {{.text = "echo hidden-marker",
                                                   .enter = false,
-                                                  .suppress_history = false}}}}}}};
+                                                  .suppress_history = false}},
+                              .shell = "cat"}}}}};
   const auto built = workspace::build(server, description);
   ASSERT_TRUE(built.has_value()) << built.error().reason;
 
@@ -270,15 +272,14 @@ TEST(WorkspaceBuilder, ASuppressedCommandIsTypedWithTheSpaceThatHidesIt) {
   ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
   ASSERT_EQ(panes->size(), 2U);
 
-  // Polled, because a pane draws what was typed into it when its shell gets
-  // round to it, and the second one has had less time than the first.
+  // Polled, because a pane may draw what was typed after the build returns,
+  // and the second one has had less time than the first.
   // Answering with the position rather than the text in front of it: a
   // command at column zero has nothing in front of it, which is not the
   // same as not having been typed.
   //
-  // Held until two readings agree. The prompt is drawn before the command but
-  // not always in one write, so a single capture can catch the line half
-  // rendered and answer with a column the shell is about to move.
+  // Held until two readings agree. A single capture can catch the line half
+  // rendered and answer with a column the terminal is about to move.
   const auto column_of = [](const libtmux::Pane& pane) -> std::optional<std::size_t> {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
     const auto reading = [&pane]() -> std::optional<std::size_t> {
