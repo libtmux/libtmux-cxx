@@ -1,5 +1,5 @@
 command
 =======
 
-.. doxygenfile:: command.hpp
+.. doxygenfile:: libtmux/command.hpp
    :project: cxx

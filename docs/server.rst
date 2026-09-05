@@ -1,5 +1,5 @@
 server
 ======
 
-.. doxygenfile:: server.hpp
+.. doxygenfile:: libtmux/server.hpp
    :project: cxx

@@ -1,5 +1,5 @@
 notification
 ============
 
-.. doxygenfile:: notification.hpp
+.. doxygenfile:: libtmux/notification.hpp
    :project: cxx

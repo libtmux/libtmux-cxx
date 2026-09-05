@@ -1,5 +1,5 @@
 keys
 ====
 
-.. doxygenfile:: keys.hpp
+.. doxygenfile:: libtmux/keys.hpp
    :project: cxx

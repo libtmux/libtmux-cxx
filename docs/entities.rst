@@ -1,5 +1,5 @@
 entities
 ========
 
-.. doxygenfile:: entities.hpp
+.. doxygenfile:: libtmux/entities.hpp
    :project: cxx

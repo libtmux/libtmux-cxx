@@ -1,5 +1,5 @@
 target
 ======
 
-.. doxygenfile:: target.hpp
+.. doxygenfile:: libtmux/target.hpp
    :project: cxx
