@@ -602,7 +602,7 @@ TEST_F(McpProtocol, CapsTheCompleteReadBatchResponseLine) {
   }
   ASSERT_GE(history_size, 18'000);
 
-  const std::string identifier(600'000U, 'i');
+  const std::string identifier(524'000U, 'i');
   const json operation{{"tool", "capture_pane"},
                        {"arguments", {{"paneId", pane_id}, {"history", true}}}};
   const json operations = json::array({operation, operation});
@@ -635,6 +635,32 @@ TEST_F(McpProtocol, CapsTheCompleteReadBatchResponseLine) {
     EXPECT_TRUE(aggregate["results"][index]["resultTruncated"].get<bool>());
     EXPECT_TRUE(aggregate["results"][index]["result"].is_null());
   }
+}
+
+TEST_F(McpProtocol, RejectsAnOversizedRequestIdBeforeToolDispatch) {
+  auto server = libtmux::Server::at_socket_path(socket().string());
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+  auto panes = server->panes();
+  ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
+  ASSERT_FALSE(panes->empty());
+  const std::string pane_id{panes->front().id()};
+  const std::string marker = "oversized-request-id-must-not-run";
+  json rejected = call("paste_text", {{"paneId", pane_id}, {"text", marker}}, 1);
+  rejected["id"] = std::string(1'000'000U, 'i');
+
+  const auto refused = converse_ready(socket(), {std::move(rejected)});
+  const json* error = response(refused, nullptr);
+  ASSERT_NE(error, nullptr);
+  EXPECT_EQ((*error)["error"]["code"], -32600);
+  EXPECT_EQ((*error)["error"]["message"], "request id exceeds 524288 bytes");
+
+  const auto checked =
+      converse_ready(socket(), {call("capture_pane", {{"paneId", pane_id}}, 2)});
+  const json* captured = response(checked, 2);
+  ASSERT_NE(captured, nullptr);
+  EXPECT_EQ((*captured)["result"]["structuredContent"]["text"].get<std::string>().find(
+                marker),
+            std::string::npos);
 }
 
 TEST_F(McpProtocol, ExpandsOnlyBoundedValidatedVariableNames) {

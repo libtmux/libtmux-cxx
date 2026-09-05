@@ -203,6 +203,9 @@ server never originates requests to its peer.
 
 Each input line is bounded at 8 MiB and is drained before an error is returned,
 so an oversized request cannot desynchronize the next frame.
+Request IDs may occupy at most 512 KiB after JSON serialization. A larger ID
+receives a bounded `id: null` invalid-request response before reservation or
+tool dispatch, so echoed framing cannot consume the read-batch response budget.
 
 ## Build and install
 

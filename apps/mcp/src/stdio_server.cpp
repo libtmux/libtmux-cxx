@@ -66,6 +66,16 @@ struct BoundedLine {
   return id != request.end() && request_id(*id) ? &*id : nullptr;
 }
 
+[[nodiscard]] bool oversized_identifier(const json& id) {
+  return id.dump().size() > kMaximumRequestIdBytes;
+}
+
+[[nodiscard]] json oversized_identifier_failure() {
+  return failure(nullptr, kInvalidRequest,
+                 "request id exceeds " + std::to_string(kMaximumRequestIdBytes) +
+                     " bytes");
+}
+
 [[nodiscard]] bool starts_legacy_lifecycle(const json& request) {
   if (!request.is_object()) {
     return false;
@@ -81,6 +91,10 @@ void route_single(const json& request, ProtocolSession& session, Dispatcher& dis
   }
   std::optional<RequestTicket> ticket;
   if (const json* id = identifier(request); id != nullptr) {
+    if (oversized_identifier(*id)) {
+      writer.send(oversized_identifier_failure());
+      return;
+    }
     RequestTicket reserved;
     if (auto refused = dispatcher.reserve(
             *id, session.uses_legacy_request_ids() || starts_legacy_lifecycle(request),
@@ -147,6 +161,9 @@ void route_batch(const json& requests, ProtocolSession& session, Dispatcher& dis
       continue;
     }
     if (const json* id = identifier(request); id != nullptr) {
+      if (oversized_identifier(*id)) {
+        continue;
+      }
       ++occurrences[request_key(*id)];
     }
   }
@@ -160,6 +177,10 @@ void route_batch(const json& requests, ProtocolSession& session, Dispatcher& dis
       continue;
     }
     if (const json* id = identifier(request); id != nullptr) {
+      if (oversized_identifier(*id)) {
+        preflight_errors[index] = oversized_identifier_failure();
+        continue;
+      }
       const std::string key = request_key(*id);
       if (occurrences.at(key) > 1U) {
         if (reserved_duplicates.insert(key).second) {
