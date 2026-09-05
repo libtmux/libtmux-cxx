@@ -32,9 +32,9 @@ assuming. A caller asks what a route serves before choosing one.
   cannot be attributed to the scope the caller named.
 - **Control mode.** `control_with_options` is rejected before a control client
   is launched.
-- **Pane input, capture, search and streaming**, which is why the MCP server
-  advertises only `inspect_tmux`, `list_sessions`, `list_windows` and
-  `list_session_panes` there.
+- **Pane input, capture, search and streaming.** The MCP server still advertises
+  the same 47-tool catalog as POSIX, but operations psmux cannot provide fail
+  explicitly as `FailureKind::unsupported` instead of being approximated.
 
 ## An id is only unique beside its session
 
