@@ -665,24 +665,51 @@ TEST(ControlModeConnection, NotificationWatchesDoNotStealFromEachOther) {
   auto first = connection.watch_notifications();
   auto second = connection.watch_notifications();
 
+  const auto collect_until = [](auto& source, std::vector<Notification> held,
+                                std::string_view prefix,
+                                std::chrono::steady_clock::time_point deadline) {
+    while (!has_notification(held, prefix)) {
+      auto available = source.wait_for_notifications(deadline);
+      if (available.empty()) {
+        break;
+      }
+      held.insert(held.end(), std::make_move_iterator(available.begin()),
+                  std::make_move_iterator(available.end()));
+    }
+    return held;
+  };
+
+  auto external = libtmux::Server::at_socket_path(server->socket_path().string());
+  ASSERT_TRUE(external.has_value()) << external.error().diagnostic;
+  const auto primed = external->run(
+      {"rename-window", "-t", std::string{server->session_name()} + ":0", "primed"});
+  ASSERT_TRUE(primed.has_value()) << primed.error().diagnostic;
+
+  auto first_events = collect_until(first, {}, "%window-renamed ",
+                                    std::chrono::steady_clock::now() + 2s);
+  ASSERT_TRUE(has_notification(first_events, "%window-renamed "));
+
   const auto created =
       connection.execute(group({{"new-window", "-d", "-n", "watched"}}),
                          std::chrono::steady_clock::now() + 2s);
   ASSERT_FALSE(created.connection_error.has_value());
 
   const auto deadline = std::chrono::steady_clock::now() + 2s;
-  const auto first_events = first.wait_for_notifications(deadline);
+  first_events =
+      collect_until(first, std::move(first_events), "%window-add ", deadline);
   std::array<pollfd, 1> second_ready{
       pollfd{.fd = second.notification_fd(), .events = POLLIN, .revents = 0}};
   ASSERT_GE(second_ready.front().fd, 0);
   ASSERT_EQ(::poll(second_ready.data(), second_ready.size(), 0), 1);
   EXPECT_NE(second_ready.front().revents & POLLIN, 0);
-  const auto second_events = second.wait_for_notifications(deadline);
-  const auto legacy_events = connection.wait_for_notifications(deadline);
+  const auto second_events = collect_until(second, {}, "%window-add ", deadline);
+  const auto legacy_events = collect_until(connection, {}, "%window-add ", deadline);
 
   EXPECT_TRUE(has_notification(first_events, "%window-add "));
   EXPECT_TRUE(has_notification(second_events, "%window-add "));
   EXPECT_TRUE(has_notification(legacy_events, "%window-add "));
+  EXPECT_TRUE(has_notification(second_events, "%window-renamed "));
+  EXPECT_TRUE(has_notification(legacy_events, "%window-renamed "));
   EXPECT_EQ(first.dropped_notifications(), 0U);
   EXPECT_EQ(second.dropped_notifications(), 0U);
   EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
