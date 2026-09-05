@@ -2722,24 +2722,40 @@ TEST(McpProtocolCli, KeepsAnIdReservedUntilItsReplyIsWritten) {
   EXPECT_TRUE(is_duplicate(duplicate_reply));
 }
 
-TEST(McpProtocolCli, KeepsBatchIdsReservedThroughAggregateBackpressure) {
+TEST_F(McpProtocol, KeepsBatchIdsReservedThroughAggregateBackpressure) {
   const std::string huge_name(2U * 1024U * 1024U, 'x');
   const std::string initialize = initialize_request("2025-03-26").dump() + '\n';
   const std::string initialized = initialized_notification().dump() + '\n';
   const std::string first =
-      json::array({call(huge_name, json::object(), 9)}).dump() + '\n';
+      json::array({call(huge_name, json::object(), 9),
+                   call("wait_for_text",
+                        {{"target", "mcp"},
+                         {"text", "batch-backpressure-never-appears"},
+                         {"timeout_ms", 5000}},
+                        10, "batch-backpressure")})
+          .dump() +
+      '\n';
+  const std::string cancel =
+      json{{"jsonrpc", "2.0"},
+           {"method", "notifications/cancelled"},
+           {"params", {{"requestId", 10}, {"reason", "barrier reached"}}}}
+          .dump() +
+      '\n';
   const std::string duplicate =
       json{{"jsonrpc", "2.0"}, {"id", 9}, {"method", "ping"}}.dump() + '\n';
   auto replies = libtmux::mcp::test::run_backpressure_probe(
-      LIBTMUX_MCP_SERVER_PATH,
-      {"--socket-name", "libtmux-cxx-mcp-batch-backpressure-no-dispatch"},
+      LIBTMUX_MCP_SERVER_PATH, {"--socket-path", socket().string()},
       libtmux::test::current_environment(), initialize, initialized, first, duplicate,
-      std::chrono::seconds{10});
+      std::chrono::seconds{15}, 1U, cancel);
   ASSERT_TRUE(replies.has_value()) << replies.error();
-  ASSERT_EQ(replies->size(), 3U);
+  ASSERT_EQ(replies->size(), 4U);
 
-  const json reply_a = json::parse((*replies)[1]);
-  const json reply_b = json::parse((*replies)[2]);
+  const json barrier = json::parse((*replies)[1]);
+  ASSERT_EQ(barrier["method"], "notifications/progress");
+  EXPECT_EQ(barrier["params"]["progressToken"], "batch-backpressure");
+
+  const json reply_a = json::parse((*replies)[2]);
+  const json reply_b = json::parse((*replies)[3]);
   const json& aggregate = reply_a.is_array() ? reply_a : reply_b;
   const json& duplicate_reply = reply_a.is_array() ? reply_b : reply_a;
   ASSERT_TRUE(aggregate.is_array());

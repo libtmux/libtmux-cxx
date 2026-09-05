@@ -100,6 +100,24 @@ wait_readable(int descriptor, std::chrono::steady_clock::time_point deadline) {
   }
 }
 
+inline libtmux::expected<void, std::string>
+read_output_byte(int descriptor, std::string& pending,
+                 std::chrono::steady_clock::time_point deadline) {
+  if (!pending.empty()) {
+    return {};
+  }
+  if (auto readable = wait_readable(descriptor, deadline); !readable.has_value()) {
+    return readable;
+  }
+  char byte = '\0';
+  const auto size = ::read(descriptor, &byte, 1U);
+  if (size <= 0) {
+    return libtmux::unexpected(std::string{"server output closed before a reply"});
+  }
+  pending.push_back(byte);
+  return {};
+}
+
 } // namespace detail
 
 struct InputStep {
@@ -111,7 +129,8 @@ inline libtmux::expected<std::vector<std::string>, std::string> run_backpressure
     const std::filesystem::path& program, std::vector<std::string> arguments,
     std::vector<std::string> environment, std::string_view initialize,
     std::string_view initialized, std::string_view first_request,
-    std::string_view duplicate_request, std::chrono::seconds timeout) {
+    std::string_view duplicate_request, std::chrono::seconds timeout,
+    std::size_t barrier_replies = 0U, std::string_view after_barrier = {}) {
   std::array<int, 2> to_child{};
   std::array<int, 2> from_child{};
   if (::pipe(to_child.data()) != 0 || ::pipe(from_child.data()) != 0) {
@@ -166,15 +185,30 @@ inline libtmux::expected<std::vector<std::string>, std::string> run_backpressure
       !written.has_value()) {
     return abort(written.error());
   }
-  if (auto readable = detail::wait_readable(from_child[0], deadline);
-      !readable.has_value()) {
-    return abort(readable.error());
+  std::vector<std::string> replies;
+  replies.reserve(barrier_replies + 3U);
+  replies.push_back(*std::move(initialized_reply));
+  for (std::size_t index = 0; index < barrier_replies; ++index) {
+    auto barrier = detail::read_line(from_child[0], pending, deadline);
+    if (!barrier.has_value()) {
+      return abort(barrier.error());
+    }
+    replies.push_back(*std::move(barrier));
+  }
+  if (!after_barrier.empty()) {
+    if (auto written = detail::write_all(to_child[1], after_barrier);
+        !written.has_value()) {
+      return abort(written.error());
+    }
+  }
+  if (auto output = detail::read_output_byte(from_child[0], pending, deadline);
+      !output.has_value()) {
+    return abort(output.error());
   }
   if (auto written = detail::write_all(to_child[1], duplicate_request);
       !written.has_value()) {
     return abort(written.error());
   }
-  std::this_thread::sleep_for(std::chrono::milliseconds{250});
 
   auto first_reply = detail::read_line(from_child[0], pending, deadline);
   if (!first_reply.has_value()) {
@@ -194,9 +228,9 @@ inline libtmux::expected<std::vector<std::string>, std::string> run_backpressure
       if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
         return libtmux::unexpected(program.string() + " exited abnormally");
       }
-      return std::vector<std::string>{*std::move(initialized_reply),
-                                      *std::move(first_reply),
-                                      *std::move(duplicate_reply)};
+      replies.push_back(*std::move(first_reply));
+      replies.push_back(*std::move(duplicate_reply));
+      return replies;
     }
     if (waited < 0) {
       return libtmux::unexpected(std::string{"waitpid: "} + std::strerror(errno));
