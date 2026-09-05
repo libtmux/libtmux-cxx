@@ -2330,18 +2330,35 @@ TEST(McpProtocolCli, EstablishesDefaultMinimalDaemonBeforeFreezingProvenance) {
       std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
   auto opened = libtmux::mcp::server::open_server(options);
   ASSERT_TRUE(opened.has_value()) << opened.error();
+  const std::filesystem::path selected_socket{opened->server.socket_path()};
   EXPECT_FALSE(opened->server_pre_existing);
   EXPECT_TRUE(opened->teardown_enabled_by_default);
   EXPECT_TRUE(opened->owns_daemon);
   EXPECT_EQ(opened->socket_provenance, "default-dedicated");
   EXPECT_EQ(opened->configuration_provenance, "minimal");
   const auto environment = opened->server.run({"show-environment", "-g"});
+  const auto alive = opened->server.run({"show-options", "-sqv", "exit-empty"});
+  const auto killed = opened->server.kill();
+
+  const auto stopped_by = std::chrono::steady_clock::now() + std::chrono::seconds{1};
+  while (killed.has_value() && opened->server.is_alive(std::chrono::milliseconds{50}) &&
+         std::chrono::steady_clock::now() < stopped_by) {
+    std::this_thread::yield();
+  }
+  const bool stopped =
+      killed.has_value() && !opened->server.is_alive(std::chrono::milliseconds{50});
+  std::error_code cleanup_error;
+  const bool removed =
+      stopped && std::filesystem::remove(selected_socket, cleanup_error);
+
   ASSERT_TRUE(environment.has_value()) << environment.error().diagnostic;
   EXPECT_EQ(environment->find("LIBTMUX_MCP_OWNER="), std::string::npos);
-  const auto alive = opened->server.run({"show-options", "-sqv", "exit-empty"});
   EXPECT_TRUE(alive.has_value()) << alive.error().diagnostic;
-  const auto killed = opened->server.kill();
   EXPECT_TRUE(killed.has_value()) << killed.error().diagnostic;
+  EXPECT_TRUE(stopped);
+  EXPECT_TRUE(removed);
+  EXPECT_FALSE(cleanup_error) << cleanup_error.message();
+  EXPECT_FALSE(std::filesystem::exists(selected_socket));
 }
 
 TEST(McpProtocolCli, StopsTheAuthenticatedDefaultDaemonWhenStdioCloses) {
