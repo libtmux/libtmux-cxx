@@ -276,6 +276,19 @@ protected:
     return std::move(*panes);
   }
 
+  [[nodiscard]] libtmux::expected<std::string, libtmux::CommandFailure>
+  wait_for_pane_value(const libtmux::Pane& pane, std::string_view format,
+                      std::string_view expected) const {
+    for (int attempt = 0; attempt < 100; ++attempt) {
+      auto value = pane.expand(format);
+      if (!value.has_value() || *value == expected) {
+        return value;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds{10});
+    }
+    return pane.expand(format);
+  }
+
   std::unique_ptr<ScopedTmuxServer> fixture_;
 };
 
@@ -639,6 +652,10 @@ TEST_F(McpProtocol, GuardsTheEffectiveSynchronizedCohortButPastesOnlyTheTarget) 
   ASSERT_TRUE(source.set_option("synchronize-panes", "on").has_value());
   ASSERT_TRUE(sibling.set_option("synchronize-panes", "on").has_value());
   ASSERT_TRUE(sibling.enter_copy_mode().has_value());
+  ASSERT_TRUE(server.run({"choose-tree", "-t", sibling.id()}).has_value());
+  const auto nested_mode = sibling.expand("#{pane_in_mode}");
+  ASSERT_TRUE(nested_mode.has_value()) << nested_mode.error().diagnostic;
+  ASSERT_EQ(*nested_mode, "2");
 
   const auto guarded = converse_ready(
       socket(), {call("send_keys", {{"paneId", source.id()}, {"keys", "Escape"}}, 1),
@@ -681,7 +698,7 @@ TEST_F(McpProtocol, GuardsTheEffectiveSynchronizedCohortButPastesOnlyTheTarget) 
   EXPECT_NE(source_after_paste.find(paste_marker), std::string::npos);
   EXPECT_EQ(sibling_after_paste.find(paste_marker), std::string::npos);
   EXPECT_EQ(sibling_after_paste, sibling_before_paste);
-  EXPECT_EQ(*sibling_mode, "1");
+  EXPECT_EQ(*sibling_mode, "2");
 
   ASSERT_TRUE(sibling.set_option("synchronize-panes", "off").has_value());
   const json sent =
@@ -709,8 +726,10 @@ TEST_F(McpProtocol, GuardsTheEffectiveSynchronizedCohortButPastesOnlyTheTarget) 
   EXPECT_EQ(sibling_source_off.find(source_only_marker), std::string::npos);
 
   ASSERT_TRUE(sibling.set_option("synchronize-panes", "off").has_value());
-  ASSERT_TRUE(
-      server.run({"send-keys", "-X", "-t", sibling.id(), "cancel"}).has_value());
+  ASSERT_TRUE(server.run({"respawn-pane", "-k", "-t", sibling.id()}).has_value());
+  const auto cleared_mode = wait_for_pane_value(sibling, "#{pane_in_mode}", "0");
+  ASSERT_TRUE(cleared_mode.has_value()) << cleared_mode.error().diagnostic;
+  ASSERT_EQ(*cleared_mode, "0");
   ASSERT_TRUE(sibling.set_option("synchronize-panes", "on").has_value());
   ASSERT_TRUE(source.set_option("synchronize-panes", "on").has_value());
   const json refused =
@@ -727,12 +746,110 @@ TEST_F(McpProtocol, GuardsTheEffectiveSynchronizedCohortButPastesOnlyTheTarget) 
   EXPECT_EQ(captured(sibling).find("synchronized-run"), std::string::npos);
 
   ASSERT_TRUE(source.set_option("synchronize-panes", "off").has_value());
+  ASSERT_TRUE(sibling.set_option("remain-on-exit", "on").has_value());
+  ASSERT_TRUE(sibling.send_text("exit").has_value());
+  ASSERT_TRUE(sibling.send_key("Enter").has_value());
+  const auto sibling_dead = wait_for_pane_value(sibling, "#{pane_dead}", "1");
+  ASSERT_TRUE(sibling_dead.has_value()) << sibling_dead.error().diagnostic;
+  ASSERT_EQ(*sibling_dead, "1");
+  ASSERT_TRUE(source.set_option("synchronize-panes", "on").has_value());
+  const std::string dead_cohort_marker = "dead-cohort-marker";
+  const auto dead_guarded = converse_ready(
+      socket(), {call("send_keys", {{"paneId", source.id()}, {"keys", "Escape"}}, 20),
+                 call("send_keys_batch",
+                      {{"operations", json::array({{{"paneId", source.id()},
+                                                    {"keys", dead_cohort_marker},
+                                                    {"literal", true}}})}},
+                      21)});
+  const json* dead_send = response(dead_guarded, 20);
+  const json* dead_batch = response(dead_guarded, 21);
+  ASSERT_NE(dead_send, nullptr);
+  ASSERT_NE(dead_batch, nullptr);
+  EXPECT_TRUE((*dead_send)["result"]["isError"].get<bool>());
+  EXPECT_EQ((*dead_batch)["result"]["structuredContent"]["completed"], 0);
+  EXPECT_NE(
+      (*dead_send)["result"]["content"][0]["text"].get<std::string>().find("dead"),
+      std::string::npos);
+  EXPECT_EQ(captured(source).find(dead_cohort_marker), std::string::npos);
+
+  ASSERT_TRUE(source.set_option("synchronize-panes", "off").has_value());
   const json singular =
       invoke("run_shell_command",
              {{"paneId", source.id()}, {"command", "printf source-only-run"}}, 14);
   ASSERT_FALSE(singular["result"]["isError"].get<bool>()) << singular.dump();
   EXPECT_EQ(singular["result"]["structuredContent"]["exit_code"], 0);
   EXPECT_EQ(captured(sibling).find("source-only-run"), std::string::npos);
+}
+
+TEST_F(McpProtocol, RefusesEveryInputToolForADeadConfiguredPane) {
+  const libtmux::Server server = connect_server();
+  auto pane = server.pane("mcp");
+  ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
+  ASSERT_TRUE(pane->set_option("remain-on-exit", "on").has_value());
+  ASSERT_TRUE(pane->send_text("exit").has_value());
+  ASSERT_TRUE(pane->send_key("Enter").has_value());
+  const auto dead = wait_for_pane_value(*pane, "#{pane_dead}", "1");
+  ASSERT_TRUE(dead.has_value()) << dead.error().diagnostic;
+  ASSERT_EQ(*dead, "1");
+  const auto buffers_before = server.buffers();
+  ASSERT_TRUE(buffers_before.has_value()) << buffers_before.error().diagnostic;
+  const auto replies = converse_ready(
+      socket(),
+      {call("send_keys", {{"paneId", pane->id()}, {"keys", "Escape"}}, 1),
+       call("send_keys_batch",
+            {{"operations", json::array({{{"paneId", pane->id()},
+                                          {"keys", "dead-batch"},
+                                          {"literal", true},
+                                          {"enter", true}}})}},
+            2),
+       call("paste_text", {{"paneId", pane->id()}, {"text", "dead-paste"}}, 3),
+       call("run_shell_command",
+            {{"paneId", pane->id()}, {"command", "printf dead-run"}, {"timeoutMs", 1}},
+            4)});
+  for (const int id : {1, 3, 4}) {
+    const json* reply = response(replies, id);
+    ASSERT_NE(reply, nullptr);
+    EXPECT_TRUE((*reply)["result"]["isError"].get<bool>());
+    EXPECT_NE((*reply)["result"]["content"][0]["text"].get<std::string>().find("dead"),
+              std::string::npos);
+  }
+  const json* batch = response(replies, 2);
+  ASSERT_NE(batch, nullptr);
+  EXPECT_EQ((*batch)["result"]["structuredContent"]["completed"], 0);
+  EXPECT_NE((*batch)["result"]["structuredContent"]["failures"][0]["reason"]
+                .get<std::string>()
+                .find("dead"),
+            std::string::npos);
+  const auto buffers_after = server.buffers();
+  ASSERT_TRUE(buffers_after.has_value()) << buffers_after.error().diagnostic;
+  EXPECT_EQ(buffer_names(*buffers_after), buffer_names(*buffers_before));
+  const std::string after = captured(*pane);
+  for (const std::string_view marker : {"dead-batch", "dead-paste", "dead-run"}) {
+    EXPECT_EQ(after.find(marker), std::string::npos) << marker;
+  }
+}
+
+TEST_F(McpProtocol, RefusesShellCommandsForANonShellForegroundProcess) {
+  const libtmux::Server server = connect_server();
+  auto pane = server.pane("mcp");
+  ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
+  const std::string pane_id{pane->id()};
+  ASSERT_TRUE(pane->send_text("exec cat").has_value());
+  ASSERT_TRUE(pane->send_key("Enter").has_value());
+  const auto command = wait_for_pane_value(*pane, "#{pane_current_command}", "cat");
+  ASSERT_TRUE(command.has_value()) << command.error().diagnostic;
+  ASSERT_EQ(*command, "cat");
+
+  const std::string marker = "non-shell-payload-marker";
+  const json reply =
+      invoke("run_shell_command",
+             {{"paneId", pane_id}, {"command", "printf " + marker}, {"timeoutMs", 100}},
+             1, std::chrono::milliseconds{250});
+  ASSERT_TRUE(reply["result"]["isError"].get<bool>()) << reply.dump();
+  EXPECT_NE(reply["result"]["content"][0]["text"].get<std::string>().find(
+                "supported POSIX shell"),
+            std::string::npos);
+  EXPECT_EQ(captured(*pane).find(marker), std::string::npos);
 }
 
 TEST_F(McpProtocol, BatchPreflightsEachRowBeforeTextAndOptionalEnter) {

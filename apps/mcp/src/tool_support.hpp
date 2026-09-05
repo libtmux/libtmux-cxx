@@ -47,6 +47,13 @@ struct ShellCommandCompletion {
   std::size_t record_begin{};
 };
 
+enum class PaneInputScope { effective_cohort, target_only, singular_posix_shell };
+
+struct PaneInputPreflight {
+  std::vector<std::string> configured_pane_ids;
+  std::string foreground_command;
+};
+
 [[nodiscard]] ShellCommandPayload shell_command_payload(std::string_view command,
                                                         std::string_view nonce);
 [[nodiscard]] std::optional<ShellCommandCompletion>
@@ -58,14 +65,12 @@ shell_command_completion(std::string_view capture, std::string_view marker,
 [[nodiscard]] ToolOutput output(StructuredValue::Object structured,
                                 std::optional<std::size_t> maximum_response_bytes = {});
 [[nodiscard]] ToolError tmux_error(const CommandFailure& error);
-[[nodiscard]] libtmux::expected<void, ToolError>
-guard_pane_input_mode(std::string_view pane_id,
-                      libtmux::expected<std::string, CommandFailure> expanded_mode);
-[[nodiscard]] libtmux::expected<void, ToolError>
-guard_pane_input_mode(const Pane& pane);
-[[nodiscard]] libtmux::expected<bool, ToolError> effective_synchronize_panes(
-    std::string_view pane_id,
-    libtmux::expected<OptionEntry, CommandFailure> effective_option);
+[[nodiscard]] libtmux::expected<PaneInputPreflight, ToolError>
+parse_pane_input_snapshot(std::string_view source_pane_id, std::string raw,
+                          PaneInputScope scope);
+[[nodiscard]] libtmux::expected<PaneInputPreflight, ToolError>
+preflight_pane_input(const Server& server, std::string_view source_pane_id,
+                     PaneInputScope scope);
 [[nodiscard]] StructuredValue session_value(const Session& session);
 [[nodiscard]] StructuredValue window_value(const Window& window);
 [[nodiscard]] StructuredValue pane_value(const Pane& pane);

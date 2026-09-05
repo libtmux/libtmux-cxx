@@ -390,11 +390,75 @@ CATALOGUE: t.Final = (
     Mutation(
         mutation_id="mcp-pane-mode-exact-zero",
         path="apps/mcp/src/tool_catalog.cpp",
-        find='  if (expanded_mode.has_value() && *expanded_mode == "0") {',
-        replace="  if (expanded_mode.has_value()) {",
+        find="    if (row->mode != 0U) {",
+        replace="    if (false) {",
         target="mcp_tools_test",
         test_regex=r"^consumer[.]mcp$",
-        guards="pane input proceeds only when a fresh mode expansion is exactly zero",
+        guards="pane input proceeds only when the authoritative mode count is zero",
+    ),
+    Mutation(
+        mutation_id="mcp-pane-input-record-framing",
+        path="apps/mcp/src/tool_catalog.cpp",
+        find=(
+            "  if (!canonical_id(source_pane_id, '%') || raw.empty() || "
+            "raw.back() != '\\n' ||\n"
+            "      raw.front() == '\\n' || raw.find(\"\\n\\n\") != "
+            "std::string::npos) {"
+        ),
+        replace="  if (!canonical_id(source_pane_id, '%')) {",
+        target="mcp_tools_test",
+        test_regex=r"^consumer[.]mcp$",
+        guards="pane snapshots reject blank and unterminated records before parsing",
+    ),
+    Mutation(
+        mutation_id="mcp-pane-input-canonical-identities",
+        path="apps/mcp/src/tool_catalog.cpp",
+        find=(
+            "  return value.size() > 1U && value.front() == prefix &&\n"
+            "         canonical_number(value.substr(1U));"
+        ),
+        replace="  return value.size() > 1U && value.front() == prefix;",
+        target="mcp_tools_test",
+        test_regex=r"^consumer[.]mcp$",
+        guards="pane and window identities are canonical bounded numeric IDs",
+    ),
+    Mutation(
+        mutation_id="mcp-pane-input-nonempty-command",
+        path="apps/mcp/src/tool_catalog.cpp",
+        find='        (values[4] != "0" && values[4] != "1") || values[5].empty() ||',
+        replace='        (values[4] != "0" && values[4] != "1") || false ||',
+        target="mcp_tools_test",
+        test_regex=r"^consumer[.]mcp$",
+        guards="every pane snapshot row names a foreground command",
+    ),
+    Mutation(
+        mutation_id="mcp-pane-dead-exact-zero",
+        path="apps/mcp/src/tool_catalog.cpp",
+        find="    if (row->dead) {",
+        replace="    if (false) {",
+        target="mcp_tools_test",
+        test_regex=r"^consumer[.]mcp$",
+        guards="configured pane input refuses a dead foreground process",
+    ),
+    Mutation(
+        mutation_id="mcp-pane-shell-allowlist",
+        path="apps/mcp/src/tool_catalog.cpp",
+        find="    if (!supported_posix_shell(result.foreground_command)) {",
+        replace=(
+            "    if (!supported_posix_shell(result.foreground_command) && false) {"
+        ),
+        target="mcp_tools_test",
+        test_regex=r"^consumer[.]mcp$",
+        guards="shell commands enter only a supported singular POSIX shell",
+    ),
+    Mutation(
+        mutation_id="mcp-pane-cohort-checks",
+        path="apps/mcp/src/tool_catalog.cpp",
+        find="      if (row.synchronized) {",
+        replace="      if (true) {",
+        target="mcp_tools_test",
+        test_regex=r"^consumer[.]mcp$",
+        guards="only the source pane's effective synchronized cohort is configured",
     ),
     Mutation(
         mutation_id="mcp-id-held-through-write",

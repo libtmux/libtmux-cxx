@@ -6,6 +6,7 @@
 #include <charconv>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <random>
 #include <set>
 #include <string>
@@ -18,6 +19,7 @@
 #include "libtmux/format.hpp"
 #include "libtmux/keys.hpp"
 #include "libtmux/server.hpp"
+#include "libtmux/snapshot.hpp"
 #include "tool_support.hpp"
 #include "wait_for_text.hpp"
 
@@ -84,37 +86,162 @@ shell_command_completion(std::string_view capture, std::string_view marker,
       .exit_code = status, .text_begin = text_begin, .record_begin = record_begin};
 }
 
-libtmux::expected<void, ToolError>
-guard_pane_input_mode(std::string_view pane_id,
-                      libtmux::expected<std::string, CommandFailure> expanded_mode) {
-  if (expanded_mode.has_value() && *expanded_mode == "0") {
-    return {};
-  }
-  return libtmux::unexpected(ToolError{
-      false, "pane " + std::string{pane_id} +
-                 " input is refused because its human-owned mode state is not clear; "
-                 "capture pane content and wait for the mode to end"});
-}
+namespace {
 
-libtmux::expected<void, ToolError> guard_pane_input_mode(const Pane& pane) {
-  return guard_pane_input_mode(pane.id(), pane.expand("#{pane_in_mode}"));
-}
+constexpr std::array<std::string_view, 6> kPaneInputFields{
+    "pane_id",      "window_id", "pane_synchronized",
+    "pane_in_mode", "pane_dead", "pane_current_command"};
 
-libtmux::expected<bool, ToolError> effective_synchronize_panes(
-    std::string_view pane_id,
-    libtmux::expected<OptionEntry, CommandFailure> effective_option) {
-  if (!effective_option.has_value()) {
-    return libtmux::unexpected(tmux_error(effective_option.error()));
-  }
-  if (effective_option->value == "on") {
-    return true;
-  }
-  if (effective_option->value == "off") {
+[[nodiscard]] bool canonical_number(std::string_view value) {
+  if (value.empty() || (value.size() > 1U && value.front() == '0')) {
     return false;
   }
-  return libtmux::unexpected(ToolError{
-      false, "tmux could not prove the effective synchronize-panes state for pane " +
-                 std::string{pane_id}});
+  std::uint64_t parsed = 0U;
+  const auto answer =
+      std::from_chars(value.data(), value.data() + value.size(), parsed);
+  return answer.ec == std::errc{} && answer.ptr == value.data() + value.size();
+}
+
+[[nodiscard]] bool canonical_id(std::string_view value, char prefix) {
+  return value.size() > 1U && value.front() == prefix &&
+         canonical_number(value.substr(1U));
+}
+
+[[nodiscard]] bool supported_posix_shell(std::string_view command) {
+  const std::size_t slash = command.rfind('/');
+  std::string_view basename =
+      command.substr(slash == std::string_view::npos ? 0U : slash + 1U);
+  if (!basename.empty() && basename.front() == '-') {
+    basename.remove_prefix(1U);
+  }
+  constexpr std::array<std::string_view, 8> shells{"sh",  "ash",  "bash",  "dash",
+                                                   "ksh", "mksh", "pdksh", "zsh"};
+  return std::ranges::find(shells, basename) != shells.end();
+}
+
+struct PaneInputRow {
+  std::string pane_id;
+  std::string window_id;
+  bool synchronized{};
+  std::uint64_t mode{};
+  bool dead{};
+  std::string command;
+};
+
+[[nodiscard]] ToolError invalid_pane_snapshot(std::string_view source_pane_id) {
+  return ToolError{false, "tmux returned an invalid pane input snapshot for pane " +
+                              std::string{source_pane_id}};
+}
+
+} // namespace
+
+libtmux::expected<PaneInputPreflight, ToolError>
+parse_pane_input_snapshot(std::string_view source_pane_id, std::string raw,
+                          PaneInputScope scope) {
+  if (!canonical_id(source_pane_id, '%') || raw.empty() || raw.back() != '\n' ||
+      raw.front() == '\n' || raw.find("\n\n") != std::string::npos) {
+    return libtmux::unexpected(invalid_pane_snapshot(source_pane_id));
+  }
+  const auto snapshot = Snapshot::from_recording(kPaneInputFields, std::move(raw));
+  if (snapshot == nullptr || snapshot->rows().empty()) {
+    return libtmux::unexpected(invalid_pane_snapshot(source_pane_id));
+  }
+
+  std::vector<PaneInputRow> rows;
+  rows.reserve(snapshot->rows().size());
+  std::set<std::string, std::less<>> pane_ids;
+  std::string window_id;
+  for (const auto& values : snapshot->rows()) {
+    if (!canonical_id(values[0], '%') || !canonical_id(values[1], '@') ||
+        (values[2] != "0" && values[2] != "1") || !canonical_number(values[3]) ||
+        (values[4] != "0" && values[4] != "1") || values[5].empty() ||
+        !pane_ids.emplace(values[0]).second ||
+        (!window_id.empty() && values[1] != window_id)) {
+      return libtmux::unexpected(invalid_pane_snapshot(source_pane_id));
+    }
+    std::uint64_t mode = 0U;
+    const auto parsed =
+        std::from_chars(values[3].data(), values[3].data() + values[3].size(), mode);
+    if (parsed.ec != std::errc{} || parsed.ptr != values[3].data() + values[3].size()) {
+      return libtmux::unexpected(invalid_pane_snapshot(source_pane_id));
+    }
+    if (window_id.empty()) {
+      window_id = std::string{values[1]};
+    }
+    rows.push_back(PaneInputRow{.pane_id = std::string{values[0]},
+                                .window_id = std::string{values[1]},
+                                .synchronized = values[2] == "1",
+                                .mode = mode,
+                                .dead = values[4] == "1",
+                                .command = std::string{values[5]}});
+  }
+
+  const auto source = std::ranges::find(rows, source_pane_id, &PaneInputRow::pane_id);
+  if (source == rows.end()) {
+    return libtmux::unexpected(invalid_pane_snapshot(source_pane_id));
+  }
+  std::vector<const PaneInputRow*> configured;
+  if (scope == PaneInputScope::target_only || !source->synchronized) {
+    configured.push_back(&*source);
+  } else {
+    for (const PaneInputRow& row : rows) {
+      if (row.synchronized) {
+        configured.push_back(&row);
+      }
+    }
+  }
+  std::ranges::sort(configured, {},
+                    [](const PaneInputRow* row) { return row->pane_id; });
+
+  PaneInputPreflight result{.configured_pane_ids = {},
+                            .foreground_command = source->command};
+  result.configured_pane_ids.reserve(configured.size());
+  for (const PaneInputRow* row : configured) {
+    if (row->dead) {
+      return libtmux::unexpected(ToolError{
+          false, "pane " + row->pane_id +
+                     " input is refused because its configured process is dead"});
+    }
+    if (row->mode != 0U) {
+      return libtmux::unexpected(ToolError{
+          false, "pane " + row->pane_id +
+                     " input is refused because its human-owned mode is active; "
+                     "capture pane content and wait for the mode to end"});
+    }
+    result.configured_pane_ids.push_back(row->pane_id);
+  }
+  if (scope == PaneInputScope::singular_posix_shell) {
+    if (result.configured_pane_ids.size() != 1U) {
+      std::string ids;
+      for (const std::string& id : result.configured_pane_ids) {
+        ids += ids.empty() ? id : ", " + id;
+      }
+      return libtmux::unexpected(ToolError{
+          false,
+          "run_shell_command requires one configured pane target; configured IDs "
+          "are " +
+              ids +
+              "; disable synchronize-panes or use a source pane whose effective "
+              "synchronize-panes state is off"});
+    }
+    if (!supported_posix_shell(result.foreground_command)) {
+      return libtmux::unexpected(ToolError{
+          false, "run_shell_command requires a supported POSIX shell in pane " +
+                     std::string{source_pane_id}});
+    }
+  }
+  return result;
+}
+
+libtmux::expected<PaneInputPreflight, ToolError>
+preflight_pane_input(const Server& server, std::string_view source_pane_id,
+                     PaneInputScope scope) {
+  const auto raw = server.run({"list-panes", "-t", std::string{source_pane_id}, "-F",
+                               format_request(kPaneInputFields)});
+  if (!raw.has_value()) {
+    return libtmux::unexpected(tmux_error(raw.error()));
+  }
+  return parse_pane_input_snapshot(source_pane_id, *raw, scope);
 }
 
 StructuredValue session_value(const Session& session) {
@@ -511,65 +638,12 @@ make_tool(std::string name, std::string title, Toolset toolset, ProcessReach rea
   return detail::output({{std::string{key}, id}, {"changed", StructuredValue{true}}});
 }
 
-[[nodiscard]] libtmux::expected<bool, ToolError>
-pane_synchronizes_input(const Pane& pane) {
-  return detail::effective_synchronize_panes(pane.id(),
-                                             pane.option("synchronize-panes"));
-}
-
-[[nodiscard]] libtmux::expected<std::vector<Pane>, ToolError>
-resolved_pane_targets(const Pane& pane) {
-  const auto source_synchronized = pane_synchronizes_input(pane);
-  if (!source_synchronized.has_value()) {
-    return libtmux::unexpected(source_synchronized.error());
-  }
-  if (!*source_synchronized) {
-    return std::vector<Pane>{pane};
-  }
-  const auto window = pane.window();
-  if (!window.has_value()) {
-    return libtmux::unexpected(detail::tmux_error(window.error()));
-  }
-  const auto panes = window->panes();
-  if (!panes.has_value()) {
-    return libtmux::unexpected(detail::tmux_error(panes.error()));
-  }
-  std::vector<Pane> targets;
-  targets.reserve(panes->size());
-  for (const Pane& candidate : *panes) {
-    if (candidate.id() == pane.id()) {
-      targets.push_back(pane);
-      continue;
-    }
-    const auto synchronized = pane_synchronizes_input(candidate);
-    if (!synchronized.has_value()) {
-      return libtmux::unexpected(synchronized.error());
-    }
-    if (*synchronized) {
-      targets.push_back(candidate);
-    }
-  }
-  std::ranges::sort(targets, {},
-                    [](const Pane& candidate) { return std::string{candidate.id()}; });
-  return targets;
-}
-
-[[nodiscard]] libtmux::expected<void, ToolError>
-guard_pane_inputs(const std::vector<Pane>& panes) {
-  for (const Pane& pane : panes) {
-    auto guarded = detail::guard_pane_input_mode(pane);
-    if (!guarded.has_value()) {
-      return libtmux::unexpected(std::move(guarded.error()));
-    }
-  }
-  return {};
-}
-
-[[nodiscard]] StructuredValue::Array pane_target_ids(const std::vector<Pane>& panes) {
+[[nodiscard]] StructuredValue::Array
+pane_target_ids(const std::vector<std::string>& pane_ids) {
   StructuredValue::Array targets;
-  targets.reserve(panes.size());
-  for (const Pane& pane : panes) {
-    targets.emplace_back(pane.id());
+  targets.reserve(pane_ids.size());
+  for (const std::string& pane_id : pane_ids) {
+    targets.emplace_back(pane_id);
   }
   return targets;
 }
@@ -1655,29 +1729,17 @@ guard_pane_inputs(const std::vector<Pane>& panes) {
         }
         const auto payload = detail::shell_command_payload(
             required(arguments, "command"), shell_command_nonce());
-        auto targets = resolved_pane_targets(*pane);
-        if (!targets.has_value()) {
-          return libtmux::unexpected(std::move(targets.error()));
+        Chain dispatch;
+        dispatch.send_text(pane->id(), payload.text);
+        if (!dispatch.valid()) {
+          return libtmux::unexpected(ToolError{true, dispatch.error()});
         }
-        auto guarded = guard_pane_inputs(*targets);
-        if (!guarded.has_value()) {
-          return libtmux::unexpected(std::move(guarded.error()));
+        const auto preflight = detail::preflight_pane_input(
+            server, pane->id(), detail::PaneInputScope::singular_posix_shell);
+        if (!preflight.has_value()) {
+          return libtmux::unexpected(preflight.error());
         }
-        if (targets->size() != 1U) {
-          std::string ids;
-          for (const Pane& target : *targets) {
-            ids += ids.empty() ? std::string{target.id()}
-                               : ", " + std::string{target.id()};
-          }
-          return libtmux::unexpected(ToolError{
-              false,
-              "run_shell_command requires one configured pane target; configured "
-              "IDs are " +
-                  ids +
-                  "; disable synchronize-panes or use a source pane whose effective "
-                  "synchronize-panes state is off"});
-        }
-        const auto sent = pane->send_text(payload.text);
+        const auto sent = server.run_chain(dispatch);
         if (!sent.has_value()) {
           return failure(sent.error());
         }
@@ -1728,19 +1790,22 @@ guard_pane_inputs(const std::vector<Pane>& panes) {
         if (!pane.has_value()) {
           return failure(pane.error());
         }
-        auto targets = resolved_pane_targets(*pane);
-        if (!targets.has_value()) {
-          return libtmux::unexpected(std::move(targets.error()));
+        Chain dispatch;
+        dispatch.send_key(pane->id(), required(arguments, "keys"));
+        if (!dispatch.valid()) {
+          return libtmux::unexpected(ToolError{true, dispatch.error()});
         }
-        auto guarded = guard_pane_inputs(*targets);
-        if (!guarded.has_value()) {
-          return libtmux::unexpected(std::move(guarded.error()));
+        const auto preflight = detail::preflight_pane_input(
+            server, pane->id(), detail::PaneInputScope::effective_cohort);
+        if (!preflight.has_value()) {
+          return libtmux::unexpected(preflight.error());
         }
-        const auto answer = pane->send_key(required(arguments, "keys"));
+        const auto answer = server.run_chain(dispatch);
         return answer.has_value()
-                   ? detail::output({{"pane_id", pane->id()},
-                                     {"target_pane_ids",
-                                      StructuredValue{pane_target_ids(*targets)}}})
+                   ? detail::output(
+                         {{"pane_id", pane->id()},
+                          {"target_pane_ids", StructuredValue{pane_target_ids(
+                                                  preflight->configured_pane_ids)}}})
                    : failure(answer.error());
       },
       "Refuse a human-owned mode in the configured synchronized pane cohort, then "
@@ -1785,25 +1850,27 @@ guard_pane_inputs(const std::vector<Pane>& panes) {
           if (!pane.has_value()) {
             error = pane.error().diagnostic;
           } else {
-            auto found_targets = resolved_pane_targets(*pane);
-            if (!found_targets.has_value()) {
-              error = found_targets.error().message;
+            Chain dispatch;
+            if (boolean(operation, "literal")) {
+              dispatch.send_text(pane->id(), required(operation, "keys"));
             } else {
-              resolved = pane_target_ids(*found_targets);
-              auto guarded = guard_pane_inputs(*found_targets);
-              if (!guarded.has_value()) {
-                error = guarded.error().message;
+              dispatch.send_key(pane->id(), required(operation, "keys"));
+            }
+            if (boolean(operation, "enter")) {
+              dispatch.send_key(pane->id(), "Enter");
+            }
+            if (!dispatch.valid()) {
+              error = dispatch.error();
+            } else {
+              const auto preflight = detail::preflight_pane_input(
+                  server, pane->id(), detail::PaneInputScope::effective_cohort);
+              if (!preflight.has_value()) {
+                error = preflight.error().message;
               } else {
-                const auto sent = boolean(operation, "literal")
-                                      ? pane->send_text(required(operation, "keys"))
-                                      : pane->send_key(required(operation, "keys"));
+                resolved = pane_target_ids(preflight->configured_pane_ids);
+                const auto sent = server.run_chain(dispatch);
                 if (!sent.has_value()) {
                   error = sent.error().diagnostic;
-                } else if (boolean(operation, "enter")) {
-                  const auto entered = pane->send_key("Enter");
-                  if (!entered.has_value()) {
-                    error = entered.error().diagnostic;
-                  }
                 }
               }
             }
@@ -1845,9 +1912,10 @@ guard_pane_inputs(const std::vector<Pane>& panes) {
         if (!pane.has_value()) {
           return failure(pane.error());
         }
-        auto guarded = detail::guard_pane_input_mode(*pane);
-        if (!guarded.has_value()) {
-          return libtmux::unexpected(std::move(guarded.error()));
+        const auto preflight = detail::preflight_pane_input(
+            server, pane->id(), detail::PaneInputScope::target_only);
+        if (!preflight.has_value()) {
+          return libtmux::unexpected(preflight.error());
         }
         const std::string name = "libtmux-mcp-" + std::to_string(++sequence);
         const auto staged = server.set_buffer(name, required(arguments, "text"));
