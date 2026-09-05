@@ -189,9 +189,8 @@ template <class... Functions> struct Overloaded : Functions... {
     if (parameter.type == ArgumentType::send_key_operations) {
       const json operation = closed_object(
           {{"paneId", {{"type", "string"}, {"maxLength", detail::kTargetCharacters}}},
-           {"keys", {{"type", "string"}, {"maxLength", 4096}}},
+           {"keys", {{"type", "string"}, {"maxLength", detail::kSearchCharacters}}},
            {"enter", {{"type", "boolean"}}},
-           {"force", {{"type", "boolean"}}},
            {"literal", {{"type", "boolean"}}}},
           {"paneId", "keys"});
       properties[parameter.name] = {{"type", "array"},

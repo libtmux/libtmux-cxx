@@ -28,6 +28,7 @@ using libtmux::Server;
 using libtmux::mcp::Arguments;
 using libtmux::mcp::default_tools;
 using libtmux::mcp::Effect;
+using libtmux::mcp::FlatArguments;
 using libtmux::mcp::InputControl;
 using libtmux::mcp::InputSink;
 using libtmux::mcp::NestedAuthority;
@@ -1170,6 +1171,63 @@ TEST(McpTools, CountsUtf8CodePointsLikeThePublishedSchema) {
     ASSERT_FALSE(malformed.has_value());
     EXPECT_TRUE(malformed.error().caller_error);
     EXPECT_NE(malformed.error().message.find("valid UTF-8"), std::string::npos);
+  }
+}
+
+TEST(McpTools, ValidatesEveryNestedSendKeysBatchRowBeforeDispatch) {
+  auto complete = default_tools(ToolSelection::all());
+  ASSERT_TRUE(complete.has_value()) << complete.error();
+  const ToolDefinition* const source = complete->find("send_keys_batch");
+  ASSERT_NE(source, nullptr);
+  ToolDefinition batch = *source;
+  std::size_t dispatches = 0U;
+  batch.handler = [&dispatches](const Server&, const Arguments&,
+                                const libtmux::mcp::CallContext&) -> ToolResult {
+    ++dispatches;
+    return ToolOutput{.structured = {}};
+  };
+  auto built = ToolRegistry::create({std::move(batch)}, ToolSelection::all());
+  ASSERT_TRUE(built.has_value()) << built.error();
+  auto server = Server::at_socket_name("mcp-send-key-batch-validation");
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+
+  const std::string face{"\xF0\x9F\x98\x80"};
+  const auto repeated = [&face](std::size_t count) {
+    std::string value;
+    value.reserve(face.size() * count);
+    for (std::size_t index = 0U; index < count; ++index) {
+      value += face;
+    }
+    return value;
+  };
+  const auto call = [&](FlatArguments operation) {
+    Arguments arguments;
+    arguments.send_key_operations.push_back(std::move(operation));
+    return built->call(*server, "send_keys_batch", arguments);
+  };
+
+  const auto exact = call({{"paneId", repeated(512U)},
+                           {"keys", repeated(4096U)},
+                           {"enter", "true"},
+                           {"literal", "false"}});
+  ASSERT_TRUE(exact.has_value()) << exact.error().message;
+  EXPECT_EQ(dispatches, 1U);
+
+  const std::vector<FlatArguments> refused{
+      {{"paneId", repeated(513U)}, {"keys", "Escape"}},
+      {{"paneId", "%1"}, {"keys", repeated(4097U)}},
+      {{"paneId", "%1"},
+       {"keys", std::string{static_cast<char>(0xC0), static_cast<char>(0x80)}}},
+      {{"paneId", "%1"}, {"keys", "Escape"}, {"force", "true"}},
+      {{"paneId", "%1"}, {"keys", "Escape"}, {"literal", "yes"}},
+      {{"paneId", "%1"}},
+      {{"keys", "Escape"}},
+  };
+  for (const FlatArguments& operation : refused) {
+    const auto rejected = call(operation);
+    ASSERT_FALSE(rejected.has_value());
+    EXPECT_TRUE(rejected.error().caller_error);
+    EXPECT_EQ(dispatches, 1U) << rejected.error().message;
   }
 }
 

@@ -348,7 +348,7 @@ libtmux::expected<Arguments, ArgumentError> read_arguments(const json& params,
       for (const json& operation : value) {
         const std::string prefix = key + "[" + std::to_string(index) + "]";
         if (!operation.is_object() ||
-            !only_keys(operation, {"paneId", "keys", "enter", "force", "literal"})) {
+            !only_keys(operation, {"paneId", "keys", "enter", "literal"})) {
           return libtmux::unexpected(
               ArgumentError{true, prefix + " must be a closed input operation"});
         }
@@ -364,7 +364,7 @@ libtmux::expected<Arguments, ArgumentError> read_arguments(const json& params,
         }
         FlatArguments parsed{{"paneId", pane->get<std::string>()},
                              {"keys", keys->get<std::string>()}};
-        for (const std::string_view flag : {"enter", "force", "literal"}) {
+        for (const std::string_view flag : {"enter", "literal"}) {
           const auto found_flag = operation.find(flag);
           if (found_flag == operation.end()) {
             continue;

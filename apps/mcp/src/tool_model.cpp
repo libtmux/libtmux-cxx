@@ -12,11 +12,12 @@
 #include <vector>
 
 #include "libtmux/server.hpp"
+#include "tool_support.hpp"
 
 namespace libtmux::mcp {
 namespace {
 
-[[nodiscard]] const std::string* argument(const Arguments& arguments,
+[[nodiscard]] const std::string* argument(const FlatArguments& arguments,
                                           std::string_view name) {
   const auto found = arguments.find(name);
   return found == arguments.end() ? nullptr : &found->second;
@@ -79,6 +80,48 @@ utf8_code_points(std::string_view value) noexcept {
     ++count;
   }
   return count;
+}
+
+[[nodiscard]] std::optional<ToolError>
+validate_send_key_operations(const std::vector<FlatArguments>& operations) {
+  for (std::size_t index = 0U; index < operations.size(); ++index) {
+    const FlatArguments& operation = operations[index];
+    const std::string prefix = "operations[" + std::to_string(index) + "]";
+    if (!operation.string_arrays.empty()) {
+      return ToolError{true, prefix + " must be a closed input operation"};
+    }
+    for (const auto& [name, value] : operation) {
+      static_cast<void>(value);
+      if (name != "paneId" && name != "keys" && name != "enter" && name != "literal") {
+        return ToolError{true, "unknown argument: " + prefix + "." + name};
+      }
+    }
+    for (const std::string_view name : {"paneId", "keys"}) {
+      const std::string* const value = argument(operation, name);
+      if (value == nullptr || value->empty()) {
+        return ToolError{true, prefix + "." + std::string{name} +
+                                   " must be a non-empty string"};
+      }
+      const auto length = utf8_code_points(*value);
+      if (!length.has_value()) {
+        return ToolError{true, prefix + "." + std::string{name} +
+                                   " must contain valid UTF-8"};
+      }
+      const std::size_t maximum =
+          name == "paneId" ? detail::kTargetCharacters : detail::kSearchCharacters;
+      if (*length > maximum) {
+        return ToolError{true, prefix + "." + std::string{name} + " is longer than " +
+                                   std::to_string(maximum) + " characters"};
+      }
+    }
+    for (const std::string_view name : {"enter", "literal"}) {
+      const std::string* const value = argument(operation, name);
+      if (value != nullptr && *value != "true" && *value != "false") {
+        return ToolError{true, prefix + "." + std::string{name} + " must be a boolean"};
+      }
+    }
+  }
+  return std::nullopt;
 }
 
 [[nodiscard]] bool valid(Toolset value) noexcept {
@@ -633,6 +676,10 @@ ToolResult ToolRegistry::call_definition(const Server& server,
   if (arguments.send_key_operations.size() > 64U) {
     return libtmux::unexpected(
         ToolError{true, "operations must contain at most sixty-four operations"});
+  }
+  if (const auto invalid = validate_send_key_operations(arguments.send_key_operations);
+      invalid.has_value()) {
+    return libtmux::unexpected(*invalid);
   }
   for (const auto& [key, value] : arguments) {
     const auto parameter = std::ranges::find(tool.schema.input, key, &Parameter::name);

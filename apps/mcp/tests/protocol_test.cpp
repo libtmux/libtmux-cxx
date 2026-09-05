@@ -573,6 +573,18 @@ TEST_F(McpProtocol, PublishesTheEffectiveCrossPortCatalog) {
   EXPECT_EQ(schema["properties"]["timeout_ms"]["maximum"], 60000);
   EXPECT_EQ(std::ranges::find(schema["required"], "timeout_ms"),
             schema["required"].end());
+
+  const auto batch = std::ranges::find(tools, "send_keys_batch", [](const json& tool) {
+    return tool["name"].get<std::string>();
+  });
+  ASSERT_NE(batch, tools.end());
+  const json& operation = (*batch)["inputSchema"]["properties"]["operations"]["items"];
+  EXPECT_FALSE(operation["additionalProperties"].get<bool>());
+  EXPECT_EQ(operation["required"], json::array({"paneId", "keys"}));
+  EXPECT_EQ(operation["properties"].size(), 4U);
+  EXPECT_FALSE(operation["properties"].contains("force"));
+  EXPECT_EQ(operation["properties"]["paneId"]["maxLength"], 512);
+  EXPECT_EQ(operation["properties"]["keys"]["maxLength"], 4096);
 }
 
 TEST_F(McpProtocol, ReturnsStructuredAndCompatibleTextContent) {
@@ -646,6 +658,93 @@ TEST_F(McpProtocol, EnforcesPublishedArgumentTypes) {
   EXPECT_EQ((*timeout_type)["error"]["code"], -32602);
   EXPECT_FALSE((*valid)["result"]["isError"].get<bool>());
   EXPECT_TRUE((*valid)["result"]["structuredContent"]["timed_out"].get<bool>());
+}
+
+TEST_F(McpProtocol, EnforcesNestedSendKeysBatchCodePointLimits) {
+  const std::string face{"\xF0\x9F\x98\x80"};
+  const auto repeated = [&face](std::size_t count) {
+    std::string value;
+    value.reserve(face.size() * count);
+    for (std::size_t index = 0U; index < count; ++index) {
+      value += face;
+    }
+    return value;
+  };
+  const auto operation = [](std::string pane_id, std::string keys) {
+    return json::array({{{"paneId", std::move(pane_id)}, {"keys", std::move(keys)}}});
+  };
+  const auto messages = converse_ready(
+      socket(),
+      {call("send_keys_batch", {{"operations", operation(repeated(512U), "Escape")}},
+            1),
+       call("send_keys_batch", {{"operations", operation(repeated(513U), "Escape")}},
+            2),
+       call("send_keys_batch", {{"operations", operation("%999", repeated(4096U))}}, 3),
+       call("send_keys_batch", {{"operations", operation("%999", repeated(4097U))}},
+            4)});
+
+  for (const int id : {1, 3}) {
+    const json* accepted = response(messages, id);
+    ASSERT_NE(accepted, nullptr);
+    EXPECT_TRUE(accepted->contains("result")) << accepted->dump();
+  }
+  for (const int id : {2, 4}) {
+    const json* rejected = response(messages, id);
+    ASSERT_NE(rejected, nullptr);
+    ASSERT_TRUE(rejected->contains("error")) << rejected->dump();
+    EXPECT_EQ((*rejected)["error"]["code"], -32602) << rejected->dump();
+  }
+}
+
+TEST_F(McpProtocol, RejectsForceForPaneInputButKeepsRespawnForce) {
+  const libtmux::Server server = connect_server();
+  auto pane = server.pane("mcp");
+  ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
+  libtmux::CaptureOptions capture_options;
+  capture_options.whole_history = true;
+  const auto buffers_before = server.buffers();
+  ASSERT_TRUE(buffers_before.has_value()) << buffers_before.error().diagnostic;
+
+  const auto messages = converse_ready(
+      socket(),
+      {call("send_keys", {{"paneId", pane->id()}, {"keys", "Z"}, {"force", true}}, 1),
+       call("send_keys_batch",
+            {{"operations", json::array({{{"paneId", pane->id()},
+                                          {"keys", "batch-force-marker"},
+                                          {"literal", true},
+                                          {"enter", true},
+                                          {"force", true}}})}},
+            2),
+       call("paste_text",
+            {{"paneId", pane->id()}, {"text", "paste-force-marker"}, {"force", true}},
+            3),
+       call("run_shell_command",
+            {{"paneId", pane->id()},
+             {"command", "printf run-force-marker"},
+             {"force", true}},
+            4)});
+  for (const int id : {1, 2, 3, 4}) {
+    const json* rejected = response(messages, id);
+    ASSERT_NE(rejected, nullptr);
+    ASSERT_TRUE(rejected->contains("error")) << rejected->dump();
+    EXPECT_EQ((*rejected)["error"]["code"], -32602) << rejected->dump();
+  }
+
+  const auto capture_after = pane->capture(capture_options);
+  const auto buffers_after = server.buffers();
+  ASSERT_TRUE(capture_after.has_value()) << capture_after.error().diagnostic;
+  ASSERT_TRUE(buffers_after.has_value()) << buffers_after.error().diagnostic;
+  for (const std::string_view marker :
+       {"Z", "batch-force-marker", "paste-force-marker", "run-force-marker"}) {
+    EXPECT_EQ(capture_after->find(marker), std::string::npos) << marker;
+  }
+  EXPECT_EQ(buffer_names(*buffers_after), buffer_names(*buffers_before));
+
+  const json respawned =
+      invoke("respawn_pane", {{"paneId", pane->id()}, {"force", true}}, 5);
+  ASSERT_TRUE(respawned.contains("result")) << respawned.dump();
+  EXPECT_FALSE(respawned["result"]["isError"].get<bool>()) << respawned.dump();
+  EXPECT_EQ(respawned["result"]["structuredContent"]["pane_id"], pane->id());
 }
 
 TEST_F(McpProtocol, CreatesThenDiscoversAWindow) {
