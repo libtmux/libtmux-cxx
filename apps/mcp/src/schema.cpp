@@ -14,9 +14,9 @@ namespace {
 
 constexpr std::string_view kInstructions =
     "Start with list_sessions and retain stable IDs. This process uses one pinned "
-    "tmux socket; read tmux://capabilities for its configuration provenance and "
-    "effective tools. Execute tools run pane processes with this user's "
-    "permissions; tool filtering is not an OS sandbox.";
+    "tmux socket; read tmux://capabilities for its resolved path, attach command, "
+    "configuration provenance, and effective tools. Execute tools run pane "
+    "processes with this user's permissions; tool filtering is not an OS sandbox.";
 constexpr std::string_view kCapabilityMetadata = "com.git-pull.libtmux-mcp/capability";
 
 [[nodiscard]] json capability_row(const ToolDefinition& tool,
@@ -426,6 +426,18 @@ template <class... Functions> struct Overloaded : Functions... {
             {"serverState", disclosure.server_state},
             {"configurationProvenance", disclosure.configuration_provenance},
             {"namespaceBoundary", "tmux-objects-only"}}},
+          {"boundary",
+           {{"oneSocketPerProcess", true},
+            {"perCallSocketSelection", false},
+            {"hostCommandExecution", false},
+            {"dynamicResources", false}}},
+          {"connection",
+           {{"socketSelector", disclosure.selector},
+            {"socketProvenance", disclosure.selection_provenance},
+            {"resolvedSocketPath", disclosure.resolved_socket_path},
+            {"serverState", disclosure.server_state},
+            {"configurationProvenance", disclosure.configuration_provenance},
+            {"attachCommand", disclosure.attach_command}}},
           {"toolsets", std::move(toolsets)},
           {"includedTools", std::move(included)},
           {"excludedTools", std::move(excluded)},

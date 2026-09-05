@@ -13,6 +13,8 @@ struct CapabilityDisclosure {
   std::string selection_provenance;
   std::string server_state;
   std::string configuration_provenance;
+  std::string resolved_socket_path;
+  std::string attach_command;
 };
 
 [[nodiscard]] json modern_protocol_versions();

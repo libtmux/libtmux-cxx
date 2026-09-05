@@ -119,9 +119,9 @@ lifecycles on stdio:
 
 The server advertises tools plus one static resource.
 `resources/list` exposes `tmux://capabilities`; `resources/read` returns its
-startup-frozen effective rows. There are no dynamic resources, templates,
-subscriptions, or prompts. Both supported protocol eras expose the same static
-document.
+startup-frozen effective rows, connection provenance, and common process
+boundary. There are no dynamic resources, templates, subscriptions, or
+prompts. Both supported protocol eras expose the same static document.
 The advertised tools capability remains `{"tools": {}}`, with no
 `listChanged`. `prompts/list` returns `-32601 no such method` rather than an
 empty list.

@@ -1520,6 +1520,22 @@ TEST(McpProtocolCli, PublishesStaticEffectiveCapabilitiesInBothEras) {
   EXPECT_EQ(document["socket"]["serverState"], "absent");
   EXPECT_EQ(document["socket"]["configurationProvenance"], "unknown");
   EXPECT_EQ(document["socket"]["namespaceBoundary"], "tmux-objects-only");
+  EXPECT_EQ(document["boundary"], json({{"oneSocketPerProcess", true},
+                                        {"perCallSocketSelection", false},
+                                        {"hostCommandExecution", false},
+                                        {"dynamicResources", false}}));
+  ASSERT_TRUE(document.contains("connection"));
+  EXPECT_EQ(document["connection"]["socketSelector"], document["socket"]["selector"]);
+  EXPECT_EQ(document["connection"]["socketProvenance"],
+            document["socket"]["selectionProvenance"]);
+  EXPECT_EQ(document["connection"]["serverState"], document["socket"]["serverState"]);
+  EXPECT_EQ(document["connection"]["configurationProvenance"],
+            document["socket"]["configurationProvenance"]);
+  ASSERT_TRUE(document["connection"]["resolvedSocketPath"].is_string());
+  EXPECT_FALSE(document["connection"]["resolvedSocketPath"].get<std::string>().empty());
+  ASSERT_TRUE(document["connection"]["attachCommand"].is_string());
+  EXPECT_NE(document["connection"]["attachCommand"].get<std::string>().find(" -N -S '"),
+            std::string::npos);
 
   const std::vector<std::string> expected{"list_windows",
                                           "list_panes",
