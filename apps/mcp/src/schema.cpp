@@ -19,6 +19,23 @@ constexpr std::string_view kInstructions =
     "processes with this user's permissions; tool filtering is not an OS sandbox.";
 constexpr std::string_view kCapabilityMetadata = "com.git-pull.libtmux-mcp/capability";
 
+[[nodiscard]] std::string shell_quote(std::string_view value) {
+  std::string quoted{"'"};
+  for (const char character : value) {
+    if (character == '\'') {
+      quoted += "'\"'\"'";
+    } else {
+      quoted += character;
+    }
+  }
+  quoted += '\'';
+  return quoted;
+}
+
+[[nodiscard]] json optional_string(const std::optional<std::string>& value) {
+  return value.has_value() ? json(*value) : json(nullptr);
+}
+
 [[nodiscard]] json capability_row(const ToolDefinition& tool,
                                   const ToolRegistry& tools);
 
@@ -388,6 +405,16 @@ template <class... Functions> struct Overloaded : Functions... {
   for (const std::string& tool : tools.selection().exclude) {
     excluded.push_back(tool);
   }
+  json connection{
+      {"socketSelector", disclosure.selector},
+      {"socketProvenance", disclosure.selection_provenance},
+      {"resolvedSocketPath", optional_string(disclosure.resolved_socket_path)},
+      {"serverState", disclosure.server_state},
+      {"configurationProvenance", disclosure.configuration_provenance},
+      {"attachCommand", optional_string(disclosure.attach_command)}};
+  if (disclosure.namespace_selector.has_value()) {
+    connection["namespaceSelector"] = *disclosure.namespace_selector;
+  }
   return {{"schemaVersion", 1},
           {"frozen", true},
           {"socket",
@@ -401,13 +428,7 @@ template <class... Functions> struct Overloaded : Functions... {
             {"perCallSocketSelection", false},
             {"hostCommandExecution", false},
             {"dynamicResources", false}}},
-          {"connection",
-           {{"socketSelector", disclosure.selector},
-            {"socketProvenance", disclosure.selection_provenance},
-            {"resolvedSocketPath", disclosure.resolved_socket_path},
-            {"serverState", disclosure.server_state},
-            {"configurationProvenance", disclosure.configuration_provenance},
-            {"attachCommand", disclosure.attach_command}}},
+          {"connection", std::move(connection)},
           {"toolsets", std::move(toolsets)},
           {"includedTools", std::move(included)},
           {"excludedTools", std::move(excluded)},
@@ -517,6 +538,31 @@ void stamp_modern(json& result) {
 }
 
 } // namespace
+
+CapabilityDisclosure capability_disclosure(libtmux::ServerImplementation implementation,
+                                           std::string selector,
+                                           std::string selection_provenance,
+                                           std::string server_state,
+                                           std::string configuration_provenance,
+                                           std::string resolved_endpoint) {
+  CapabilityDisclosure disclosure{
+      .selector = std::move(selector),
+      .selection_provenance = std::move(selection_provenance),
+      .server_state = std::move(server_state),
+      .configuration_provenance = std::move(configuration_provenance),
+      .namespace_selector = std::nullopt,
+      .resolved_socket_path = std::nullopt,
+      .attach_command = std::nullopt,
+  };
+  if (implementation == libtmux::ServerImplementation::tmux) {
+    disclosure.attach_command =
+        "tmux -N -S " + shell_quote(resolved_endpoint) + " attach";
+    disclosure.resolved_socket_path = std::move(resolved_endpoint);
+  } else if (implementation == libtmux::ServerImplementation::psmux) {
+    disclosure.namespace_selector = std::move(resolved_endpoint);
+  }
+  return disclosure;
+}
 
 json modern_protocol_versions() { return json::array({kModernProtocolVersion}); }
 

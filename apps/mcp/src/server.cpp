@@ -3,30 +3,12 @@
 #include <iostream>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <utility>
 
 #include "cli.hpp"
 #include "libtmux/version.hpp"
 #include "libtmux_consumers/mcp.hpp"
 #include "stdio_server.hpp"
-
-namespace {
-
-[[nodiscard]] std::string shell_quote(std::string_view value) {
-  std::string quoted{"'"};
-  for (const char character : value) {
-    if (character == '\'') {
-      quoted += "'\"'\"'";
-    } else {
-      quoted += character;
-    }
-  }
-  quoted += '\'';
-  return quoted;
-}
-
-} // namespace
 
 int main(int argc, char** argv) {
   using namespace libtmux::mcp::server;
@@ -66,13 +48,10 @@ int main(int argc, char** argv) {
   const std::string state = opened->server_pre_existing           ? "existing"
                             : opened->teardown_enabled_by_default ? "created"
                                                                   : "absent";
-  CapabilityDisclosure disclosure{
-      .selector = opened->socket_selector,
-      .selection_provenance = opened->socket_provenance,
-      .server_state = state,
-      .configuration_provenance = opened->configuration_provenance,
-      .resolved_socket_path = resolved_socket,
-      .attach_command = "tmux -N -S " + shell_quote(resolved_socket) + " attach"};
+  CapabilityDisclosure disclosure =
+      capability_disclosure(opened->server.capabilities().implementation,
+                            opened->socket_selector, opened->socket_provenance, state,
+                            opened->configuration_provenance, resolved_socket);
   std::fprintf(stderr,
                "libtmux-mcp: socket=%s resolved_socket_path=%s server_state=%s "
                "configuration_provenance=%s tool_count=%zu\n",

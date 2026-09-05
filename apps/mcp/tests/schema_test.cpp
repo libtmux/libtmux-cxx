@@ -144,6 +144,43 @@ TEST(McpProtocolSchema, PreservesStructuredScalarTypes) {
   EXPECT_EQ(result["content"][0]["text"], structured.dump());
 }
 
+TEST(McpProtocolSchema, DescribesPsmuxAsANamespaceWithoutAPosixAttachRoute) {
+  const std::vector<std::pair<std::string, std::string>> cases{
+      {"name:review", "psmux:-L:review"}, {"inherit", "psmux:default"}};
+  for (const auto& [selector, endpoint] : cases) {
+    SCOPED_TRACE(endpoint);
+    const auto disclosure = libtmux::mcp::server::capability_disclosure(
+        libtmux::ServerImplementation::psmux, selector, "operator-current", "existing",
+        "unknown", endpoint);
+    const json result = libtmux::mcp::server::capabilities_resource_result(
+        all_tools(), ProtocolEra::legacy, disclosure);
+    const json document = json::parse(result["contents"][0]["text"].get<std::string>());
+    const json& connection = document["connection"];
+
+    EXPECT_EQ(connection.value("namespaceSelector", ""), endpoint);
+    EXPECT_TRUE(connection["resolvedSocketPath"].is_null());
+    EXPECT_TRUE(connection["attachCommand"].is_null());
+    EXPECT_EQ(document.dump().find("-S psmux:"), std::string::npos);
+  }
+}
+
+TEST(McpProtocolSchema, PreservesThePosixSocketAndExactAttachRoute) {
+  const auto disclosure = libtmux::mcp::server::capability_disclosure(
+      libtmux::ServerImplementation::tmux, "name:review", "operator-current",
+      "existing", "unknown", "/tmp/tmux-1000/review");
+  const json result = libtmux::mcp::server::capabilities_resource_result(
+      all_tools(), ProtocolEra::legacy, disclosure);
+  const json document = json::parse(result["contents"][0]["text"].get<std::string>());
+
+  EXPECT_EQ(document["connection"],
+            json({{"socketSelector", "name:review"},
+                  {"socketProvenance", "operator-current"},
+                  {"resolvedSocketPath", "/tmp/tmux-1000/review"},
+                  {"serverState", "existing"},
+                  {"configurationProvenance", "unknown"},
+                  {"attachCommand", "tmux -N -S '/tmp/tmux-1000/review' attach"}}));
+}
+
 TEST(McpProtocolSchema, CapsTheCompleteReadBatchResultAtOneMillionBytes) {
   const std::string payload(400U * 1024U, 'x');
   auto tools =

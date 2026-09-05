@@ -1,9 +1,11 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <string_view>
 
+#include "libtmux/capabilities.hpp"
 #include "libtmux_consumers/mcp.hpp"
 #include "protocol_types.hpp"
 
@@ -14,9 +16,16 @@ struct CapabilityDisclosure {
   std::string selection_provenance;
   std::string server_state;
   std::string configuration_provenance;
-  std::string resolved_socket_path;
-  std::string attach_command;
+  std::optional<std::string> namespace_selector;
+  std::optional<std::string> resolved_socket_path;
+  std::optional<std::string> attach_command;
 };
+
+[[nodiscard]] CapabilityDisclosure
+capability_disclosure(libtmux::ServerImplementation implementation,
+                      std::string selector, std::string selection_provenance,
+                      std::string server_state, std::string configuration_provenance,
+                      std::string resolved_endpoint);
 
 [[nodiscard]] json modern_protocol_versions();
 [[nodiscard]] json initialize_result(std::string_view version);

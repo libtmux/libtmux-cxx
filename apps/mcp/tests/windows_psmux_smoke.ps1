@@ -378,6 +378,35 @@ try {
         params = @{}
     }
 
+    $capabilities = Invoke-Request @{
+        jsonrpc = "2.0"
+        id = "capabilities"
+        method = "resources/read"
+        params = @{ uri = "tmux://capabilities" }
+    }
+    $capabilityText = [string]$capabilities.result.contents[0].text
+    $capabilityDocument = ConvertFrom-Json -InputObject $capabilityText
+    $connectionFields = @(
+        $capabilityDocument.connection.PSObject.Properties.Name
+    )
+    Assert-True (
+        $capabilityDocument.connection.socketSelector -eq "name:$socketName"
+    ) "capability resource lost the operator's socket selector"
+    Assert-True (
+        $capabilityDocument.connection.namespaceSelector -eq "psmux:-L:$socketName"
+    ) "capability resource did not report the psmux namespace selector"
+    Assert-True (
+        $connectionFields -contains "resolvedSocketPath" -and
+        $null -eq $capabilityDocument.connection.resolvedSocketPath
+    ) "capability resource reported the psmux namespace as a socket path"
+    Assert-True (
+        $connectionFields -contains "attachCommand" -and
+        $null -eq $capabilityDocument.connection.attachCommand
+    ) "capability resource synthesized an unsupported psmux attach command"
+    Assert-True (
+        $capabilityText.IndexOf("-S psmux:", [StringComparison]::Ordinal) -lt 0
+    ) "capability resource emitted a POSIX route for psmux"
+
     $listed = Invoke-Request @{
         jsonrpc = "2.0"
         id = 1
