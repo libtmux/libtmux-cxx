@@ -318,30 +318,6 @@ template <class... Functions> struct Overloaded : Functions... {
   return {};
 }
 
-[[nodiscard]] std::string_view name(InputSink value) {
-  switch (value) {
-  case InputSink::none:
-    return "none";
-  case InputSink::tmux_lookup:
-    return "tmux-lookup";
-  case InputSink::tmux_state:
-    return "tmux-state";
-  case InputSink::pane_input:
-    return "pane-input";
-  case InputSink::shell_command:
-    return "shell-command";
-  case InputSink::process_argv:
-    return "process-argv";
-  case InputSink::regex:
-    return "regex";
-  case InputSink::tmux_format:
-    return "tmux-format";
-  case InputSink::nested_tool:
-    return "nested-tool";
-  }
-  return {};
-}
-
 [[nodiscard]] std::string_view name(InputControl value) {
   switch (value) {
   case InputControl::none:
@@ -364,17 +340,13 @@ template <class... Functions> struct Overloaded : Functions... {
   for (const OutputClass output : tool.authority.output_classes) {
     outputs.push_back(name(output));
   }
-  json input_sinks = json::object();
   json input_literalization = json::object();
   for (const auto& [field, sinks] : tool.authority.input_sinks) {
-    json values = json::array();
     for (const Sink& sink : sinks) {
-      values.push_back(name(sink.type));
       if (sink.type == InputSink::tmux_format && sink.control != InputControl::none) {
         input_literalization[field] = name(sink.control);
       }
     }
-    input_sinks[field] = std::move(values);
   }
   json nested = json::array();
   for (const std::string& nested_name : tool.authority.nested_tools) {
@@ -391,7 +363,6 @@ template <class... Functions> struct Overloaded : Functions... {
           {"mayReturnUntrustedContent", tool.authority.may_return_untrusted_content},
           {"amplifiesFutureInput", tool.authority.amplifies_future_input},
           {"annotations", annotations(tool)},
-          {"inputSinks", std::move(input_sinks)},
           {"inputLiteralization", std::move(input_literalization)},
           {"nestedAuthority", std::move(nested)},
           {"inputSchema", input_schema(tool, tools)},
@@ -459,6 +430,83 @@ template <class... Functions> struct Overloaded : Functions... {
 void stamp_modern(json& result) {
   result["resultType"] = "complete";
   result["_meta"] = {{"io.modelcontextprotocol/serverInfo", implementation()}};
+}
+
+[[nodiscard]] json complete_tool_result(const json& structured, ProtocolEra era) {
+  json result{
+      {"content", json::array({json{{"type", "text"}, {"text", structured.dump()}}})},
+      {"structuredContent", structured},
+      {"isError", false}};
+  if (era == ProtocolEra::modern) {
+    stamp_modern(result);
+  }
+  return result;
+}
+
+[[nodiscard]] json bounded_tool_result(json structured, ProtocolEra era,
+                                       std::size_t maximum_bytes) {
+  json result = complete_tool_result(structured, era);
+  std::size_t estimated_size = result.dump().size();
+  if (estimated_size <= maximum_bytes) {
+    return result;
+  }
+  const std::size_t original_size = estimated_size;
+  auto rows = structured.find("results");
+  if (rows == structured.end() || !rows->is_array()) {
+    return result;
+  }
+  constexpr std::size_t metadata_headroom = 64U;
+  const std::size_t target =
+      maximum_bytes > metadata_headroom ? maximum_bytes - metadata_headroom : 0U;
+  const auto discount = [&estimated_size](std::size_t serialized_savings) {
+    const std::size_t envelope_savings = serialized_savings * 2U;
+    estimated_size =
+        envelope_savings < estimated_size ? estimated_size - envelope_savings : 0U;
+  };
+  for (json& row : *rows) {
+    if (estimated_size <= target) {
+      break;
+    }
+    auto nested = row.find("result");
+    if (nested == row.end() || nested->is_null()) {
+      continue;
+    }
+    const std::size_t before = nested->dump().size();
+    *nested = nullptr;
+    row["resultTruncated"] = true;
+    discount(before > 4U ? before - 4U : 0U);
+  }
+  constexpr std::string_view truncated_error =
+      "nested error text truncated to fit the response limit";
+  for (json& row : *rows) {
+    if (estimated_size <= target) {
+      break;
+    }
+    auto error = row.find("error");
+    if (error == row.end() || !error->is_string() ||
+        error->get_ref<const std::string&>() == truncated_error) {
+      continue;
+    }
+    const std::size_t before = error->dump().size();
+    *error = truncated_error;
+    row["resultTruncated"] = true;
+    const std::size_t after = error->dump().size();
+    discount(before > after ? before - after : 0U);
+  }
+  structured["truncated"] = true;
+  structured["truncatedBytes"] = 0;
+  for (int iteration = 0; iteration < 4; ++iteration) {
+    result = complete_tool_result(structured, era);
+    const std::size_t current_size = result.dump().size();
+    const std::size_t dropped =
+        original_size > current_size ? original_size - current_size : 0U;
+    if (structured["truncatedBytes"] == dropped) {
+      break;
+    }
+    structured["truncatedBytes"] = dropped;
+  }
+  result = complete_tool_result(structured, era);
+  return result;
 }
 
 [[nodiscard]] json listed_tools(const ToolRegistry& tools) {
@@ -538,15 +586,12 @@ json capabilities_resource_result(const ToolRegistry& tools, ProtocolEra era,
 }
 
 json tool_success(const ToolOutput& answer, ProtocolEra era) {
-  const json structured = encode(StructuredValue{answer.structured});
-  json result{
-      {"content", json::array({json{{"type", "text"}, {"text", structured.dump()}}})},
-      {"structuredContent", structured},
-      {"isError", false}};
-  if (era == ProtocolEra::modern) {
-    stamp_modern(result);
+  json structured = encode(StructuredValue{answer.structured});
+  if (answer.maximum_response_bytes.has_value()) {
+    return bounded_tool_result(std::move(structured), era,
+                               *answer.maximum_response_bytes);
   }
-  return result;
+  return complete_tool_result(structured, era);
 }
 
 json tool_failure(std::string message, ProtocolEra era) {

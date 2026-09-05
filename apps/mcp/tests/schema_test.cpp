@@ -24,10 +24,13 @@ using json = nlohmann::json;
 using libtmux::Server;
 using libtmux::mcp::Arguments;
 using libtmux::mcp::default_tools;
+using libtmux::mcp::Handler;
 using libtmux::mcp::StructuredValue;
 using libtmux::mcp::ToolDefinition;
 using libtmux::mcp::ToolOutput;
 using libtmux::mcp::ToolRegistry;
+using libtmux::mcp::ToolResult;
+using libtmux::mcp::ToolSelection;
 using libtmux::mcp::server::ProtocolEra;
 
 [[nodiscard]] ToolRegistry all_tools() {
@@ -49,6 +52,29 @@ using libtmux::mcp::server::ProtocolEra;
 [[nodiscard]] json published_output(const ToolOutput& answer) {
   return libtmux::mcp::server::tool_success(answer,
                                             ProtocolEra::legacy)["structuredContent"];
+}
+
+[[nodiscard]] libtmux::expected<ToolRegistry, std::string>
+read_batch_with(Handler handler) {
+  auto complete = default_tools(ToolSelection::all());
+  if (!complete.has_value()) {
+    return libtmux::unexpected(complete.error());
+  }
+  const ToolDefinition* const source_batch = complete->find("call_read_tools_batch");
+  if (source_batch == nullptr) {
+    return libtmux::unexpected(std::string{"read batch definition is missing"});
+  }
+  std::vector<ToolDefinition> definitions{*source_batch};
+  for (const std::string& name : source_batch->authority.nested_tools) {
+    ToolDefinition nested = *complete->find(name);
+    nested.schema.input.clear();
+    nested.authority.input_sinks.clear();
+    nested.handler = handler;
+    definitions.push_back(std::move(nested));
+  }
+  ToolSelection selection;
+  selection.include = {"call_read_tools_batch"};
+  return ToolRegistry::create(std::move(definitions), selection);
 }
 
 // Answers every command slower than the deadline it is given, so a wait bounded
@@ -116,6 +142,53 @@ TEST(McpProtocolSchema, PreservesStructuredScalarTypes) {
   EXPECT_EQ(structured["array"], json::array({nullptr, true, 7, "mcp"}));
   EXPECT_EQ(structured["object"], json({{"nested", "value"}}));
   EXPECT_EQ(result["content"][0]["text"], structured.dump());
+}
+
+TEST(McpProtocolSchema, CapsTheCompleteReadBatchResultAtOneMillionBytes) {
+  const std::string payload(400U * 1024U, 'x');
+  auto tools =
+      read_batch_with([payload](const Server&, const Arguments&,
+                                const libtmux::mcp::CallContext&) -> ToolResult {
+        return ToolOutput{.structured = {{"payload", payload}}};
+      });
+  ASSERT_TRUE(tools.has_value()) << tools.error();
+  Arguments arguments;
+  arguments.read_calls = {{"list_sessions", {}}};
+  auto server = Server::at_socket_name("mcp-complete-batch-cap");
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+  const auto answer = tools->call(*server, "call_read_tools_batch", arguments);
+  ASSERT_TRUE(answer.has_value()) << answer.error().message;
+
+  for (const ProtocolEra era : {ProtocolEra::legacy, ProtocolEra::modern}) {
+    const json wire = libtmux::mcp::server::tool_success(*answer, era);
+    EXPECT_LE(wire.dump().size(), 1'000'000U);
+    ASSERT_EQ(wire["structuredContent"]["results"].size(), 1U);
+    EXPECT_TRUE(wire["structuredContent"]["truncated"].get<bool>());
+    EXPECT_TRUE(wire["structuredContent"]["results"][0]["resultTruncated"].get<bool>());
+  }
+}
+
+TEST(McpProtocolSchema, KeepsAllExecutedReadBatchRowsInsideTheWireCap) {
+  const std::string error(70'000U, 'e');
+  auto tools = read_batch_with([error](const Server&, const Arguments&,
+                                       const libtmux::mcp::CallContext&) -> ToolResult {
+    return libtmux::unexpected(libtmux::mcp::ToolError{false, error});
+  });
+  ASSERT_TRUE(tools.has_value()) << tools.error();
+  Arguments arguments{{"onError", "continue"}};
+  arguments.read_calls.assign(16U, {"list_sessions", {}});
+  auto server = Server::at_socket_name("mcp-complete-batch-errors");
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+  const auto answer = tools->call(*server, "call_read_tools_batch", arguments);
+  ASSERT_TRUE(answer.has_value()) << answer.error().message;
+
+  const json wire = libtmux::mcp::server::tool_success(*answer, ProtocolEra::modern);
+  EXPECT_LE(wire.dump().size(), 1'000'000U);
+  ASSERT_EQ(wire["structuredContent"]["results"].size(), 16U);
+  EXPECT_EQ(wire["structuredContent"]["failed"], 16);
+  for (std::size_t index = 0; index < 16U; ++index) {
+    EXPECT_EQ(wire["structuredContent"]["results"][index]["index"], index);
+  }
 }
 
 TEST(McpProtocolSchema, WaitOmitsThePaneIdItNeverResolved) {

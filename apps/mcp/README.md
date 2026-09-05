@@ -14,8 +14,12 @@ dispatch rather than disappearing from the declared capability surface.
 
 One native registry owns the 47 public tools and their names, titles,
 controlled descriptions, toolsets, capability claims, conservative
-annotations, schemas, input-sink tables, nested authority, and handlers. Its
-startup-filtered definitions govern both listing and calls:
+annotations, schemas, internal input-sink tables, nested authority, and
+handlers. Its startup-filtered definitions govern both listing and calls:
+
+Input sinks remain internal manifest and CI data. Public capability rows expose
+only schema-keyed `inputLiteralization`, never `inputSinks` or
+`tmuxFormatControls`.
 
 <!-- BEGIN GENERATED TOOL INVENTORY -->
 <!-- Generated from tmux://capabilities; run this script to update. -->
@@ -240,7 +244,8 @@ configuration. Explicitly named, path-pinned, inherited, or already-running
 sockets have user-configured or unknown provenance and omit teardown by
 default. A wholly new dedicated minimal socket may default to all four
 toolsets. `tmux://capabilities` reports the selector, selection provenance,
-server state, and configuration provenance.
+server state, and configuration provenance. The process stops a dedicated
+daemon only when its startup nonce proves that this invocation created it.
 
 CLI selectors remain available:
 
@@ -265,8 +270,8 @@ than the packaged minimal file. Earlier no-selector launches followed `$TMUX`;
 the current default is the dedicated socket above. Pass `--socket inherit` to
 retain that earlier behavior; it requires a valid inherited `$TMUX` route.
 
-Conflicting selectors and an empty or relative `LIBTMUX_TMUX_CONFIG` fail
-before tmux opens. Windows psmux rejects
+Conflicting selectors, empty values, and an empty or relative
+`LIBTMUX_TMUX_CONFIG` fail before tmux opens. Windows psmux rejects
 socket paths before dispatch. Psmux 3.3.7 ignores
 `PSMUX_DATA_DIR` and stores routing state in the Windows profile's `.psmux`
 directory; use a high-entropy `--socket-name` and exact session and registry

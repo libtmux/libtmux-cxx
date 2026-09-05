@@ -14,6 +14,7 @@ inline constexpr std::size_t kTargetCharacters = 512U;
 inline constexpr std::size_t kSearchCharacters = 4096U;
 inline constexpr std::size_t kRegexWorkUnits = 8U * 1024U * 1024U;
 inline constexpr std::size_t kSearchMatchLimit = 1024U;
+inline constexpr std::size_t kReadBatchResponseBytes = 1'000'000U;
 
 class BoundedRegex {
 public:
@@ -36,7 +37,8 @@ private:
 
 [[nodiscard]] const std::string* argument(const Arguments& arguments,
                                           std::string_view name);
-[[nodiscard]] ToolOutput output(StructuredValue::Object structured);
+[[nodiscard]] ToolOutput output(StructuredValue::Object structured,
+                                std::optional<std::size_t> maximum_response_bytes = {});
 [[nodiscard]] ToolError tmux_error(const CommandFailure& error);
 [[nodiscard]] StructuredValue session_value(const Session& session);
 [[nodiscard]] StructuredValue window_value(const Window& window);

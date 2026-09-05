@@ -323,6 +323,10 @@ TEST(McpTools, CapabilityManifestMatchesThePinnedCrossPortInventory) {
   EXPECT_TRUE(batch->description.starts_with(
       "Read pane output; accepts no client-supplied executable input. Returned "
       "content may be sensitive or untrusted."));
+  const ToolDefinition* const capture_since = tools.find("capture_since");
+  ASSERT_NE(capture_since, nullptr);
+  EXPECT_EQ(capture_since->authority.effects, std::set{Effect::observe});
+  EXPECT_EQ(batch->authority.effects, std::set{Effect::observe});
   for (const auto [tool_name, field_name] :
        {std::pair{"rename_session", "name"}, std::pair{"rename_window", "name"},
         std::pair{"set_pane_title", "title"}}) {
@@ -638,7 +642,7 @@ TEST(McpToolsTmux, ReadBatchReturnsPartialRowsAndHonorsContinue) {
       std::get<StructuredValue::Object>(rows[1].value).at("success").value));
 }
 
-TEST(McpTools, ReadBatchKeepsRowsWhileBoundingNestedPayloads) {
+TEST(McpTools, ReadBatchCarriesCompleteRowsToTheProtocolLimiter) {
   auto complete = default_tools(ToolSelection::all());
   ASSERT_TRUE(complete.has_value()) << complete.error();
   const ToolDefinition* const source_batch = complete->find("call_read_tools_batch");
@@ -667,13 +671,15 @@ TEST(McpTools, ReadBatchKeepsRowsWhileBoundingNestedPayloads) {
   const auto result = built->call(*server, "call_read_tools_batch", arguments);
 
   ASSERT_TRUE(result.has_value()) << result.error().message;
-  EXPECT_TRUE(std::get<bool>(result->structured.at("truncated").value));
-  EXPECT_GT(std::get<std::int64_t>(result->structured.at("truncatedBytes").value), 0);
+  ASSERT_TRUE(result->maximum_response_bytes.has_value());
+  EXPECT_EQ(*result->maximum_response_bytes, 1'000'000U);
+  EXPECT_FALSE(std::get<bool>(result->structured.at("truncated").value));
+  EXPECT_EQ(std::get<std::int64_t>(result->structured.at("truncatedBytes").value), 0);
   const auto& rows =
       std::get<StructuredValue::Array>(result->structured.at("results").value);
   ASSERT_EQ(rows.size(), 2U);
-  EXPECT_TRUE(std::ranges::any_of(rows, [](const StructuredValue& value) {
-    return std::get<bool>(
+  EXPECT_TRUE(std::ranges::all_of(rows, [](const StructuredValue& value) {
+    return !std::get<bool>(
         std::get<StructuredValue::Object>(value.value).at("resultTruncated").value);
   }));
   EXPECT_EQ(std::get<std::int64_t>(result->structured.at("succeeded").value), 2);

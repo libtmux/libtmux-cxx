@@ -93,6 +93,7 @@ struct StructuredValue {
 
 struct ToolOutput {
   StructuredValue::Object structured;
+  std::optional<std::size_t> maximum_response_bytes{};
 };
 
 using ToolResult = libtmux::expected<ToolOutput, ToolError>;

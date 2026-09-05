@@ -31,6 +31,7 @@ struct OpenedServer {
   std::string configuration_provenance;
   bool server_pre_existing{};
   bool teardown_enabled_by_default{};
+  bool owns_daemon{};
 };
 
 [[nodiscard]] libtmux::expected<CliOptions, std::string> parse_cli(int argc,

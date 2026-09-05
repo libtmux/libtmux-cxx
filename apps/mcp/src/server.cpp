@@ -1,5 +1,7 @@
+#include <chrono>
 #include <cstdio>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -76,6 +78,23 @@ int main(int argc, char** argv) {
                "configuration_provenance=%s tool_count=%zu\n",
                opened->socket_selector.c_str(), resolved_socket.c_str(), state.c_str(),
                opened->configuration_provenance.c_str(), tools->tools().size());
-  return serve_stdio(std::move(opened->server), *std::move(tools),
-                     std::move(disclosure));
+  std::optional<libtmux::Server> owned_daemon;
+  if (opened->owns_daemon) {
+    owned_daemon = opened->server;
+  }
+  const int served =
+      serve_stdio(std::move(opened->server), *std::move(tools), std::move(disclosure));
+  if (owned_daemon.has_value()) {
+    const auto stopped = owned_daemon->kill();
+    if (!stopped.has_value()) {
+      const auto still_running = owned_daemon->run(
+          {"show-options", "-sqv", "exit-empty"}, std::chrono::milliseconds{250});
+      if (still_running.has_value()) {
+        std::fprintf(stderr, "libtmux-mcp: could not stop owned daemon: %s\n",
+                     stopped.error().diagnostic.c_str());
+        return 1;
+      }
+    }
+  }
+  return served;
 }

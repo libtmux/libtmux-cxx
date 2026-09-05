@@ -27,8 +27,10 @@ const std::string* argument(const Arguments& arguments, std::string_view name) {
   return found == arguments.end() ? nullptr : &found->second;
 }
 
-ToolOutput output(StructuredValue::Object structured) {
-  return ToolOutput{.structured = std::move(structured)};
+ToolOutput output(StructuredValue::Object structured,
+                  std::optional<std::size_t> maximum_response_bytes) {
+  return ToolOutput{.structured = std::move(structured),
+                    .maximum_response_bytes = maximum_response_bytes};
 }
 
 ToolError tmux_error(const CommandFailure& error) {
@@ -592,13 +594,10 @@ resolved_pane_targets(const Pane& pane) {
           OutputShape shape, Handler handler, std::string description,
           std::set<OutputClass> outputs = {OutputClass::tmux_metadata,
                                            OutputClass::terminal_content}) {
-        const bool advances_cursor = name == "capture_since";
-        add(make_tool(
-            std::move(name), std::move(title), Toolset::inspect, ProcessReach::none,
-            advances_cursor ? std::set{Effect::observe, Effect::change}
-                            : std::set{Effect::observe},
-            std::move(outputs), true, true, kConservativeAnnotations, std::move(fields),
-            shape, std::move(handler), std::move(description)));
+        add(make_tool(std::move(name), std::move(title), Toolset::inspect,
+                      ProcessReach::none, {Effect::observe}, std::move(outputs), true,
+                      true, kConservativeAnnotations, std::move(fields), shape,
+                      std::move(handler), std::move(description)));
       };
 
   inspect_metadata(
@@ -1067,44 +1066,17 @@ resolved_pane_targets(const Pane& pane) {
                                       {"success", true},
                                       {"tool", call.tool}});
         }
-        constexpr std::size_t response_limit = 1024U * 1024U;
-        std::size_t truncated_bytes = 0U;
-        bool truncated = false;
-        const auto wrapped = [&]() {
-          return StructuredValue::Object{
-              {"failed", static_cast<long long>(failed)},
-              {"onError", on_error},
-              {"results", StructuredValue{results}},
-              {"stoppedAt", stopped_at.has_value()
-                                ? StructuredValue{static_cast<long long>(*stopped_at)}
-                                : StructuredValue{}},
-              {"succeeded", static_cast<long long>(succeeded)},
-              {"truncated", truncated},
-              {"truncatedBytes", static_cast<long long>(truncated_bytes)},
-          };
-        };
-        for (StructuredValue& value : results) {
-          if (serialize_json(StructuredValue{wrapped()}).size() <= response_limit) {
-            break;
-          }
-          auto& row = std::get<StructuredValue::Object>(value.value);
-          StructuredValue& nested = row.at("result");
-          if (std::holds_alternative<std::nullptr_t>(nested.value)) {
-            continue;
-          }
-          const std::size_t before = serialize_json(nested).size();
-          nested = StructuredValue{};
-          row.at("resultTruncated") = StructuredValue{true};
-          truncated = true;
-          truncated_bytes += before - 4U;
-        }
-        StructuredValue final{wrapped()};
-        if (serialize_json(final).size() > response_limit) {
-          return libtmux::unexpected(
-              ToolError{false, "read batch metadata exceeds the result ceiling"});
-        }
         return detail::output(
-            std::get<StructuredValue::Object>(std::move(final.value)));
+            {{"failed", static_cast<long long>(failed)},
+             {"onError", on_error},
+             {"results", StructuredValue{std::move(results)}},
+             {"stoppedAt", stopped_at.has_value()
+                               ? StructuredValue{static_cast<long long>(*stopped_at)}
+                               : StructuredValue{}},
+             {"succeeded", static_cast<long long>(succeeded)},
+             {"truncated", false},
+             {"truncatedBytes", 0}},
+            detail::kReadBatchResponseBytes);
       },
       "Run up to sixteen declared inspect operations serially under this one call; "
       "inner operations receive no separate approval.",

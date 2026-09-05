@@ -386,7 +386,8 @@ libtmux::expected<OpenedServer, std::string> open_server(const CliOptions& optio
                                                : "default-dedicated",
                       .configuration_provenance = std::move(provenance),
                       .server_pre_existing = existing,
-                      .teardown_enabled_by_default = newly_minimal};
+                      .teardown_enabled_by_default = newly_minimal,
+                      .owns_daemon = newly_minimal};
 }
 
 void print_usage(std::ostream& output) {

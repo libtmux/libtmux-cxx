@@ -1411,6 +1411,7 @@ TEST(McpProtocolCli, EstablishesDefaultMinimalDaemonBeforeFreezingProvenance) {
   ASSERT_TRUE(opened.has_value()) << opened.error();
   EXPECT_FALSE(opened->server_pre_existing);
   EXPECT_TRUE(opened->teardown_enabled_by_default);
+  EXPECT_TRUE(opened->owns_daemon);
   EXPECT_EQ(opened->socket_provenance, "default-dedicated");
   EXPECT_EQ(opened->configuration_provenance, "minimal");
   const auto environment = opened->server.run({"show-environment", "-g"});
@@ -1420,6 +1421,37 @@ TEST(McpProtocolCli, EstablishesDefaultMinimalDaemonBeforeFreezingProvenance) {
   EXPECT_TRUE(alive.has_value()) << alive.error().diagnostic;
   const auto killed = opened->server.kill();
   EXPECT_TRUE(killed.has_value()) << killed.error().diagnostic;
+}
+
+TEST(McpProtocolCli, StopsTheAuthenticatedDefaultDaemonWhenStdioCloses) {
+  auto fixture = ScopedTmuxServer::start(ScopedTmuxServerOptions{
+      .mode = SocketMode::Name,
+      .session_name = "cleanup-namespace",
+      .socket_namespace = SocketNamespace::consumer("mcp-cleanup")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  auto environment = fixture->child_environment();
+  libtmux::test::erase_environment(environment, "TMUX");
+  for (const std::string_view name :
+       {"LIBTMUX_SOCKET", "LIBTMUX_SOCKET_PATH", "LIBTMUX_TMUX_CONFIG",
+        "LIBTMUX_TOOLSETS", "LIBTMUX_TOOLS", "LIBTMUX_EXCLUDE_TOOLS"}) {
+    libtmux::test::erase_environment(environment, name);
+  }
+
+  const auto finished = libtmux::mcp::test::run_server(
+      LIBTMUX_MCP_SERVER_PATH, {}, environment, {}, std::chrono::seconds{5});
+  auto server = libtmux::Server::at_socket_path(
+      (fixture->socket_path().parent_path() / "libtmux-mcp").string());
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+  const bool still_alive =
+      server
+          ->run({"show-options", "-sqv", "exit-empty"}, std::chrono::milliseconds{250})
+          .has_value();
+  if (still_alive) {
+    static_cast<void>(server->kill());
+  }
+
+  ASSERT_TRUE(finished.has_value()) << finished.error();
+  EXPECT_FALSE(still_alive);
 }
 
 TEST(McpProtocolCli, DoesNotClaimAnExistingDedicatedDaemon) {
@@ -1434,8 +1466,14 @@ TEST(McpProtocolCli, DoesNotClaimAnExistingDedicatedDaemon) {
         "LIBTMUX_TOOLSETS", "LIBTMUX_TOOLS", "LIBTMUX_EXCLUDE_TOOLS"}) {
     libtmux::test::erase_environment(environment, name);
   }
-  const auto first = libtmux::mcp::test::run_server(
-      LIBTMUX_MCP_SERVER_PATH, {}, environment, {}, std::chrono::seconds{5});
+  const std::filesystem::path socket =
+      fixture->socket_path().parent_path() / "libtmux-mcp";
+  auto server = libtmux::Server::startable_at_socket_path(
+      socket.string(),
+      libtmux::mcp::server::minimal_configuration_path(LIBTMUX_MCP_SERVER_PATH));
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+  const auto started = server->run({"start-server"});
+  ASSERT_TRUE(started.has_value()) << started.error().diagnostic;
   const auto messages =
       converse_with({}, environment,
                     {initialize_request(), initialized_notification(),
@@ -1443,12 +1481,8 @@ TEST(McpProtocolCli, DoesNotClaimAnExistingDedicatedDaemon) {
                           {"id", 1},
                           {"method", "resources/read"},
                           {"params", {{"uri", "tmux://capabilities"}}}}});
-  auto server = libtmux::Server::at_socket_path(
-      (fixture->socket_path().parent_path() / "libtmux-mcp").string());
-  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
   const auto killed = server->kill();
 
-  ASSERT_TRUE(first.has_value()) << first.error();
   ASSERT_TRUE(killed.has_value()) << killed.error().diagnostic;
   const json* read = response(messages, 1);
   ASSERT_NE(read, nullptr);
@@ -1581,6 +1615,17 @@ TEST(McpProtocolCli, PublishesStaticEffectiveCapabilitiesInBothEras) {
     EXPECT_EQ(listed_tool["_meta"]["com.git-pull.libtmux-mcp/capability"], *row)
         << listed_tool["name"];
   }
+  for (const json& tool : document["tools"]) {
+    EXPECT_FALSE(tool.contains("inputSinks")) << tool["name"];
+    EXPECT_FALSE(tool.contains("tmuxFormatControls")) << tool["name"];
+    ASSERT_TRUE(tool["inputLiteralization"].is_object()) << tool["name"];
+    for (const auto& [field, control] : tool["inputLiteralization"].items()) {
+      EXPECT_TRUE(tool["inputSchema"]["properties"].contains(field))
+          << tool["name"] << '.' << field;
+      EXPECT_TRUE(control == "double-hash-once" || control == "validated-variable-name")
+          << tool["name"] << '.' << field;
+    }
+  }
   const auto sent_keys = std::ranges::find_if(
       document["tools"], [](const json& tool) { return tool["name"] == "send_keys"; });
   ASSERT_NE(sent_keys, document["tools"].end());
@@ -1590,7 +1635,6 @@ TEST(McpProtocolCli, PublishesStaticEffectiveCapabilitiesInBothEras) {
   EXPECT_EQ((*sent_keys)["outputClasses"], json::array({"tmux-metadata"}));
   EXPECT_FALSE((*sent_keys)["mayExposeSecrets"].get<bool>());
   EXPECT_TRUE((*sent_keys)["mayReturnUntrustedContent"].get<bool>());
-  EXPECT_EQ((*sent_keys)["inputSinks"]["keys"], json::array({"pane-input"}));
   EXPECT_TRUE((*sent_keys)["annotations"]["destructiveHint"].get<bool>());
   EXPECT_TRUE((*sent_keys)["inputSchema"]["properties"].contains("keys"));
   const auto synchronized =
@@ -1615,18 +1659,14 @@ TEST(McpProtocolCli, PublishesStaticEffectiveCapabilitiesInBothEras) {
       });
   ASSERT_NE(create_session, document["tools"].end());
   ASSERT_TRUE((*create_session).contains("inputLiteralization"));
-  EXPECT_EQ((*create_session)["inputSinks"]["startDirectory"],
-            json::array({"tmux-state", "tmux-format"}));
   EXPECT_EQ((*create_session)["inputLiteralization"]["startDirectory"],
             "double-hash-once");
-  const json literal_format = json::array({"tmux-state", "tmux-format"});
-  EXPECT_EQ((*create_session)["inputSinks"]["name"], literal_format);
-  EXPECT_EQ((*create_session)["inputSinks"]["windowName"], literal_format);
+  EXPECT_EQ((*create_session)["inputLiteralization"]["name"], "double-hash-once");
+  EXPECT_EQ((*create_session)["inputLiteralization"]["windowName"], "double-hash-once");
   for (const auto [tool_name, field_name] : {std::pair{"create_window", "name"}}) {
     const auto row = std::ranges::find_if(
         document["tools"], [&](const json& tool) { return tool["name"] == tool_name; });
     ASSERT_NE(row, document["tools"].end()) << tool_name;
-    EXPECT_EQ((*row)["inputSinks"][field_name], literal_format) << tool_name;
     EXPECT_EQ((*row)["inputLiteralization"][field_name], "double-hash-once")
         << tool_name;
   }
@@ -1634,8 +1674,6 @@ TEST(McpProtocolCli, PublishesStaticEffectiveCapabilitiesInBothEras) {
     return tool["name"] == "get_tmux_variables";
   });
   ASSERT_NE(variables, document["tools"].end());
-  EXPECT_EQ((*variables)["inputSinks"]["names"],
-            json::array({"tmux-lookup", "tmux-format"}));
   EXPECT_EQ((*variables)["inputLiteralization"]["names"], "validated-variable-name");
   const auto read_batch = std::ranges::find_if(document["tools"], [](const json& tool) {
     return tool["name"] == "call_read_tools_batch";
@@ -1705,6 +1743,8 @@ TEST(McpProtocolCli, RejectsInvalidPolicyBeforeOpeningTmux) {
       {"LIBTMUX_TOOLS", "unknown"},
       {"LIBTMUX_EXCLUDE_TOOLS", "capture_pane,"},
       {"LIBTMUX_EXCLUDE_TOOLS", "unknown"},
+      {"LIBTMUX_SOCKET", ""},
+      {"LIBTMUX_SOCKET_PATH", ""},
       {"LIBTMUX_TMUX_CONFIG", ""},
       {"LIBTMUX_TMUX_CONFIG", "relative.conf"},
       {"LIBTMUX_SAFETY", "read-only"},
@@ -1914,7 +1954,10 @@ TEST(McpProtocolCli, UsesTheProductDedicatedDefaultRoute) {
   auto server = libtmux::Server::at_socket_path(
       (fixture->socket_path().parent_path() / "libtmux-mcp").string());
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
-  EXPECT_TRUE(server->kill().has_value());
+  EXPECT_FALSE(
+      server
+          ->run({"show-options", "-sqv", "exit-empty"}, std::chrono::milliseconds{250})
+          .has_value());
   const json* read = response(messages, 1);
   ASSERT_NE(read, nullptr);
   const json document =
@@ -1940,7 +1983,10 @@ TEST(McpProtocolCli, DoesNotUseAnInvalidInheritedRoute) {
   auto server = libtmux::Server::at_socket_path(
       (fixture->socket_path().parent_path() / "libtmux-mcp").string());
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
-  EXPECT_TRUE(server->kill().has_value());
+  EXPECT_FALSE(
+      server
+          ->run({"show-options", "-sqv", "exit-empty"}, std::chrono::milliseconds{250})
+          .has_value());
 }
 
 } // namespace
