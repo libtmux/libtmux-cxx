@@ -34,6 +34,10 @@ was recorded as it landed.
   pane search, and synchronized-pane target disclosure. Request IDs over 512
   KiB fail before dispatch rather than consuming that response budget.
   `set_synchronize_panes` declares that it amplifies subsequent pane input.
+- Pane-input tools now refuse panes in human-owned modes. `send_keys` and each
+  `send_keys_batch` row preflight the effective synchronized cohort, while
+  `run_shell_command` also requires one configured target and isolates its
+  completion framing from the caller command; `paste_text` remains target-only.
 
 ## 0.1.0-alpha.6 (2026-08-31)
 
