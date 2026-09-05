@@ -14,7 +14,7 @@ namespace {
 
 constexpr std::string_view kInstructions =
     "Start with list_sessions and retain stable IDs. This process uses one pinned "
-    "tmux socket; read tmux://capabilities for its resolved path, attach command, "
+    "tmux endpoint; read tmux://capabilities for its connection route, "
     "configuration provenance, and effective tools. Execute tools run pane "
     "processes with this user's permissions; tool filtering is not an OS sandbox.";
 constexpr std::string_view kCapabilityMetadata = "com.git-pull.libtmux-mcp/capability";

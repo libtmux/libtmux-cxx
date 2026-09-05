@@ -145,6 +145,12 @@ TEST(McpProtocolSchema, PreservesStructuredScalarTypes) {
 }
 
 TEST(McpProtocolSchema, DescribesPsmuxAsANamespaceWithoutAPosixAttachRoute) {
+  const std::string instructions =
+      libtmux::mcp::server::initialize_result("2025-06-18")["instructions"];
+  EXPECT_NE(instructions.find("connection route"), std::string::npos);
+  EXPECT_EQ(instructions.find("resolved path"), std::string::npos);
+  EXPECT_EQ(instructions.find("attach command"), std::string::npos);
+
   const std::vector<std::pair<std::string, std::string>> cases{
       {"name:review", "psmux:-L:review"}, {"inherit", "psmux:default"}};
   for (const auto& [selector, endpoint] : cases) {
