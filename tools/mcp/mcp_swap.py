@@ -1431,8 +1431,8 @@ def build_binary_spec(
     """Build the spec that runs a compiled server.
 
     ``socket`` is passed as the server's POSIX-compatible positional path.
-    Without it the server requires a valid inherited ``TMUX`` route and never
-    falls back to the default server.
+    Without it the server resolves its product-dedicated socket and bundled
+    minimal configuration.
     """
     return McpServerSpec(
         command=str(binary),
@@ -1538,8 +1538,8 @@ def preflight_spec(spec: McpServerSpec, *, timeout: float = 300.0) -> str | None
     ):
         return "server returned a malformed MCP tool catalog"
     required = {
-        "inspect_tmux",
-        "list_session_panes",
+        "get_server_info",
+        "list_panes",
         "list_sessions",
         "list_windows",
     }
@@ -1892,9 +1892,9 @@ def _cmd_use_local(args: argparse.Namespace) -> int:
             # Preserve the existing entry's env on replacement.
             # ``build_binary_spec`` writes only what ``--env`` gave it, so
             # without this merge a swap would silently drop
-            # client-side settings (LIBTMUX_SAFETY, LIBTMUX_SOCKET, custom dev
-            # knobs). Symmetric with ``_spec_from_entry`` which round-trips env on
-            # the read side.
+            # client-side settings (capability selection, socket routing, and
+            # custom development knobs). Symmetric with ``_spec_from_entry``,
+            # which round-trips env on the read side.
             base_env = dict(current.env) if current else {}
             base_env.update(extra_env)
             cli_spec = (
@@ -2423,8 +2423,8 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help=(
             "private POSIX tmux socket path, passed as the server's "
-            "compatibility positional argument. Without it the server "
-            "requires a valid inherited TMUX route; it never uses a default."
+            "compatibility positional argument. Without it the server uses "
+            "its product-dedicated default route."
         ),
     )
     pu.add_argument(

@@ -132,6 +132,14 @@ struct NewSessionOptions {
   std::vector<std::pair<std::string, std::string>> environment{};
 };
 
+struct RespawnOptions {
+  bool replace_running{false};
+  // Where the configured replacement process starts. Empty inherits the
+  // pane's current directory. The command builder escapes tmux format markers
+  // exactly once before this value reaches tmux.
+  std::string start_directory{};
+};
+
 struct CaptureOptions {
   // Where to start, counting back into the scrollback. Absent starts at the
   // top of the visible pane.
@@ -621,6 +629,10 @@ public:
   [[nodiscard]] expected<void, CommandFailure> send_text(std::string_view text) const;
   [[nodiscard]] expected<void, CommandFailure> send_key(std::string_view key) const;
 
+  // Split this exact pane rather than whichever pane in its window happens to
+  // be active.
+  [[nodiscard]] expected<Pane, CommandFailure> split(SplitOptions options = {}) const;
+
   // The visible contents, as tmux printed them. `capture_lines` frames it into
   // lines, and takes a named string: the lines are views into it, so framing
   // this return value directly is a compile error rather than a dangling read.
@@ -689,6 +701,7 @@ public:
   // live process is a decision, so `replace_running` has to be asked for.
   [[nodiscard]] expected<void, CommandFailure>
   respawn(bool replace_running = false) const;
+  [[nodiscard]] expected<void, CommandFailure> respawn(RespawnOptions options) const;
 
   [[nodiscard]] expected<void, CommandFailure> clear_history() const;
 

@@ -36,8 +36,8 @@ print(json.dumps({
 }), flush=True)
 if mode != "missing-tools":
     tools = [] if mode == "empty-tools" else [
-        {"name": "inspect_tmux"},
-        {"name": "list_session_panes"},
+        {"name": "get_server_info"},
+        {"name": "list_panes"},
         {"name": "list_sessions"},
         {"name": "list_windows"},
     ]
@@ -105,7 +105,7 @@ class McpSwapPreflightTest(unittest.TestCase):
         failure = mcp_swap.preflight_spec(self.spec("empty-tools"), timeout=2.0)
         self.assertEqual(
             failure,
-            "server tool catalog is missing: inspect_tmux, list_session_panes, "
+            "server tool catalog is missing: get_server_info, list_panes, "
             "list_sessions, list_windows",
         )
 
@@ -131,8 +131,8 @@ class McpSwapPreflightTest(unittest.TestCase):
         )
         self.assertEqual(failure, "synthetic crash")
 
-    def test_binary_spec_never_invents_a_default_route(self) -> None:
-        """Keep absent routes absent and explicit routes exact."""
+    def test_binary_spec_leaves_default_route_to_the_server(self) -> None:
+        """Keep the server-owned default implicit and explicit routes exact."""
         binary = pathlib.Path("/tmp/libtmux-mcp-server")
         inherited = mcp_swap.build_binary_spec(binary)
         explicit = mcp_swap.build_binary_spec(binary, "/tmp/libtmux-private/socket")

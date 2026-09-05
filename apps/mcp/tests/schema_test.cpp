@@ -1,10 +1,12 @@
 #include <chrono>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <memory>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -23,13 +25,20 @@ using libtmux::Server;
 using libtmux::mcp::Arguments;
 using libtmux::mcp::default_tools;
 using libtmux::mcp::StructuredValue;
-using libtmux::mcp::Tool;
+using libtmux::mcp::ToolDefinition;
 using libtmux::mcp::ToolOutput;
+using libtmux::mcp::ToolRegistry;
 using libtmux::mcp::server::ProtocolEra;
+
+[[nodiscard]] ToolRegistry all_tools() {
+  auto built = default_tools();
+  EXPECT_TRUE(built.has_value()) << built.error();
+  return std::move(*built);
+}
 
 [[nodiscard]] json published_schemas() {
   const json listed =
-      libtmux::mcp::server::tools_result(default_tools(), ProtocolEra::modern);
+      libtmux::mcp::server::tools_result(all_tools(), ProtocolEra::modern);
   json schemas = json::object();
   for (const auto& tool : listed.at("tools")) {
     schemas[tool.at("name").get<std::string>()] = tool.at("outputSchema");
@@ -74,7 +83,7 @@ private:
 
 [[nodiscard]] ToolOutput wait_past_pane_lookup() {
   const Server server = libtmux::detail::server_over(std::make_shared<SlowBackend>());
-  auto waited = default_tools().call(
+  auto waited = all_tools().call(
       server, "wait_for_text",
       {{"target", "mcp"}, {"text", "never appears"}, {"timeout_ms", "1"}});
   EXPECT_TRUE(waited.has_value()) << waited.error().message;
@@ -130,23 +139,112 @@ TEST(McpProtocolSchemaTmux, EmitsEveryToolAnswerBesideItsPublishedSchema) {
   ASSERT_TRUE(opened.has_value());
   const Server server = *opened;
   const std::string session{fixture->session_name()};
-  const auto tools = default_tools();
+  const auto tools = all_tools();
 
-  const std::map<std::string, Arguments, std::less<>> calls{
-      {"capture_pane", {{"target", session}}},
-      {"create_session", {{"name", "schema-conformance"}}},
-      {"inspect_tmux", {}},
-      {"list_panes", {}},
-      {"list_session_panes", {{"session", session}}},
-      {"list_sessions", {}},
-      {"list_windows", {{"session", session}}},
-      {"new_window", {{"session", session}, {"name", "schema-conformance"}}},
-      {"search_panes", {{"text", "conformance"}}},
-      {"send_keys", {{"target", session}, {"keys", "Enter"}}},
-      {"send_text", {{"target", session}, {"text", "conformance\n"}}},
-      {"wait_for_text",
-       {{"target", session}, {"text", "never appears"}, {"timeout_ms", "50"}}},
-  };
+  auto root = server.session(session);
+  ASSERT_TRUE(root.has_value()) << root.error().diagnostic;
+  auto windows = root->windows();
+  ASSERT_TRUE(windows.has_value()) << windows.error().diagnostic;
+  ASSERT_FALSE(windows->empty());
+  const auto main_window = windows->front();
+  auto panes = main_window.panes();
+  ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
+  ASSERT_FALSE(panes->empty());
+  const auto primary = panes->front();
+  auto secondary = main_window.split({.focus = false});
+  ASSERT_TRUE(secondary.has_value()) << secondary.error().diagnostic;
+  auto doomed_pane = main_window.split({.focus = false});
+  ASSERT_TRUE(doomed_pane.has_value()) << doomed_pane.error().diagnostic;
+  auto doomed_window =
+      root->new_window({.name = "schema-doomed-window", .focus = false});
+  ASSERT_TRUE(doomed_window.has_value()) << doomed_window.error().diagnostic;
+  auto respawn_window =
+      root->new_window({.name = "schema-respawn-window", .focus = false});
+  ASSERT_TRUE(respawn_window.has_value()) << respawn_window.error().diagnostic;
+  auto respawn_panes = respawn_window->panes();
+  ASSERT_TRUE(respawn_panes.has_value()) << respawn_panes.error().diagnostic;
+  ASSERT_FALSE(respawn_panes->empty());
+  const auto respawn_pane = respawn_panes->front();
+  auto doomed_session = server.new_session("schema-doomed-session");
+  ASSERT_TRUE(doomed_session.has_value()) << doomed_session.error().diagnostic;
+
+  const std::filesystem::path literal_directory =
+      fixture->socket_path().parent_path() / "schema-#{pid}";
+  std::error_code directory_error;
+  ASSERT_TRUE(std::filesystem::create_directory(literal_directory, directory_error))
+      << directory_error.message();
+
+  Arguments batch;
+  batch.read_calls.push_back({"list_sessions", {}});
+  std::map<std::string, Arguments, std::less<>> calls;
+  const auto add =
+      [&calls](std::string name,
+               std::initializer_list<std::pair<std::string_view, std::string_view>>
+                   arguments) { calls.emplace(std::move(name), Arguments{arguments}); };
+  add("list_sessions", {});
+  add("list_windows", {{"session", root->id()}});
+  add("list_panes", {});
+  add("get_server_info", {});
+  add("get_session_info", {{"session", root->id()}});
+  add("get_window_info", {{"windowId", main_window.id()}});
+  add("get_pane_info", {{"paneId", primary.id()}});
+  add("capture_pane", {{"paneId", primary.id()}});
+  add("capture_since", {{"paneId", primary.id()}, {"cursor", "0"}});
+  add("snapshot_pane", {{"paneId", primary.id()}});
+  add("search_panes", {{"pattern", "schema"}});
+  add("find_pane_by_position",
+      {{"row", "0"}, {"column", "0"}, {"windowId", main_window.id()}});
+  add("wait_for_text",
+      {{"target", primary.id()}, {"text", "never appears"}, {"timeout_ms", "1"}});
+  Arguments variables{{"paneId", primary.id()}};
+  variables.string_arrays["names"] = {"pane_id"};
+  calls.emplace("get_tmux_variables", std::move(variables));
+  add("show_option", {{"name", "history-limit"}, {"target", root->id()}});
+  add("show_environment", {});
+  add("show_hooks", {});
+  calls.emplace("call_read_tools_batch", std::move(batch));
+  add("rename_session", {{"session", root->id()}, {"name", "schema-#{pid}"}});
+  add("rename_window", {{"windowId", main_window.id()}, {"name", "schema-#{pid}"}});
+  add("select_window", {{"windowId", main_window.id()}});
+  add("select_pane", {{"paneId", primary.id()}});
+  add("select_layout", {{"windowId", main_window.id()}, {"layout", "tiled"}});
+  add("resize_window",
+      {{"windowId", main_window.id()}, {"width", "100"}, {"height", "40"}});
+  add("resize_pane", {{"paneId", primary.id()}, {"width", "30"}});
+  add("move_window", {{"windowId", main_window.id()}, {"index", "9"}});
+  add("swap_pane", {{"sourcePaneId", primary.id()}, {"targetPaneId", secondary->id()}});
+  add("set_pane_title", {{"paneId", primary.id()}, {"title", "schema-#{pid}"}});
+  add("enter_copy_mode", {{"paneId", primary.id()}});
+  add("exit_copy_mode", {{"paneId", primary.id()}});
+  add("wait_for_channel", {{"channel", "schema-wait"}, {"timeoutMs", "1000"}});
+  add("signal_channel", {{"channel", "schema-signal"}});
+  add("set_mouse_enabled", {{"enabled", "false"}});
+  add("set_history_limit", {{"session", root->id()}, {"limit", "2000"}});
+  add("create_session", {{"name", "schema-created-#{pid}"},
+                         {"windowName", "schema-first-#{pid}"},
+                         {"startDirectory", literal_directory.string()}});
+  add("create_window", {{"session", root->id()},
+                        {"name", "schema-created-window-#{pid}"},
+                        {"startDirectory", literal_directory.string()}});
+  add("split_window",
+      {{"paneId", primary.id()}, {"startDirectory", literal_directory.string()}});
+  add("respawn_pane", {{"paneId", respawn_pane.id()},
+                       {"force", "true"},
+                       {"startDirectory", literal_directory.string()}});
+  add("run_shell_command", {{"paneId", primary.id()},
+                            {"command", "printf schema-conformance"},
+                            {"timeoutMs", "5000"}});
+  add("send_keys", {{"paneId", primary.id()}, {"keys", "Escape"}});
+  Arguments key_batch;
+  key_batch.send_key_operations.push_back(
+      libtmux::mcp::FlatArguments{{"paneId", primary.id()}, {"keys", "Escape"}});
+  calls.emplace("send_keys_batch", std::move(key_batch));
+  add("paste_text", {{"paneId", primary.id()}, {"text", "schema-conformance"}});
+  add("set_synchronize_panes", {{"windowId", main_window.id()}, {"enabled", "false"}});
+  add("clear_pane_scrollback", {{"paneId", primary.id()}});
+  add("kill_pane", {{"paneId", doomed_pane->id()}});
+  add("kill_window", {{"windowId", doomed_window->id()}});
+  add("kill_session", {{"session", doomed_session->id()}});
   const json schemas = published_schemas();
 
   std::ofstream out{destination, std::ios::trunc};
@@ -157,17 +255,50 @@ TEST(McpProtocolSchemaTmux, EmitsEveryToolAnswerBesideItsPublishedSchema) {
         << '\n';
   };
 
-  for (const Tool& tool : tools.tools()) {
+  for (const ToolDefinition& tool : tools.tools()) {
     const auto call = calls.find(tool.name);
     ASSERT_NE(call, calls.end()) << tool.name << " has no schema-conformance call";
+    std::optional<std::thread> signal;
+    if (tool.name == "wait_for_channel") {
+      signal.emplace([server] {
+        std::this_thread::sleep_for(std::chrono::milliseconds{20});
+        static_cast<void>(server.signal("schema-wait"));
+      });
+    }
     const auto result = tools.call(server, tool.name, call->second);
+    if (signal.has_value()) {
+      signal->join();
+    }
     ASSERT_TRUE(result.has_value()) << tool.name << ": " << result.error().message;
+    if (tool.name == "rename_session") {
+      const auto renamed = server.session(root->id());
+      ASSERT_TRUE(renamed.has_value()) << renamed.error().diagnostic;
+      EXPECT_EQ(renamed->name(), "schema-#{pid}");
+    } else if (tool.name == "rename_window") {
+      const auto renamed = server.window(main_window.id());
+      ASSERT_TRUE(renamed.has_value()) << renamed.error().diagnostic;
+      EXPECT_EQ(renamed->name(), "schema-#{pid}");
+    } else if (tool.name == "set_pane_title") {
+      const auto titled = server.pane(primary.id());
+      ASSERT_TRUE(titled.has_value()) << titled.error().diagnostic;
+      EXPECT_EQ(titled->title(), "schema-#{pid}");
+    } else if (tool.name == "create_session") {
+      const auto& value = result->structured.at("session_id").value;
+      const auto created = server.session(std::get<std::string>(value));
+      ASSERT_TRUE(created.has_value()) << created.error().diagnostic;
+      auto created_panes = created->panes();
+      ASSERT_TRUE(created_panes.has_value()) << created_panes.error().diagnostic;
+      ASSERT_FALSE(created_panes->empty());
+      EXPECT_EQ(created_panes->front().path(), literal_directory.string());
+    }
     emit(tool.name, published_output(*result));
   }
   // The one answer no live server produces on demand.
   emit("wait_for_text", published_output(wait_past_pane_lookup()));
   out.flush();
   ASSERT_TRUE(out.good()) << "cannot finish writing " << destination;
+  EXPECT_TRUE(std::filesystem::remove(literal_directory, directory_error))
+      << directory_error.message();
 }
 
 } // namespace

@@ -5,59 +5,73 @@ A [Model Context Protocol](https://modelcontextprotocol.io) server for
 [libtmux](../../README.md). It speaks newline-delimited JSON-RPC over stdio and
 ships as one native executable.
 
-This is an alpha interface. POSIX tmux has the full twelve-tool catalog below.
-Native Windows exposes a four-tool, read-only psmux preview and fails closed for
-session and window creation, pane input, capture, search, waits, global pane
-discovery, persistent control mode, and socket paths.
+This is an alpha interface. The same startup-frozen 47-tool manifest is
+advertised on POSIX and native Windows. Psmux support remains
+command-dependent on Windows: unsupported operations fail explicitly at
+dispatch rather than disappearing from the declared capability surface.
 
-## Tool catalogs
+## Tool catalog
 
-These four read-only tools are advertised on POSIX and Windows:
+One native registry owns the 47 public tools and their names, titles,
+controlled descriptions, toolsets, capability claims, conservative
+annotations, schemas, input-sink tables, nested authority, and handlers. Its
+startup-filtered definitions govern both listing and calls:
+
+<!-- BEGIN GENERATED TOOL INVENTORY -->
+<!-- Generated from tmux://capabilities; run this script to update. -->
+| Toolset | Tools |
+|---|---|
+| `inspect` | `list_sessions`, `list_windows`, `list_panes`, `get_server_info`, `get_session_info`, `get_window_info`, `get_pane_info`, `capture_pane`, `capture_since`, `snapshot_pane`, `search_panes`, `find_pane_by_position`, `wait_for_text`, `get_tmux_variables`, `show_option`, `show_environment`, `show_hooks`, `call_read_tools_batch` |
+| `manage` | `rename_session`, `rename_window`, `select_window`, `select_pane`, `select_layout`, `resize_window`, `resize_pane`, `move_window`, `swap_pane`, `set_pane_title`, `enter_copy_mode`, `exit_copy_mode`, `wait_for_channel`, `signal_channel`, `set_mouse_enabled`, `set_history_limit` |
+| `execute` | `create_session`, `create_window`, `split_window`, `respawn_pane`, `run_shell_command`, `send_keys`, `send_keys_batch`, `paste_text`, `set_synchronize_panes` |
+| `teardown` | `clear_pane_scrollback`, `kill_pane`, `kill_window`, `kill_session` |
+<!-- END GENERATED TOOL INVENTORY -->
+
+### Moving from the twelve-tool alpha
+
+Eight route names remain, though callers must use their current schemas. The
+other four map as follows:
+
+| Earlier route | Current route |
+|---|---|
+| `inspect_tmux` | `list_sessions` + `list_windows` + `list_panes` |
+| `list_session_panes` | `list_panes`; filter returned `session_id` |
+| `new_window` | `create_window`; `session` and `name` remain |
+| `send_text` | `paste_text`; `target` becomes `paneId` |
+
+### Core workflow quick reference
+
+Start with server and object discovery, then retain the stable IDs returned by
+those calls. These common workflows keep their argument and result guidance
+beside the full generated inventory:
 
 | Tool | Arguments | Result |
 |---|---|---|
-| `inspect_tmux` | — | Sessions, windows, and panes with their owning IDs |
-| `list_sessions` | — | Stable session IDs, names, attachment state, and window counts |
+| `get_server_info` | — | Server liveness and tmux version |
+| `list_sessions` | — | Stable session IDs, names, paths, client counts, and window counts |
 | `list_windows` | `session` | Windows belonging to one exact session |
-| `list_session_panes` | `session` | Panes belonging to one exact session |
-
-The session-scoped discovery calls are load-bearing on psmux: window and pane
-IDs can repeat between sessions, so clients must retain the returned
-`session_id`.
-
-Here, read-only describes the requested tmux operation and its MCP annotation.
-Tmux and psmux expand server-side `command-alias` entries before built-in
-lookup, so the annotation is not a sandbox against hostile server
-configuration. Use only servers and configurations you trust; a private
-selector prevents accidental cross-talk, not malicious reconfiguration.
-Before parsing any command, psmux 3.3.7 globally removes registry entries it
-considers stale and reaps servers it considers orphaned. A socket name cannot
-isolate that upstream maintenance; it is not a security boundary from other
-local psmux users. See the library's [Windows safety boundary](../../README.md#windows-through-psmux).
-
-POSIX tmux advertises eight additional tools:
-
-| Tool | Arguments | Result |
-|---|---|---|
-| `create_session` | `name` | The new session ID and name |
-| `new_window` | `session`, `name` | The new window ID and its owning session ID |
 | `list_panes` | — | Every pane with stable pane, window, and session IDs |
-| `capture_pane` | `target` | Visible rendered pane text |
-| `send_text` | `target`, `text` | Pane ID after typing literal text |
-| `send_keys` | `target`, `keys` | Pane ID after pressing validated key names |
+| `create_session` | `name?`, `windowName?`, `startDirectory?`, `width?`, `height?` | New session ID and name |
+| `create_window` | `session`, `name?`, `startDirectory?` | New window ID and owning session ID |
+| `capture_pane` | `paneId`, `history?` | Visible or retained pane text |
+| `paste_text` | `paneId`, `text` | Pane ID after pasting literal text |
+| `send_keys` | `paneId`, `keys` | Pane ID and every resolved synchronized target |
 | `wait_for_text` | `target`, `text`, `timeout_ms?` | Match, timeout, elapsed time, transport mode, and final capture |
-| `search_panes` | `text` | Matching pane IDs and matching lines |
+| `search_panes` | `pattern` | Matching pane IDs and matching lines |
+| `call_read_tools_batch` | `operations`, `onError?` | Ordered nested results, counters, and explicit truncation state |
 
-`send_text` never interprets key names. `send_keys` validates the complete
-space-separated key list before sending any key. `timeout_ms` is an integer
-from 1 through 60000 and defaults to 10000.
+Creation and respawn tools accept no command or environment payload.
+`run_shell_command` runs an explicit shell command in a pane. `send_keys`,
+`send_keys_batch`, and `paste_text` send input to a pane's existing
+process. `set_synchronize_panes` is the only tool marked as amplifying future
+input; the two key-sending tools report every resolved pane target when tmux
+copies input across the window.
 
-Start with `inspect_tmux`. Tool descriptions tell the model which stable IDs to
-retain, and every parameter has a description and a closed JSON Schema.
-Misspelt arguments, wrong JSON types, out-of-range integers, and oversized
-strings are caller errors; they never reach tmux. String limits count validated
-UTF-8 Unicode code points, not encoded bytes, so the runtime and published JSON
-Schema apply the same character limit.
+`search_panes` accepts a pattern of at most 256 characters, returns at most
+1,024 matches, and uses at most 8,388,608 character-comparison work units.
+`wait_for_text` accepts a literal of at most 4,096 characters, uses at most
+8 MiB of matching work, and shares one deadline across lookup, connection,
+capture, and polling.
 
 Every successful call contains both:
 
@@ -65,12 +79,25 @@ Every successful call contains both:
 - a JSON-serialized text content item for clients that do not consume
   structured tool results.
 
-The text item is deliberately the exact serialized structured value, not a
-second hand-formatted rendering. This follows MCP's structured-content
-compatibility guidance and gives old and new clients one authoritative result.
+The text item is the exact serialized structured value, not a second
+hand-formatted rendering. Closed schemas reject unknown fields. Caller text in
+tmux format-expanding positions is escaped exactly once; public capability rows
+record that control under schema-keyed `inputLiteralization`. String limits
+count validated UTF-8 Unicode code points rather than encoded bytes, so runtime
+checks match the published schema.
 
-Tools also publish titles and the MCP read-only, destructive, idempotent, and
-open-world annotations. `tools/list` is a fixed, unpaginated catalog.
+Capability annotations describe requested effects; they are not a sandbox
+against trusted-server configuration such as `command-alias`. A dedicated
+socket prevents accidental object cross-talk, not hostile local
+reconfiguration. See the library's
+[Windows safety boundary](../../README.md#windows-through-psmux) for the psmux
+registry and process-lifecycle limits.
+
+Every tool uses conservative annotations: `readOnlyHint=false`,
+`destructiveHint=true`, `idempotentHint=false`, and `openWorldHint=true`.
+The full capability row appears under
+`_meta["com.git-pull.libtmux-mcp/capability"]` and matches the row in
+`tmux://capabilities`.
 
 ## Protocol and lifecycle
 
@@ -90,12 +117,14 @@ lifecycles on stdio:
   negotiated to `2025-11-25`, the newest initialize-based version this server
   supports, and the client may disconnect if it cannot use that selection.
 
-Tools are the only primitive this server offers. It advertises
-`{"tools": {}}` and nothing else — no resources, no prompts, no `listChanged` —
-and `resources/list` and `prompts/list` answer `-32601 no such method` rather
-than an empty list, so a client learns the boundary instead of inferring it
-from silence. The Python
-[libtmux-mcp](https://github.com/tmux-python/libtmux-mcp) serves all three.
+The server advertises tools plus one static resource.
+`resources/list` exposes `tmux://capabilities`; `resources/read` returns its
+startup-frozen effective rows. There are no dynamic resources, templates,
+subscriptions, or prompts. Both supported protocol eras expose the same static
+document.
+The advertised tools capability remains `{"tools": {}}`, with no
+`listChanged`. `prompts/list` returns `-32601 no such method` rather than an
+empty list.
 
 `server/discover` reports `2026-07-28`, the one supported per-request-metadata
 version, plus the tools capability, server identity, instructions, and a public
@@ -157,7 +186,7 @@ and reservations remain held until the aggregate response is written.
 Once a valid JSON-RPC version and method identify a notification, the server
 never replies even when that method's parameters are invalid. Inbound response
 messages are also consumed silently, without reserving their IDs, because this
-tools-only server never originates requests to its peer.
+server never originates requests to its peer.
 
 Each input line is bounded at 8 MiB and is drained before an error is returned,
 so an oversized request cannot desynchronize the next frame.
@@ -185,17 +214,35 @@ $ cmake --build build/mcp
 $ cmake --install build/mcp --prefix ~/.local
 ```
 
-This installs `libtmux-mcp-server` in the selected binary directory.
+This installs `libtmux-mcp-server` and its packaged minimal tmux configuration
+in the selected binary directory.
 
 On native Windows, build the repository's `windows-psmux` preset and use the
 audited psmux version described in [the library README](../../README.md#windows-through-psmux).
-The executable advertises only the four psmux-safe read tools; this is a
-bounded MCP preview, not tmux parity.
+The executable advertises the same 47 names. The native smoke records which
+operations psmux 3.3.7 supports and requires unsupported commands to fail
+explicitly; this remains a bounded preview, not tmux parity.
 
 ## Socket selection
 
-Choose an exact socket whenever an agent should not reach a person's default
-tmux server:
+The process resolves one socket before protocol startup and never accepts a
+per-call override. The shared environment contract is:
+
+| Variable | Meaning |
+|---|---|
+| `LIBTMUX_SOCKET` | Exact tmux socket name |
+| `LIBTMUX_SOCKET_PATH` | Exact socket path; mutually exclusive with the name |
+| `LIBTMUX_TMUX_CONFIG` | Explicit absolute tmux configuration path |
+
+With no selector, the server uses the product-dedicated `libtmux-mcp` socket.
+With no configuration path, a newly created dedicated socket uses minimal
+configuration. Explicitly named, path-pinned, inherited, or already-running
+sockets have user-configured or unknown provenance and omit teardown by
+default. A wholly new dedicated minimal socket may default to all four
+toolsets. `tmux://capabilities` reports the selector, selection provenance,
+server state, and configuration provenance.
+
+CLI selectors remain available:
 
 ```console
 $ libtmux-mcp-server --socket-path /tmp/tmux-1000/agent
@@ -207,14 +254,20 @@ $ libtmux-mcp-server --socket-name agent
 
 The selectors are:
 
+- `--socket SELECTOR`, where `SELECTOR` is `name:NAME`,
+  `path:/ABSOLUTE/PATH`, or `inherit`;
 - `--socket-path PATH` for tmux `-S PATH` on POSIX;
 - `--socket-name NAME` for tmux or psmux `-L NAME`;
-- one positional `PATH`, retained as a POSIX compatibility spelling;
-- no selector only inside a valid inherited `TMUX` route.
+- one positional `PATH`, retained as a POSIX compatibility spelling.
 
-An absent or invalid inherited `TMUX` value is an error; the MCP server never
-silently falls back to the default server. Windows psmux rejects
-`--socket-path` and positional paths before dispatch. Psmux 3.3.7 ignores
+`--tmux-config /ABSOLUTE/PATH` selects an explicit tmux configuration rather
+than the packaged minimal file. Earlier no-selector launches followed `$TMUX`;
+the current default is the dedicated socket above. Pass `--socket inherit` to
+retain that earlier behavior; it requires a valid inherited `$TMUX` route.
+
+Conflicting selectors and an empty or relative `LIBTMUX_TMUX_CONFIG` fail
+before tmux opens. Windows psmux rejects
+socket paths before dispatch. Psmux 3.3.7 ignores
 `PSMUX_DATA_DIR` and stores routing state in the Windows profile's `.psmux`
 directory; use a high-entropy `--socket-name` and exact session and registry
 cleanup rather than assuming the variable isolates it. Psmux also loads user
@@ -231,6 +284,16 @@ $ libtmux-mcp-server --help
 ```console
 $ libtmux-mcp-server --version
 ```
+
+### Capability selection
+
+`LIBTMUX_TOOLSETS` is an unordered comma-separated subset of `inspect`,
+`manage`, `execute`, and `teardown`. All 16 subsets are valid. A wholly empty
+value selects no toolsets; once nonempty, leading, trailing, and interior empty
+tokens are errors. `LIBTMUX_TOOLS` adds exact names, then
+`LIBTMUX_EXCLUDE_TOOLS` removes exact names last. Unknown names fail startup.
+
+`LIBTMUX_SAFETY` is retired. Its presence stops startup with a migration error.
 
 ## Client configuration
 
@@ -268,11 +331,12 @@ For Claude Desktop, the equivalent entry is:
 
 ### Native Windows with psmux
 
-Windows MCP is a connection to a trusted, pre-created psmux session. It exposes
-exactly `inspect_tmux`, `list_sessions`, `list_windows`, and
-`list_session_panes`; the server cannot create the fixture. Run this setup once
-from native PowerShell outside psmux. It creates a high-entropy selector, an
-empty configuration file, and a state file used by the commands below:
+Windows MCP uses the same 47-name manifest through a trusted psmux route.
+Unsupported psmux commands fail explicitly. The audited example below
+pre-creates an isolated fixture so its exact selector and configuration are
+known before an agent connects. Run it once from native PowerShell outside
+psmux; it creates a high-entropy selector, an empty configuration file, and a
+state file used by the commands below:
 
 ```console
 $ & {
@@ -708,7 +772,7 @@ generic internal JSON-RPC error while the detailed diagnostic stays on stderr.
 | [`src/server.cpp`](src/server.cpp) | Executable composition root |
 | [`tests/mcp_test.cpp`](tests/mcp_test.cpp) | Direct tool tests against deterministic seams and isolated real tmux |
 | [`tests/protocol_test.cpp`](tests/protocol_test.cpp) | Both protocol eras, schemas, backpressure, concurrency, cancellation, framing, and selectors |
-| [`tests/windows_psmux_smoke.ps1`](tests/windows_psmux_smoke.ps1) | Native psmux fixture, exact four-tool catalog, typed hierarchy, and exact cleanup |
+| [`tests/windows_psmux_smoke.ps1`](tests/windows_psmux_smoke.ps1) | Native psmux fixture, pinned catalog, explicit unsupported-command behavior, and exact cleanup |
 
 ## Related
 

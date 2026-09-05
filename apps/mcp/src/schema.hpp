@@ -8,11 +8,22 @@
 
 namespace libtmux::mcp::server {
 
+struct CapabilityDisclosure {
+  std::string selector;
+  std::string selection_provenance;
+  std::string server_state;
+  std::string configuration_provenance;
+};
+
 [[nodiscard]] json modern_protocol_versions();
 [[nodiscard]] json initialize_result(std::string_view version);
 [[nodiscard]] json discover_result();
 [[nodiscard]] json ping_result();
-[[nodiscard]] json tools_result(const ToolSet& tools, ProtocolEra era);
+[[nodiscard]] json tools_result(const ToolRegistry& tools, ProtocolEra era);
+[[nodiscard]] json resources_result(ProtocolEra era);
+[[nodiscard]] json
+capabilities_resource_result(const ToolRegistry& tools, ProtocolEra era,
+                             const CapabilityDisclosure& disclosure = {});
 [[nodiscard]] json tool_success(const ToolOutput& answer, ProtocolEra era);
 [[nodiscard]] json tool_failure(std::string message, ProtocolEra era);
 

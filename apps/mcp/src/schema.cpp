@@ -7,22 +7,20 @@
 #include <variant>
 
 #include "libtmux/version.hpp"
+#include "tool_support.hpp"
 
 namespace libtmux::mcp::server {
 namespace {
 
-#if defined(_WIN32)
 constexpr std::string_view kInstructions =
-    "Start with inspect_tmux. On psmux, keep the session ID with every window "
-    "or pane ID. This Windows catalog deliberately supports only session-scoped "
-    "read-only discovery; creation, pane capture, input, waits, and global pane "
-    "queries are not advertised.";
-#else
-constexpr std::string_view kInstructions =
-    "Start with inspect_tmux. Prefer stable IDs. Use send_text for literal text, "
-    "send_keys for named keys, and wait_for_text for future output. Tool "
-    "annotations distinguish reads from actions.";
-#endif
+    "Start with list_sessions and retain stable IDs. This process uses one pinned "
+    "tmux socket; read tmux://capabilities for its configuration provenance and "
+    "effective tools. Execute tools run pane processes with this user's "
+    "permissions; tool filtering is not an OS sandbox.";
+constexpr std::string_view kCapabilityMetadata = "com.git-pull.libtmux-mcp/capability";
+
+[[nodiscard]] json capability_row(const ToolDefinition& tool,
+                                  const ToolRegistry& tools);
 
 template <class... Functions> struct Overloaded : Functions... {
   using Functions::operator()...;
@@ -58,31 +56,47 @@ template <class... Functions> struct Overloaded : Functions... {
 }
 
 [[nodiscard]] json session_schema() {
-  return closed_object({{"attached", {{"type", "boolean"}}},
-                        {"id", {{"type", "string"}, {"pattern", R"(^\$[0-9]+$)"}}},
-                        {"name", {{"type", "string"}}},
-                        {"window_count", {{"type", "integer"}, {"minimum", 0}}}},
-                       {"attached", "id", "name", "window_count"});
+  return closed_object(
+      {{"attached", {{"type", "boolean"}}},
+       {"client_count", {{"type", "integer"}, {"minimum", 0}}},
+       {"id", {{"type", "string"}, {"pattern", R"(^\$[0-9]+$)"}}},
+       {"name", {{"type", "string"}}},
+       {"path", {{"type", "string"}}},
+       {"window_count", {{"type", "integer"}, {"minimum", 0}}}},
+      {"attached", "client_count", "id", "name", "path", "window_count"});
 }
 
 [[nodiscard]] json window_schema() {
   return closed_object(
       {{"active", {{"type", "boolean"}}},
+       {"height", {{"type", "integer"}, {"minimum", 0}}},
        {"id", {{"type", "string"}, {"pattern", R"(^@[0-9]+$)"}}},
        {"index", {{"type", "integer"}}},
+       {"layout", {{"type", "string"}}},
        {"name", {{"type", "string"}}},
-       {"session_id", {{"type", "string"}, {"pattern", R"(^\$[0-9]+$)"}}}},
-      {"active", "id", "index", "name", "session_id"});
+       {"pane_count", {{"type", "integer"}, {"minimum", 0}}},
+       {"session_id", {{"type", "string"}, {"pattern", R"(^\$[0-9]+$)"}}},
+       {"width", {{"type", "integer"}, {"minimum", 0}}}},
+      {"active", "height", "id", "index", "layout", "name", "pane_count", "session_id",
+       "width"});
 }
 
 [[nodiscard]] json pane_schema() {
   return closed_object(
       {{"active", {{"type", "boolean"}}},
        {"command", {{"type", "string"}}},
+       {"dead", {{"type", "boolean"}}},
+       {"height", {{"type", "integer"}, {"minimum", 0}}},
        {"id", {{"type", "string"}, {"pattern", R"(^%[0-9]+$)"}}},
+       {"index", {{"type", "integer"}, {"minimum", 0}}},
+       {"path", {{"type", "string"}}},
+       {"pid", {{"type", "integer"}, {"minimum", 0}}},
        {"session_id", {{"type", "string"}, {"pattern", R"(^\$[0-9]+$)"}}},
+       {"title", {{"type", "string"}}},
+       {"width", {{"type", "integer"}, {"minimum", 0}}},
        {"window_id", {{"type", "string"}, {"pattern", R"(^@[0-9]+$)"}}}},
-      {"active", "command", "id", "session_id", "window_id"});
+      {"active", "command", "dead", "height", "id", "index", "path", "pid",
+       "session_id", "title", "width", "window_id"});
 }
 
 [[nodiscard]] json array_property(json items) {
@@ -110,7 +124,15 @@ template <class... Functions> struct Overloaded : Functions... {
         {"pane_id", "text"});
   case OutputShape::pane_id:
     return closed_object(
-        {{"pane_id", {{"type", "string"}, {"pattern", R"(^%[0-9]+$)"}}}}, {"pane_id"});
+        {{"changed", {{"type", "boolean"}}},
+         {"pane_id", {{"type", "string"}, {"pattern", R"(^%[0-9]+$)"}}}},
+        {"pane_id"});
+  case OutputShape::pane_targets:
+    return closed_object(
+        {{"pane_id", {{"type", "string"}, {"pattern", R"(^%[0-9]+$)"}}},
+         {"target_pane_ids",
+          array_property({{"type", "string"}, {"pattern", R"(^%[0-9]+$)"}})}},
+        {"pane_id", "target_pane_ids"});
   case OutputShape::session_id:
     return closed_object(
         {{"name", {{"type", "string"}}},
@@ -138,16 +160,75 @@ template <class... Functions> struct Overloaded : Functions... {
                {"pane_id", {{"type", "string"}, {"pattern", R"(^%[0-9]+$)"}}}},
               {"line", "pane_id"}))}},
         {"matches"});
+  case OutputShape::object:
+    return json{{"type", "object"}, {"additionalProperties", true}};
   }
   return closed_object({}, {});
 }
 
-[[nodiscard]] json describe(const Tool& tool) {
+[[nodiscard]] json input_schema(const ToolDefinition& tool, const ToolRegistry& tools) {
   json properties = json::object();
-  for (const Parameter& parameter : tool.parameters) {
-    json property{
-        {"type", parameter.type == ArgumentType::integer ? "integer" : "string"},
-        {"description", parameter.description}};
+  for (const Parameter& parameter : tool.schema.input) {
+    if (parameter.type == ArgumentType::string_array) {
+      json items{{"type", "string"}};
+      if (parameter.maximum_length.has_value()) {
+        items["maxLength"] = *parameter.maximum_length;
+      }
+      json property{{"type", "array"},
+                    {"description", parameter.description},
+                    {"items", std::move(items)}};
+      if (parameter.minimum.has_value()) {
+        property["minItems"] = *parameter.minimum;
+      }
+      if (parameter.maximum.has_value()) {
+        property["maxItems"] = *parameter.maximum;
+      }
+      properties[parameter.name] = std::move(property);
+      continue;
+    }
+    if (parameter.type == ArgumentType::send_key_operations) {
+      const json operation = closed_object(
+          {{"paneId", {{"type", "string"}, {"maxLength", detail::kTargetCharacters}}},
+           {"keys", {{"type", "string"}, {"maxLength", 4096}}},
+           {"enter", {{"type", "boolean"}}},
+           {"force", {{"type", "boolean"}}},
+           {"literal", {{"type", "boolean"}}}},
+          {"paneId", "keys"});
+      properties[parameter.name] = {{"type", "array"},
+                                    {"description", parameter.description},
+                                    {"minItems", 1},
+                                    {"maxItems", 64},
+                                    {"items", operation}};
+      continue;
+    }
+    if (parameter.type == ArgumentType::read_calls) {
+      json alternatives = json::array();
+      for (const std::string& name : tool.authority.nested_tools) {
+        const ToolDefinition* const nested = tools.find_nested(tool, name);
+        if (nested == nullptr) {
+          continue;
+        }
+        alternatives.push_back(
+            closed_object({{"tool", {{"type", "string"}, {"const", name}}},
+                           {"arguments", input_schema(*nested, tools)}},
+                          {"tool"}));
+      }
+      json calls = {{"type", "array"},
+                    {"description", parameter.description},
+                    {"minItems", 1},
+                    {"maxItems", 16}};
+      calls["items"] =
+          alternatives.empty() ? json(false) : json{{"oneOf", std::move(alternatives)}};
+      properties[parameter.name] = std::move(calls);
+      continue;
+    }
+    std::string_view type = "string";
+    if (parameter.type == ArgumentType::integer) {
+      type = "integer";
+    } else if (parameter.type == ArgumentType::boolean) {
+      type = "boolean";
+    }
+    json property{{"type", type}, {"description", parameter.description}};
     if (parameter.minimum.has_value()) {
       property["minimum"] = *parameter.minimum;
     }
@@ -157,20 +238,204 @@ template <class... Functions> struct Overloaded : Functions... {
     if (parameter.maximum_length.has_value()) {
       property["maxLength"] = *parameter.maximum_length;
     }
+    if (!parameter.allowed_values.empty()) {
+      property["enum"] = parameter.allowed_values;
+    }
     properties[parameter.name] = std::move(property);
   }
-  return json{
-      {"name", tool.name},
-      {"title", tool.title},
-      {"description", tool.description},
-      {"inputSchema", closed_object(std::move(properties), tool.required_names())},
-      {"outputSchema", output_schema(tool.output)},
-      {"annotations",
-       {{"title", tool.title},
-        {"readOnlyHint", tool.annotations.read_only},
-        {"destructiveHint", tool.annotations.destructive},
-        {"idempotentHint", tool.annotations.idempotent},
-        {"openWorldHint", tool.annotations.open_world}}}};
+  return closed_object(std::move(properties), tool.required_names());
+}
+
+[[nodiscard]] json annotations(const ToolDefinition& tool) {
+  return {{"title", tool.title},
+          {"readOnlyHint", tool.annotations.read_only},
+          {"destructiveHint", tool.annotations.destructive},
+          {"idempotentHint", tool.annotations.idempotent},
+          {"openWorldHint", tool.annotations.open_world}};
+}
+
+[[nodiscard]] json describe(const ToolDefinition& tool, const ToolRegistry& tools) {
+  return json{{"name", tool.name},
+              {"title", tool.title},
+              {"description", tool.description},
+              {"inputSchema", input_schema(tool, tools)},
+              {"outputSchema", output_schema(tool.schema.output)},
+              {"annotations", annotations(tool)},
+              {"_meta", {{kCapabilityMetadata, capability_row(tool, tools)}}}};
+}
+
+[[nodiscard]] std::string_view name(Toolset value) {
+  switch (value) {
+  case Toolset::inspect:
+    return "inspect";
+  case Toolset::manage:
+    return "manage";
+  case Toolset::execute:
+    return "execute";
+  case Toolset::teardown:
+    return "teardown";
+  }
+  return {};
+}
+
+[[nodiscard]] std::string_view name(ProcessReach value) {
+  switch (value) {
+  case ProcessReach::none:
+    return "none";
+  case ProcessReach::configured_process:
+    return "configured-process";
+  case ProcessReach::pane_input:
+    return "pane-input";
+  case ProcessReach::pane_command:
+    return "pane-command";
+  }
+  return {};
+}
+
+[[nodiscard]] std::string_view name(Effect value) {
+  switch (value) {
+  case Effect::observe:
+    return "observe";
+  case Effect::change:
+    return "change";
+  case Effect::delete_:
+    return "delete";
+  }
+  return {};
+}
+
+[[nodiscard]] std::string_view name(OutputClass value) {
+  switch (value) {
+  case OutputClass::tmux_metadata:
+    return "tmux-metadata";
+  case OutputClass::terminal_content:
+    return "terminal-content";
+  case OutputClass::process_environment:
+    return "process-environment";
+  case OutputClass::configured_command:
+    return "configured-command";
+  }
+  return {};
+}
+
+[[nodiscard]] std::string_view name(InputSink value) {
+  switch (value) {
+  case InputSink::none:
+    return "none";
+  case InputSink::tmux_lookup:
+    return "tmux-lookup";
+  case InputSink::tmux_state:
+    return "tmux-state";
+  case InputSink::pane_input:
+    return "pane-input";
+  case InputSink::shell_command:
+    return "shell-command";
+  case InputSink::process_argv:
+    return "process-argv";
+  case InputSink::regex:
+    return "regex";
+  case InputSink::tmux_format:
+    return "tmux-format";
+  case InputSink::nested_tool:
+    return "nested-tool";
+  }
+  return {};
+}
+
+[[nodiscard]] std::string_view name(InputControl value) {
+  switch (value) {
+  case InputControl::none:
+    return "none";
+  case InputControl::double_hash_once:
+    return "double-hash-once";
+  case InputControl::validated_variable_name:
+    return "validated-variable-name";
+  }
+  return {};
+}
+
+[[nodiscard]] json capability_row(const ToolDefinition& tool,
+                                  const ToolRegistry& tools) {
+  json effects = json::array();
+  for (const Effect effect : tool.authority.effects) {
+    effects.push_back(name(effect));
+  }
+  json outputs = json::array();
+  for (const OutputClass output : tool.authority.output_classes) {
+    outputs.push_back(name(output));
+  }
+  json input_sinks = json::object();
+  json input_literalization = json::object();
+  for (const auto& [field, sinks] : tool.authority.input_sinks) {
+    json values = json::array();
+    for (const Sink& sink : sinks) {
+      values.push_back(name(sink.type));
+      if (sink.type == InputSink::tmux_format && sink.control != InputControl::none) {
+        input_literalization[field] = name(sink.control);
+      }
+    }
+    input_sinks[field] = std::move(values);
+  }
+  json nested = json::array();
+  for (const std::string& nested_name : tool.authority.nested_tools) {
+    nested.push_back(nested_name);
+  }
+  return {{"name", tool.name},
+          {"title", tool.title},
+          {"description", tool.description},
+          {"toolset", name(tool.toolset)},
+          {"processReach", name(tool.authority.process_reach)},
+          {"tmuxEffects", std::move(effects)},
+          {"outputClasses", std::move(outputs)},
+          {"mayExposeSecrets", tool.authority.may_expose_secrets},
+          {"mayReturnUntrustedContent", tool.authority.may_return_untrusted_content},
+          {"amplifiesFutureInput", tool.authority.amplifies_future_input},
+          {"annotations", annotations(tool)},
+          {"inputSinks", std::move(input_sinks)},
+          {"inputLiteralization", std::move(input_literalization)},
+          {"nestedAuthority", std::move(nested)},
+          {"inputSchema", input_schema(tool, tools)},
+          {"outputSchema", output_schema(tool.schema.output)}};
+}
+
+[[nodiscard]] json capability_document(const ToolRegistry& tools,
+                                       const CapabilityDisclosure& disclosure) {
+  json rows = json::array();
+  json effective = json::array();
+  for (const ToolDefinition& tool : tools.tools()) {
+    effective.push_back(tool.name);
+    rows.push_back(capability_row(tool, tools));
+  }
+  json toolsets = json::array();
+  for (const Toolset toolset : tools.selection().toolsets) {
+    toolsets.push_back(name(toolset));
+  }
+  json included = json::array();
+  for (const std::string& tool : tools.selection().include) {
+    included.push_back(tool);
+  }
+  json excluded = json::array();
+  for (const std::string& tool : tools.selection().exclude) {
+    excluded.push_back(tool);
+  }
+  return {{"schemaVersion", 1},
+          {"frozen", true},
+          {"socket",
+           {{"selector", disclosure.selector},
+            {"selectionProvenance", disclosure.selection_provenance},
+            {"serverState", disclosure.server_state},
+            {"configurationProvenance", disclosure.configuration_provenance},
+            {"namespaceBoundary", "tmux-objects-only"}}},
+          {"toolsets", std::move(toolsets)},
+          {"includedTools", std::move(included)},
+          {"excludedTools", std::move(excluded)},
+          {"toolCount", tools.tools().size()},
+          {"effectiveTools", std::move(effective)},
+          {"hostCommandTools", 0},
+          {"toolFilteringBoundary", "interface-shaping-not-authorization"},
+          {"executionAuthority", "tmux-user"},
+          {"operatingSystemBoundary", "none"},
+          {"tools", std::move(rows)}};
 }
 
 [[nodiscard]] json implementation() {
@@ -184,10 +449,10 @@ void stamp_modern(json& result) {
   result["_meta"] = {{"io.modelcontextprotocol/serverInfo", implementation()}};
 }
 
-[[nodiscard]] json listed_tools(const ToolSet& tools) {
+[[nodiscard]] json listed_tools(const ToolRegistry& tools) {
   json listed = json::array();
-  for (const Tool& tool : tools.tools()) {
-    listed.push_back(describe(tool));
+  for (const ToolDefinition& tool : tools.tools()) {
+    listed.push_back(describe(tool, tools));
   }
   return listed;
 }
@@ -198,14 +463,18 @@ json modern_protocol_versions() { return json::array({kModernProtocolVersion}); 
 
 json initialize_result(std::string_view version) {
   return {{"protocolVersion", version},
-          {"capabilities", {{"tools", json::object()}}},
+          {"capabilities",
+           {{"tools", json::object()},
+            {"resources", {{"listChanged", false}, {"subscribe", false}}}}},
           {"serverInfo", implementation()},
           {"instructions", kInstructions}};
 }
 
 json discover_result() {
   json result{{"supportedVersions", modern_protocol_versions()},
-              {"capabilities", {{"tools", json::object()}}},
+              {"capabilities",
+               {{"tools", json::object()},
+                {"resources", {{"listChanged", false}, {"subscribe", false}}}}},
               {"instructions", kInstructions},
               {"ttlMs", 3600000},
               {"cacheScope", "public"}};
@@ -215,8 +484,39 @@ json discover_result() {
 
 json ping_result() { return json::object(); }
 
-json tools_result(const ToolSet& tools, ProtocolEra era) {
+json tools_result(const ToolRegistry& tools, ProtocolEra era) {
   json result{{"tools", listed_tools(tools)}};
+  if (era == ProtocolEra::modern) {
+    result["ttlMs"] = 3600000;
+    result["cacheScope"] = "public";
+    stamp_modern(result);
+  }
+  return result;
+}
+
+json resources_result(ProtocolEra era) {
+  json result{{"resources",
+               json::array({{{"uri", "tmux://capabilities"},
+                             {"name", "tmux-capabilities"},
+                             {"title", "Effective tmux capabilities"},
+                             {"description",
+                              "The startup-frozen effective tool capability manifest."},
+                             {"mimeType", "application/json"}}})}};
+  if (era == ProtocolEra::modern) {
+    result["ttlMs"] = 3600000;
+    result["cacheScope"] = "public";
+    stamp_modern(result);
+  }
+  return result;
+}
+
+json capabilities_resource_result(const ToolRegistry& tools, ProtocolEra era,
+                                  const CapabilityDisclosure& disclosure) {
+  json result{
+      {"contents",
+       json::array({{{"uri", "tmux://capabilities"},
+                     {"mimeType", "application/json"},
+                     {"text", capability_document(tools, disclosure).dump()}}})}};
   if (era == ProtocolEra::modern) {
     result["ttlMs"] = 3600000;
     result["cacheScope"] = "public";

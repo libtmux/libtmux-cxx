@@ -34,7 +34,8 @@ unexpected_key(const json& object, std::initializer_list<std::string_view> allow
 [[nodiscard]] libtmux::expected<std::optional<json>, MetadataError>
 validate_modern_metadata(const json& params);
 [[nodiscard]] libtmux::expected<Arguments, ArgumentError>
-read_arguments(const json& params, const Tool& tool);
+read_arguments(const json& params, const ToolDefinition& tool,
+               const ToolRegistry& tools);
 [[nodiscard]] std::optional<json> legacy_progress_token(const json& params);
 
 } // namespace libtmux::mcp::server

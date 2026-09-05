@@ -293,7 +293,8 @@ validate_modern_metadata(const json& params) {
 }
 
 libtmux::expected<Arguments, ArgumentError> read_arguments(const json& params,
-                                                           const Tool& tool) {
+                                                           const ToolDefinition& tool,
+                                                           const ToolRegistry& tools) {
   Arguments arguments;
   const auto found = params.find("arguments");
   if (found == params.end()) {
@@ -303,8 +304,8 @@ libtmux::expected<Arguments, ArgumentError> read_arguments(const json& params,
     return libtmux::unexpected(ArgumentError{false, "arguments must be an object"});
   }
   for (const auto& [key, value] : found->items()) {
-    const auto parameter = std::ranges::find(tool.parameters, key, &Parameter::name);
-    if (parameter == tool.parameters.end()) {
+    const auto parameter = std::ranges::find(tool.schema.input, key, &Parameter::name);
+    if (parameter == tool.schema.input.end()) {
       return libtmux::unexpected(ArgumentError{true, "unknown argument: " + key});
     }
     if (parameter->type == ArgumentType::string) {
@@ -313,6 +314,115 @@ libtmux::expected<Arguments, ArgumentError> read_arguments(const json& params,
             ArgumentError{true, "argument " + key + " must be a string"});
       }
       arguments.emplace(key, value.get<std::string>());
+      continue;
+    }
+    if (parameter->type == ArgumentType::boolean) {
+      if (!value.is_boolean()) {
+        return libtmux::unexpected(
+            ArgumentError{true, "argument " + key + " must be a boolean"});
+      }
+      arguments.emplace(key, value.get<bool>() ? "true" : "false");
+      continue;
+    }
+    if (parameter->type == ArgumentType::string_array) {
+      if (!value.is_array() || !std::ranges::all_of(value, [](const json& item) {
+            return item.is_string();
+          })) {
+        return libtmux::unexpected(
+            ArgumentError{true, "argument " + key + " must be an array of strings"});
+      }
+      auto& values = arguments.string_arrays[key];
+      values.reserve(value.size());
+      for (const json& item : value) {
+        values.push_back(item.get<std::string>());
+      }
+      continue;
+    }
+    if (parameter->type == ArgumentType::send_key_operations) {
+      if (!value.is_array() || value.empty() || value.size() > 64U) {
+        return libtmux::unexpected(ArgumentError{
+            true,
+            "argument " + key + " must contain between one and sixty-four operations"});
+      }
+      std::size_t index = 0U;
+      for (const json& operation : value) {
+        const std::string prefix = key + "[" + std::to_string(index) + "]";
+        if (!operation.is_object() ||
+            !only_keys(operation, {"paneId", "keys", "enter", "force", "literal"})) {
+          return libtmux::unexpected(
+              ArgumentError{true, prefix + " must be a closed input operation"});
+        }
+        const auto pane = operation.find("paneId");
+        const auto keys = operation.find("keys");
+        if (pane == operation.end() || !pane->is_string() || pane->empty()) {
+          return libtmux::unexpected(
+              ArgumentError{true, prefix + ".paneId must be a string"});
+        }
+        if (keys == operation.end() || !keys->is_string() || keys->empty()) {
+          return libtmux::unexpected(
+              ArgumentError{true, prefix + ".keys must be a string"});
+        }
+        FlatArguments parsed{{"paneId", pane->get<std::string>()},
+                             {"keys", keys->get<std::string>()}};
+        for (const std::string_view flag : {"enter", "force", "literal"}) {
+          const auto found_flag = operation.find(flag);
+          if (found_flag == operation.end()) {
+            continue;
+          }
+          if (!found_flag->is_boolean()) {
+            return libtmux::unexpected(ArgumentError{
+                true, prefix + "." + std::string{flag} + " must be a boolean"});
+          }
+          parsed.emplace(flag, found_flag->get<bool>() ? "true" : "false");
+        }
+        arguments.send_key_operations.push_back(std::move(parsed));
+        ++index;
+      }
+      continue;
+    }
+    if (parameter->type == ArgumentType::read_calls) {
+      if (!value.is_array() || value.empty() || value.size() > 16U) {
+        return libtmux::unexpected(ArgumentError{
+            true,
+            "argument " + key + " must contain between one and sixteen operations"});
+      }
+      std::size_t index = 0U;
+      for (const json& call : value) {
+        const std::string prefix = key + "[" + std::to_string(index) + "]";
+        if (!call.is_object() || !only_keys(call, {"tool", "arguments"})) {
+          return libtmux::unexpected(
+              ArgumentError{true, prefix + " must be a closed call object"});
+        }
+        const auto name = call.find("tool");
+        const auto inner = call.find("arguments");
+        if (name == call.end() || !name->is_string() || name->empty()) {
+          return libtmux::unexpected(
+              ArgumentError{true, prefix + ".tool must be a tool name"});
+        }
+        if (inner != call.end() && !inner->is_object()) {
+          return libtmux::unexpected(
+              ArgumentError{true, prefix + ".arguments must be an object"});
+        }
+        const std::string nested_name = name->get<std::string>();
+        const ToolDefinition* const nested = tools.find_nested(tool, nested_name);
+        if (nested == nullptr) {
+          return libtmux::unexpected(
+              ArgumentError{true, prefix + ".tool is not an authorized read tool"});
+        }
+        auto parsed = read_arguments(
+            json{{"arguments", inner == call.end() ? json::object() : *inner}}, *nested,
+            tools);
+        if (!parsed.has_value()) {
+          return libtmux::unexpected(
+              ArgumentError{parsed.error().tool_input,
+                            prefix + ".arguments: " + parsed.error().message});
+        }
+        FlatArguments values{ArgumentMap{parsed->begin(), parsed->end()}};
+        values.string_arrays = std::move(parsed->string_arrays);
+        arguments.read_calls.push_back(
+            ReadToolCall{std::move(nested_name), std::move(values)});
+        ++index;
+      }
       continue;
     }
     if (!value.is_number_integer() || value.is_boolean()) {

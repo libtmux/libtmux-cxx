@@ -318,7 +318,7 @@ expected<Window, CommandFailure> Session::new_window(NewWindowOptions options) c
     target += ":" + std::to_string(*options.index);
   }
   CommandRequest command{"new-window", "-t", std::move(target),
-                         "-P",         "-n", options.name};
+                         "-P",         "-n", escape_literal(options.name)};
   if (!options.focus) {
     command.emplace_back("-d");
   }
@@ -327,7 +327,7 @@ expected<Window, CommandFailure> Session::new_window(NewWindowOptions options) c
   }
   if (!options.start_directory.empty()) {
     command.emplace_back("-c");
-    command.push_back(std::move(options.start_directory));
+    command.push_back(escape_literal(options.start_directory));
   }
   if (const auto env = detail::append_environment(command, options.environment);
       !env.has_value()) {
@@ -356,7 +356,7 @@ expected<void, CommandFailure> Session::rename(std::string_view name) const {
 #else
   std::vector<std::string> command{"rename-session", "-t", session_target(*this)};
   command.emplace_back("--");
-  command.emplace_back(name);
+  command.push_back(escape_literal(name));
   return effect(run(command));
 #endif
 }
@@ -596,7 +596,7 @@ expected<Pane, CommandFailure> Window::split(SplitOptions options) const {
   }
   if (!options.start_directory.empty()) {
     command.emplace_back("-c");
-    command.push_back(std::move(options.start_directory));
+    command.push_back(escape_literal(options.start_directory));
   }
   if (const auto env = detail::append_environment(command, options.environment);
       !env.has_value()) {
@@ -620,7 +620,7 @@ expected<void, CommandFailure> Window::rename(std::string_view name) const {
   }
   std::vector<std::string> command{"rename-window", "-t", window_command_target(*this)};
   command.emplace_back("--");
-  command.emplace_back(name);
+  command.push_back(escape_literal(name));
   return effect(run(command));
 }
 
@@ -1053,6 +1053,46 @@ expected<void, CommandFailure> Pane::send_key(std::string_view key) const {
   return effect(run({"send-keys", "-t", pane_target(*this), std::string{key}}));
 }
 
+expected<Pane, CommandFailure> Pane::split(SplitOptions options) const {
+  if (options.percentage.has_value() &&
+      (*options.percentage < 1 || *options.percentage > 100)) {
+    return unexpected(rejected("a percentage of the window is between 1 and 100"));
+  }
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux cannot safely target split-window")) {
+    return unexpected(std::move(*refusal));
+  }
+  CommandRequest command{"split-window", "-t", pane_target(*this), "-P"};
+  if (!options.focus) {
+    command.emplace_back("-d");
+  }
+  command.emplace_back(options.horizontal ? "-h" : "-v");
+  if (options.before) {
+    command.emplace_back("-b");
+  }
+  if (options.full_size) {
+    command.emplace_back("-f");
+  }
+  if (options.percentage.has_value()) {
+    command.emplace_back("-l");
+    command.push_back(std::to_string(*options.percentage) + "%");
+  }
+  if (!options.start_directory.empty()) {
+    command.emplace_back("-c");
+    command.push_back(escape_literal(options.start_directory));
+  }
+  if (const auto env = detail::append_environment(command, options.environment);
+      !env.has_value()) {
+    return unexpected(env.error());
+  }
+  if (!options.shell_command.empty()) {
+    command.emplace_back("--");
+    command.push_back(CommandArgument::sensitive(std::move(options.shell_command)));
+  }
+  return detail::one_entity<Pane>(backend(), std::move(command), FormatArgument::flag,
+                                  id(), {}, session_route(*this));
+}
+
 expected<std::string, CommandFailure> Pane::capture() const {
   return capture(CaptureOptions{});
 }
@@ -1402,17 +1442,25 @@ expected<void, CommandFailure> Pane::set_title(std::string_view title) const {
   // "can't find pane: itled". The guard belongs on positional arguments,
   // like the text of set-buffer, not on the value of a flag.
   return effect(
-      run({"select-pane", "-t", pane_target(*this), "-T", std::string{title}}));
+      run({"select-pane", "-t", pane_target(*this), "-T", escape_literal(title)}));
 }
 
 expected<void, CommandFailure> Pane::respawn(bool replace_running) const {
+  return respawn(RespawnOptions{.replace_running = replace_running});
+}
+
+expected<void, CommandFailure> Pane::respawn(RespawnOptions options) const {
   if (auto refusal = refused(ServerFeature::captured_mutation,
                              "psmux respawn-pane can terminate the session server")) {
     return unexpected(std::move(*refusal));
   }
   std::vector<std::string> command{"respawn-pane", "-t", pane_target(*this)};
-  if (replace_running) {
+  if (options.replace_running) {
     command.emplace_back("-k");
+  }
+  if (!options.start_directory.empty()) {
+    command.emplace_back("-c");
+    command.push_back(escape_literal(options.start_directory));
   }
   return effect(run(command));
 }

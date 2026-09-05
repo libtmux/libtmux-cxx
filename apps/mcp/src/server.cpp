@@ -4,6 +4,7 @@
 
 #include "cli.hpp"
 #include "libtmux/version.hpp"
+#include "libtmux_consumers/mcp.hpp"
 #include "stdio_server.hpp"
 
 int main(int argc, char** argv) {
@@ -22,10 +23,38 @@ int main(int argc, char** argv) {
     std::cout << libtmux::library_version() << '\n';
     return 0;
   }
-  auto server = open_server(*options);
-  if (!server.has_value()) {
-    std::fprintf(stderr, "libtmux-mcp: %s\n", server.error().c_str());
+  // Validate every startup-frozen policy name before resolving or opening a
+  // socket. The provenance-aware default is applied again after the socket is
+  // classified; explicit selections have identical meaning in both passes.
+  auto validated_tools = libtmux::mcp::configured_tools(false);
+  if (!validated_tools.has_value()) {
+    std::fprintf(stderr, "libtmux-mcp: %s\n", validated_tools.error().c_str());
+    return 2;
+  }
+  auto opened = open_server(*options);
+  if (!opened.has_value()) {
+    std::fprintf(stderr, "libtmux-mcp: %s\n", opened.error().c_str());
     return 1;
   }
-  return serve_stdio(*std::move(server));
+  auto tools = libtmux::mcp::configured_tools(opened->teardown_enabled_by_default);
+  if (!tools.has_value()) {
+    std::fprintf(stderr, "libtmux-mcp: %s\n", tools.error().c_str());
+    return 2;
+  }
+  const std::string resolved_socket{opened->server.socket_path()};
+  const std::string state = opened->server_pre_existing           ? "existing"
+                            : opened->teardown_enabled_by_default ? "created"
+                                                                  : "absent";
+  CapabilityDisclosure disclosure{.selector = opened->socket_selector,
+                                  .selection_provenance = opened->socket_provenance,
+                                  .server_state = state,
+                                  .configuration_provenance =
+                                      opened->configuration_provenance};
+  std::fprintf(stderr,
+               "libtmux-mcp: socket=%s resolved_socket_path=%s server_state=%s "
+               "configuration_provenance=%s tool_count=%zu\n",
+               opened->socket_selector.c_str(), resolved_socket.c_str(), state.c_str(),
+               opened->configuration_provenance.c_str(), tools->tools().size());
+  return serve_stdio(std::move(opened->server), *std::move(tools),
+                     std::move(disclosure));
 }

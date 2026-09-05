@@ -1,10 +1,12 @@
 #include "libtmux_consumers/mcp.hpp"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <thread>
 #include <utility>
@@ -16,24 +18,34 @@
 #include "libtmux/format.hpp"
 #include "libtmux/server.hpp"
 #include "libtmux/testing/scoped_server.hpp"
+#include "tool_support.hpp"
 
 namespace {
 
 using libtmux::Server;
 using libtmux::mcp::Arguments;
 using libtmux::mcp::default_tools;
+using libtmux::mcp::Effect;
+using libtmux::mcp::InputControl;
+using libtmux::mcp::InputSink;
+using libtmux::mcp::NestedAuthority;
+using libtmux::mcp::OutputClass;
 using libtmux::mcp::OutputShape;
-using libtmux::mcp::Parameter;
+using libtmux::mcp::ProcessReach;
+using libtmux::mcp::Sink;
 using libtmux::mcp::StructuredValue;
-using libtmux::mcp::Tool;
-using libtmux::mcp::ToolAnnotations;
+using libtmux::mcp::ToolDefinition;
 using libtmux::mcp::ToolOutput;
+using libtmux::mcp::ToolRegistry;
 using libtmux::mcp::ToolResult;
-using libtmux::mcp::ToolSet;
+using libtmux::mcp::ToolSelection;
+using libtmux::mcp::Toolset;
 
 class DeadlineBackend final : public libtmux::detail::Backend {
 public:
-  explicit DeadlineBackend(std::chrono::milliseconds delay) : delay_{delay} {}
+  explicit DeadlineBackend(std::chrono::milliseconds delay,
+                           std::string capture = "visible text without the marker\n")
+      : delay_{delay}, capture_{std::move(capture)} {}
 
   libtmux::expected<std::string, libtmux::CommandFailure>
   run(const libtmux::CommandRequest& command,
@@ -58,7 +70,7 @@ public:
     }
     const std::vector<std::string> argv = command.argv();
     if (argv.front() == "capture-pane") {
-      return "visible text without the marker\n";
+      return capture_;
     }
     if (argv.front() == "display-message" &&
         argv.back().find("pane_id") != std::string::npos) {
@@ -95,6 +107,7 @@ public:
 
 private:
   std::chrono::milliseconds delay_;
+  std::string capture_;
   std::vector<std::string> connection_;
   mutable std::vector<std::optional<std::chrono::milliseconds>> timeouts_;
 };
@@ -109,10 +122,16 @@ const std::string& string_field(const ToolOutput& output, std::string_view name)
   return std::get<std::string>(output.structured.at(std::string{name}).value);
 }
 
+ToolRegistry all_tools() {
+  auto built = default_tools();
+  EXPECT_TRUE(built.has_value()) << built.error();
+  return std::move(*built);
+}
+
 TEST(McpToolsTmux, ListsTheSessionsOfARealServer) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
-  const auto result = default_tools().call(connect(*fixture), "list_sessions", {});
+  const auto result = all_tools().call(connect(*fixture), "list_sessions", {});
   ASSERT_TRUE(result.has_value()) << result.error().message;
   const auto& sessions =
       std::get<StructuredValue::Array>(result->structured.at("sessions").value);
@@ -125,7 +144,7 @@ TEST(McpToolsTmux, SeparatesACallerMistakeFromATmuxRefusal) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
-  const auto tools = default_tools();
+  const auto tools = all_tools();
 
   const auto missing = tools.call(server, "capture_pane", {});
   ASSERT_FALSE(missing.has_value());
@@ -136,7 +155,7 @@ TEST(McpToolsTmux, SeparatesACallerMistakeFromATmuxRefusal) {
   EXPECT_TRUE(unknown.error().caller_error);
 
   const auto refused =
-      tools.call(server, "capture_pane", Arguments{{"target", "%999"}});
+      tools.call(server, "capture_pane", Arguments{{"paneId", "%999"}});
   ASSERT_FALSE(refused.has_value());
   EXPECT_FALSE(refused.error().caller_error);
 }
@@ -146,8 +165,8 @@ TEST(McpToolsTmux, CapturesAPaneThroughTheLibrary) {
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
   const auto captured =
-      default_tools().call(server, "capture_pane",
-                           Arguments{{"target", std::string{fixture->session_name()}}});
+      all_tools().call(server, "capture_pane",
+                       Arguments{{"paneId", std::string{fixture->session_name()}}});
   ASSERT_TRUE(captured.has_value()) << captured.error().message;
 }
 
@@ -155,17 +174,17 @@ TEST(McpToolsTmux, CreatesAWindowAndTypesIntoItsPane) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
-  const auto tools = default_tools();
+  const auto tools = all_tools();
   const std::string session{fixture->session_name()};
 
   const auto created = tools.call(
-      server, "new_window", Arguments{{"session", session}, {"name", "from-mcp"}});
+      server, "create_window", Arguments{{"session", session}, {"name", "from-mcp"}});
   ASSERT_TRUE(created.has_value()) << created.error().message;
   const std::string window_id = string_field(*created, "window_id");
   EXPECT_EQ(window_id.front(), '@');
 
-  const auto typed = tools.call(server, "send_text",
-                                Arguments{{"target", window_id}, {"text", "marker"}});
+  const auto typed = tools.call(server, "paste_text",
+                                Arguments{{"paneId", window_id}, {"text", "marker"}});
   ASSERT_TRUE(typed.has_value()) << typed.error().message;
 
   const auto listed = tools.call(server, "list_panes", {});
@@ -178,31 +197,523 @@ TEST(McpToolsTmux, CreatesAWindowAndTypesIntoItsPane) {
   }));
 }
 
+TEST(McpToolsTmux, LiteralizesTmuxFormatBearingStateOnce) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  auto windows = server.windows();
+  ASSERT_TRUE(windows.has_value()) << windows.error().diagnostic;
+  ASSERT_EQ(windows->size(), 1U);
+  const std::string window_id{windows->front().id()};
+  const std::string literal_name{"literal-#{session_name}"};
+  const auto tools = all_tools();
+
+  const auto renamed =
+      tools.call(server, "rename_window",
+                 Arguments{{"windowId", window_id}, {"name", literal_name}});
+  ASSERT_TRUE(renamed.has_value()) << renamed.error().message;
+  const auto inspected =
+      tools.call(server, "get_window_info", Arguments{{"windowId", window_id}});
+  ASSERT_TRUE(inspected.has_value()) << inspected.error().message;
+  const auto& window =
+      std::get<StructuredValue::Object>(inspected->structured.at("window").value);
+  EXPECT_EQ(std::get<std::string>(window.at("name").value), literal_name);
+}
+
 TEST(McpTools, EveryToolDeclaresANameAndDescription) {
   // The set must be named: tools() returns a reference into it, and a
   // range-for over the temporary would outlive what it borrows.
-  const auto tools = default_tools();
+  const auto tools = all_tools();
   for (const auto& tool : tools.tools()) {
     EXPECT_FALSE(tool.name.empty());
     EXPECT_FALSE(tool.description.empty());
   }
-  EXPECT_EQ(tools.tools().size(), 12U);
+  EXPECT_EQ(tools.tools().size(), 47U);
+}
+
+TEST(McpTools, CapabilityManifestMatchesThePinnedCrossPortInventory) {
+  const auto tools = all_tools();
+  const std::array<std::pair<std::string_view, Toolset>, 47> expected{{
+      {"list_sessions", Toolset::inspect},
+      {"list_windows", Toolset::inspect},
+      {"list_panes", Toolset::inspect},
+      {"get_server_info", Toolset::inspect},
+      {"get_session_info", Toolset::inspect},
+      {"get_window_info", Toolset::inspect},
+      {"get_pane_info", Toolset::inspect},
+      {"capture_pane", Toolset::inspect},
+      {"capture_since", Toolset::inspect},
+      {"snapshot_pane", Toolset::inspect},
+      {"search_panes", Toolset::inspect},
+      {"find_pane_by_position", Toolset::inspect},
+      {"wait_for_text", Toolset::inspect},
+      {"get_tmux_variables", Toolset::inspect},
+      {"show_option", Toolset::inspect},
+      {"show_environment", Toolset::inspect},
+      {"show_hooks", Toolset::inspect},
+      {"call_read_tools_batch", Toolset::inspect},
+      {"rename_session", Toolset::manage},
+      {"rename_window", Toolset::manage},
+      {"select_window", Toolset::manage},
+      {"select_pane", Toolset::manage},
+      {"select_layout", Toolset::manage},
+      {"resize_window", Toolset::manage},
+      {"resize_pane", Toolset::manage},
+      {"move_window", Toolset::manage},
+      {"swap_pane", Toolset::manage},
+      {"set_pane_title", Toolset::manage},
+      {"enter_copy_mode", Toolset::manage},
+      {"exit_copy_mode", Toolset::manage},
+      {"wait_for_channel", Toolset::manage},
+      {"signal_channel", Toolset::manage},
+      {"set_mouse_enabled", Toolset::manage},
+      {"set_history_limit", Toolset::manage},
+      {"create_session", Toolset::execute},
+      {"create_window", Toolset::execute},
+      {"split_window", Toolset::execute},
+      {"respawn_pane", Toolset::execute},
+      {"run_shell_command", Toolset::execute},
+      {"send_keys", Toolset::execute},
+      {"send_keys_batch", Toolset::execute},
+      {"paste_text", Toolset::execute},
+      {"set_synchronize_panes", Toolset::execute},
+      {"clear_pane_scrollback", Toolset::teardown},
+      {"kill_pane", Toolset::teardown},
+      {"kill_window", Toolset::teardown},
+      {"kill_session", Toolset::teardown},
+  }};
+
+  ASSERT_EQ(tools.tools().size(), expected.size());
+  for (std::size_t index = 0; index < expected.size(); ++index) {
+    EXPECT_EQ(tools.tools()[index].name, expected[index].first) << index;
+    EXPECT_EQ(tools.tools()[index].toolset, expected[index].second) << index;
+  }
+
+  const auto schema_names = [&tools](std::string_view name) {
+    std::set<std::string, std::less<>> result;
+    const ToolDefinition* const tool = tools.find(name);
+    EXPECT_NE(tool, nullptr) << name;
+    if (tool != nullptr) {
+      for (const auto& parameter : tool->schema.input) {
+        result.insert(parameter.name);
+      }
+    }
+    return result;
+  };
+  EXPECT_EQ(schema_names("create_session"),
+            (std::set<std::string, std::less<>>{"height", "name", "startDirectory",
+                                                "width", "windowName"}));
+  EXPECT_EQ(schema_names("create_window"),
+            (std::set<std::string, std::less<>>{"name", "session", "startDirectory"}));
+  EXPECT_EQ(
+      schema_names("split_window"),
+      (std::set<std::string, std::less<>>{"direction", "paneId", "startDirectory"}));
+  EXPECT_EQ(schema_names("respawn_pane"),
+            (std::set<std::string, std::less<>>{"force", "killFirst", "paneId",
+                                                "startDirectory"}));
+  for (const std::string_view name :
+       {"create_session", "create_window", "split_window", "respawn_pane"}) {
+    const ToolDefinition* const tool = tools.find(name);
+    ASSERT_NE(tool, nullptr) << name;
+    EXPECT_EQ(tool->toolset, Toolset::execute);
+    EXPECT_EQ(tool->authority.process_reach, ProcessReach::configured_process);
+  }
+  const ToolDefinition* const batch = tools.find("call_read_tools_batch");
+  ASSERT_NE(batch, nullptr);
+  EXPECT_TRUE(batch->description.starts_with(
+      "Read pane output; accepts no client-supplied executable input. Returned "
+      "content may be sensitive or untrusted."));
+  for (const auto [tool_name, field_name] :
+       {std::pair{"rename_session", "name"}, std::pair{"rename_window", "name"},
+        std::pair{"set_pane_title", "title"}}) {
+    const ToolDefinition* const tool = tools.find(tool_name);
+    ASSERT_NE(tool, nullptr) << tool_name;
+    EXPECT_EQ(tool->authority.input_sinks.at(field_name),
+              (std::set{Sink{InputSink::tmux_state, NestedAuthority::none},
+                        Sink{InputSink::tmux_format, NestedAuthority::controlled,
+                             InputControl::double_hash_once}}))
+        << tool_name;
+  }
+}
+
+TEST(McpTools, CapabilityRegistryOwnsTheCurrentSurface) {
+  const auto built = default_tools(ToolSelection::all());
+  ASSERT_TRUE(built.has_value()) << built.error();
+  const ToolRegistry& tools = *built;
+  ASSERT_EQ(tools.tools().size(), 47U);
+
+  struct Expected {
+    std::string_view name;
+    Toolset toolset;
+    ProcessReach reach;
+    std::set<Effect> effects;
+    std::set<OutputClass> outputs;
+    bool secrets;
+    bool untrusted;
+    std::string_view opener;
+  };
+  const std::array expected{
+      Expected{"list_sessions",
+               Toolset::inspect,
+               ProcessReach::none,
+               {Effect::observe},
+               {OutputClass::tmux_metadata},
+               false,
+               false,
+               "Inspect tmux metadata; accepts no client-supplied executable input."},
+      Expected{"capture_pane",
+               Toolset::inspect,
+               ProcessReach::none,
+               {Effect::observe},
+               {OutputClass::tmux_metadata, OutputClass::terminal_content},
+               true,
+               true,
+               "Read pane output; accepts no client-supplied executable input. "
+               "Returned content may be sensitive or untrusted."},
+      Expected{"show_option",
+               Toolset::inspect,
+               ProcessReach::none,
+               {Effect::observe},
+               {OutputClass::tmux_metadata, OutputClass::configured_command},
+               false,
+               true,
+               "Read configured tmux commands; accepts no client-supplied executable "
+               "input. Returned values may contain executable configuration."},
+      Expected{"create_session",
+               Toolset::execute,
+               ProcessReach::configured_process,
+               {Effect::observe, Effect::change},
+               {OutputClass::tmux_metadata},
+               false,
+               false,
+               "Start a pane's configured process; accepts no command payload."},
+      Expected{"paste_text",
+               Toolset::execute,
+               ProcessReach::pane_input,
+               {Effect::observe, Effect::change},
+               {OutputClass::tmux_metadata},
+               false,
+               true,
+               "Send input to a pane's program; a shell that receives it runs it "
+               "with your user's permissions."},
+  };
+  for (const Expected& item : expected) {
+    const ToolDefinition* const tool = tools.find(item.name);
+    ASSERT_NE(tool, nullptr) << item.name;
+    EXPECT_EQ(tool->toolset, item.toolset);
+    EXPECT_EQ(tool->authority.process_reach, item.reach);
+    EXPECT_EQ(tool->authority.effects, item.effects);
+    EXPECT_EQ(tool->authority.output_classes, item.outputs);
+    EXPECT_EQ(tool->authority.may_expose_secrets, item.secrets);
+    EXPECT_EQ(tool->authority.may_return_untrusted_content, item.untrusted);
+    EXPECT_TRUE(tool->description.starts_with(item.opener));
+    EXPECT_FALSE(tool->annotations.read_only);
+    EXPECT_TRUE(tool->annotations.destructive);
+    EXPECT_FALSE(tool->annotations.idempotent);
+    EXPECT_TRUE(tool->annotations.open_world);
+  }
+}
+
+TEST(McpTools, CapabilityRegistryRejectsInvalidDefinitions) {
+  const auto built = default_tools(ToolSelection::all());
+  ASSERT_TRUE(built.has_value()) << built.error();
+  const ToolDefinition baseline = *built->find("paste_text");
+
+  const auto rejected = [](ToolDefinition tool, std::string_view expected) {
+    auto registry = ToolRegistry::create({std::move(tool)}, ToolSelection::all());
+    ASSERT_FALSE(registry.has_value());
+    EXPECT_NE(registry.error().find(expected), std::string::npos) << registry.error();
+  };
+
+  ToolDefinition invalid = baseline;
+  invalid.authority.effects.clear();
+  rejected(invalid, "effects must not be empty");
+  invalid = baseline;
+  invalid.schema.input.push_back(invalid.schema.input.front());
+  invalid.schema.input.back().name = "missing";
+  rejected(invalid, "missing input sinks: missing");
+  invalid = baseline;
+  invalid.authority.input_sinks.emplace(
+      "extra", std::set{Sink{InputSink::none, NestedAuthority::none}});
+  rejected(invalid, "extra input sinks: extra");
+  invalid = baseline;
+  invalid.authority.input_sinks.at("text").clear();
+  rejected(invalid, "input sink set must not be empty: text");
+  invalid = baseline;
+  invalid.toolset = static_cast<Toolset>(255);
+  rejected(invalid, "invalid toolset");
+  invalid = baseline;
+  invalid.authority.process_reach = static_cast<ProcessReach>(255);
+  rejected(invalid, "invalid process reach");
+  invalid = baseline;
+  invalid.authority.effects = {static_cast<Effect>(255)};
+  rejected(invalid, "invalid effect");
+  invalid = baseline;
+  invalid.authority.effects = {Effect::observe};
+  rejected(invalid, "toolset/effect mismatch");
+  invalid = baseline;
+  invalid.authority.output_classes = {static_cast<OutputClass>(255)};
+  rejected(invalid, "invalid output class");
+  invalid = baseline;
+  invalid.schema.input.front().type = static_cast<libtmux::mcp::ArgumentType>(255);
+  rejected(invalid, "invalid schema field type");
+  invalid = baseline;
+  invalid.schema.output = static_cast<OutputShape>(255);
+  rejected(invalid, "invalid output schema");
+  invalid = baseline;
+  invalid.authority.input_sinks.at("text") = {
+      Sink{static_cast<InputSink>(255), NestedAuthority::none}};
+  rejected(invalid, "invalid input sink");
+  invalid = baseline;
+  invalid.authority.input_sinks.at("text") = {
+      Sink{InputSink::pane_input, static_cast<NestedAuthority>(255)}};
+  rejected(invalid, "invalid nested authority");
+  invalid = baseline;
+  invalid.authority.input_sinks.at("paneId") = {
+      Sink{InputSink::tmux_lookup, NestedAuthority::controlled}};
+  rejected(invalid, "non-executable sink has nested authority");
+  invalid = baseline;
+  invalid.authority.input_sinks.at("text") = {
+      Sink{InputSink::pane_input, NestedAuthority::none}};
+  rejected(invalid, "executable sink lacks nested authority");
+  invalid = baseline;
+  invalid.authority.input_sinks.at("text") = {
+      Sink{InputSink::tmux_format, NestedAuthority::unrestricted}};
+  rejected(invalid, "unrestricted tmux-format is prohibited");
+  invalid = baseline;
+  invalid.authority.process_reach = ProcessReach::configured_process;
+  rejected(invalid, "configured-process accepts no executable input sink");
+  invalid = baseline;
+  invalid.authority.process_reach = ProcessReach::none;
+  rejected(invalid, "pane-input reach/sink mismatch");
+  invalid = baseline;
+  invalid.description = "Type pane text.";
+  rejected(invalid, "description has the wrong controlled opener");
+  invalid = baseline;
+  invalid.annotations.read_only = true;
+  rejected(invalid, "annotations must be conservative");
+  invalid = baseline;
+  invalid.handler = {};
+  rejected(invalid, "handler is missing");
+
+  auto duplicate = ToolRegistry::create({baseline, baseline}, ToolSelection::all());
+  ASSERT_FALSE(duplicate.has_value());
+  EXPECT_NE(duplicate.error().find("duplicate tool: paste_text"), std::string::npos);
+
+  ToolSelection invalid_selection;
+  invalid_selection.toolsets = {static_cast<Toolset>(255)};
+  const auto bad_selection = ToolRegistry::create({baseline}, invalid_selection);
+  ASSERT_FALSE(bad_selection.has_value());
+  EXPECT_NE(bad_selection.error().find("invalid selected toolset"), std::string::npos);
+}
+
+TEST(McpTools, CapabilityRegistryResolvesAllToolsetSubsetsAndNames) {
+  const std::array<std::string_view, 4> toolsets{"inspect", "manage", "execute",
+                                                 "teardown"};
+  const auto names = [](const ToolRegistry& registry) {
+    std::vector<std::string> result;
+    for (const ToolDefinition& tool : registry.tools()) {
+      result.push_back(tool.name);
+    }
+    return result;
+  };
+  for (unsigned mask = 0; mask < 16U; ++mask) {
+    std::string forward;
+    std::string reverse;
+    for (unsigned bit = 0; bit < toolsets.size(); ++bit) {
+      if ((mask & (1U << bit)) != 0U) {
+        if (!forward.empty()) {
+          forward += ',';
+        }
+        forward += toolsets[bit];
+        if (!reverse.empty()) {
+          reverse.insert(0, ",");
+        }
+        reverse.insert(0, toolsets[bit]);
+      }
+    }
+    const auto selection = libtmux::mcp::parse_tool_selection(
+        std::optional<std::string_view>{forward}, std::nullopt, std::nullopt, false);
+    const auto reversed = libtmux::mcp::parse_tool_selection(
+        std::optional<std::string_view>{reverse}, std::nullopt, std::nullopt, false);
+    ASSERT_TRUE(selection.has_value()) << selection.error();
+    ASSERT_TRUE(reversed.has_value()) << reversed.error();
+    const auto selected = default_tools(*selection);
+    const auto selected_reversed = default_tools(*reversed);
+    ASSERT_TRUE(selected.has_value()) << selected.error();
+    ASSERT_TRUE(selected_reversed.has_value()) << selected_reversed.error();
+    const std::size_t expected =
+        ((mask & 1U) != 0U ? 18U : 0U) + ((mask & 2U) != 0U ? 16U : 0U) +
+        ((mask & 4U) != 0U ? 9U : 0U) + ((mask & 8U) != 0U ? 4U : 0U);
+    EXPECT_EQ(selected->tools().size(), expected) << mask;
+    EXPECT_EQ(names(*selected), names(*selected_reversed)) << mask;
+  }
+
+  ToolSelection selection;
+  selection.include = {"capture_pane", "paste_text"};
+  selection.exclude = {"paste_text"};
+  const auto selected = default_tools(selection);
+  ASSERT_TRUE(selected.has_value()) << selected.error();
+  ASSERT_EQ(selected->tools().size(), 1U);
+  EXPECT_EQ(selected->tools().front().name, "capture_pane");
+  EXPECT_NE(selected->find("capture_pane"), nullptr);
+  EXPECT_EQ(selected->find("paste_text"), nullptr);
+
+  selection.include = {"unknown"};
+  EXPECT_FALSE(default_tools(selection).has_value());
+  selection.include.clear();
+  selection.exclude = {"unknown"};
+  EXPECT_FALSE(default_tools(selection).has_value());
+}
+
+TEST(McpTools, CapabilitySelectionParsesEmptyAndRejectsMalformedLists) {
+  using OptionalText = std::optional<std::string_view>;
+  const auto empty = libtmux::mcp::parse_tool_selection(OptionalText{""}, std::nullopt,
+                                                        std::nullopt, false);
+  ASSERT_TRUE(empty.has_value()) << empty.error();
+  EXPECT_TRUE(empty->toolsets.empty());
+
+  const auto defaults = libtmux::mcp::parse_tool_selection(std::nullopt, std::nullopt,
+                                                           std::nullopt, false);
+  ASSERT_TRUE(defaults.has_value()) << defaults.error();
+  EXPECT_EQ(defaults->toolsets, (std::set{Toolset::inspect, Toolset::manage,
+                                          Toolset::execute, Toolset::teardown}));
+
+  const auto shared_defaults = libtmux::mcp::parse_tool_selection(
+      std::nullopt, std::nullopt, std::nullopt, false, false);
+  ASSERT_TRUE(shared_defaults.has_value()) << shared_defaults.error();
+  EXPECT_EQ(shared_defaults->toolsets,
+            (std::set{Toolset::inspect, Toolset::manage, Toolset::execute}));
+  const auto explicit_teardown = libtmux::mcp::parse_tool_selection(
+      OptionalText{"inspect,teardown"}, std::nullopt, std::nullopt, false, false);
+  ASSERT_TRUE(explicit_teardown.has_value()) << explicit_teardown.error();
+  EXPECT_TRUE(explicit_teardown->toolsets.contains(Toolset::teardown));
+
+  for (const std::string_view malformed :
+       {"inspect,", ",inspect", "inspect,,execute", "unknown"}) {
+    EXPECT_FALSE(libtmux::mcp::parse_tool_selection(OptionalText{malformed},
+                                                    std::nullopt, std::nullopt, false)
+                     .has_value())
+        << malformed;
+  }
+  EXPECT_FALSE(libtmux::mcp::parse_tool_selection(std::nullopt, OptionalText{""},
+                                                  std::nullopt, false)
+                   .has_value());
+  EXPECT_FALSE(libtmux::mcp::parse_tool_selection(std::nullopt, std::nullopt,
+                                                  OptionalText{"capture_pane,"}, false)
+                   .has_value());
+  EXPECT_FALSE(
+      libtmux::mcp::parse_tool_selection(std::nullopt, std::nullopt, std::nullopt, true)
+          .has_value());
+}
+
+TEST(McpToolsTmux, ReadBatchReturnsPartialRowsAndHonorsContinue) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  ToolSelection selection;
+  selection.include = {"call_read_tools_batch"};
+  auto built = default_tools(selection);
+  ASSERT_TRUE(built.has_value()) << built.error();
+  Arguments arguments{{"onError", "continue"}};
+  arguments.read_calls = {{"get_session_info", {}}, {"list_sessions", {}}};
+
+  const auto result =
+      built->call(connect(*fixture), "call_read_tools_batch", arguments);
+
+  ASSERT_TRUE(result.has_value()) << result.error().message;
+  EXPECT_EQ(std::get<std::int64_t>(result->structured.at("failed").value), 1);
+  EXPECT_EQ(std::get<std::int64_t>(result->structured.at("succeeded").value), 1);
+  EXPECT_EQ(std::get<std::string>(result->structured.at("onError").value), "continue");
+  const auto& rows =
+      std::get<StructuredValue::Array>(result->structured.at("results").value);
+  ASSERT_EQ(rows.size(), 2U);
+  const auto& failed_row = std::get<StructuredValue::Object>(rows[0].value);
+  EXPECT_FALSE(std::get<bool>(failed_row.at("success").value));
+  const auto& nested_error =
+      std::get<StructuredValue::Object>(failed_row.at("result").value);
+  EXPECT_TRUE(std::get<bool>(nested_error.at("isError").value));
+  EXPECT_TRUE(
+      std::holds_alternative<StructuredValue::Array>(nested_error.at("content").value));
+  EXPECT_TRUE(std::get<bool>(
+      std::get<StructuredValue::Object>(rows[1].value).at("success").value));
+}
+
+TEST(McpTools, ReadBatchKeepsRowsWhileBoundingNestedPayloads) {
+  auto complete = default_tools(ToolSelection::all());
+  ASSERT_TRUE(complete.has_value()) << complete.error();
+  const ToolDefinition* const source_batch = complete->find("call_read_tools_batch");
+  ASSERT_NE(source_batch, nullptr);
+  std::vector<ToolDefinition> definitions{*source_batch};
+  const std::string payload(600U * 1024U, 'x');
+  for (const std::string& name : source_batch->authority.nested_tools) {
+    ToolDefinition nested = *complete->find(name);
+    nested.schema.input.clear();
+    nested.authority.input_sinks.clear();
+    nested.handler = [payload](const Server&, const Arguments&,
+                               const libtmux::mcp::CallContext&) -> ToolResult {
+      return ToolOutput{.structured = {{"payload", payload}}};
+    };
+    definitions.push_back(std::move(nested));
+  }
+  ToolSelection selection;
+  selection.include = {"call_read_tools_batch"};
+  auto built = ToolRegistry::create(std::move(definitions), selection);
+  ASSERT_TRUE(built.has_value()) << built.error();
+  Arguments arguments;
+  arguments.read_calls = {{"list_sessions", {}}, {"list_windows", {}}};
+  auto server = Server::at_socket_name("mcp-batch-bounds");
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+
+  const auto result = built->call(*server, "call_read_tools_batch", arguments);
+
+  ASSERT_TRUE(result.has_value()) << result.error().message;
+  EXPECT_TRUE(std::get<bool>(result->structured.at("truncated").value));
+  EXPECT_GT(std::get<std::int64_t>(result->structured.at("truncatedBytes").value), 0);
+  const auto& rows =
+      std::get<StructuredValue::Array>(result->structured.at("results").value);
+  ASSERT_EQ(rows.size(), 2U);
+  EXPECT_TRUE(std::ranges::any_of(rows, [](const StructuredValue& value) {
+    return std::get<bool>(
+        std::get<StructuredValue::Object>(value.value).at("resultTruncated").value);
+  }));
+  EXPECT_EQ(std::get<std::int64_t>(result->structured.at("succeeded").value), 2);
 }
 
 TEST(McpTools, CountsUtf8CodePointsLikeThePublishedSchema) {
-  ToolSet tools;
-  tools.add(Tool{.name = "unicode",
-                 .title = "Unicode",
-                 .description = "Validate a bounded Unicode string.",
-                 .parameters = {{.name = "value",
-                                 .description = "At most two characters.",
-                                 .maximum_length = 2U}},
-                 .output = OutputShape::pane_text,
-                 .annotations = ToolAnnotations{},
-                 .handle = [](const Server&, const Arguments&,
-                              const libtmux::mcp::CallContext&) -> ToolResult {
-                   return ToolOutput{.structured = {}};
-                 }});
+  auto built = ToolRegistry::create(
+      {ToolDefinition{
+          .name = "unicode",
+          .title = "Unicode",
+          .description =
+              "Inspect tmux metadata; accepts no client-supplied executable input. "
+              "Validate a bounded Unicode string.",
+          .toolset = Toolset::inspect,
+          .authority = {.process_reach = ProcessReach::none,
+                        .effects = {Effect::observe},
+                        .output_classes = {OutputClass::tmux_metadata},
+                        .may_expose_secrets = false,
+                        .may_return_untrusted_content = true,
+                        .amplifies_future_input = false,
+                        .input_sinks = {{"value",
+                                         {{InputSink::none, NestedAuthority::none}}}},
+                        .nested_tools = {}},
+          .annotations = libtmux::mcp::kConservativeAnnotations,
+          .schema = {.input = {{.name = "value",
+                                .description = "At most two characters.",
+                                .type = libtmux::mcp::ArgumentType::string,
+                                .required = true,
+                                .minimum = std::nullopt,
+                                .maximum = std::nullopt,
+                                .maximum_length = 2U,
+                                .allowed_values = {}}},
+                     .output = OutputShape::pane_text},
+          .handler = [](const Server&, const Arguments&,
+                        const libtmux::mcp::CallContext&) -> ToolResult {
+            return ToolOutput{.structured = {}};
+          }}},
+      ToolSelection::all());
+  ASSERT_TRUE(built.has_value()) << built.error();
+  ToolRegistry tools = std::move(*built);
   auto server = Server::at_socket_name("mcp-unicode-validation");
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
 
@@ -235,7 +746,7 @@ TEST(McpTools, AppliesOneDeadlineToWaitStartupAndPolling) {
   auto backend = std::make_shared<DeadlineBackend>(6ms);
   const Server server = libtmux::detail::server_over(backend);
   const auto started = std::chrono::steady_clock::now();
-  const auto waited = default_tools().call(
+  const auto waited = all_tools().call(
       server, "wait_for_text",
       {{"target", "mcp"}, {"text", "never appears"}, {"timeout_ms", "30"}});
   const auto elapsed = std::chrono::steady_clock::now() - started;
@@ -272,7 +783,7 @@ TEST(McpTools, ObservesCancellationBetweenBoundedWaitCommands) {
     cancelled.store(true);
   }};
   const auto started = std::chrono::steady_clock::now();
-  const auto waited = default_tools().call(
+  const auto waited = all_tools().call(
       server, "wait_for_text",
       {{"target", "mcp"}, {"text", "never appears"}, {"timeout_ms", "1000"}},
       libtmux::mcp::CallContext{
@@ -286,6 +797,32 @@ TEST(McpTools, ObservesCancellationBetweenBoundedWaitCommands) {
   // Well inside the 1000ms budget is the claim: cancellation ended the wait
   // rather than the deadline. A tighter bound measures the machine instead.
   EXPECT_LT(elapsed, 500ms);
+}
+
+TEST(McpTools, RejectsSearchWhenDeterministicWorkBudgetIsSpent) {
+  auto pattern = libtmux::mcp::detail::BoundedRegex::compile("a*a*a*a");
+  ASSERT_TRUE(pattern.has_value()) << pattern.error();
+  std::size_t remaining_work = 7U;
+
+  const auto matched = pattern->search("aaaaaaaa", remaining_work);
+
+  ASSERT_FALSE(matched.has_value());
+  EXPECT_EQ(matched.error(), "search matching work limit exceeded");
+  EXPECT_EQ(remaining_work, 3U);
+}
+
+TEST(McpTools, RejectsWaitWhenDeterministicMatchingWorkBudgetIsSpent) {
+  auto backend = std::make_shared<DeadlineBackend>(
+      std::chrono::milliseconds{0}, std::string(9U * 1024U * 1024U, 'x'));
+  const Server server = libtmux::detail::server_over(backend);
+
+  const auto waited = all_tools().call(
+      server, "wait_for_text",
+      {{"target", "mcp"}, {"text", "never appears"}, {"timeout_ms", "1000"}});
+
+  ASSERT_FALSE(waited.has_value());
+  EXPECT_FALSE(waited.error().caller_error);
+  EXPECT_EQ(waited.error().message, "wait matching work limit exceeded");
 }
 
 TEST(McpToolsTmux, ReportsAPaneThatDisappearsDuringSearch) {
@@ -305,7 +842,7 @@ TEST(McpToolsTmux, ReportsAPaneThatDisappearsDuringSearch) {
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
 
   const auto searched =
-      default_tools().call(*server, "search_panes", Arguments{{"text", "anything"}});
+      all_tools().call(*server, "search_panes", Arguments{{"pattern", "anything"}});
   ASSERT_FALSE(searched.has_value());
   EXPECT_FALSE(searched.error().caller_error);
   EXPECT_FALSE(searched.error().message.empty());

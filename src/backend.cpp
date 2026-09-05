@@ -206,17 +206,23 @@ Backend::prepare_attach(std::string_view target) const {
 }
 
 SubprocessBackend::SubprocessBackend(std::vector<std::string> connection,
-                                     std::string socket_path, std::string identity,
+                                     std::string socket_path,
+                                     std::string selected_socket_path,
+                                     std::string identity,
                                      std::shared_ptr<const SocketAlias> socket_alias,
-                                     bool socket_missing, CommandObserver observer,
-                                     ExecutionPolicy policy)
+                                     bool socket_missing, bool startable,
+                                     std::optional<std::string> startup_configuration,
+                                     CommandObserver observer, ExecutionPolicy policy)
     : Backend{std::move(observer), policy}, connection_{std::move(connection)},
       identity_{std::move(identity)}, socket_path_{std::move(socket_path)},
-      socket_alias_{std::move(socket_alias)}, socket_missing_{socket_missing} {}
+      selected_socket_path_{std::move(selected_socket_path)},
+      socket_alias_{std::move(socket_alias)}, socket_missing_{socket_missing},
+      startable_{startable}, startup_configuration_{std::move(startup_configuration)} {}
 
 expected<std::shared_ptr<const SubprocessBackend>, CommandFailure>
 SubprocessBackend::open(std::vector<std::string> connection, CommandObserver observer,
                         ExecutionPolicy policy) {
+  const std::string selected = resolved_socket_path(connection).value_or(std::string{});
   auto endpoint = bind_socket_endpoint(connection);
   if (!endpoint.has_value()) {
     return unexpected(CommandFailure{.kind = FailureKind::pipe,
@@ -225,15 +231,49 @@ SubprocessBackend::open(std::vector<std::string> connection, CommandObserver obs
                                      .diagnostic = std::move(endpoint.error())});
   }
   auto backend = std::shared_ptr<SubprocessBackend>{new SubprocessBackend{
-      std::move(endpoint->connection), std::move(endpoint->socket_path),
+      std::move(endpoint->connection), std::move(endpoint->socket_path), selected,
       std::move(endpoint->identity), std::move(endpoint->alias), endpoint->missing,
-      std::move(observer), policy}};
+      false, std::nullopt, std::move(observer), policy}};
+  return std::shared_ptr<const SubprocessBackend>{std::move(backend)};
+}
+
+expected<std::shared_ptr<const SubprocessBackend>, CommandFailure>
+SubprocessBackend::open_startable(std::vector<std::string> connection,
+                                  std::optional<std::string> configuration,
+                                  CommandObserver observer, ExecutionPolicy policy) {
+  const std::vector<std::string> selector = connection;
+  const std::string selected = resolved_socket_path(selector).value_or(std::string{});
+  auto endpoint = bind_socket_endpoint(connection);
+  if (!endpoint.has_value()) {
+    return unexpected(CommandFailure{.kind = FailureKind::pipe,
+                                     .delivery = DeliveryStatus::not_started,
+                                     .exit_code = 0,
+                                     .diagnostic = std::move(endpoint.error())});
+  }
+  if (endpoint->missing) {
+    const auto resolved = resolved_socket_path(selector);
+    if (!resolved.has_value()) {
+      return unexpected(CommandFailure{
+          .kind = FailureKind::validation,
+          .delivery = DeliveryStatus::not_started,
+          .exit_code = 0,
+          .diagnostic = "the startable tmux socket path could not be resolved"});
+    }
+    endpoint->connection = {"-S", *resolved};
+    endpoint->socket_path = *resolved;
+    endpoint->identity = "pending:" + *resolved;
+    endpoint->alias.reset();
+  }
+  auto backend = std::shared_ptr<SubprocessBackend>{new SubprocessBackend{
+      std::move(endpoint->connection), std::move(endpoint->socket_path), selected,
+      std::move(endpoint->identity), std::move(endpoint->alias), endpoint->missing,
+      true, std::move(configuration), std::move(observer), policy}};
   return std::shared_ptr<const SubprocessBackend>{std::move(backend)};
 }
 
 expected<PreparedAttach, CommandFailure>
 SubprocessBackend::prepare_attach(std::string_view target) const {
-  if (socket_missing_) {
+  if (socket_missing_.load()) {
     return unexpected(CommandFailure{
         .kind = FailureKind::missing,
         .delivery = DeliveryStatus::not_started,
@@ -257,7 +297,7 @@ SubprocessBackend::run_unobserved(const CommandRequest& command,
                                   std::optional<std::size_t> output_limit) const {
   const bool version_query =
       command.size() == 1U && command.arguments().front().value() == "-V";
-  if (socket_missing_ && !version_query) {
+  if (socket_missing_.load() && !version_query) {
     return interpret_failure_unobserved(
         command,
         CommandFailure{
@@ -286,7 +326,7 @@ expected<std::string, CommandFailure> SubprocessBackend::run_cancellable(
     std::optional<std::size_t> output_limit, const CancellationProbe& cancelled) const {
   const bool version_query =
       command.size() == 1U && command.arguments().front().value() == "-V";
-  if (socket_missing_ && !version_query) {
+  if (socket_missing_.load() && !version_query) {
     return report_failure(
         command,
         CommandFailure{
@@ -315,7 +355,7 @@ expected<std::string, CommandFailure> SubprocessBackend::run_cancellable_unobser
     ProcessTransportEntry entry) const {
   const bool version_query =
       command.size() == 1U && command.arguments().front().value() == "-V";
-  if (socket_missing_ && !version_query) {
+  if (socket_missing_.load() && !version_query) {
     return interpret_failure_unobserved(
         command,
         CommandFailure{
@@ -428,7 +468,7 @@ expected<bool, CommandFailure> SubprocessBackend::session_belongs(
 }
 
 expected<void, CommandFailure> SubprocessBackend::async_preflight() const {
-  if (!socket_missing_) {
+  if (!socket_missing_.load()) {
     return {};
   }
   return unexpected(CommandFailure{
@@ -469,6 +509,10 @@ SubprocessBackend::build_request(const CommandRequest& command,
   // always passed this flag; the subprocess one is the reason a caller in a C
   // locale sees a library that cannot read anything.
   request.arguments.push_back(Argument{"-u"});
+  if (socket_missing_.load() && startable_ && startup_configuration_.has_value()) {
+    request.arguments.push_back(Argument{"-f"});
+    request.arguments.push_back(Argument{*startup_configuration_});
+  }
   for (const std::string& argument : connection_) {
     request.arguments.push_back(Argument{argument});
   }
@@ -486,9 +530,16 @@ SubprocessBackend::run_scoped(const CommandRequest& command,
                               std::optional<std::string_view> session,
                               std::optional<std::chrono::milliseconds> timeout,
                               std::optional<std::size_t> output_limit) const {
+  std::unique_lock startup_lock{startup_mutex_, std::defer_lock};
+  if (socket_missing_.load()) {
+    startup_lock.lock();
+  }
   const bool version_query =
       command.size() == 1U && command.arguments().front().value() == "-V";
-  if (socket_missing_ && !version_query) {
+  const bool starts_server =
+      !command.empty() && (command.arguments().front().value() == "new-session" ||
+                           command.arguments().front().value() == "start-server");
+  if (socket_missing_.load() && !version_query && (!startable_ || !starts_server)) {
     return report_failure(
         command,
         CommandFailure{
@@ -518,7 +569,12 @@ SubprocessBackend::run_scoped(const CommandRequest& command,
                                    .diagnostic = std::move(reply.error().diagnostic)});
   }
 
-  return interpret(command, allowed_bytes, *std::move(reply));
+  auto interpreted = interpret(command, allowed_bytes, *std::move(reply));
+  if (interpreted.has_value() && socket_missing_.load() && startable_ &&
+      starts_server) {
+    socket_missing_.store(false);
+  }
+  return interpreted;
 }
 
 expected<std::string, CommandFailure>

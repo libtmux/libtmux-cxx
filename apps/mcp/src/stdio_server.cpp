@@ -226,10 +226,11 @@ void route_batch(const json& requests, ProtocolSession& session, Dispatcher& dis
 
 } // namespace
 
-int serve_stdio(libtmux::Server server) {
+int serve_stdio(libtmux::Server server, ToolRegistry tools,
+                CapabilityDisclosure disclosure) {
   std::ios::sync_with_stdio(false);
   Writer writer;
-  ProtocolSession session{std::move(server)};
+  ProtocolSession session{std::move(server), std::move(tools), std::move(disclosure)};
   Dispatcher dispatcher{session, writer};
   std::streambuf& input = *std::cin.rdbuf();
   while (true) {

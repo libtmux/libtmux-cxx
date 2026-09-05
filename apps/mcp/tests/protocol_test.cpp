@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <string>
@@ -16,6 +17,7 @@
 
 #include <libtmux/testing/scoped_server.hpp>
 
+#include "cli.hpp"
 #include "run_server.hpp"
 
 namespace {
@@ -135,12 +137,13 @@ std::vector<json> converse_batch(json batch) {
   return converse_raw("libtmux-cxx-mcp-batch-no-dispatch", std::move(input));
 }
 
-std::vector<json>
-converse_steps(const std::filesystem::path& socket,
-               const std::vector<libtmux::mcp::test::InputStep>& steps) {
+std::vector<json> converse_steps(
+    const std::filesystem::path& socket,
+    const std::vector<libtmux::mcp::test::InputStep>& steps,
+    std::vector<std::string> environment = libtmux::test::current_environment()) {
   auto finished = libtmux::mcp::test::run_server_steps(
       LIBTMUX_MCP_SERVER_PATH, {"--socket-path", socket.string()},
-      libtmux::test::current_environment(), steps, std::chrono::seconds{60});
+      std::move(environment), steps, std::chrono::seconds{60});
   return decode_messages(finished);
 }
 
@@ -250,14 +253,41 @@ TEST_F(McpProtocol, EnforcesTheInitializationLifecycle) {
   EXPECT_FALSE((*ready)["result"].contains("resultType"));
 }
 
-TEST_F(McpProtocol, PublishesTheTwelveToolPosixCatalog) {
+TEST(McpProtocolCli, StartsAnAbsentPinnedSocketOnlyForCreateSession) {
+  const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
+  const std::filesystem::path socket =
+      std::filesystem::temp_directory_path() /
+      ("libtmux-mcp-startable-" + std::to_string(nonce) + ".sock");
+  const std::string initialize =
+      encode_requests({initialize_request(), initialized_notification(),
+                       call("create_session", {{"name", "mcp-startable"}}, 1)});
+  const std::string teardown =
+      encode_requests({call("kill_session", {{"session", "mcp-startable"}}, 2)});
+  auto environment = libtmux::test::current_environment();
+  libtmux::test::set_environment(environment, "LIBTMUX_TOOLS", "kill_session");
+  const auto messages = converse_steps(socket,
+                                       {{initialize, std::chrono::milliseconds{750}},
+                                        {teardown, std::chrono::milliseconds{750}}},
+                                       std::move(environment));
+
+  const json* created = response(messages, 1);
+  const json* killed = response(messages, 2);
+  ASSERT_NE(created, nullptr);
+  ASSERT_NE(killed, nullptr);
+  EXPECT_FALSE(created->contains("error")) << created->dump();
+  EXPECT_FALSE(killed->contains("error")) << killed->dump();
+  EXPECT_FALSE((*created)["result"]["isError"].get<bool>()) << created->dump();
+  EXPECT_FALSE((*killed)["result"]["isError"].get<bool>()) << killed->dump();
+}
+
+TEST_F(McpProtocol, PublishesTheEffectiveCrossPortCatalog) {
   const auto messages = converse_ready(
       socket(), {json{{"jsonrpc", "2.0"}, {"id", 1}, {"method", "tools/list"}}});
   const json* listed = response(messages, 1);
   ASSERT_NE(listed, nullptr);
   const auto& tools = (*listed)["result"]["tools"];
   ASSERT_TRUE(tools.is_array());
-  ASSERT_EQ(tools.size(), 12U);
+  ASSERT_EQ(tools.size(), 43U);
 
   std::vector<std::string> names;
   for (const auto& tool : tools) {
@@ -270,16 +300,54 @@ TEST_F(McpProtocol, PublishesTheTwelveToolPosixCatalog) {
     EXPECT_TRUE(tool.contains("annotations"));
     for (const auto& [name, property] : tool["inputSchema"]["properties"].items()) {
       static_cast<void>(name);
-      EXPECT_TRUE(property["type"] == "string" || property["type"] == "integer");
+      EXPECT_TRUE(property["type"] == "string" || property["type"] == "integer" ||
+                  property["type"] == "boolean" || property["type"] == "array");
       EXPECT_FALSE(property.value("description", "").empty());
     }
   }
-  std::ranges::sort(names);
-  EXPECT_EQ(names,
-            (std::vector<std::string>{
-                "capture_pane", "create_session", "inspect_tmux", "list_panes",
-                "list_session_panes", "list_sessions", "list_windows", "new_window",
-                "search_panes", "send_keys", "send_text", "wait_for_text"}));
+  EXPECT_EQ(names, (std::vector<std::string>{"list_sessions",
+                                             "list_windows",
+                                             "list_panes",
+                                             "get_server_info",
+                                             "get_session_info",
+                                             "get_window_info",
+                                             "get_pane_info",
+                                             "capture_pane",
+                                             "capture_since",
+                                             "snapshot_pane",
+                                             "search_panes",
+                                             "find_pane_by_position",
+                                             "wait_for_text",
+                                             "get_tmux_variables",
+                                             "show_option",
+                                             "show_environment",
+                                             "show_hooks",
+                                             "call_read_tools_batch",
+                                             "rename_session",
+                                             "rename_window",
+                                             "select_window",
+                                             "select_pane",
+                                             "select_layout",
+                                             "resize_window",
+                                             "resize_pane",
+                                             "move_window",
+                                             "swap_pane",
+                                             "set_pane_title",
+                                             "enter_copy_mode",
+                                             "exit_copy_mode",
+                                             "wait_for_channel",
+                                             "signal_channel",
+                                             "set_mouse_enabled",
+                                             "set_history_limit",
+                                             "create_session",
+                                             "create_window",
+                                             "split_window",
+                                             "respawn_pane",
+                                             "run_shell_command",
+                                             "send_keys",
+                                             "send_keys_batch",
+                                             "paste_text",
+                                             "set_synchronize_panes"}));
 
   const auto waiting = std::ranges::find(tools, "wait_for_text", [](const json& tool) {
     return tool["name"].get<std::string>();
@@ -328,8 +396,8 @@ TEST_F(McpProtocol, SeparatesCallerErrorsFromTmuxRefusals) {
   const auto messages = converse_ready(
       socket(),
       {call("capture_pane", json::object(), 1), call("no_such_tool", json::object(), 2),
-       call("capture_pane", {{"target", "%999"}}, 3),
-       call("capture_pane", {{"target", "mcp"}, {"typo", "x"}}, 4)});
+       call("capture_pane", {{"paneId", "%999"}}, 3),
+       call("capture_pane", {{"paneId", "mcp"}, {"typo", "x"}}, 4)});
   const json* missing = response(messages, 1);
   const json* unknown = response(messages, 2);
   const json* refused = response(messages, 3);
@@ -348,7 +416,7 @@ TEST_F(McpProtocol, SeparatesCallerErrorsFromTmuxRefusals) {
 TEST_F(McpProtocol, EnforcesPublishedArgumentTypes) {
   const auto messages = converse_ready(
       socket(),
-      {call("capture_pane", {{"target", 999}}, 1),
+      {call("capture_pane", {{"paneId", 999}}, 1),
        call("wait_for_text",
             {{"target", "mcp"}, {"text", "type-check-marker"}, {"timeout_ms", "5"}}, 2),
        call("wait_for_text",
@@ -368,7 +436,7 @@ TEST_F(McpProtocol, EnforcesPublishedArgumentTypes) {
 
 TEST_F(McpProtocol, CreatesThenDiscoversAWindow) {
   const auto created_messages = converse_ready(
-      socket(), {call("new_window", {{"session", "mcp"}, {"name", "from-mcp"}}, 1)});
+      socket(), {call("create_window", {{"session", "mcp"}, {"name", "from-mcp"}}, 1)});
   const json* created = response(created_messages, 1);
   ASSERT_NE(created, nullptr);
   ASSERT_FALSE((*created)["result"]["isError"].get<bool>());
@@ -377,7 +445,7 @@ TEST_F(McpProtocol, CreatesThenDiscoversAWindow) {
   EXPECT_EQ(window_id.front(), '@');
 
   const auto typed_messages = converse_ready(
-      socket(), {call("send_text", {{"target", window_id}, {"text", "marker"}}, 2)});
+      socket(), {call("paste_text", {{"paneId", window_id}, {"text", "marker"}}, 2)});
   const json* typed = response(typed_messages, 2);
   ASSERT_NE(typed, nullptr);
   EXPECT_FALSE((*typed)["result"]["isError"].get<bool>());
@@ -395,14 +463,130 @@ TEST_F(McpProtocol, CreatesThenDiscoversAWindow) {
 
 TEST_F(McpProtocol, ValidatesEveryNamedKeyBeforeSending) {
   const auto messages = converse_ready(
-      socket(), {call("send_keys", {{"target", "mcp"}, {"keys", "Enter"}}, 1),
-                 call("send_keys", {{"target", "mcp"}, {"keys", "NotAKey"}}, 2)});
+      socket(), {call("send_keys", {{"paneId", "mcp"}, {"keys", "Enter"}}, 1),
+                 call("send_keys", {{"paneId", "mcp"}, {"keys", "NotAKey"}}, 2)});
   const json* sent = response(messages, 1);
   const json* invalid = response(messages, 2);
   ASSERT_NE(sent, nullptr);
   ASSERT_NE(invalid, nullptr);
   EXPECT_FALSE((*sent)["result"]["isError"].get<bool>());
   EXPECT_EQ((*invalid)["error"]["code"], -32602);
+}
+
+TEST_F(McpProtocol, ReportsTargetsExpandedBySynchronizedPaneInput) {
+  const auto split_messages =
+      converse_ready(socket(), {call("split_window", {{"paneId", "mcp"}}, 1)});
+  const json* split = response(split_messages, 1);
+  ASSERT_NE(split, nullptr);
+  ASSERT_FALSE((*split)["result"]["isError"].get<bool>());
+
+  const auto listed_messages =
+      converse_ready(socket(), {call("list_panes", json::object(), 2)});
+  const json* listed = response(listed_messages, 2);
+  ASSERT_NE(listed, nullptr);
+  const json& panes = (*listed)["result"]["structuredContent"]["panes"];
+  ASSERT_EQ(panes.size(), 2U);
+  const std::string pane_id = panes[0]["id"].get<std::string>();
+  const std::string window_id = panes[0]["window_id"].get<std::string>();
+  std::vector<std::string> expected_ids;
+  for (const json& pane : panes) {
+    expected_ids.push_back(pane["id"].get<std::string>());
+  }
+  std::ranges::sort(expected_ids);
+  const json expected = expected_ids;
+
+  const auto synchronized_messages = converse_ready(
+      socket(),
+      {call("set_synchronize_panes", {{"windowId", window_id}, {"enabled", true}}, 3)});
+  const json* synchronized = response(synchronized_messages, 3);
+  ASSERT_NE(synchronized, nullptr);
+  ASSERT_TRUE(synchronized->contains("result")) << synchronized->dump();
+  ASSERT_FALSE((*synchronized)["result"]["isError"].get<bool>());
+
+  const auto sent_messages = converse_ready(
+      socket(),
+      {call("send_keys", {{"paneId", pane_id}, {"keys", "Escape"}}, 4),
+       call("send_keys_batch",
+            {{"operations", json::array({{{"paneId", pane_id}, {"keys", "Escape"}}})}},
+            5)});
+  const json* sent = response(sent_messages, 4);
+  const json* batched = response(sent_messages, 5);
+  ASSERT_NE(sent, nullptr);
+  ASSERT_NE(batched, nullptr);
+  ASSERT_TRUE(sent->contains("result")) << sent->dump();
+  ASSERT_TRUE(batched->contains("result")) << batched->dump();
+  ASSERT_FALSE((*sent)["result"]["isError"].get<bool>());
+  ASSERT_FALSE((*batched)["result"]["isError"].get<bool>());
+  const json& sent_content = (*sent)["result"]["structuredContent"];
+  const json& batched_content = (*batched)["result"]["structuredContent"];
+  ASSERT_TRUE(sent_content.contains("target_pane_ids"));
+  ASSERT_TRUE(batched_content.contains("targets"));
+  EXPECT_EQ(sent_content["target_pane_ids"], expected);
+  ASSERT_EQ(batched_content["targets"].size(), 1U);
+  EXPECT_EQ(batched_content["targets"][0]["resolvedPaneIds"], expected);
+}
+
+TEST_F(McpProtocol, RunsTypedReadBatchInDeclaredOrder) {
+  const json operations = json::array(
+      {{{"tool", "list_sessions"}, {"arguments", json::object()}},
+       {{"tool", "get_session_info"}, {"arguments", {{"session", "mcp"}}}}});
+  const auto messages = converse_ready(
+      socket(), {call("call_read_tools_batch", {{"operations", operations}}, 1)});
+  const json* reply = response(messages, 1);
+  ASSERT_NE(reply, nullptr);
+  ASSERT_TRUE(reply->contains("result")) << reply->dump();
+  ASSERT_FALSE((*reply)["result"]["isError"].get<bool>());
+  const json& aggregate = (*reply)["result"]["structuredContent"];
+  EXPECT_EQ(aggregate["succeeded"], 2);
+  EXPECT_EQ(aggregate["failed"], 0);
+  EXPECT_EQ(aggregate["onError"], "stop");
+  EXPECT_TRUE(aggregate["stoppedAt"].is_null());
+  EXPECT_FALSE(aggregate["truncated"].get<bool>());
+  EXPECT_EQ(aggregate["truncatedBytes"], 0);
+  const json& results = aggregate["results"];
+  ASSERT_EQ(results.size(), 2U);
+  EXPECT_EQ(results[0]["index"], 0);
+  EXPECT_EQ(results[0]["tool"], "list_sessions");
+  EXPECT_TRUE(results[0]["success"].get<bool>());
+  EXPECT_TRUE(results[0]["error"].is_null());
+  EXPECT_FALSE(results[0]["resultTruncated"].get<bool>());
+  EXPECT_FALSE(results[0]["result"]["isError"].get<bool>());
+  EXPECT_TRUE(results[0]["result"]["content"].is_array());
+  EXPECT_TRUE(results[0]["result"]["structuredContent"].contains("sessions"));
+  EXPECT_EQ(results[0]["result"]["content"][0]["text"],
+            results[0]["result"]["structuredContent"].dump());
+  EXPECT_EQ(results[1]["tool"], "get_session_info");
+  EXPECT_TRUE(results[1]["result"]["structuredContent"].contains("session"));
+
+  const auto invalid = converse_ready(
+      socket(),
+      {call("call_read_tools_batch",
+            {{"operations", json::array({{{"tool", "get_session_info"},
+                                          {"arguments", {{"unknown", "mcp"}}}}})}},
+            2)});
+  const json* rejected = response(invalid, 2);
+  ASSERT_NE(rejected, nullptr);
+  EXPECT_EQ((*rejected)["error"]["code"], -32602);
+  EXPECT_NE((*rejected)["error"]["message"].get<std::string>().find("unknown argument"),
+            std::string::npos);
+}
+
+TEST_F(McpProtocol, ExpandsOnlyBoundedValidatedVariableNames) {
+  const auto messages = converse_ready(
+      socket(),
+      {call("get_tmux_variables",
+            {{"names", json::array({"pane_id", "pane_title"})}, {"paneId", "mcp"}}, 1),
+       call("get_tmux_variables", {{"names", json::array({"pane_id", "#(id)"})}}, 2)});
+  const json* expanded = response(messages, 1);
+  const json* rejected = response(messages, 2);
+  ASSERT_NE(expanded, nullptr);
+  ASSERT_NE(rejected, nullptr);
+  ASSERT_TRUE(expanded->contains("result")) << expanded->dump();
+  EXPECT_FALSE((*expanded)["result"]["isError"].get<bool>());
+  const json& values = (*expanded)["result"]["structuredContent"]["values"];
+  EXPECT_TRUE(values.contains("pane_id"));
+  EXPECT_TRUE(values.contains("pane_title"));
+  EXPECT_EQ((*rejected)["error"]["code"], -32602);
 }
 
 TEST_F(McpProtocol, WaitsThroughControlOutputAndSearchesTheResult) {
@@ -416,10 +600,10 @@ TEST_F(McpProtocol, WaitsThroughControlOutputAndSearchesTheResult) {
            {{"target", "mcp"}, {"text", "mcp-stream-marker"}, {"timeout_ms", 9000}},
            1)};
   const std::vector<json> produce{
-      call("send_text",
-           {{"target", "mcp"}, {"text", "printf 'mcp-%s\\n' 'stream-marker'\n"}}, 2)};
+      call("paste_text",
+           {{"paneId", "mcp"}, {"text", "printf 'mcp-%s\\n' 'stream-marker'\n"}}, 2)};
   const std::vector<json> search{
-      call("search_panes", {{"text", "mcp-stream-marker"}}, 3)};
+      call("search_panes", {{"pattern", "mcp-stream-marker"}}, 3)};
 
   const auto messages = converse_steps(
       socket(), {{encode_requests(start_wait), std::chrono::milliseconds{1500}},
@@ -629,7 +813,7 @@ TEST(McpProtocolCli, SupportsModernDiscoveryAndCacheableResults) {
   EXPECT_EQ(catalog["resultType"], "complete");
   EXPECT_EQ(catalog["ttlMs"], 3600000);
   EXPECT_EQ(catalog["cacheScope"], "public");
-  EXPECT_EQ(catalog["tools"].size(), 12U);
+  EXPECT_EQ(catalog["tools"].size(), 43U);
   EXPECT_EQ(catalog["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
             "libtmux-cxx");
   EXPECT_EQ((*ping)["error"]["code"], -32601);
@@ -804,11 +988,11 @@ TEST(McpProtocolCli, KeepsBatchIdsReservedAndLegacyIdsUnique) {
 TEST_F(McpProtocol, RejectsEveryDuplicateBeforeBatchDispatch) {
   const std::string marker = "mcp-duplicate-preflight-marker";
   const json batch =
-      json::array({call("send_text", {{"target", "mcp"}, {"text", marker}}, 7),
-                   call("send_text", {{"target", "mcp"}, {"text", marker}}, 7)});
+      json::array({call("paste_text", {{"paneId", "mcp"}, {"text", marker}}, 7),
+                   call("paste_text", {{"paneId", "mcp"}, {"text", marker}}, 7)});
   const auto messages =
       converse(socket(), {initialize_request("2025-03-26"), initialized_notification(),
-                          batch, call("capture_pane", {{"target", "mcp"}}, 8)});
+                          batch, call("capture_pane", {{"paneId", "mcp"}}, 8)});
   const json* first = response(messages, 7);
   const json* captured = response(messages, 8);
   ASSERT_NE(first, nullptr);
@@ -1022,7 +1206,7 @@ TEST(McpProtocolCli, ReportsModernToolInputErrorsAsToolResults) {
   const auto messages = converse_with(
       {"--socket-name", "libtmux-cxx-mcp-modern-input-no-dispatch"},
       libtmux::test::current_environment(),
-      {modern_call("capture_pane", {{"target", 99}}, 1),
+      {modern_call("capture_pane", {{"paneId", 99}}, 1),
        modern_call("capture_pane", json::object(), 2),
        modern_request("tools/call", 3,
                       {{"name", "capture_pane"}, {"arguments", json::array()}}),
@@ -1062,7 +1246,7 @@ TEST(McpProtocolCli, Reports2025NovemberInputErrorsAsToolResults) {
       converse_with({"--socket-name", "libtmux-cxx-mcp-november-input-no-dispatch"},
                     libtmux::test::current_environment(),
                     {initialize_request("2025-11-25"), initialized_notification(),
-                     call("capture_pane", {{"target", 99}}, 1),
+                     call("capture_pane", {{"paneId", 99}}, 1),
                      call("capture_pane", json::object(), 2),
                      call("no_such_tool", json::object(), 3)});
   for (const int id : {1, 2}) {
@@ -1133,7 +1317,7 @@ TEST(McpProtocolCli, ValidatesLegacyMetadataContainers) {
 }
 
 TEST(McpProtocolCli, AcceptsLegacyToolMetadataAndRetainsArguments) {
-  json compatible = call("capture_pane", {{"target", 99}}, 1, "client-progress");
+  json compatible = call("capture_pane", {{"paneId", 99}}, 1, "client-progress");
   compatible["params"]["_meta"]["claudeCode"] = {{"version", "2.1.234"}};
   json invalid_key = compatible;
   invalid_key["id"] = 2;
@@ -1147,7 +1331,7 @@ TEST(McpProtocolCli, AcceptsLegacyToolMetadataAndRetainsArguments) {
   ASSERT_NE(accepted, nullptr);
   ASSERT_NE(rejected, nullptr);
   EXPECT_EQ((*accepted)["error"]["code"], -32602);
-  EXPECT_EQ((*accepted)["error"]["message"], "argument target must be a string");
+  EXPECT_EQ((*accepted)["error"]["message"], "argument paneId must be a string");
   EXPECT_EQ((*rejected)["error"]["code"], -32602);
   EXPECT_EQ((*rejected)["error"]["message"], "tools/call _meta is invalid");
 }
@@ -1170,15 +1354,15 @@ TEST(McpProtocolTmux, SelectsAnIsolatedServerBySocketName) {
             "mcp-name");
 }
 
-TEST(McpProtocolTmux, UsesAnExactInheritedRoute) {
+TEST(McpProtocolTmux, UsesTheExactSocketPathEnvironment) {
   auto started = ScopedTmuxServer::start(ScopedTmuxServerOptions{
       .session_name = "mcp-env",
       .socket_namespace = SocketNamespace::consumer("mcp-env")});
   ASSERT_TRUE(started.has_value()) << started.error();
   auto environment = started->child_environment();
-  libtmux::test::set_environment(environment, "TMUX",
-                                 started->socket_path().string() + ',' +
-                                     std::to_string(started->server_pid()) + ",0");
+  libtmux::test::erase_environment(environment, "TMUX");
+  libtmux::test::set_environment(environment, "LIBTMUX_SOCKET_PATH",
+                                 started->socket_path().string());
   const std::vector<json> requests{initialize_request(), initialized_notification(),
                                    call("list_sessions", json::object(), 1)};
   const auto messages = converse_with({}, std::move(environment), requests);
@@ -1206,6 +1390,440 @@ TEST(McpProtocolCli, PublishesCharacterCountLimits) {
   ASSERT_NE(waiting, tools.end());
   EXPECT_EQ((*windows)["inputSchema"]["properties"]["session"]["maxLength"], 512);
   EXPECT_EQ((*waiting)["inputSchema"]["properties"]["text"]["maxLength"], 4096);
+}
+
+TEST(McpProtocolCli, EstablishesDefaultMinimalDaemonBeforeFreezingProvenance) {
+  const std::filesystem::path configuration =
+      libtmux::mcp::server::minimal_configuration_path(LIBTMUX_MCP_SERVER_PATH);
+  std::ifstream input{configuration};
+  ASSERT_TRUE(input) << configuration;
+  const std::string contents{std::istreambuf_iterator<char>{input},
+                             std::istreambuf_iterator<char>{}};
+  ASSERT_FALSE(input.bad());
+  EXPECT_NE(contents.find("exit-empty off"), std::string::npos);
+  EXPECT_EQ(contents.find("run-shell"), std::string::npos);
+
+  libtmux::mcp::server::CliOptions options;
+  options.value =
+      "libtmux-cxx-default-provenance-" +
+      std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+  auto opened = libtmux::mcp::server::open_server(options);
+  ASSERT_TRUE(opened.has_value()) << opened.error();
+  EXPECT_FALSE(opened->server_pre_existing);
+  EXPECT_TRUE(opened->teardown_enabled_by_default);
+  EXPECT_EQ(opened->socket_provenance, "default-dedicated");
+  EXPECT_EQ(opened->configuration_provenance, "minimal");
+  const auto environment = opened->server.run({"show-environment", "-g"});
+  ASSERT_TRUE(environment.has_value()) << environment.error().diagnostic;
+  EXPECT_EQ(environment->find("LIBTMUX_MCP_OWNER="), std::string::npos);
+  const auto alive = opened->server.run({"show-options", "-sqv", "exit-empty"});
+  EXPECT_TRUE(alive.has_value()) << alive.error().diagnostic;
+  const auto killed = opened->server.kill();
+  EXPECT_TRUE(killed.has_value()) << killed.error().diagnostic;
+}
+
+TEST(McpProtocolCli, DoesNotClaimAnExistingDedicatedDaemon) {
+  auto fixture = ScopedTmuxServer::start(ScopedTmuxServerOptions{
+      .mode = SocketMode::Name,
+      .session_name = "provenance-holder",
+      .socket_namespace = SocketNamespace::consumer("mcp-owner")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  auto environment = fixture->child_environment();
+  for (const std::string_view name :
+       {"LIBTMUX_SOCKET", "LIBTMUX_SOCKET_PATH", "LIBTMUX_TMUX_CONFIG",
+        "LIBTMUX_TOOLSETS", "LIBTMUX_TOOLS", "LIBTMUX_EXCLUDE_TOOLS"}) {
+    libtmux::test::erase_environment(environment, name);
+  }
+  const auto first = libtmux::mcp::test::run_server(
+      LIBTMUX_MCP_SERVER_PATH, {}, environment, {}, std::chrono::seconds{5});
+  const auto messages =
+      converse_with({}, environment,
+                    {initialize_request(), initialized_notification(),
+                     json{{"jsonrpc", "2.0"},
+                          {"id", 1},
+                          {"method", "resources/read"},
+                          {"params", {{"uri", "tmux://capabilities"}}}}});
+  auto server = libtmux::Server::at_socket_path(
+      (fixture->socket_path().parent_path() / "libtmux-mcp").string());
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+  const auto killed = server->kill();
+
+  ASSERT_TRUE(first.has_value()) << first.error();
+  ASSERT_TRUE(killed.has_value()) << killed.error().diagnostic;
+  const json* read = response(messages, 1);
+  ASSERT_NE(read, nullptr);
+  const json document =
+      json::parse((*read)["result"]["contents"][0]["text"].get<std::string>());
+  EXPECT_EQ(document["socket"]["serverState"], "existing");
+  EXPECT_EQ(document["socket"]["configurationProvenance"], "unknown");
+  EXPECT_EQ(document["toolCount"], 43);
+}
+
+TEST(McpProtocolCli, PublishesStaticEffectiveCapabilitiesInBothEras) {
+  auto environment = libtmux::test::current_environment();
+  libtmux::test::set_environment(environment, "LIBTMUX_TOOLSETS", "inspect,execute");
+  libtmux::test::set_environment(environment, "LIBTMUX_TOOLS",
+                                 "create_session,paste_text");
+  libtmux::test::set_environment(environment, "LIBTMUX_EXCLUDE_TOOLS",
+                                 "list_sessions,paste_text");
+  const json legacy_list{
+      {"jsonrpc", "2.0"}, {"id", "legacy-resources"}, {"method", "resources/list"}};
+  const json legacy_read{{"jsonrpc", "2.0"},
+                         {"id", "legacy-read"},
+                         {"method", "resources/read"},
+                         {"params", {{"uri", "tmux://capabilities"}}}};
+  const json legacy_tools{
+      {"jsonrpc", "2.0"}, {"id", "legacy-tools"}, {"method", "tools/list"}};
+  const json excluded_call = call("paste_text", json::object(), 7);
+  const auto legacy = converse_with(
+      {"--socket-name", "libtmux-cxx-capabilities-legacy-no-dispatch"}, environment,
+      {initialize_request(), initialized_notification(), legacy_list, legacy_read,
+       legacy_tools, excluded_call});
+
+  const json* initialized = response(legacy, "initialize");
+  const json* listed = response(legacy, "legacy-resources");
+  const json* read = response(legacy, "legacy-read");
+  const json* tools = response(legacy, "legacy-tools");
+  const json* excluded = response(legacy, 7);
+  ASSERT_NE(initialized, nullptr);
+  ASSERT_NE(listed, nullptr);
+  ASSERT_NE(read, nullptr);
+  ASSERT_NE(tools, nullptr);
+  ASSERT_NE(excluded, nullptr);
+  ASSERT_TRUE((*initialized)["result"]["capabilities"].contains("resources"));
+  EXPECT_EQ((*initialized)["result"]["capabilities"]["resources"],
+            json({{"listChanged", false}, {"subscribe", false}}));
+  ASSERT_TRUE(listed->contains("result"));
+  ASSERT_EQ((*listed)["result"]["resources"].size(), 1U);
+  EXPECT_EQ((*listed)["result"]["resources"][0]["uri"], "tmux://capabilities");
+  ASSERT_TRUE(read->contains("result"));
+  ASSERT_EQ((*read)["result"]["contents"].size(), 1U);
+  const json document =
+      json::parse((*read)["result"]["contents"][0]["text"].get<std::string>());
+  EXPECT_EQ(document["schemaVersion"], 1);
+  EXPECT_TRUE(document["frozen"].get<bool>());
+  ASSERT_TRUE(document.contains("toolsets"));
+  ASSERT_TRUE(document.contains("includedTools"));
+  ASSERT_TRUE(document.contains("excludedTools"));
+  ASSERT_TRUE(document.contains("socket"));
+  EXPECT_EQ(document["toolsets"], json::array({"inspect", "execute"}));
+  EXPECT_EQ(document["includedTools"], json::array({"create_session", "paste_text"}));
+  EXPECT_EQ(document["excludedTools"], json::array({"list_sessions", "paste_text"}));
+  EXPECT_EQ(document["toolCount"], 25);
+  EXPECT_EQ(document["hostCommandTools"], 0);
+  EXPECT_EQ(document["toolFilteringBoundary"], "interface-shaping-not-authorization");
+  EXPECT_EQ(document["executionAuthority"], "tmux-user");
+  EXPECT_EQ(document["operatingSystemBoundary"], "none");
+  EXPECT_EQ(document["socket"]["selector"],
+            "name:libtmux-cxx-capabilities-legacy-no-dispatch");
+  EXPECT_EQ(document["socket"]["selectionProvenance"], "operator-current");
+  EXPECT_EQ(document["socket"]["serverState"], "absent");
+  EXPECT_EQ(document["socket"]["configurationProvenance"], "unknown");
+  EXPECT_EQ(document["socket"]["namespaceBoundary"], "tmux-objects-only");
+
+  const std::vector<std::string> expected{"list_windows",
+                                          "list_panes",
+                                          "get_server_info",
+                                          "get_session_info",
+                                          "get_window_info",
+                                          "get_pane_info",
+                                          "capture_pane",
+                                          "capture_since",
+                                          "snapshot_pane",
+                                          "search_panes",
+                                          "find_pane_by_position",
+                                          "wait_for_text",
+                                          "get_tmux_variables",
+                                          "show_option",
+                                          "show_environment",
+                                          "show_hooks",
+                                          "call_read_tools_batch",
+                                          "create_session",
+                                          "create_window",
+                                          "split_window",
+                                          "respawn_pane",
+                                          "run_shell_command",
+                                          "send_keys",
+                                          "send_keys_batch",
+                                          "set_synchronize_panes"};
+  std::vector<std::string> listed_names;
+  for (const json& tool : (*tools)["result"]["tools"]) {
+    listed_names.push_back(tool["name"].get<std::string>());
+  }
+  std::vector<std::string> reported_names;
+  for (const json& tool : document["tools"]) {
+    reported_names.push_back(tool["name"].get<std::string>());
+  }
+  EXPECT_EQ(listed_names, expected);
+  EXPECT_EQ(reported_names, expected);
+  for (const json& listed_tool : (*tools)["result"]["tools"]) {
+    const auto row = std::ranges::find_if(document["tools"], [&](const json& item) {
+      return item["name"] == listed_tool["name"];
+    });
+    ASSERT_NE(row, document["tools"].end()) << listed_tool["name"];
+    ASSERT_TRUE(listed_tool.contains("_meta")) << listed_tool["name"];
+    EXPECT_EQ(listed_tool["_meta"]["com.git-pull.libtmux-mcp/capability"], *row)
+        << listed_tool["name"];
+  }
+  const auto sent_keys = std::ranges::find_if(
+      document["tools"], [](const json& tool) { return tool["name"] == "send_keys"; });
+  ASSERT_NE(sent_keys, document["tools"].end());
+  EXPECT_EQ((*sent_keys)["toolset"], "execute");
+  EXPECT_EQ((*sent_keys)["processReach"], "pane-input");
+  EXPECT_EQ((*sent_keys)["tmuxEffects"], json::array({"observe", "change"}));
+  EXPECT_EQ((*sent_keys)["outputClasses"], json::array({"tmux-metadata"}));
+  EXPECT_FALSE((*sent_keys)["mayExposeSecrets"].get<bool>());
+  EXPECT_TRUE((*sent_keys)["mayReturnUntrustedContent"].get<bool>());
+  EXPECT_EQ((*sent_keys)["inputSinks"]["keys"], json::array({"pane-input"}));
+  EXPECT_TRUE((*sent_keys)["annotations"]["destructiveHint"].get<bool>());
+  EXPECT_TRUE((*sent_keys)["inputSchema"]["properties"].contains("keys"));
+  const auto synchronized =
+      std::ranges::find_if(document["tools"], [](const json& tool) {
+        return tool["name"] == "set_synchronize_panes";
+      });
+  ASSERT_NE(synchronized, document["tools"].end());
+  ASSERT_TRUE((*synchronized).contains("amplifiesFutureInput"));
+  EXPECT_TRUE((*synchronized)["amplifiesFutureInput"].get<bool>());
+  EXPECT_NE((*synchronized)["description"].get<std::string>().find(
+                "subsequent input is copied to every pane"),
+            std::string::npos);
+  for (const json& tool : document["tools"]) {
+    ASSERT_TRUE(tool.contains("amplifiesFutureInput")) << tool["name"];
+    EXPECT_EQ(tool["amplifiesFutureInput"].get<bool>(),
+              tool["name"] == "set_synchronize_panes")
+        << tool["name"];
+  }
+  const auto create_session =
+      std::ranges::find_if(document["tools"], [](const json& tool) {
+        return tool["name"] == "create_session";
+      });
+  ASSERT_NE(create_session, document["tools"].end());
+  ASSERT_TRUE((*create_session).contains("inputLiteralization"));
+  EXPECT_EQ((*create_session)["inputSinks"]["startDirectory"],
+            json::array({"tmux-state", "tmux-format"}));
+  EXPECT_EQ((*create_session)["inputLiteralization"]["startDirectory"],
+            "double-hash-once");
+  const json literal_format = json::array({"tmux-state", "tmux-format"});
+  EXPECT_EQ((*create_session)["inputSinks"]["name"], literal_format);
+  EXPECT_EQ((*create_session)["inputSinks"]["windowName"], literal_format);
+  for (const auto [tool_name, field_name] : {std::pair{"create_window", "name"}}) {
+    const auto row = std::ranges::find_if(
+        document["tools"], [&](const json& tool) { return tool["name"] == tool_name; });
+    ASSERT_NE(row, document["tools"].end()) << tool_name;
+    EXPECT_EQ((*row)["inputSinks"][field_name], literal_format) << tool_name;
+    EXPECT_EQ((*row)["inputLiteralization"][field_name], "double-hash-once")
+        << tool_name;
+  }
+  const auto variables = std::ranges::find_if(document["tools"], [](const json& tool) {
+    return tool["name"] == "get_tmux_variables";
+  });
+  ASSERT_NE(variables, document["tools"].end());
+  EXPECT_EQ((*variables)["inputSinks"]["names"],
+            json::array({"tmux-lookup", "tmux-format"}));
+  EXPECT_EQ((*variables)["inputLiteralization"]["names"], "validated-variable-name");
+  const auto read_batch = std::ranges::find_if(document["tools"], [](const json& tool) {
+    return tool["name"] == "call_read_tools_batch";
+  });
+  ASSERT_NE(read_batch, document["tools"].end());
+  const json expected_nested = json::array(
+      {"capture_pane", "capture_since", "find_pane_by_position", "get_pane_info",
+       "get_server_info", "get_session_info", "get_tmux_variables", "get_window_info",
+       "list_panes", "list_windows", "search_panes", "show_environment", "show_hooks",
+       "show_option", "snapshot_pane"});
+  const auto expected_nested_names = expected_nested.get<std::vector<std::string>>();
+  EXPECT_EQ((*read_batch)["nestedAuthority"], expected_nested);
+  const json& alternatives =
+      (*read_batch)["inputSchema"]["properties"]["operations"]["items"]["oneOf"];
+  ASSERT_EQ(alternatives.size(), expected_nested.size());
+  for (const json& alternative : alternatives) {
+    const std::string nested_name =
+        alternative["properties"]["tool"]["const"].get<std::string>();
+    const auto expected_name = std::ranges::find(expected_nested_names, nested_name);
+    EXPECT_NE(expected_name, expected_nested_names.end()) << nested_name;
+    EXPECT_FALSE(
+        alternative["properties"]["arguments"]["additionalProperties"].get<bool>())
+        << nested_name;
+  }
+  EXPECT_EQ((*read_batch)["inputSchema"]["properties"]["onError"]["enum"],
+            json::array({"continue", "stop"}));
+  EXPECT_EQ((*excluded)["error"]["message"], "unknown tool: paste_text");
+
+  const auto modern =
+      converse_with({"--socket-name", "libtmux-cxx-capabilities-modern-no-dispatch"},
+                    std::move(environment),
+                    {modern_request("server/discover", "discover"),
+                     modern_request("resources/list", "modern-resources"),
+                     modern_request("resources/read", "modern-read",
+                                    {{"uri", "tmux://capabilities"}})});
+  const json* discovered = response(modern, "discover");
+  const json* modern_list = response(modern, "modern-resources");
+  const json* modern_read = response(modern, "modern-read");
+  ASSERT_NE(discovered, nullptr);
+  ASSERT_NE(modern_list, nullptr);
+  ASSERT_NE(modern_read, nullptr);
+  ASSERT_TRUE((*discovered)["result"]["capabilities"].contains("resources"));
+  EXPECT_EQ((*discovered)["result"]["capabilities"]["resources"],
+            json({{"listChanged", false}, {"subscribe", false}}));
+  ASSERT_TRUE(modern_list->contains("result"));
+  ASSERT_TRUE(modern_read->contains("result"));
+  EXPECT_EQ((*modern_list)["result"]["resultType"], "complete");
+  EXPECT_EQ((*modern_read)["result"]["resultType"], "complete");
+  const json modern_document =
+      json::parse((*modern_read)["result"]["contents"][0]["text"].get<std::string>());
+  std::vector<std::string> modern_names;
+  for (const json& tool : modern_document["tools"]) {
+    modern_names.push_back(tool["name"].get<std::string>());
+  }
+  EXPECT_EQ(modern_names, expected);
+}
+
+TEST(McpProtocolCli, RejectsInvalidPolicyBeforeOpeningTmux) {
+  struct InvalidPolicy {
+    std::string name;
+    std::string value;
+  };
+  const std::vector<InvalidPolicy> invalid{
+      {"LIBTMUX_TOOLSETS", "inspect,,execute"},
+      {"LIBTMUX_TOOLSETS", "unknown"},
+      {"LIBTMUX_TOOLS", ""},
+      {"LIBTMUX_TOOLS", "unknown"},
+      {"LIBTMUX_EXCLUDE_TOOLS", "capture_pane,"},
+      {"LIBTMUX_EXCLUDE_TOOLS", "unknown"},
+      {"LIBTMUX_TMUX_CONFIG", ""},
+      {"LIBTMUX_TMUX_CONFIG", "relative.conf"},
+      {"LIBTMUX_SAFETY", "read-only"},
+  };
+  for (const auto& policy : invalid) {
+    auto environment = libtmux::test::current_environment();
+    libtmux::test::erase_environment(environment, "TMUX");
+    libtmux::test::set_environment(environment, policy.name, policy.value);
+    const auto finished = libtmux::mcp::test::run_server(LIBTMUX_MCP_SERVER_PATH, {},
+                                                         std::move(environment), {},
+                                                         std::chrono::seconds{5});
+    ASSERT_FALSE(finished.has_value()) << policy.name << '=' << policy.value;
+    EXPECT_NE(finished.error().find("exited with status 2"), std::string::npos)
+        << policy.name << '=' << policy.value;
+  }
+}
+
+TEST(McpProtocolCli, UsesSeparateSocketEnvironmentVariables) {
+  auto environment = libtmux::test::current_environment();
+  libtmux::test::erase_environment(environment, "TMUX");
+  libtmux::test::erase_environment(environment, "LIBTMUX_SOCKET");
+  libtmux::test::set_environment(environment, "LIBTMUX_SOCKET_PATH",
+                                 "/tmp/libtmux-cxx-env-path-no-dispatch.sock");
+  const auto messages =
+      converse_with({}, environment,
+                    {initialize_request(), initialized_notification(),
+                     json{{"jsonrpc", "2.0"},
+                          {"id", 1},
+                          {"method", "resources/read"},
+                          {"params", {{"uri", "tmux://capabilities"}}}}});
+  const json* read = response(messages, 1);
+  ASSERT_NE(read, nullptr);
+  const json document =
+      json::parse((*read)["result"]["contents"][0]["text"].get<std::string>());
+  EXPECT_EQ(document["socket"]["selector"],
+            "path:/tmp/libtmux-cxx-env-path-no-dispatch.sock");
+  EXPECT_EQ(document["socket"]["selectionProvenance"], "operator-current");
+
+  libtmux::test::set_environment(environment, "LIBTMUX_SOCKET", "conflict");
+  const auto conflicting = libtmux::mcp::test::run_server(
+      LIBTMUX_MCP_SERVER_PATH, {}, std::move(environment), {}, std::chrono::seconds{5});
+  ASSERT_FALSE(conflicting.has_value());
+  EXPECT_NE(conflicting.error().find("exited with status 2"), std::string::npos);
+}
+
+TEST(McpProtocolCli, RetainsNestedReadsForAggregateOnlySelection) {
+  auto environment = libtmux::test::current_environment();
+  libtmux::test::erase_environment(environment, "TMUX");
+  libtmux::test::set_environment(environment, "LIBTMUX_TOOLSETS", "");
+  libtmux::test::set_environment(environment, "LIBTMUX_TOOLS", "call_read_tools_batch");
+  libtmux::test::set_environment(environment, "LIBTMUX_EXCLUDE_TOOLS", "capture_pane");
+  const json operations =
+      json::array({{{"tool", "list_sessions"}, {"arguments", json::object()}}});
+  const auto messages = converse_with(
+      {"--socket-name", "libtmux-cxx-aggregate-only-no-dispatch"}, environment,
+      {initialize_request(), initialized_notification(),
+       json{{"jsonrpc", "2.0"}, {"id", 1}, {"method", "tools/list"}},
+       call("call_read_tools_batch", {{"operations", operations}}, 2)});
+  const json* listed = response(messages, 1);
+  const json* called = response(messages, 2);
+  ASSERT_NE(listed, nullptr);
+  ASSERT_NE(called, nullptr);
+  ASSERT_EQ((*listed)["result"]["tools"].size(), 1U);
+  const json& batch = (*listed)["result"]["tools"][0];
+  EXPECT_EQ(batch["name"], "call_read_tools_batch");
+  const json& alternatives =
+      batch["inputSchema"]["properties"]["operations"]["items"]["oneOf"];
+  EXPECT_EQ(alternatives.size(), 15U);
+  const auto names =
+      alternatives | std::views::transform([](const json& alternative) {
+        return alternative["properties"]["tool"]["const"].get<std::string>();
+      });
+  EXPECT_NE(std::ranges::find(names, "list_sessions"), names.end());
+  EXPECT_EQ(std::ranges::find(names, "capture_pane"), names.end());
+  ASSERT_TRUE(called->contains("result")) << called->dump();
+  ASSERT_FALSE((*called)["result"]["isError"].get<bool>());
+  EXPECT_EQ((*called)["result"]["structuredContent"]["results"][0]["tool"],
+            "list_sessions");
+}
+
+TEST(McpProtocolCli, MakesAReadBatchWithNoNestedAuthorityUnsatisfiable) {
+  auto environment = libtmux::test::current_environment();
+  libtmux::test::erase_environment(environment, "TMUX");
+  libtmux::test::set_environment(environment, "LIBTMUX_TOOLSETS", "");
+  libtmux::test::set_environment(environment, "LIBTMUX_TOOLS", "call_read_tools_batch");
+  libtmux::test::set_environment(
+      environment, "LIBTMUX_EXCLUDE_TOOLS",
+      "list_sessions,list_windows,list_panes,get_server_info,get_session_info,"
+      "get_window_info,get_pane_info,capture_pane,capture_since,snapshot_pane,"
+      "search_panes,find_pane_by_position,get_tmux_variables,show_option,"
+      "show_environment,show_hooks");
+  const auto messages = converse_with(
+      {"--socket-name", "libtmux-cxx-zero-authority-no-dispatch"}, environment,
+      {initialize_request(), initialized_notification(),
+       json{{"jsonrpc", "2.0"}, {"id", 1}, {"method", "tools/list"}}});
+  const json* listed = response(messages, 1);
+  ASSERT_NE(listed, nullptr);
+  const json& tools = (*listed)["result"]["tools"];
+  ASSERT_EQ(tools.size(), 1U);
+  const json& capability = tools[0]["_meta"]["com.git-pull.libtmux-mcp/capability"];
+  EXPECT_EQ(capability["nestedAuthority"], json::array());
+  EXPECT_EQ(capability["tmuxEffects"], json::array({"observe"}));
+  EXPECT_EQ(capability["outputClasses"], json::array());
+  const json& operations = tools[0]["inputSchema"]["properties"]["operations"];
+  EXPECT_EQ(operations["minItems"], 1);
+  EXPECT_EQ(operations["items"], false);
+}
+
+TEST(McpProtocolCli, ExplicitSocketDefaultsExcludeTeardown) {
+  auto environment = libtmux::test::current_environment();
+  libtmux::test::erase_environment(environment, "TMUX");
+  libtmux::test::erase_environment(environment, "LIBTMUX_TOOLSETS");
+  libtmux::test::erase_environment(environment, "LIBTMUX_TOOLS");
+  libtmux::test::erase_environment(environment, "LIBTMUX_EXCLUDE_TOOLS");
+  const auto messages = converse_with(
+      {"--socket-name", "libtmux-cxx-explicit-default-no-dispatch"}, environment,
+      {initialize_request(), initialized_notification(),
+       json{{"jsonrpc", "2.0"}, {"id", 1}, {"method", "tools/list"}},
+       json{{"jsonrpc", "2.0"},
+            {"id", 2},
+            {"method", "resources/read"},
+            {"params", {{"uri", "tmux://capabilities"}}}}});
+  const json* listed = response(messages, 1);
+  const json* read = response(messages, 2);
+  ASSERT_NE(listed, nullptr);
+  ASSERT_NE(read, nullptr);
+  const json& tools = (*listed)["result"]["tools"];
+  EXPECT_EQ(tools.size(), 43U);
+  EXPECT_EQ(std::ranges::find(
+                tools, "kill_session",
+                [](const json& tool) { return tool["name"].get<std::string>(); }),
+            tools.end());
+  const json document =
+      json::parse((*read)["result"]["contents"][0]["text"].get<std::string>());
+  EXPECT_EQ(document["socket"]["selectionProvenance"], "operator-current");
 }
 
 TEST(McpProtocolCli, KeepsAnIdReservedUntilItsReplyIsWritten) {
@@ -1263,22 +1881,50 @@ TEST(McpProtocolCli, KeepsBatchIdsReservedThroughAggregateBackpressure) {
   EXPECT_EQ(duplicate_reply["error"]["message"], "request id is already in flight");
 }
 
-TEST(McpProtocolCli, RefusesAnImplicitDefaultRoute) {
-  auto environment = libtmux::test::current_environment();
-  libtmux::test::erase_environment(environment, "TMUX");
-  const auto finished = libtmux::mcp::test::run_server(
-      LIBTMUX_MCP_SERVER_PATH, {}, std::move(environment), {}, std::chrono::seconds{5});
-  ASSERT_FALSE(finished.has_value());
-  EXPECT_NE(finished.error().find("exited with status 1"), std::string::npos);
+TEST(McpProtocolCli, UsesTheProductDedicatedDefaultRoute) {
+  auto fixture = ScopedTmuxServer::start(ScopedTmuxServerOptions{
+      .mode = SocketMode::Name,
+      .session_name = "default-route-holder",
+      .socket_namespace = SocketNamespace::consumer("mcp-default")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  auto environment = fixture->child_environment();
+  const auto messages =
+      converse_with({}, std::move(environment),
+                    {initialize_request(), initialized_notification(),
+                     json{{"jsonrpc", "2.0"},
+                          {"id", 1},
+                          {"method", "resources/read"},
+                          {"params", {{"uri", "tmux://capabilities"}}}}});
+  auto server = libtmux::Server::at_socket_path(
+      (fixture->socket_path().parent_path() / "libtmux-mcp").string());
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+  EXPECT_TRUE(server->kill().has_value());
+  const json* read = response(messages, 1);
+  ASSERT_NE(read, nullptr);
+  const json document =
+      json::parse((*read)["result"]["contents"][0]["text"].get<std::string>());
+  EXPECT_EQ(document["socket"]["serverState"], "created");
+  EXPECT_EQ(document["socket"]["configurationProvenance"], "minimal");
+  EXPECT_EQ(document["socket"]["selectionProvenance"], "default-dedicated");
+  EXPECT_EQ(document["toolCount"], 47);
 }
 
-TEST(McpProtocolCli, RefusesAnInvalidInheritedRoute) {
-  auto environment = libtmux::test::current_environment();
+TEST(McpProtocolCli, DoesNotUseAnInvalidInheritedRoute) {
+  auto fixture = ScopedTmuxServer::start(ScopedTmuxServerOptions{
+      .mode = SocketMode::Name,
+      .session_name = "invalid-route-holder",
+      .socket_namespace = SocketNamespace::consumer("mcp-invalid")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  auto environment = fixture->child_environment();
   libtmux::test::set_environment(environment, "TMUX", "");
   const auto finished = libtmux::mcp::test::run_server(
       LIBTMUX_MCP_SERVER_PATH, {}, std::move(environment), {}, std::chrono::seconds{5});
-  ASSERT_FALSE(finished.has_value());
-  EXPECT_NE(finished.error().find("exited with status 1"), std::string::npos);
+  ASSERT_TRUE(finished.has_value());
+  EXPECT_EQ(*finished, "");
+  auto server = libtmux::Server::at_socket_path(
+      (fixture->socket_path().parent_path() / "libtmux-mcp").string());
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+  EXPECT_TRUE(server->kill().has_value());
 }
 
 } // namespace
