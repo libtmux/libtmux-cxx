@@ -871,7 +871,7 @@ jobs:
               send({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
               listed = receive(2)
               send({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
-                    "params": {"name": "capture_pane", "arguments": {"target": 99},
+                    "params": {"name": "capture_pane", "arguments": {"paneId": 99},
                                "_meta": {"progressToken": "ci",
                                          "claudeCode": {"version": "ci"}}}})
               called = receive(3)
@@ -892,7 +892,7 @@ jobs:
           if not names:
               raise RuntimeError("the server advertised no tools")
           if called.get("error") != {"code": -32602,
-                                     "message": "argument target must be a string"}:
+                                     "message": "argument paneId must be a string"}:
               raise RuntimeError(f"tools/call lost arguments or _meta: {called}")
           print("tools:", ", ".join(names))
           PROBE
