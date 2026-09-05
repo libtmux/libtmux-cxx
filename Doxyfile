@@ -14,6 +14,15 @@ GENERATE_LATEX         = NO
 GENERATE_XML           = YES
 XML_PROGRAMLISTING     = NO
 
+# The first sentence of a comment block is its brief description.
+#
+# Without this, a multi-line /// block becomes the detailed description and
+# the brief stays empty — which is what every consumer shows in a listing.
+# The headers document themselves in prose paragraphs, so the first sentence
+# is the summary a reader wants; 261 of them reach the XML with this on and
+# none without.
+JAVADOC_AUTOBRIEF      = YES
+
 # Public API only; the site documents what callers can use.
 EXTRACT_ALL            = NO
 EXTRACT_PRIVATE        = NO
