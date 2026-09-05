@@ -525,13 +525,14 @@ TEST(McpTools, ExecutableResolutionSkipsUnusableEntriesAndHasNoFixedFallback) {
 TEST(McpTools, ShellCommandCompletionRequiresAnExactBoundedStatusRecord) {
   const std::string marker = "__LIBTMUX_MCP_DONE_nonce__";
   const std::string prefix = "old\n\n" + marker + ":BEGIN\noutput\n";
-  const std::array<std::pair<std::string_view, std::optional<int>>, 8> cases{{
+  const std::array<std::pair<std::string_view, std::optional<int>>, 9> cases{{
       {"0", 0},
       {"23", 23},
       {"255", 255},
       {"", std::nullopt},
       {"-1", std::nullopt},
       {"23x", std::nullopt},
+      {"23\t", std::nullopt},
       {"256", std::nullopt},
       {"%s", std::nullopt},
   }};
@@ -557,8 +558,20 @@ TEST(McpTools, ShellCommandCompletionRequiresAnExactBoundedStatusRecord) {
   EXPECT_EQ(evicted.substr(parsed_evicted->text_begin,
                            parsed_evicted->record_begin - parsed_evicted->text_begin),
             "retained\n");
+  const std::string padded =
+      "old\n\n" + marker + ":BEGIN   \noutput\n\n" + marker + ":23  \nprompt";
+  const auto parsed_padded =
+      libtmux::mcp::detail::shell_command_completion(padded, marker);
+  ASSERT_TRUE(parsed_padded.has_value());
+  EXPECT_EQ(parsed_padded->exit_code, 23);
+  EXPECT_EQ(padded.substr(parsed_padded->text_begin,
+                          parsed_padded->record_begin - parsed_padded->text_begin),
+            "output\n");
   EXPECT_FALSE(libtmux::mcp::detail::shell_command_completion(
                    "\n" + marker + ":BEGIN\n\n" + marker + ":0", marker)
+                   .has_value());
+  EXPECT_FALSE(libtmux::mcp::detail::shell_command_completion(
+                   "\n" + marker + ":BEGIN\t\noutput\n\n" + marker + ":0\n", marker)
                    .has_value());
   EXPECT_FALSE(libtmux::mcp::detail::shell_command_completion(
                    "\n" + marker + "_lookalike:0\n", marker)

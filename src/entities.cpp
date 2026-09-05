@@ -981,6 +981,26 @@ std::string named_repair_guard(std::string_view window_id,
   return condition;
 }
 
+std::string trim_line_end_spaces(std::string_view text) {
+  std::string trimmed;
+  trimmed.reserve(text.size());
+  std::size_t line_begin = 0U;
+  while (line_begin < text.size()) {
+    const std::size_t newline = text.find('\n', line_begin);
+    std::size_t line_end = newline == std::string_view::npos ? text.size() : newline;
+    while (line_end > line_begin && text[line_end - 1U] == ' ') {
+      --line_end;
+    }
+    trimmed.append(text, line_begin, line_end - line_begin);
+    if (newline == std::string_view::npos) {
+      break;
+    }
+    trimmed.push_back('\n');
+    line_begin = newline + 1U;
+  }
+  return trimmed;
+}
+
 } // namespace
 
 expected<Window, CommandFailure> Pane::window() const {
@@ -1124,7 +1144,12 @@ expected<std::string, CommandFailure> Pane::capture(CaptureOptions options) cons
   if (options.keep_trailing_spaces) {
     command.emplace_back("-N");
   }
-  return run(command, options.output_limit);
+  auto captured = run(command, options.output_limit);
+  if (!captured.has_value() || !options.join_wrapped || options.keep_trailing_spaces) {
+    return captured;
+  }
+  // tmux 3.2 and 3.3 make -J retain cell padding even without -N.
+  return trim_line_end_spaces(*captured);
 }
 
 expected<void, CommandFailure> Pane::set_width(long long width) const {

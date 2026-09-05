@@ -178,11 +178,18 @@ resolve_executable(std::string_view search_path,
 std::optional<ShellCommandCompletion>
 shell_command_completion(std::string_view capture, std::string_view marker,
                          std::size_t search_begin) {
-  const std::string boundary = "\n" + std::string{marker} + ":BEGIN\n";
+  const std::string boundary = "\n" + std::string{marker} + ":BEGIN";
   const auto boundary_begin = capture.find(boundary, search_begin);
-  const std::size_t text_begin = boundary_begin == std::string_view::npos
-                                     ? search_begin
-                                     : boundary_begin + boundary.size();
+  std::size_t text_begin = search_begin;
+  if (boundary_begin != std::string_view::npos) {
+    const std::size_t padding_begin = boundary_begin + boundary.size();
+    const auto boundary_end = capture.find('\n', padding_begin);
+    if (boundary_end != std::string_view::npos &&
+        std::ranges::all_of(capture.substr(padding_begin, boundary_end - padding_begin),
+                            [](const char value) { return value == ' '; })) {
+      text_begin = boundary_end + 1U;
+    }
+  }
   const std::string prefix = "\n" + std::string{marker} + ":";
   const auto record_begin = capture.find(prefix, text_begin);
   if (record_begin == std::string_view::npos) {
@@ -193,9 +200,13 @@ shell_command_completion(std::string_view capture, std::string_view marker,
   if (status_end == std::string_view::npos || status_end == status_begin) {
     return std::nullopt;
   }
+  std::size_t status_value_end = status_end;
+  while (status_value_end > status_begin && capture[status_value_end - 1U] == ' ') {
+    --status_value_end;
+  }
   int status = 0;
   const char* const first = capture.data() + status_begin;
-  const char* const last = capture.data() + status_end;
+  const char* const last = capture.data() + status_value_end;
   const auto parsed = std::from_chars(first, last, status);
   if (parsed.ec != std::errc{} || parsed.ptr != last || status < 0 || status > 255) {
     return std::nullopt;
