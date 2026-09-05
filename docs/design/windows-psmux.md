@@ -53,6 +53,12 @@ An explicit `-L default` is rejected: psmux gives it the same environment
 identity as its unselected default, so accepting it would let two spellings
 address one server while looking like two.
 
+The MCP capability resource reports that identity as `namespaceSelector`:
+`psmux:-L:<name>` for a named namespace or `psmux:default` for the unselected
+default. Its `resolvedSocketPath` and `attachCommand` fields are null because
+psmux supplies neither an exact socket path nor a safe captured-session attach
+route; the resource never converts a `psmux:*` identity into a POSIX `-S` path.
+
 ## Two environment hazards
 
 An argument carrying `;`, a carriage return or a newline is refused before

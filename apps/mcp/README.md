@@ -276,8 +276,12 @@ configuration. Explicitly named, path-pinned, inherited, or already-running
 sockets have user-configured or unknown provenance and omit teardown by
 default. A wholly new dedicated minimal socket may default to all four
 toolsets. `tmux://capabilities` reports the selector, selection provenance,
-server state, and configuration provenance. The process stops a dedicated
-daemon only when its startup nonce proves that this invocation created it.
+server state, and configuration provenance. On POSIX, its connection block also
+reports the resolved socket path and exact `tmux -N -S ... attach` command. On
+Windows, it reports the psmux namespace selector and leaves
+`resolvedSocketPath` and `attachCommand` null because psmux has no exact attach
+route. The process stops a dedicated daemon only when its startup nonce proves
+that this invocation created it.
 
 CLI selectors remain available:
 
