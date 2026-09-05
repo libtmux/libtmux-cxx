@@ -1930,9 +1930,9 @@ pane_target_ids(const std::vector<std::string>& pane_ids) {
         }
         return libtmux::unexpected(ToolError{false, "shell command timed out"});
       },
-      "Refuse a human-owned mode in the configured synchronized pane cohort and "
-      "refuse a multi-pane cohort, then send one command and return output after "
-      "its private completion boundary."));
+      "Require one live configured pane, outside human-owned mode and running a "
+      "supported POSIX foreground shell, then send one command and return output "
+      "after its private completion boundary."));
 
   add(make_tool(
       "send_keys", "Send keys to a tmux pane", Toolset::execute,
@@ -1967,8 +1967,8 @@ pane_target_ids(const std::vector<std::string>& pane_ids) {
                                                   preflight->configured_pane_ids)}}})
                    : failure(answer.error());
       },
-      "Refuse a human-owned mode in the configured synchronized pane cohort, then "
-      "deliver one validated tmux key name."));
+      "Require every configured synchronized pane to be live and outside "
+      "human-owned mode, then send one validated tmux key name."));
 
   add(make_tool(
       "send_keys_batch", "Send a key sequence to a tmux pane", Toolset::execute,
@@ -2052,7 +2052,8 @@ pane_target_ids(const std::vector<std::string>& pane_ids) {
                                {"targets", StructuredValue{std::move(targets)}}});
       },
       "Preflight each row's configured synchronized pane cohort independently, "
-      "refusing human-owned modes before its text or key and optional Enter."));
+      "requiring every pane to be live and outside human-owned mode before its text "
+      "or key and optional Enter."));
 
   add(make_tool(
       "paste_text", "Paste text into a tmux pane", Toolset::execute,
@@ -2097,8 +2098,8 @@ pane_target_ids(const std::vector<std::string>& pane_ids) {
         }
         return changed("pane_id", pane->id());
       },
-      "Refuse a human-owned mode in the target pane, then stage a private buffer, "
-      "paste it once, and consume it."));
+      "Require the target pane to be live and outside human-owned mode, then stage "
+      "a private buffer, paste it once, and consume it."));
 
   add(make_tool(
       "set_synchronize_panes", "Set synchronized pane input", Toolset::execute,
