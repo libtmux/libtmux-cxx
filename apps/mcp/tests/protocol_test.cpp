@@ -11,6 +11,7 @@
 #include <iostream>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -190,6 +191,14 @@ const json* response(const std::vector<json>& messages, const json& id) {
   return nullptr;
 }
 
+const json& require_response(const std::vector<json>& messages, const json& id) {
+  const json* reply = response(messages, id);
+  if (reply == nullptr) {
+    throw std::runtime_error{"MCP server did not reply to request " + id.dump()};
+  }
+  return *reply;
+}
+
 std::optional<std::size_t> response_position(const std::vector<json>& messages,
                                              const json& id) {
   for (std::size_t index = 0; index < messages.size(); ++index) {
@@ -312,9 +321,7 @@ protected:
          std::chrono::milliseconds linger = std::chrono::milliseconds{250}) const {
     const auto messages =
         converse_ready(socket(), {call(name, std::move(arguments), id)}, linger);
-    const json* reply = response(messages, id);
-    EXPECT_NE(reply, nullptr);
-    return reply == nullptr ? json::object() : *reply;
+    return require_response(messages, id);
   }
 
   [[nodiscard]] std::string captured(const libtmux::Pane& pane) const {
@@ -424,6 +431,10 @@ protected:
 
   std::unique_ptr<ScopedTmuxServer> fixture_;
 };
+
+TEST(McpProtocolHelpers, MissingResponseStopsTheCaller) {
+  EXPECT_THROW(static_cast<void>(require_response({}, 7)), std::runtime_error);
+}
 
 TEST_F(McpProtocol, EnforcesTheInitializationLifecycle) {
   const auto messages = converse(
