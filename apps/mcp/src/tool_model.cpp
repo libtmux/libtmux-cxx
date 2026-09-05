@@ -651,7 +651,8 @@ ToolResult ToolRegistry::call_definition(const Server& server,
       }
     }
     if (!parameter->allowed_values.empty() &&
-        !std::ranges::contains(parameter->allowed_values, value)) {
+        std::ranges::find(parameter->allowed_values, value) ==
+            parameter->allowed_values.end()) {
       return libtmux::unexpected(
           ToolError{true, key + " must be one of the advertised values"});
     }
