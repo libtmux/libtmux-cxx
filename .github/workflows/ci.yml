@@ -31,6 +31,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # `install` defaults to `detect`, so the action installs ccache with
+      # the runner's package manager -- apt on Linux, brew on macOS -- and
+      # never downloads the ccache build pinned in its own metadata.json.
+      # A bump to this action therefore moves @actions/cache and the action's
+      # own bundle, not the ccache binary: CI currently runs ccache 4.9.1 on
+      # ubuntu-latest and 4.14 on macos-latest.
       - uses: hendrikmuhs/ccache-action@f09c25b45002a07be2955cbe52e8cee55643f89d # v1.2.24
         with:
           key: ${{ github.job }}-tmux-${{ matrix.tmux-version }}
