@@ -474,9 +474,9 @@ CATALOGUE: t.Final = (
         mutation_id="mcp-shell-frame-output-endpoint",
         path="apps/mcp/src/tool_catalog.cpp",
         find=(
-            "  return shell_quote(tmux_executable) + \" -N -S \" + "
+            '  return shell_quote(tmux_executable) + " -N -S " + '
             "shell_quote(socket_path) +\n"
-            "         \" display-message -p \" + std::string{message};"
+            '         " display-message -p " + std::string{message};'
         ),
         replace=(
             "  static_cast<void>(tmux_executable);\n"
