@@ -121,6 +121,50 @@ Server connect(const libtmux::test::ScopedTmuxServer& fixture) {
   return server.value();
 }
 
+class SelectedSocketReplacement final {
+public:
+  SelectedSocketReplacement(std::filesystem::path selected,
+                            std::filesystem::path retained,
+                            const std::filesystem::path& replacement)
+      : selected_{std::move(selected)}, retained_{std::move(retained)} {
+    removed_ = std::filesystem::remove(selected_, error_);
+    if (error_ || !removed_) {
+      if (!error_) {
+        error_ = std::make_error_code(std::errc::no_such_file_or_directory);
+      }
+      return;
+    }
+    std::filesystem::create_hard_link(replacement, selected_, error_);
+  }
+
+  ~SelectedSocketReplacement() { static_cast<void>(restore()); }
+
+  SelectedSocketReplacement(const SelectedSocketReplacement&) = delete;
+  SelectedSocketReplacement& operator=(const SelectedSocketReplacement&) = delete;
+
+  [[nodiscard]] const std::error_code& error() const noexcept { return error_; }
+
+  [[nodiscard]] std::error_code restore() noexcept {
+    if (!removed_) {
+      return {};
+    }
+    std::error_code ignored;
+    static_cast<void>(std::filesystem::remove(selected_, ignored));
+    std::error_code restored;
+    std::filesystem::create_hard_link(retained_, selected_, restored);
+    if (!restored) {
+      removed_ = false;
+    }
+    return restored;
+  }
+
+private:
+  std::filesystem::path selected_;
+  std::filesystem::path retained_;
+  std::error_code error_;
+  bool removed_{};
+};
+
 const std::string& string_field(const ToolOutput& output, std::string_view name) {
   return std::get<std::string>(output.structured.at(std::string{name}).value);
 }
@@ -222,6 +266,68 @@ TEST(McpToolsTmux, SeparatesACallerMistakeFromATmuxRefusal) {
       tools.call(server, "capture_pane", Arguments{{"paneId", "%999"}});
   ASSERT_FALSE(refused.has_value());
   EXPECT_FALSE(refused.error().caller_error);
+}
+
+TEST(McpToolsTmux, RunsShellFramingThroughThePinnedServerEndpoint) {
+  auto original = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(original.has_value()) << original.error();
+  auto replacement = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(replacement.has_value()) << replacement.error();
+  const Server server = connect(*original);
+  const Server other = connect(*replacement);
+
+  auto panes = server.panes();
+  ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
+  ASSERT_FALSE(panes->empty());
+  auto sessions = server.sessions();
+  ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
+  ASSERT_FALSE(sessions->empty());
+  const auto attach = sessions->front().attach_command();
+  ASSERT_TRUE(attach.has_value()) << attach.error().diagnostic;
+  ASSERT_GE(attach->argv().size(), 3U);
+  ASSERT_EQ(attach->argv()[1], "-S");
+  const std::filesystem::path retained = attach->argv()[2];
+  const std::filesystem::path selected = original->socket_path();
+  std::error_code compared;
+  ASSERT_TRUE(std::filesystem::equivalent(retained, selected, compared));
+  ASSERT_FALSE(compared) << compared.message();
+
+  ASSERT_TRUE(other.run({"set-option", "-g", "@mcp-frame-route", "clean"}).has_value());
+  ASSERT_TRUE(other
+                  .run({"set-hook", "-g", "after-display-message",
+                        "set-option -g @mcp-frame-route replacement"})
+                  .has_value());
+
+  {
+    SelectedSocketReplacement replaced{selected, retained, replacement->socket_path()};
+    ASSERT_FALSE(replaced.error()) << replaced.error().message();
+    EXPECT_EQ(server.socket_path(), selected.string());
+
+    const auto answer = all_tools().call(server, "run_shell_command",
+                                         {{"paneId", panes->front().id()},
+                                          {"command", "printf pinned-endpoint-output"},
+                                          {"timeoutMs", "2000"}});
+    ASSERT_TRUE(answer.has_value()) << answer.error().message;
+    EXPECT_EQ(string_field(*answer, "text"), "pinned-endpoint-output");
+
+    const auto replacement_route =
+        other.run({"show-options", "-gv", "@mcp-frame-route"});
+    ASSERT_TRUE(replacement_route.has_value()) << replacement_route.error().diagnostic;
+    EXPECT_EQ(*replacement_route, "clean\n");
+    const auto replacement_capture = other.panes();
+    ASSERT_TRUE(replacement_capture.has_value())
+        << replacement_capture.error().diagnostic;
+    ASSERT_FALSE(replacement_capture->empty());
+    const auto text = replacement_capture->front().capture();
+    ASSERT_TRUE(text.has_value()) << text.error().diagnostic;
+    EXPECT_EQ(text->find("pinned-endpoint-output"), std::string::npos);
+
+    const std::error_code restored = replaced.restore();
+    ASSERT_FALSE(restored) << restored.message();
+  }
+  compared.clear();
+  EXPECT_TRUE(std::filesystem::equivalent(retained, selected, compared));
+  EXPECT_FALSE(compared) << compared.message();
 }
 
 TEST(McpToolsTmux, CapturesAPaneThroughTheLibrary) {

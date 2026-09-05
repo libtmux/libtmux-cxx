@@ -1893,8 +1893,21 @@ pane_target_ids(const std::vector<std::string>& pane_ids) {
         if (!tmux_executable.has_value()) {
           return libtmux::unexpected(tmux_executable.error());
         }
+        const auto session = pane->session();
+        if (!session.has_value()) {
+          return failure(session.error());
+        }
+        const auto endpoint = session->attach_command();
+        if (!endpoint.has_value()) {
+          return failure(endpoint.error());
+        }
+        const std::vector<std::string>& route = endpoint->argv();
+        if (route.size() < 3U || route[1] != "-S" || route[2].empty()) {
+          return libtmux::unexpected(ToolError{
+              false, "run_shell_command requires a retained POSIX tmux endpoint"});
+        }
         const auto payload = detail::shell_command_payload(
-            required(arguments, "command"), *tmux_executable, server.socket_path(),
+            required(arguments, "command"), *tmux_executable, route[2],
             shell_command_nonce);
         if (!payload.has_value()) {
           return libtmux::unexpected(payload.error());
