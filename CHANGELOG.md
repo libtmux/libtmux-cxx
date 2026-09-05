@@ -41,6 +41,9 @@ was recorded as it landed.
   `run_shell_command` also requires one configured target running a supported
   POSIX foreground shell and uses collision-free, subshell-isolated completion
   framing through the exact tmux endpoint.
+- `mcp_swap.py use-local` validates every selected agent config and backup
+  destination before changing any config. A malformed later config leaves the
+  whole selection unchanged.
 
 ## 0.1.0-alpha.6 (2026-08-31)
 
