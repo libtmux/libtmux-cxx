@@ -1320,11 +1320,11 @@ TEST_F(McpProtocol, CapsTheCompleteReadBatchResponseLine) {
   const json operations = json::array({operation, operation});
   json request = call("call_read_tools_batch", {{"operations", operations}}, 1);
   request["id"] = identifier;
-  const auto finished = libtmux::mcp::test::run_server(
+  const auto finished = libtmux::mcp::test::run_server_until_lines(
       LIBTMUX_MCP_SERVER_PATH, {"--socket-path", socket().string()},
       libtmux::test::current_environment(),
       encode_requests({initialize_request(), initialized_notification(), request}),
-      std::chrono::seconds{60}, std::chrono::milliseconds{250});
+      std::chrono::seconds{60}, 2U);
   ASSERT_TRUE(finished.has_value()) << finished.error();
   ASSERT_FALSE(finished->empty());
   ASSERT_EQ(finished->back(), '\n');

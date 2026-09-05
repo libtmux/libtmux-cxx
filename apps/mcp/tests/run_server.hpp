@@ -208,11 +208,10 @@ inline libtmux::expected<std::vector<std::string>, std::string> run_backpressure
   return libtmux::unexpected(program.string() + " did not finish in time");
 }
 
-inline libtmux::expected<std::string, std::string>
-run_server_steps(const std::filesystem::path& program,
-                 std::vector<std::string> arguments,
-                 std::vector<std::string> environment,
-                 const std::vector<InputStep>& steps, std::chrono::seconds timeout) {
+inline libtmux::expected<std::string, std::string> run_server_steps(
+    const std::filesystem::path& program, std::vector<std::string> arguments,
+    std::vector<std::string> environment, const std::vector<InputStep>& steps,
+    std::chrono::seconds timeout, std::size_t output_lines_before_eof = 0U) {
   std::array<int, 2> to_child{};
   std::array<int, 2> from_child{};
   if (::pipe(to_child.data()) != 0 || ::pipe(from_child.data()) != 0) {
@@ -260,29 +259,61 @@ run_server_steps(const std::filesystem::path& program,
       std::this_thread::sleep_for(step.pause_after);
     }
   }
-  ::close(to_child[1]);
-
   const auto deadline = std::chrono::steady_clock::now() + timeout;
   std::string output;
-  while (true) {
+  std::size_t output_lines = 0U;
+  const auto read_output = [&]() -> libtmux::expected<bool, std::string> {
     const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
         deadline - std::chrono::steady_clock::now());
     if (remaining.count() <= 0) {
-      ::kill(child, SIGKILL);
-      ::waitpid(child, nullptr, 0);
-      ::close(from_child[0]);
       return libtmux::unexpected(program.string() + " did not finish in time");
     }
     pollfd waiting{.fd = from_child[0], .events = POLLIN, .revents = 0};
     if (::poll(&waiting, 1, static_cast<int>(remaining.count())) <= 0) {
-      continue;
+      return true;
     }
     std::array<char, 4096> buffer{};
     const auto read_bytes = ::read(from_child[0], buffer.data(), buffer.size());
     if (read_bytes <= 0) {
-      break;
+      return false;
+    }
+    for (ssize_t index = 0; index < read_bytes; ++index) {
+      if (buffer[static_cast<std::size_t>(index)] == '\n') {
+        ++output_lines;
+      }
     }
     output.append(buffer.data(), static_cast<std::size_t>(read_bytes));
+    return true;
+  };
+  const auto abort = [&](std::string error) {
+    ::close(to_child[1]);
+    ::close(from_child[0]);
+    static_cast<void>(::kill(child, SIGKILL));
+    static_cast<void>(::waitpid(child, nullptr, 0));
+    return libtmux::expected<std::string, std::string>{
+        libtmux::unexpected(std::move(error))};
+  };
+  while (output_lines < output_lines_before_eof) {
+    auto more = read_output();
+    if (!more.has_value()) {
+      return abort(more.error());
+    }
+    if (!*more) {
+      return abort(program.string() + " closed output before the expected reply");
+    }
+  }
+  ::close(to_child[1]);
+  while (true) {
+    auto more = read_output();
+    if (!more.has_value()) {
+      ::close(from_child[0]);
+      static_cast<void>(::kill(child, SIGKILL));
+      static_cast<void>(::waitpid(child, nullptr, 0));
+      return libtmux::unexpected(more.error());
+    }
+    if (!*more) {
+      break;
+    }
   }
   ::close(from_child[0]);
 
@@ -313,6 +344,14 @@ run_server(const std::filesystem::path& program, std::vector<std::string> argume
            std::chrono::milliseconds linger_before_eof = {}) {
   return run_server_steps(program, std::move(arguments), std::move(environment),
                           {{input, linger_before_eof}}, timeout);
+}
+
+inline libtmux::expected<std::string, std::string> run_server_until_lines(
+    const std::filesystem::path& program, std::vector<std::string> arguments,
+    std::vector<std::string> environment, const std::string& input,
+    std::chrono::seconds timeout, std::size_t output_lines_before_eof) {
+  return run_server_steps(program, std::move(arguments), std::move(environment),
+                          {{input, {}}}, timeout, output_lines_before_eof);
 }
 
 } // namespace libtmux::mcp::test
