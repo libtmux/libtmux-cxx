@@ -7,6 +7,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 
 from tools.mcp import mcp_swap
 
@@ -138,6 +139,78 @@ class McpSwapPreflightTest(unittest.TestCase):
         explicit = mcp_swap.build_binary_spec(binary, "/tmp/libtmux-private/socket")
         self.assertEqual(inherited.args, [])
         self.assertEqual(explicit.args, ["/tmp/libtmux-private/socket"])
+
+
+class McpSwapTransactionTest(unittest.TestCase):
+    """Keep a selected config set unchanged when preparation fails."""
+
+    def test_malformed_later_config_leaves_earlier_config_unchanged(self) -> None:
+        """Reject the whole selection before writing its first config."""
+        with tempfile.TemporaryDirectory(prefix="mcp-swap-transaction-") as raw:
+            root = pathlib.Path(raw)
+            checkout = root / "checkout"
+            build = root / "build"
+            binary = build / "apps" / "mcp" / "libtmux-mcp-server"
+            binary.parent.mkdir(parents=True)
+            binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            binary.chmod(0o755)
+            marker = checkout / mcp_swap.CHECKOUT_MARKER
+            marker.parent.mkdir(parents=True)
+            marker.write_text(
+                "set_target_properties(server PROPERTIES "
+                "OUTPUT_NAME libtmux-mcp-server)\n",
+                encoding="utf-8",
+            )
+
+            configs = root / "configs"
+            patched_clis = {
+                name: mcp_swap.dataclasses.replace(
+                    info, config_path=configs / f"{name}.config"
+                )
+                for name, info in mcp_swap.CLIS.items()
+            }
+            cursor = patched_clis["cursor"].config_path
+            gemini = patched_clis["gemini"].config_path
+            cursor.parent.mkdir(parents=True)
+            cursor_before = b'{"mcpServers":{"keep":{"command":"keep"}}}\n'
+            gemini_before = b'{"mcpServers": '
+            cursor.write_bytes(cursor_before)
+            gemini.write_bytes(gemini_before)
+            state_dir = root / "state"
+            state_file = state_dir / "state.json"
+
+            with (
+                mock.patch.dict(mcp_swap.CLIS, patched_clis, clear=True),
+                mock.patch.object(mcp_swap, "STATE_DIR", state_dir),
+                mock.patch.object(mcp_swap, "STATE_FILE", state_file),
+            ):
+                result = mcp_swap.main(
+                    [
+                        "use-local",
+                        "--repo",
+                        str(checkout),
+                        "--build-dir",
+                        str(build),
+                        "--no-preflight",
+                        "--cli",
+                        "cursor",
+                        "--cli",
+                        "gemini",
+                    ]
+                )
+
+            self.assertEqual(result, 1)
+            self.assertEqual(cursor.read_bytes(), cursor_before)
+            self.assertEqual(gemini.read_bytes(), gemini_before)
+            self.assertFalse(state_file.exists())
+            self.assertEqual(
+                list(
+                    cursor.parent.glob(
+                        cursor.name + mcp_swap.BACKUP_SUFFIX_PREFIX + "*"
+                    )
+                ),
+                [],
+            )
 
 
 if __name__ == "__main__":
