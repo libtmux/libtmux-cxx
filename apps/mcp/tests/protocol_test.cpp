@@ -22,6 +22,7 @@
 #include <nlohmann/json.hpp>
 
 #include <libtmux/server.hpp>
+#include <libtmux/testing/environment_guard.hpp>
 #include <libtmux/testing/scoped_server.hpp>
 
 #include <unistd.h>
@@ -2324,6 +2325,18 @@ TEST(McpProtocolCli, EstablishesDefaultMinimalDaemonBeforeFreezingProvenance) {
   EXPECT_NE(contents.find("exit-empty off"), std::string::npos);
   EXPECT_EQ(contents.find("run-shell"), std::string::npos);
 
+  auto sentinel = ScopedTmuxServer::start(ScopedTmuxServerOptions{
+      .mode = SocketMode::Name,
+      .session_name = "provenance-sentinel",
+      .socket_namespace = SocketNamespace::consumer("mcp-provenance")});
+  ASSERT_TRUE(sentinel.has_value()) << sentinel.error();
+  const auto private_permissions =
+      std::filesystem::status(sentinel->tmux_tmpdir()).permissions();
+  EXPECT_EQ(private_permissions & (std::filesystem::perms::group_all |
+                                   std::filesystem::perms::others_all),
+            std::filesystem::perms::none);
+  const libtmux::test::EnvironmentGuard tmux_tmpdir{"TMUX_TMPDIR",
+                                                    sentinel->tmux_tmpdir().string()};
   libtmux::mcp::server::CliOptions options;
   options.value =
       "libtmux-cxx-default-provenance-" +
@@ -2331,6 +2344,7 @@ TEST(McpProtocolCli, EstablishesDefaultMinimalDaemonBeforeFreezingProvenance) {
   auto opened = libtmux::mcp::server::open_server(options);
   ASSERT_TRUE(opened.has_value()) << opened.error();
   const std::filesystem::path selected_socket{opened->server.socket_path()};
+  EXPECT_EQ(selected_socket.parent_path().parent_path(), sentinel->tmux_tmpdir());
   EXPECT_FALSE(opened->server_pre_existing);
   EXPECT_TRUE(opened->teardown_enabled_by_default);
   EXPECT_TRUE(opened->owns_daemon);
@@ -2359,6 +2373,11 @@ TEST(McpProtocolCli, EstablishesDefaultMinimalDaemonBeforeFreezingProvenance) {
   EXPECT_TRUE(removed);
   EXPECT_FALSE(cleanup_error) << cleanup_error.message();
   EXPECT_FALSE(std::filesystem::exists(selected_socket));
+  EXPECT_TRUE(sentinel->is_alive());
+  const auto sibling =
+      libtmux::Server::at_socket_path(sentinel->socket_path().string());
+  ASSERT_TRUE(sibling.has_value()) << sibling.error().diagnostic;
+  EXPECT_TRUE(sibling->is_alive());
 }
 
 TEST(McpProtocolCli, StopsTheAuthenticatedDefaultDaemonWhenStdioCloses) {
