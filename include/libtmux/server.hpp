@@ -41,8 +41,8 @@ LIBTMUX_NAMESPACE_BEGIN
 class Server;
 
 namespace detail {
-// Declared so the private constructor has exactly one way in. Defined in a
-// header this package does not install.
+/// Declared so the private constructor has exactly one way in. Defined in a
+/// header this package does not install.
 [[nodiscard]] Server server_over(std::shared_ptr<const Backend> backend);
 } // namespace detail
 
@@ -68,24 +68,24 @@ struct ExecutorOptions {
 
 class Server {
 public:
-  // `-S path`: the socket file, used verbatim.
-  //
-  // These report `CommandFailure`, the same type every other call reports,
-  // rather than the `SocketError` the argument builders use: a factory that
-  // failed differently is a factory nothing can be chained onto. The reason a
-  // selector was rejected is in the diagnostic, and `socket_path_arguments`
-  // still returns the enum for a caller that wants to branch on it.
-  //
-  // An observer, if given, is told about every command this server runs. It is
-  // fixed at construction because the connection is immutable afterwards, and
-  // that is what makes a Server safe to copy between threads. The policy is
-  // fixed for the same reason, and says what a call gets when it names no
-  // timeout or limit of its own.
+  /// `-S path`: the socket file, used verbatim.
+  ///
+  /// These report `CommandFailure`, the same type every other call reports,
+  /// rather than the `SocketError` the argument builders use: a factory that
+  /// failed differently is a factory nothing can be chained onto. The reason a
+  /// selector was rejected is in the diagnostic, and `socket_path_arguments`
+  /// still returns the enum for a caller that wants to branch on it.
+  ///
+  /// An observer, if given, is told about every command this server runs. It is
+  /// fixed at construction because the connection is immutable afterwards, and
+  /// that is what makes a Server safe to copy between threads. The policy is
+  /// fixed for the same reason, and says what a call gets when it names no
+  /// timeout or limit of its own.
   [[nodiscard]] static expected<Server, CommandFailure>
   at_socket_path(std::string_view path, CommandObserver observer = {},
                  ExecutionPolicy policy = {});
-  // Uses native path bytes on POSIX and UTF-8 on Windows. The exact path
-  // constraint keeps string and string-literal calls unambiguous.
+  /// Uses native path bytes on POSIX and UTF-8 on Windows. The exact path
+  /// constraint keeps string and string-literal calls unambiguous.
   template <typename Path>
     requires std::same_as<std::remove_cvref_t<Path>, std::filesystem::path>
   [[nodiscard]] static expected<Server, CommandFailure>
@@ -96,17 +96,17 @@ public:
         std::string_view{reinterpret_cast<const char*>(text.data()), text.size()},
         std::move(observer), policy);
   }
-  // `-L name`: resolved under tmux's socket directory, as the tmux flag does.
+  /// `-L name`: resolved under tmux's socket directory, as the tmux flag does.
   [[nodiscard]] static expected<Server, CommandFailure>
   at_socket_name(std::string_view name, CommandObserver observer = {},
                  ExecutionPolicy policy = {});
 
-  // A socket handle that may create an absent server on its first
-  // `new_session` call or an explicit `run({"start-server"})`. `configuration`
-  // is passed to tmux as `-f`; absent
-  // preserves tmux's user configuration. Every other call remains no-start
-  // while the socket is absent. The selector and configuration are frozen in
-  // the handle, and concurrent first-session calls are serialized.
+  /// A socket handle that may create an absent server on its first
+  /// `new_session` call or an explicit `run({"start-server"})`. `configuration`
+  /// is passed to tmux as `-f`; absent
+  /// preserves tmux's user configuration. Every other call remains no-start
+  /// while the socket is absent. The selector and configuration are frozen in
+  /// the handle, and concurrent first-session calls are serialized.
   [[nodiscard]] static expected<Server, CommandFailure>
   startable_at_socket_path(std::string_view path,
                            std::optional<std::filesystem::path> configuration,
@@ -130,298 +130,298 @@ public:
   startable_at_default(std::optional<std::filesystem::path> configuration,
                        CommandObserver observer = {}, ExecutionPolicy policy = {});
 
-  // The server this process is running inside.
-  //
-  // tmux exports `TMUX` to everything it starts, as
-  // `<socket path>,<server pid>,<session id>`. Only the socket path is read:
-  // the session id is stale the moment a pane moves, and a `#()` job carries
-  // no session at all — so a caller who wants the session asks tmux, rather
-  // than trusting what it inherited.
+  /// The server this process is running inside.
+  ///
+  /// tmux exports `TMUX` to everything it starts, as
+  /// `<socket path>,<server pid>,<session id>`. Only the socket path is read:
+  /// the session id is stale the moment a pane moves, and a `#()` job carries
+  /// no session at all — so a caller who wants the session asks tmux, rather
+  /// than trusting what it inherited.
   [[nodiscard]] static expected<Server, CommandFailure>
   from_env(CommandObserver observer = {}, ExecutionPolicy policy = {});
 
-  // The server tmux would talk to with no `-L` or `-S` at all, which is the
-  // one a person means when they say "my tmux".
+  /// The server tmux would talk to with no `-L` or `-S` at all, which is the
+  /// one a person means when they say "my tmux".
   [[nodiscard]] static expected<Server, CommandFailure>
   at_default(CommandObserver observer = {}, ExecutionPolicy policy = {});
 
-  // A Server over a transport the caller supplies.
-  //
-  // `BackendKind::custom` named this possibility from the first release and
-  // nothing could reach it: the interface a backend had to satisfy lived in a
-  // header this package does not install, so the only transport a consumer
-  // could get was the one that launches a subprocess per command. An executor
-  // answers one command; the library keeps session routing, batching, attach
-  // preparation and the rest on its own side rather than making them a
-  // promise.
+  /// A Server over a transport the caller supplies.
+  ///
+  /// `BackendKind::custom` named this possibility from the first release and
+  /// nothing could reach it: the interface a backend had to satisfy lived in a
+  /// header this package does not install, so the only transport a consumer
+  /// could get was the one that launches a subprocess per command. An executor
+  /// answers one command; the library keeps session routing, batching, attach
+  /// preparation and the rest on its own side rather than making them a
+  /// promise.
   [[nodiscard]] static expected<Server, CommandFailure>
   over(std::shared_ptr<const CommandExecutor> executor, ExecutorOptions options = {},
        CommandObserver observer = {}, ExecutionPolicy policy = {});
 
-  // The local backend contract; no command runs. `tmux_version()` separately
-  // queries the executable or the connected control server.
+  /// The local backend contract; no command runs. `tmux_version()` separately
+  /// queries the executable or the connected control server.
   [[nodiscard]] ServerCapabilities capabilities() const noexcept;
 
-  // The resolved path pinned by this handle, including a startable path whose
-  // server has not been created yet. Empty only when the backend has no socket
-  // path representation.
+  /// The resolved path pinned by this handle, including a startable path whose
+  /// server has not been created yet. Empty only when the backend has no socket
+  /// path representation.
   [[nodiscard]] std::string_view socket_path() const noexcept;
 
-  // Run one command and return its standard output.
-  //
-  // The timeout still rides on the call: how long a caller will wait is a
-  // property of what they asked for, and listing sessions does not share a
-  // deadline with attaching a client. Unset takes the server's
-  // `ExecutionPolicy`, which is thirty seconds rather than forever — a floor,
-  // not a guess at what this particular command needs.
-  // `output_limit` bounds how much of tmux's answer this call will hold. Past
-  // it the command reports `truncated` rather than returning a prefix that
-  // reads like a complete answer. Unset uses the package default, which is
-  // ample for every listing and can be too small for a long scrollback.
+  /// Run one command and return its standard output.
+  ///
+  /// The timeout still rides on the call: how long a caller will wait is a
+  /// property of what they asked for, and listing sessions does not share a
+  /// deadline with attaching a client. Unset takes the server's
+  /// `ExecutionPolicy`, which is thirty seconds rather than forever — a floor,
+  /// not a guess at what this particular command needs.
+  /// `output_limit` bounds how much of tmux's answer this call will hold. Past
+  /// it the command reports `truncated` rather than returning a prefix that
+  /// reads like a complete answer. Unset uses the package default, which is
+  /// ample for every listing and can be too small for a long scrollback.
   [[nodiscard]] expected<std::string, CommandFailure>
   run(const CommandRequest& command,
       std::optional<std::chrono::milliseconds> timeout = {},
       std::optional<std::size_t> output_limit = {}) const;
 
-  // Admit one command to an explicit bounded runtime without waiting for it.
-  // A refusal before admission is returned here; an admitted command carries
-  // every later transport or tmux failure in its operation.
+  /// Admit one command to an explicit bounded runtime without waiting for it.
+  /// A refusal before admission is returned here; an admitted command carries
+  /// every later transport or tmux failure in its operation.
   [[nodiscard]] expected<CommandOperation, CommandFailure>
   try_submit(CommandRuntime& runtime, CommandRequest command,
              std::optional<std::chrono::milliseconds> timeout = {},
              std::optional<std::size_t> output_limit = {}) const;
 
-  // Run several commands in one invocation. tmux runs a batch fail-fast, so a
-  // failed batch is partially applied rather than rolled back, and one exit
-  // status covers the group, so tmux does not identify which member failed.
+  /// Run several commands in one invocation. tmux runs a batch fail-fast, so a
+  /// failed batch is partially applied rather than rolled back, and one exit
+  /// status covers the group, so tmux does not identify which member failed.
   [[nodiscard]] expected<std::string, CommandFailure>
   run_batch(const CommandBatch& batch) const;
 
-  // Run a chain. A chain that failed validation never reaches tmux, and says
-  // which step was wrong rather than surfacing a tmux message about it.
+  /// Run a chain. A chain that failed validation never reaches tmux, and says
+  /// which step was wrong rather than surfacing a tmux message about it.
   [[nodiscard]] expected<std::string, CommandFailure>
   run_chain(const Chain& chain) const;
 
-  // Open a control-mode connection to one session.
-  //
-  // This is the streaming half of the transport: a control connection stays
-  // open, exposes guarded reply blocks in wire order, and delivers events
-  // outside those blocks. The synchronous surface above is unaffected —
-  // a caller who never opens one never pays for it. A guarded block is not a
-  // final result for commands whose work tmux completes asynchronously.
-  //
-  // Fails with `ProtocolError`, not `CommandFailure`, because that is what
-  // the `Connection` it returns speaks: an error type here that the value's
-  // own surface does not use would make the doorway disagree with the room.
+  /// Open a control-mode connection to one session.
+  ///
+  /// This is the streaming half of the transport: a control connection stays
+  /// open, exposes guarded reply blocks in wire order, and delivers events
+  /// outside those blocks. The synchronous surface above is unaffected —
+  /// a caller who never opens one never pays for it. A guarded block is not a
+  /// final result for commands whose work tmux completes asynchronously.
+  ///
+  /// Fails with `ProtocolError`, not `CommandFailure`, because that is what
+  /// the `Connection` it returns speaks: an error type here that the value's
+  /// own surface does not use would make the doorway disagree with the room.
   [[nodiscard]] expected<Connection, ProtocolError>
   control(std::string_view session) const;
-  // The Server supplies the socket and `session` supplies the session name;
-  // every other connection option is kept, including pane output policy.
+  /// The Server supplies the socket and `session` supplies the session name;
+  /// every other connection option is kept, including pane output policy.
   [[nodiscard]] expected<Connection, ProtocolError>
   control_with_options(std::string_view session, ConnectionOptions options) const;
 
-  // A Server whose commands travel over held-open control clients attached to
-  // `session`, rather than one launched process each.
-  //
-  // Only where that gives the same answer. tmux can end a command's guarded
-  // block before the command has finished, so a command goes over the wire
-  // only if the typed surface issues it and tmux cannot defer it as sent —
-  // `split-window` without `-I` or `-W`, `display-message` without `-I`, the
-  // listings, and the other commands in the list in `server.cpp`, each checked
-  // against tmux's `CMD_RETURN_WAIT`. Anything else launches, as it would from
-  // this Server: a deferring command, one that acts on the client itself, an
-  // alias or an abbreviation this cannot see through. A failure reads as the
-  // same `CommandFailure` a launch would give.
-  //
-  // `connections` spreads commands over that many clients. One is enough for
-  // most callers — a connection already carries concurrent requests — and
-  // each extra client is attached to `session` and shows in `clients()`.
-  //
-  // A command with no target resolves against the control client's session
-  // rather than the most recently used one. The typed surface always names a
-  // target; a caller passing raw commands through `run` should too.
+  /// A Server whose commands travel over held-open control clients attached to
+  /// `session`, rather than one launched process each.
+  ///
+  /// Only where that gives the same answer. tmux can end a command's guarded
+  /// block before the command has finished, so a command goes over the wire
+  /// only if the typed surface issues it and tmux cannot defer it as sent —
+  /// `split-window` without `-I` or `-W`, `display-message` without `-I`, the
+  /// listings, and the other commands in the list in `server.cpp`, each checked
+  /// against tmux's `CMD_RETURN_WAIT`. Anything else launches, as it would from
+  /// this Server: a deferring command, one that acts on the client itself, an
+  /// alias or an abbreviation this cannot see through. A failure reads as the
+  /// same `CommandFailure` a launch would give.
+  ///
+  /// `connections` spreads commands over that many clients. One is enough for
+  /// most callers — a connection already carries concurrent requests — and
+  /// each extra client is attached to `session` and shows in `clients()`.
+  ///
+  /// A command with no target resolves against the control client's session
+  /// rather than the most recently used one. The typed surface always names a
+  /// target; a caller passing raw commands through `run` should too.
   [[nodiscard]] expected<Server, ProtocolError>
   over_control(std::string_view session, std::size_t connections = 1) const;
 
-  // Ask the selected subprocess executable with `tmux -V` without touching a
-  // server. The call uses this Server's execution policy.
+  /// Ask the selected subprocess executable with `tmux -V` without touching a
+  /// server. The call uses this Server's execution policy.
   [[nodiscard]] expected<Version, CommandFailure> tmux_version() const;
 
-  // Whether a server is answering on this socket. False covers every reason —
-  // no server, no socket, a tmux that would not run — because a caller who
-  // only wants to know whether to start one does not need to tell them apart.
-  //
-  // Bounded by default: the one call whose whole job is answering "can I reach
-  // this" must not be the call that hangs. A stalled socket or a stopped
-  // server answers no, in time, rather than never.
+  /// Whether a server is answering on this socket. False covers every reason —
+  /// no server, no socket, a tmux that would not run — because a caller who
+  /// only wants to know whether to start one does not need to tell them apart.
+  ///
+  /// Bounded by default: the one call whose whole job is answering "can I reach
+  /// this" must not be the call that hangs. A stalled socket or a stopped
+  /// server answers no, in time, rather than never.
   [[nodiscard]] bool is_alive(std::chrono::milliseconds timeout = std::chrono::seconds{
                                   5}) const;
-  // The same question, keeping why the answer was no.
+  /// The same question, keeping why the answer was no.
   [[nodiscard]] expected<void, CommandFailure>
   check_alive(std::chrono::milliseconds timeout = std::chrono::seconds{5}) const;
 
-  // End the server and everything in it.
+  /// End the server and everything in it.
   [[nodiscard]] expected<void, CommandFailure> kill() const;
 
-  // One snapshot each. Iterating or filtering the result never reaches tmux
-  // again; taking a current view means calling these again.
+  /// One snapshot each. Iterating or filtering the result never reaches tmux
+  /// again; taking a current view means calling these again.
   [[nodiscard]] expected<std::vector<Session>, CommandFailure> sessions() const;
-  // tmux scopes window and pane listings to the current session unless asked
-  // for every one, so `-a` is part of the request rather than a caller's
-  // responsibility to remember.
+  /// tmux scopes window and pane listings to the current session unless asked
+  /// for every one, so `-a` is part of the request rather than a caller's
+  /// responsibility to remember.
   [[nodiscard]] expected<std::vector<Window>, CommandFailure> windows() const;
   [[nodiscard]] expected<std::vector<Pane>, CommandFailure> panes() const;
   [[nodiscard]] expected<std::vector<Client>, CommandFailure> clients() const;
 
-  // Block until someone signals this channel, or the deadline passes.
-  //
-  // tmux latches a signal: one sent while nobody is waiting satisfies the
-  // next wait rather than being lost. That makes signal-before-wait safe,
-  // and it also means a stale signal can release a later waiter, so a
-  // channel is worth naming for one exchange rather than reusing.
-  //
-  // A server that dies under a waiter makes tmux exit zero, which is
-  // indistinguishable from being signalled — a caller would carry on as
-  // though the other side had spoken. This reports that as a failure
-  // instead, which is the reason to prefer it over running the command.
-  //
-  // Omitting `timeout` waits with no deadline: if the channel is never
-  // signalled, this call never returns. Waiting is the whole point of the
-  // request, so that is deliberate rather than a gap — pass a timeout to
-  // bound it.
+  /// Block until someone signals this channel, or the deadline passes.
+  ///
+  /// tmux latches a signal: one sent while nobody is waiting satisfies the
+  /// next wait rather than being lost. That makes signal-before-wait safe,
+  /// and it also means a stale signal can release a later waiter, so a
+  /// channel is worth naming for one exchange rather than reusing.
+  ///
+  /// A server that dies under a waiter makes tmux exit zero, which is
+  /// indistinguishable from being signalled — a caller would carry on as
+  /// though the other side had spoken. This reports that as a failure
+  /// instead, which is the reason to prefer it over running the command.
+  ///
+  /// Omitting `timeout` waits with no deadline: if the channel is never
+  /// signalled, this call never returns. Waiting is the whole point of the
+  /// request, so that is deliberate rather than a gap — pass a timeout to
+  /// bound it.
   [[nodiscard]] expected<void, CommandFailure>
   wait_for(std::string_view channel,
            std::optional<std::chrono::milliseconds> timeout = {}) const;
 
-  // Release whoever is waiting on the channel, or latch it for whoever
-  // waits next.
+  /// Release whoever is waiting on the channel, or latch it for whoever
+  /// waits next.
   [[nodiscard]] expected<void, CommandFailure> signal(std::string_view channel) const;
 
-  // Every command this tmux understands, with its alias and usage.
-  //
-  // Asking beats inferring: the supported-version range is a floor, not a
-  // description, and a distribution can ship a build with commands left
-  // out. A caller deciding whether a capability exists can look.
+  /// Every command this tmux understands, with its alias and usage.
+  ///
+  /// Asking beats inferring: the supported-version range is a floor, not a
+  /// description, and a distribution can ship a build with commands left
+  /// out. A caller deciding whether a capability exists can look.
   [[nodiscard]] expected<std::vector<Command>, CommandFailure> commands() const;
 
-  // The server's cut buffers, newest first as tmux orders them. A server
-  // holding none answers with an empty list rather than a failure, like
-  // every other listing here.
+  /// The server's cut buffers, newest first as tmux orders them. A server
+  /// holding none answers with an empty list rather than a failure, like
+  /// every other listing here.
   [[nodiscard]] expected<std::vector<Buffer>, CommandFailure> buffers() const;
 
-  // Read a file into a named buffer, and write one back out.
-  //
-  // The file is read and written by the tmux server, so the path is the
-  // server's to resolve — which matters when it is not on this machine.
-  // The bytes are not interpreted: a buffer round-tripped through a file
-  // comes back identical.
+  /// Read a file into a named buffer, and write one back out.
+  ///
+  /// The file is read and written by the tmux server, so the path is the
+  /// server's to resolve — which matters when it is not on this machine.
+  /// The bytes are not interpreted: a buffer round-tripped through a file
+  /// comes back identical.
   [[nodiscard]] expected<void, CommandFailure>
   load_buffer(std::string_view name, const std::filesystem::path& from) const;
   [[nodiscard]] expected<void, CommandFailure>
   save_buffer(std::string_view name, const std::filesystem::path& to) const;
 
-  // Bind a key in a key table, and take a binding away again.
-  //
-  // The command is argv, not a string, so nothing here has to be quoted for
-  // tmux to take it apart again correctly.
-  //
-  // A table name containing whitespace is refused. tmux accepts one and then
-  // prints it unquoted in `list-keys`, where `-T my table X command` cannot
-  // be told apart from the table `my` bound to the key `table` — so a name
-  // that survives being listed is required, the same way a target refuses a
-  // name that cannot survive being parsed.
-  //
-  // Key names are tmux's to check: unlike `send-keys`, `bind-key` reports an
-  // unknown one — including an empty one — so there is nothing for this to
-  // add, and nothing here repeats it.
-  //
-  // `repeatable` is tmux's `-r`, letting the key repeat without the prefix
-  // being pressed again.
+  /// Bind a key in a key table, and take a binding away again.
+  ///
+  /// The command is argv, not a string, so nothing here has to be quoted for
+  /// tmux to take it apart again correctly.
+  ///
+  /// A table name containing whitespace is refused. tmux accepts one and then
+  /// prints it unquoted in `list-keys`, where `-T my table X command` cannot
+  /// be told apart from the table `my` bound to the key `table` — so a name
+  /// that survives being listed is required, the same way a target refuses a
+  /// name that cannot survive being parsed.
+  ///
+  /// Key names are tmux's to check: unlike `send-keys`, `bind-key` reports an
+  /// unknown one — including an empty one — so there is nothing for this to
+  /// add, and nothing here repeats it.
+  ///
+  /// `repeatable` is tmux's `-r`, letting the key repeat without the prefix
+  /// being pressed again.
   [[nodiscard]] expected<void, CommandFailure>
   bind_key(std::string_view table, std::string_view key,
            const std::vector<std::string>& command, bool repeatable = false) const;
 
-  // Unbinding a key that was not bound succeeds; unbinding in a table that
-  // does not exist is refused. A table exists only while something is bound
-  // in it, so taking away the last binding takes the table with it.
+  /// Unbinding a key that was not bound succeeds; unbinding in a table that
+  /// does not exist is refused. A table exists only while something is bound
+  /// in it, so taking away the last binding takes the table with it.
   [[nodiscard]] expected<void, CommandFailure> unbind_key(std::string_view table,
                                                           std::string_view key) const;
 
-  // Run a shell command on the machine the server is on.
-  //
-  // Reports whether it ran, not what it printed. tmux hands back the output
-  // on most versions and discards it on 3.3a and 3.4, and an answer that is
-  // empty on two versions in the middle of the range is worse than no answer
-  // at all. A caller that needs the output redirects it to a file.
-  //
-  // What is uniform is the exit status: a command that fails is a failure
-  // here, carrying its code in `exit_code`.
-  //
-  // `background` is tmux's `-b`, which returns as soon as the command is
-  // started. Nothing can then be said about how it ended, so a backgrounded
-  // command that fails still reports success.
+  /// Run a shell command on the machine the server is on.
+  ///
+  /// Reports whether it ran, not what it printed. tmux hands back the output
+  /// on most versions and discards it on 3.3a and 3.4, and an answer that is
+  /// empty on two versions in the middle of the range is worse than no answer
+  /// at all. A caller that needs the output redirects it to a file.
+  ///
+  /// What is uniform is the exit status: a command that fails is a failure
+  /// here, carrying its code in `exit_code`.
+  ///
+  /// `background` is tmux's `-b`, which returns as soon as the command is
+  /// started. Nothing can then be said about how it ended, so a backgrounded
+  /// command that fails still reports success.
   [[nodiscard]] expected<void, CommandFailure> run_shell(std::string_view command,
                                                          bool background = false) const;
 
-  // Run the commands in a file, the way tmux runs a configuration file.
-  //
-  // The server reads the file, so the path is the server's to resolve. A
-  // file it cannot read is reported rather than passed over.
-  // A control-backed Server rejects execution because the file can add an
-  // unknowable number of reply blocks; `check_file` remains available there.
+  /// Run the commands in a file, the way tmux runs a configuration file.
+  ///
+  /// The server reads the file, so the path is the server's to resolve. A
+  /// file it cannot read is reported rather than passed over.
+  /// A control-backed Server rejects execution because the file can add an
+  /// unknowable number of reply blocks; `check_file` remains available there.
   [[nodiscard]] expected<void, CommandFailure>
   source_file(const std::filesystem::path& file) const;
 
-  // Parse the same file and report what tmux would refuse in it, running
-  // none of it. This is how a program checks a configuration it is about to
-  // apply without applying half of it first.
+  /// Parse the same file and report what tmux would refuse in it, running
+  /// none of it. This is how a program checks a configuration it is about to
+  /// apply without applying half of it first.
   [[nodiscard]] expected<void, CommandFailure>
   check_file(const std::filesystem::path& file) const;
 
-  // Ask tmux to expand a format, against no target but the server itself.
-  //
-  // Unguarded, unlike the entity forms: there is no target here that could
-  // have gone away. A server kept alive with no sessions still answers its
-  // own fields, and answers the session-scoped ones with nothing — which is
-  // the truth about that server, not a failure to report.
+  /// Ask tmux to expand a format, against no target but the server itself.
+  ///
+  /// Unguarded, unlike the entity forms: there is no target here that could
+  /// have gone away. A server kept alive with no sessions still answers its
+  /// own fields, and answers the session-scoped ones with nothing — which is
+  /// the truth about that server, not a failure to report.
   [[nodiscard]] expected<std::string, CommandFailure>
   expand(std::string_view format) const;
 
-  // Put a message on the status line of every attached client, and send it
-  // to each control client as `%message`.
-  //
-  // tmux expands the text as a format, so a `#{...}` in it is substituted
-  // rather than shown. Text built from data belongs in `escape_literal`
-  // first.
+  /// Put a message on the status line of every attached client, and send it
+  /// to each control client as `%message`.
+  ///
+  /// tmux expands the text as a format, so a `#{...}` in it is substituted
+  /// rather than shown. Text built from data belongs in `escape_literal`
+  /// first.
   [[nodiscard]] expected<void, CommandFailure>
   show_message(std::string_view text) const;
 
-  // Put text in a named buffer, replacing what was there. An empty name
-  // lets tmux choose one, which is what a caller copying without caring
-  // about the name wants.
+  /// Put text in a named buffer, replacing what was there. An empty name
+  /// lets tmux choose one, which is what a caller copying without caring
+  /// about the name wants.
   [[nodiscard]] expected<void, CommandFailure> set_buffer(std::string_view name,
                                                           std::string_view data) const;
 
-  // One object by target, for a caller holding an id or a `session:window`
-  // path that came from somewhere else. The target is resolved the way tmux
-  // resolves it, so a session target names that session's active pane and the
-  // window that pane is in. A target tmux cannot resolve is reported missing.
+  /// One object by target, for a caller holding an id or a `session:window`
+  /// path that came from somewhere else. The target is resolved the way tmux
+  /// resolves it, so a session target names that session's active pane and the
+  /// window that pane is in. A target tmux cannot resolve is reported missing.
   [[nodiscard]] expected<Session, CommandFailure>
   session(std::string_view target) const;
   [[nodiscard]] expected<Window, CommandFailure> window(std::string_view target) const;
   [[nodiscard]] expected<Pane, CommandFailure> pane(std::string_view target) const;
 
-  // Wait until the pane `target` names produces `wanted`. For a caller holding
-  // a target rather than a `Pane` — `Pane::wait_for_text` is the same wait
-  // without the lookup. One deadline covers both: a target that will not
-  // resolve cannot spend the whole budget and leave nothing for waiting, and
-  // `WaitPath::pane_lookup` says that is what happened.
+  /// Wait until the pane `target` names produces `wanted`. For a caller holding
+  /// a target rather than a `Pane` — `Pane::wait_for_text` is the same wait
+  /// without the lookup. One deadline covers both: a target that will not
+  /// resolve cannot spend the whole budget and leave nothing for waiting, and
+  /// `WaitPath::pane_lookup` says that is what happened.
   [[nodiscard]] expected<WaitResult, CommandFailure>
   wait_for_text(std::string_view target, std::string_view wanted,
                 const WaitOptions& options = {}) const;
 
-  // Created detached, and returned, because tmux prints what it made. Windows
-  // psmux rejects typed creation: concurrent creators cannot prove ownership.
+  /// Created detached, and returned, because tmux prints what it made. Windows
+  /// psmux rejects typed creation: concurrent creators cannot prove ownership.
   [[nodiscard]] expected<Session, CommandFailure>
   new_session(std::string_view name) const;
   [[nodiscard]] expected<Session, CommandFailure>
@@ -429,45 +429,45 @@ public:
 
   [[nodiscard]] expected<std::vector<OptionEntry>, CommandFailure>
   options(std::string_view target = {}) const;
-  // The server's own options, which are neither session nor window options
-  // and are the only ones a server without a session still has.
+  /// The server's own options, which are neither session nor window options
+  /// and are the only ones a server without a session still has.
   [[nodiscard]] expected<std::vector<OptionEntry>, CommandFailure>
   server_options() const;
   [[nodiscard]] expected<void, CommandFailure>
   set_server_option(std::string_view name, std::string_view value) const;
   [[nodiscard]] expected<std::vector<OptionEntry>, CommandFailure>
   global_options() const;
-  // Sets the value every session inherits, rather than one session's own.
+  /// Sets the value every session inherits, rather than one session's own.
   [[nodiscard]] expected<void, CommandFailure>
   set_global_option(std::string_view name, std::string_view value) const;
   [[nodiscard]] expected<std::vector<OptionEntry>, CommandFailure>
   hooks(std::string_view target = {}) const;
 
-  // The environment every new process on this server starts with.
-  //
-  // Server-global here; a session has its own. tmux keeps hidden entries
-  // apart from these, and this asks for neither `-h` nor the shell form, so
-  // what comes back is the plain listing a caller means.
+  /// The environment every new process on this server starts with.
+  ///
+  /// Server-global here; a session has its own. tmux keeps hidden entries
+  /// apart from these, and this asks for neither `-h` nor the shell form, so
+  /// what comes back is the plain listing a caller means.
   [[nodiscard]] expected<std::vector<EnvironmentEntry>, CommandFailure>
   environment() const;
 
-  // Bind a name. An empty value binds it to empty, which is not the same as
-  // not binding it at all.
+  /// Bind a name. An empty value binds it to empty, which is not the same as
+  /// not binding it at all.
   [[nodiscard]] expected<void, CommandFailure>
   set_environment(std::string_view name, std::string_view value) const;
 
-  // Forget the name, so a new process inherits whatever the tmux server
-  // itself has. This is tmux's `-u`.
+  /// Forget the name, so a new process inherits whatever the tmux server
+  /// itself has. This is tmux's `-u`.
   [[nodiscard]] expected<void, CommandFailure>
   unset_environment(std::string_view name) const;
 
-  // Keep the name and take it out of what a new process inherits — tmux's
-  // `-r`, which a listing then prints as `-NAME`. Different from forgetting
-  // it: this one is remembered, as an instruction to remove.
+  /// Keep the name and take it out of what a new process inherits — tmux's
+  /// `-r`, which a listing then prints as `-NAME`. Different from forgetting
+  /// it: this one is remembered, as an instruction to remove.
   [[nodiscard]] expected<void, CommandFailure>
   remove_environment(std::string_view name) const;
-  // A hook set globally is not reported by the unscoped listing, so reading it
-  // back needs the scope it was set with.
+  /// A hook set globally is not reported by the unscoped listing, so reading it
+  /// back needs the scope it was set with.
   [[nodiscard]] expected<std::vector<OptionEntry>, CommandFailure> global_hooks() const;
   [[nodiscard]] expected<void, CommandFailure>
   set_global_hook(std::string_view name, std::string_view command) const;
@@ -478,9 +478,9 @@ private:
 
   friend Server detail::server_over(std::shared_ptr<const detail::Backend> backend);
 
-  // Whether this server is known to get `feature` wrong, which is what the
-  // typed surface refuses on. Distinct from `capabilities().supports`, which a
-  // caller asks about what it may rely on.
+  /// Whether this server is known to get `feature` wrong, which is what the
+  /// typed surface refuses on. Distinct from `capabilities().supports`, which a
+  /// caller asks about what it may rely on.
   [[nodiscard]] bool refuses(ServerFeature feature) const noexcept;
 
   [[nodiscard]] expected<std::vector<OptionEntry>, CommandFailure>

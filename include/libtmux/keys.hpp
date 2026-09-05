@@ -32,9 +32,9 @@ enum class KeyError { empty, unknown_name };
   return "unknown key error";
 }
 
-// Named keys tmux accepts, taken from the table in its own key-string.c at
-// the oldest supported release. Function keys are generated rather than
-// listed, and a single character is handled separately.
+/// Named keys tmux accepts, taken from the table in its own key-string.c at
+/// the oldest supported release. Function keys are generated rather than
+/// listed, and a single character is handled separately.
 inline constexpr std::array kNamedKeys{
     std::string_view{"BSpace"},   std::string_view{"BTab"},
     std::string_view{"DC"},       std::string_view{"Delete"},
@@ -78,7 +78,7 @@ inline constexpr std::array kNamedKeys{
   return value >= 1 && value <= 12;
 }
 
-// Accept a key with any number of C-, M-, or S- modifiers.
+/// Accept a key with any number of C-, M-, or S- modifiers.
 [[nodiscard]] inline bool is_key_name(std::string_view key) noexcept {
   while (key.size() > 2 && key[1] == '-' &&
          (key[0] == 'C' || key[0] == 'M' || key[0] == 'S')) {
@@ -103,14 +103,14 @@ inline constexpr std::array kNamedKeys{
   return false;
 }
 
-// Send text exactly as written: the flag, the end of flags, and the text.
-//
-// `--` is part of the fragment rather than something a caller appends, because
-// text beginning with a dash is read as another `send-keys` option without it
-// and that is not a mistake worth making twice. It was made twice: this
-// returned the flag and the text alone, `Pane::send_text` inserted the
-// separator afterwards, and `Chain::send_text` did not — so the same text
-// through the two spellings reached tmux as two different commands.
+/// Send text exactly as written: the flag, the end of flags, and the text.
+///
+/// `--` is part of the fragment rather than something a caller appends, because
+/// text beginning with a dash is read as another `send-keys` option without it
+/// and that is not a mistake worth making twice. It was made twice: this
+/// returned the flag and the text alone, `Pane::send_text` inserted the
+/// separator afterwards, and `Chain::send_text` did not — so the same text
+/// through the two spellings reached tmux as two different commands.
 [[nodiscard]] inline expected<std::vector<std::string>, KeyError>
 literal_arguments(std::string_view text) {
   if (text.empty()) {

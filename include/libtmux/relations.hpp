@@ -22,12 +22,12 @@ LIBTMUX_NAMESPACE_BEGIN
 
 enum class Quantifier { any_of, all_of, none_of, is };
 
-// Join two listings on the id one of them carries.
-//
-// A relation predicate has to reach the related rows without running tmux, so
-// the caller lists both kinds once and links them here. The result borrows the
-// rows it was given, exactly as a filtered view does, so it must not outlive
-// the listing it reads.
+/// Join two listings on the id one of them carries.
+///
+/// A relation predicate has to reach the related rows without running tmux, so
+/// the caller lists both kinds once and links them here. The result borrows the
+/// rows it was given, exactly as a filtered view does, so it must not outlive
+/// the listing it reads.
 template <typename Parent, typename Child>
 [[nodiscard]] auto children_of(const std::vector<Child>& rows,
                                StringFieldHandle<Child> foreign_key,
@@ -40,13 +40,13 @@ template <typename Parent, typename Child>
   };
 }
 
-// The rows are borrowed, so a listing that dies at the semicolon is refused
-// here rather than dangling inside the predicate later.
+/// The rows are borrowed, so a listing that dies at the semicolon is refused
+/// here rather than dangling inside the predicate later.
 template <typename Parent, typename Child>
 auto children_of(const std::vector<Child>&&, StringFieldHandle<Child>,
                  StringFieldHandle<Parent>) = delete;
 
-// The same join read the other way: the one row a child points at, or none.
+/// The same join read the other way: the one row a child points at, or none.
 template <typename Child, typename Parent>
 [[nodiscard]] auto parent_of(const std::vector<Parent>& rows,
                              StringFieldHandle<Child> foreign_key,
@@ -62,8 +62,8 @@ template <typename Child, typename Parent>
   };
 }
 
-// The related entity is whatever the accessor yields, so a bare flag field can
-// stand in for a predicate here exactly as it does in `matching`.
+/// The related entity is whatever the accessor yields, so a bare flag field can
+/// stand in for a predicate here exactly as it does in `matching`.
 template <typename Entity, typename Read>
 using RelatedMany = std::ranges::range_value_t<
     std::remove_cvref_t<std::invoke_result_t<Read, const Entity&>>>;
@@ -72,8 +72,8 @@ template <typename Entity, typename Read>
 using RelatedOne = std::remove_cvref_t<
     std::remove_pointer_t<std::invoke_result_t<Read, const Entity&>>>;
 
-// To-many and to-one links take different accessors, so they get different
-// builders rather than one that has to compile both shapes.
+/// To-many and to-one links take different accessors, so they get different
+/// builders rather than one that has to compile both shapes.
 template <typename Entity>
 [[nodiscard]] FilterExpr<Entity> quantified(std::string name, Quantifier quantifier,
                                             auto read, auto predicate) {
@@ -115,8 +115,8 @@ template <typename Entity>
   return quantified<Entity>(std::move(name), Quantifier::none_of, read, predicate);
 }
 
-// An absent to-one link never satisfies `is`: a window with no active pane is
-// not a window whose active pane runs an editor.
+/// An absent to-one link never satisfies `is`: a window with no active pane is
+/// not a window whose active pane runs an editor.
 template <typename Entity>
 [[nodiscard]] FilterExpr<Entity> is(std::string name, auto read, auto predicate) {
   const FilterExpr<RelatedOne<Entity, decltype(read)>> test{predicate};

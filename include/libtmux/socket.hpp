@@ -56,7 +56,7 @@ enum class SocketError {
   return "unknown socket error";
 }
 
-// `-L name`: a single component resolved under the socket directory.
+/// `-L name`: a single component resolved under the socket directory.
 [[nodiscard]] inline expected<std::vector<std::string>, SocketError>
 socket_name_arguments(std::string_view name) {
   if (name.empty()) {
@@ -72,7 +72,7 @@ socket_name_arguments(std::string_view name) {
   return std::vector<std::string>{"-L", std::string{name}};
 }
 
-// `-S path`: used verbatim, so the address limit applies to it directly.
+/// `-S path`: used verbatim, so the address limit applies to it directly.
 [[nodiscard]] inline expected<std::vector<std::string>, SocketError>
 socket_path_arguments(std::string_view path) {
   if (path.empty()) {

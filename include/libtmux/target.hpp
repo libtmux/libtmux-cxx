@@ -31,10 +31,10 @@ enum class TargetError {
   return "unknown target error";
 }
 
-// Whether a value is written as an id, which is what decides that it needs no
-// separator validation below — not whether tmux would resolve it. `%x` is an
-// id by this test and no pane by tmux's, and both are right: it carries no
-// separator, so composing it can only produce the caller's own mistake back.
+/// Whether a value is written as an id, which is what decides that it needs no
+/// separator validation below — not whether tmux would resolve it. `%x` is an
+/// id by this test and no pane by tmux's, and both are right: it carries no
+/// separator, so composing it can only produce the caller's own mistake back.
 [[nodiscard]] constexpr bool is_pane_id(std::string_view value) noexcept {
   return value.size() > 1 && value.front() == '%';
 }
@@ -45,8 +45,8 @@ enum class TargetError {
   return value.size() > 1 && value.front() == '$';
 }
 
-// Validate one path component. Ids skip validation because they contain no
-// separator by construction.
+/// Validate one path component. Ids skip validation because they contain no
+/// separator by construction.
 [[nodiscard]] inline expected<std::string, TargetError>
 path_component(std::string_view name) {
   if (name.empty()) {
@@ -58,7 +58,7 @@ path_component(std::string_view name) {
   return std::string{name};
 }
 
-// A session target is its id, or its validated name.
+/// A session target is its id, or its validated name.
 [[nodiscard]] inline expected<std::string, TargetError>
 session_target(std::string_view session) {
   if (is_session_id(session)) {
@@ -67,7 +67,7 @@ session_target(std::string_view session) {
   return path_component(session);
 }
 
-// A window target is its id, which needs no session, or `session:window`.
+/// A window target is its id, which needs no session, or `session:window`.
 [[nodiscard]] inline expected<std::string, TargetError>
 window_target(std::string_view session, std::string_view window) {
   if (is_window_id(window)) {
@@ -84,7 +84,7 @@ window_target(std::string_view session, std::string_view window) {
   return *left + ":" + *right;
 }
 
-// A pane target is its id, or `session:window.pane`.
+/// A pane target is its id, or `session:window.pane`.
 [[nodiscard]] inline expected<std::string, TargetError>
 pane_target(std::string_view session, std::string_view window, std::string_view pane) {
   if (is_pane_id(pane)) {
