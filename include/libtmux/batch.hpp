@@ -24,9 +24,9 @@ inline constexpr std::string_view kCommandSeparator = ";";
 
 class CommandBatch {
 public:
-  // Append one command. An empty command is rejected rather than emitted,
-  // because an empty argv between separators makes tmux read the next
-  // command's name as an argument.
+  /// Append one command. An empty command is rejected rather than emitted,
+  /// because an empty argv between separators makes tmux read the next
+  /// command's name as an argument.
   bool add(CommandRequest command) {
     if (command.empty()) {
       return false;
@@ -38,8 +38,8 @@ public:
   [[nodiscard]] std::size_t size() const noexcept { return commands_.size(); }
   [[nodiscard]] bool empty() const noexcept { return commands_.empty(); }
 
-  // Render the whole batch as one argv. A single command renders with no
-  // separator, so a batch of one is byte-identical to running it alone.
+  /// Render the whole batch as one argv. A single command renders with no
+  /// separator, so a batch of one is byte-identical to running it alone.
   [[nodiscard]] CommandRequest request() const {
     CommandRequest result;
     for (const CommandRequest& command : commands_) {

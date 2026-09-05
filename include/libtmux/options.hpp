@@ -18,32 +18,32 @@ LIBTMUX_NAMESPACE_BEGIN
 
 struct OptionEntry {
   std::string name;
-  // Present only for array options, which tmux indexes sparsely: absent
-  // indexes are genuinely unset rather than empty.
+  /// Present only for array options, which tmux indexes sparsely: absent
+  /// indexes are genuinely unset rather than empty.
   std::optional<std::size_t> index;
   std::string value;
-  // True when the value comes from a wider scope rather than being set here.
-  // `show-options -A` marks these with a trailing asterisk on the name.
-  //
-  // tmux accepts a user option whose name itself ends in an asterisk, and
-  // prints `@star* value` for one set here — which is the same shape as
-  // `status-position* bottom` for an inherited option. In a listing the two
-  // cannot be told apart, and the marker reading wins. Asking for one option
-  // by name is exact, because the name asked for settles it.
+  /// True when the value comes from a wider scope rather than being set here.
+  /// `show-options -A` marks these with a trailing asterisk on the name.
+  ///
+  /// tmux accepts a user option whose name itself ends in an asterisk, and
+  /// prints `@star* value` for one set here — which is the same shape as
+  /// `status-position* bottom` for an inherited option. In a listing the two
+  /// cannot be told apart, and the marker reading wins. Asking for one option
+  /// by name is exact, because the name asked for settles it.
   bool inherited{};
 };
 
-// Undo the quoting tmux applies when it prints a value.
-//
-// tmux picks one of four forms, and a reader that knows only one corrupts the
-// rest: `''` for an empty value; double quotes when the value contains any of
-// ` #';${}`; single quotes when it contains a double quote; and otherwise no
-// quotes at all. Inside any of them the body is escaped the way `vis` does it
-// — `\t`, `\n`, `\\`, `\ooo` for a byte with no printable form — and a
-// leading tilde is escaped whether or not anything else is.
-//
-// This is the inverse of tmux's own `args_escape`, so a value read here and
-// written back is the value that was there.
+/// Undo the quoting tmux applies when it prints a value.
+///
+/// tmux picks one of four forms, and a reader that knows only one corrupts the
+/// rest: `''` for an empty value; double quotes when the value contains any of
+/// ` #';${}`; single quotes when it contains a double quote; and otherwise no
+/// quotes at all. Inside any of them the body is escaped the way `vis` does it
+/// — `\\t`, `\\n`, `\\\\`, `\\ooo` for a byte with no printable form — and a
+/// leading tilde is escaped whether or not anything else is.
+///
+/// This is the inverse of tmux's own `args_escape`, so a value read here and
+/// written back is the value that was there.
 [[nodiscard]] inline std::string unquote(std::string_view value) {
   if (value == "''") {
     return {};
@@ -115,8 +115,8 @@ struct OptionEntry {
   return result;
 }
 
-// Parse one line. Returns nullopt for a blank line so callers can feed raw
-// output straight in.
+/// Parse one line. Returns nullopt for a blank line so callers can feed raw
+/// output straight in.
 [[nodiscard]] inline std::optional<OptionEntry> parse_option(std::string_view line) {
   if (line.empty()) {
     return std::nullopt;
