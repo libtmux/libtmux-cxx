@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
 #include <string_view>
 
@@ -27,6 +28,8 @@ struct CapabilityDisclosure {
 capabilities_resource_result(const ToolRegistry& tools, ProtocolEra era,
                              const CapabilityDisclosure& disclosure = {});
 [[nodiscard]] json tool_success(const ToolOutput& answer, ProtocolEra era);
+[[nodiscard]] json tool_success(const ToolOutput& answer, ProtocolEra era,
+                                std::size_t maximum_result_bytes);
 [[nodiscard]] json tool_failure(std::string message, ProtocolEra era);
 
 } // namespace libtmux::mcp::server

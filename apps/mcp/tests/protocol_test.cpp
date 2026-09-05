@@ -10,11 +10,13 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 
+#include <libtmux/server.hpp>
 #include <libtmux/testing/scoped_server.hpp>
 
 #include "cli.hpp"
@@ -569,6 +571,70 @@ TEST_F(McpProtocol, RunsTypedReadBatchInDeclaredOrder) {
   EXPECT_EQ((*rejected)["error"]["code"], -32602);
   EXPECT_NE((*rejected)["error"]["message"].get<std::string>().find("unknown argument"),
             std::string::npos);
+}
+
+TEST_F(McpProtocol, CapsTheCompleteReadBatchResponseLine) {
+  auto server = libtmux::Server::at_socket_path(socket().string());
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+  ASSERT_TRUE(server->run({"set-option", "-g", "history-limit", "25000"}).has_value());
+  auto sessions = server->sessions();
+  ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
+  ASSERT_FALSE(sessions->empty());
+  auto window = sessions->front().new_window("mcp-response-cap");
+  ASSERT_TRUE(window.has_value()) << window.error().diagnostic;
+  auto panes = window->panes();
+  ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
+  ASSERT_EQ(panes->size(), 1U);
+  const std::string pane_id{panes->front().id()};
+  ASSERT_TRUE(panes->front()
+                  .send_text("awk 'BEGIN { for (i=0; i<20000; ++i) print "
+                             "\"xxxxxxx\" }'")
+                  .has_value());
+  ASSERT_TRUE(panes->front().send_key("Enter").has_value());
+  int history_size = 0;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{30};
+  while (history_size < 18'000 && std::chrono::steady_clock::now() < deadline) {
+    const auto history =
+        server->run({"display-message", "-p", "-t", pane_id, "#{history_size}"});
+    ASSERT_TRUE(history.has_value()) << history.error().diagnostic;
+    history_size = std::stoi(*history);
+    std::this_thread::sleep_for(std::chrono::milliseconds{25});
+  }
+  ASSERT_GE(history_size, 18'000);
+
+  const std::string identifier(600'000U, 'i');
+  const json operation{{"tool", "capture_pane"},
+                       {"arguments", {{"paneId", pane_id}, {"history", true}}}};
+  const json operations = json::array({operation, operation});
+  json request = call("call_read_tools_batch", {{"operations", operations}}, 1);
+  request["id"] = identifier;
+  const auto finished = libtmux::mcp::test::run_server(
+      LIBTMUX_MCP_SERVER_PATH, {"--socket-path", socket().string()},
+      libtmux::test::current_environment(),
+      encode_requests({initialize_request(), initialized_notification(), request}),
+      std::chrono::seconds{60}, std::chrono::milliseconds{250});
+  ASSERT_TRUE(finished.has_value()) << finished.error();
+  ASSERT_FALSE(finished->empty());
+  ASSERT_EQ(finished->back(), '\n');
+  const std::size_t first_end = finished->find('\n');
+  ASSERT_NE(first_end, std::string::npos);
+  const std::size_t response_start = first_end + 1U;
+  ASSERT_EQ(finished->find('\n', response_start), finished->size() - 1U);
+  const std::string_view response_line{*finished};
+  const std::string_view call_line =
+      response_line.substr(response_start, finished->size() - response_start - 1U);
+
+  EXPECT_LE(call_line.size() + 1U, 1'000'000U);
+  const json reply = json::parse(call_line);
+  EXPECT_EQ(reply["id"], identifier);
+  const json& aggregate = reply["result"]["structuredContent"];
+  ASSERT_EQ(aggregate["results"].size(), 2U);
+  EXPECT_TRUE(aggregate["truncated"].get<bool>());
+  for (std::size_t index = 0; index < 2U; ++index) {
+    EXPECT_EQ(aggregate["results"][index]["index"], index);
+    EXPECT_TRUE(aggregate["results"][index]["resultTruncated"].get<bool>());
+    EXPECT_TRUE(aggregate["results"][index]["result"].is_null());
+  }
 }
 
 TEST_F(McpProtocol, ExpandsOnlyBoundedValidatedVariableNames) {

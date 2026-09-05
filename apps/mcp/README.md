@@ -71,6 +71,15 @@ process. `set_synchronize_panes` is the only tool marked as amplifying future
 input; the two key-sending tools report every resolved pane target when tmux
 copies input across the window.
 
+`call_read_tools_batch` accepts one through 16 serial inspect calls, excluding
+itself and the self-bounded `wait_for_text`. Exact tool exclusions prune its
+published variants, declared authority, and dispatch together. Selecting only
+the aggregate keeps those nested operations callable without advertising them
+separately. `onError` selects stop or continue behavior. Completed rows remain
+in order, and oversized nested payloads are marked and elided to keep the
+complete newline-terminated JSON-RPC response, including its request ID, within
+exactly 1,000,000 serialized bytes.
+
 `search_panes` accepts a pattern of at most 256 characters, returns at most
 1,024 matches, and uses at most 8,388,608 character-comparison work units.
 `wait_for_text` accepts a literal of at most 4,096 characters, uses at most

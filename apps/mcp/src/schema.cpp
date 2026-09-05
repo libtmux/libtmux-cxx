@@ -594,6 +594,12 @@ json tool_success(const ToolOutput& answer, ProtocolEra era) {
   return complete_tool_result(structured, era);
 }
 
+json tool_success(const ToolOutput& answer, ProtocolEra era,
+                  std::size_t maximum_result_bytes) {
+  return bounded_tool_result(encode(StructuredValue{answer.structured}), era,
+                             maximum_result_bytes);
+}
+
 json tool_failure(std::string message, ProtocolEra era) {
   json result{
       {"content", json::array({json{{"type", "text"}, {"text", std::move(message)}}})},

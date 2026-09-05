@@ -226,6 +226,16 @@ json ProtocolSession::execute(const CallRequest& request, const CallContext& con
   }
   const auto answer = tools_.call(server_, tool->name, *arguments, context);
   if (answer.has_value()) {
+    if (answer->maximum_response_bytes.has_value()) {
+      const std::size_t empty_result_bytes = json::object().dump().size();
+      const std::size_t envelope_bytes =
+          success(request.id, json::object()).dump().size() - empty_result_bytes + 1U;
+      const std::size_t result_bytes =
+          *answer->maximum_response_bytes > envelope_bytes
+              ? *answer->maximum_response_bytes - envelope_bytes
+              : 0U;
+      return success(request.id, tool_success(*answer, request.era, result_bytes));
+    }
     return success(request.id, tool_success(*answer, request.era));
   }
   if (answer.error().caller_error) {
