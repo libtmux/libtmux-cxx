@@ -2468,7 +2468,7 @@ TEST(McpProtocolCli, PublishesStaticEffectiveCapabilitiesInBothEras) {
             "double-hash-once");
   EXPECT_EQ((*create_session)["inputLiteralization"]["name"], "double-hash-once");
   EXPECT_EQ((*create_session)["inputLiteralization"]["windowName"], "double-hash-once");
-  for (const auto [tool_name, field_name] : {std::pair{"create_window", "name"}}) {
+  for (const auto& [tool_name, field_name] : {std::pair{"create_window", "name"}}) {
     const auto row = std::ranges::find_if(
         document["tools"], [&](const json& tool) { return tool["name"] == tool_name; });
     ASSERT_NE(row, document["tools"].end()) << tool_name;

@@ -743,7 +743,7 @@ TEST(McpTools, CapabilityManifestMatchesThePinnedCrossPortInventory) {
   ASSERT_NE(capture_since, nullptr);
   EXPECT_EQ(capture_since->authority.effects, std::set{Effect::observe});
   EXPECT_EQ(batch->authority.effects, std::set{Effect::observe});
-  for (const auto [tool_name, field_name] :
+  for (const auto& [tool_name, field_name] :
        {std::pair{"rename_session", "name"}, std::pair{"rename_window", "name"},
         std::pair{"set_pane_title", "title"}}) {
     const ToolDefinition* const tool = tools.find(tool_name);

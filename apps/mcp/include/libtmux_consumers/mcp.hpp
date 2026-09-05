@@ -31,8 +31,6 @@ namespace libtmux::mcp {
 using ArgumentMap = std::map<std::string, std::string, std::less<>>;
 
 struct FlatArguments : ArgumentMap {
-  using ArgumentMap::ArgumentMap;
-
   FlatArguments() = default;
   FlatArguments(
       std::initializer_list<std::pair<std::string_view, std::string_view>> values) {
@@ -51,8 +49,6 @@ struct ReadToolCall {
 };
 
 struct Arguments : FlatArguments {
-  using FlatArguments::FlatArguments;
-
   Arguments() = default;
   Arguments(
       std::initializer_list<std::pair<std::string_view, std::string_view>> values) {
