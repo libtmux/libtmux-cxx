@@ -281,8 +281,7 @@ private:
 
 [[nodiscard]] libtmux::expected<ToolSelection, std::string> parse_tool_selection(
     std::optional<std::string_view> toolsets, std::optional<std::string_view> include,
-    std::optional<std::string_view> exclude, bool retired_safety_present,
-    bool teardown_enabled_by_default = true);
+    std::optional<std::string_view> exclude, bool teardown_enabled_by_default = true);
 [[nodiscard]] libtmux::expected<ToolRegistry, std::string> default_tools();
 [[nodiscard]] libtmux::expected<ToolRegistry, std::string>
 default_tools(const ToolSelection& selection);

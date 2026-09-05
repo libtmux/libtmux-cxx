@@ -287,8 +287,6 @@ TEST(McpProtocolSchemaTmux, EmitsEveryToolAnswerBesideItsPublishedSchema) {
   add("move_window", {{"windowId", main_window.id()}, {"index", "9"}});
   add("swap_pane", {{"sourcePaneId", primary.id()}, {"targetPaneId", secondary->id()}});
   add("set_pane_title", {{"paneId", primary.id()}, {"title", "schema-#{pid}"}});
-  add("enter_copy_mode", {{"paneId", primary.id()}});
-  add("exit_copy_mode", {{"paneId", primary.id()}});
   add("wait_for_channel", {{"channel", "schema-wait"}, {"timeoutMs", "1000"}});
   add("signal_channel", {{"channel", "schema-signal"}});
   add("set_mouse_enabled", {{"enabled", "false"}});

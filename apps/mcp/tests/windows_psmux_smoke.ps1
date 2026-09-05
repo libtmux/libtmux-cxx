@@ -392,8 +392,6 @@ try {
         "clear_pane_scrollback",
         "create_session",
         "create_window",
-        "enter_copy_mode",
-        "exit_copy_mode",
         "find_pane_by_position",
         "get_pane_info",
         "get_server_info",
@@ -436,7 +434,7 @@ try {
     ) | Sort-Object
     Assert-True (
         ($actualTools -join ",") -eq ($expectedTools -join ",")
-    ) "Windows MCP tool catalog is not the authoritative 47-tool inventory"
+    ) "Windows MCP tool catalog is not the authoritative 45-tool inventory"
 
     $sessions = Invoke-Tool 2 "list_sessions" @{}
     $ownedSessions = @(

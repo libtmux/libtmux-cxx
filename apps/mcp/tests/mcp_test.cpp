@@ -228,12 +228,12 @@ TEST(McpTools, EveryToolDeclaresANameAndDescription) {
     EXPECT_FALSE(tool.name.empty());
     EXPECT_FALSE(tool.description.empty());
   }
-  EXPECT_EQ(tools.tools().size(), 47U);
+  EXPECT_EQ(tools.tools().size(), 45U);
 }
 
 TEST(McpTools, CapabilityManifestMatchesThePinnedCrossPortInventory) {
   const auto tools = all_tools();
-  const std::array<std::pair<std::string_view, Toolset>, 47> expected{{
+  const std::array<std::pair<std::string_view, Toolset>, 45> expected{{
       {"list_sessions", Toolset::inspect},
       {"list_windows", Toolset::inspect},
       {"list_panes", Toolset::inspect},
@@ -262,8 +262,6 @@ TEST(McpTools, CapabilityManifestMatchesThePinnedCrossPortInventory) {
       {"move_window", Toolset::manage},
       {"swap_pane", Toolset::manage},
       {"set_pane_title", Toolset::manage},
-      {"enter_copy_mode", Toolset::manage},
-      {"exit_copy_mode", Toolset::manage},
       {"wait_for_channel", Toolset::manage},
       {"signal_channel", Toolset::manage},
       {"set_mouse_enabled", Toolset::manage},
@@ -344,7 +342,7 @@ TEST(McpTools, CapabilityRegistryOwnsTheCurrentSurface) {
   const auto built = default_tools(ToolSelection::all());
   ASSERT_TRUE(built.has_value()) << built.error();
   const ToolRegistry& tools = *built;
-  ASSERT_EQ(tools.tools().size(), 47U);
+  ASSERT_EQ(tools.tools().size(), 45U);
 
   struct Expected {
     std::string_view name;
@@ -537,9 +535,9 @@ TEST(McpTools, CapabilityRegistryResolvesAllToolsetSubsetsAndNames) {
       }
     }
     const auto selection = libtmux::mcp::parse_tool_selection(
-        std::optional<std::string_view>{forward}, std::nullopt, std::nullopt, false);
+        std::optional<std::string_view>{forward}, std::nullopt, std::nullopt);
     const auto reversed = libtmux::mcp::parse_tool_selection(
-        std::optional<std::string_view>{reverse}, std::nullopt, std::nullopt, false);
+        std::optional<std::string_view>{reverse}, std::nullopt, std::nullopt);
     ASSERT_TRUE(selection.has_value()) << selection.error();
     ASSERT_TRUE(reversed.has_value()) << reversed.error();
     const auto selected = default_tools(*selection);
@@ -547,7 +545,7 @@ TEST(McpTools, CapabilityRegistryResolvesAllToolsetSubsetsAndNames) {
     ASSERT_TRUE(selected.has_value()) << selected.error();
     ASSERT_TRUE(selected_reversed.has_value()) << selected_reversed.error();
     const std::size_t expected =
-        ((mask & 1U) != 0U ? 18U : 0U) + ((mask & 2U) != 0U ? 16U : 0U) +
+        ((mask & 1U) != 0U ? 18U : 0U) + ((mask & 2U) != 0U ? 14U : 0U) +
         ((mask & 4U) != 0U ? 9U : 0U) + ((mask & 8U) != 0U ? 4U : 0U);
     EXPECT_EQ(selected->tools().size(), expected) << mask;
     EXPECT_EQ(names(*selected), names(*selected_reversed)) << mask;
@@ -572,43 +570,40 @@ TEST(McpTools, CapabilityRegistryResolvesAllToolsetSubsetsAndNames) {
 
 TEST(McpTools, CapabilitySelectionParsesEmptyAndRejectsMalformedLists) {
   using OptionalText = std::optional<std::string_view>;
-  const auto empty = libtmux::mcp::parse_tool_selection(OptionalText{""}, std::nullopt,
-                                                        std::nullopt, false);
+  const auto empty =
+      libtmux::mcp::parse_tool_selection(OptionalText{""}, std::nullopt, std::nullopt);
   ASSERT_TRUE(empty.has_value()) << empty.error();
   EXPECT_TRUE(empty->toolsets.empty());
 
-  const auto defaults = libtmux::mcp::parse_tool_selection(std::nullopt, std::nullopt,
-                                                           std::nullopt, false);
+  const auto defaults =
+      libtmux::mcp::parse_tool_selection(std::nullopt, std::nullopt, std::nullopt);
   ASSERT_TRUE(defaults.has_value()) << defaults.error();
   EXPECT_EQ(defaults->toolsets, (std::set{Toolset::inspect, Toolset::manage,
                                           Toolset::execute, Toolset::teardown}));
 
   const auto shared_defaults = libtmux::mcp::parse_tool_selection(
-      std::nullopt, std::nullopt, std::nullopt, false, false);
+      std::nullopt, std::nullopt, std::nullopt, false);
   ASSERT_TRUE(shared_defaults.has_value()) << shared_defaults.error();
   EXPECT_EQ(shared_defaults->toolsets,
             (std::set{Toolset::inspect, Toolset::manage, Toolset::execute}));
   const auto explicit_teardown = libtmux::mcp::parse_tool_selection(
-      OptionalText{"inspect,teardown"}, std::nullopt, std::nullopt, false, false);
+      OptionalText{"inspect,teardown"}, std::nullopt, std::nullopt, false);
   ASSERT_TRUE(explicit_teardown.has_value()) << explicit_teardown.error();
   EXPECT_TRUE(explicit_teardown->toolsets.contains(Toolset::teardown));
 
   for (const std::string_view malformed :
        {"inspect,", ",inspect", "inspect,,execute", "unknown"}) {
     EXPECT_FALSE(libtmux::mcp::parse_tool_selection(OptionalText{malformed},
-                                                    std::nullopt, std::nullopt, false)
+                                                    std::nullopt, std::nullopt)
                      .has_value())
         << malformed;
   }
-  EXPECT_FALSE(libtmux::mcp::parse_tool_selection(std::nullopt, OptionalText{""},
-                                                  std::nullopt, false)
-                   .has_value());
-  EXPECT_FALSE(libtmux::mcp::parse_tool_selection(std::nullopt, std::nullopt,
-                                                  OptionalText{"capture_pane,"}, false)
-                   .has_value());
   EXPECT_FALSE(
-      libtmux::mcp::parse_tool_selection(std::nullopt, std::nullopt, std::nullopt, true)
+      libtmux::mcp::parse_tool_selection(std::nullopt, OptionalText{""}, std::nullopt)
           .has_value());
+  EXPECT_FALSE(libtmux::mcp::parse_tool_selection(std::nullopt, std::nullopt,
+                                                  OptionalText{"capture_pane,"})
+                   .has_value());
 }
 
 TEST(McpToolsTmux, ReadBatchReturnsPartialRowsAndHonorsContinue) {

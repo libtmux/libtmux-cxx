@@ -289,7 +289,7 @@ TEST_F(McpProtocol, PublishesTheEffectiveCrossPortCatalog) {
   ASSERT_NE(listed, nullptr);
   const auto& tools = (*listed)["result"]["tools"];
   ASSERT_TRUE(tools.is_array());
-  ASSERT_EQ(tools.size(), 43U);
+  ASSERT_EQ(tools.size(), 41U);
 
   std::vector<std::string> names;
   for (const auto& tool : tools) {
@@ -335,8 +335,6 @@ TEST_F(McpProtocol, PublishesTheEffectiveCrossPortCatalog) {
                                              "move_window",
                                              "swap_pane",
                                              "set_pane_title",
-                                             "enter_copy_mode",
-                                             "exit_copy_mode",
                                              "wait_for_channel",
                                              "signal_channel",
                                              "set_mouse_enabled",
@@ -905,7 +903,7 @@ TEST(McpProtocolCli, SupportsModernDiscoveryAndCacheableResults) {
   EXPECT_EQ(catalog["resultType"], "complete");
   EXPECT_EQ(catalog["ttlMs"], 3600000);
   EXPECT_EQ(catalog["cacheScope"], "public");
-  EXPECT_EQ(catalog["tools"].size(), 43U);
+  EXPECT_EQ(catalog["tools"].size(), 41U);
   EXPECT_EQ(catalog["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
             "libtmux-cxx");
   EXPECT_EQ((*ping)["error"]["code"], -32601);
@@ -1582,7 +1580,7 @@ TEST(McpProtocolCli, DoesNotClaimAnExistingDedicatedDaemon) {
       json::parse((*read)["result"]["contents"][0]["text"].get<std::string>());
   EXPECT_EQ(document["socket"]["serverState"], "existing");
   EXPECT_EQ(document["socket"]["configurationProvenance"], "unknown");
-  EXPECT_EQ(document["toolCount"], 43);
+  EXPECT_EQ(document["toolCount"], 41);
 }
 
 TEST(McpProtocolCli, PublishesStaticEffectiveCapabilitiesInBothEras) {
@@ -1964,7 +1962,7 @@ TEST(McpProtocolCli, ExplicitSocketDefaultsExcludeTeardown) {
   ASSERT_NE(listed, nullptr);
   ASSERT_NE(read, nullptr);
   const json& tools = (*listed)["result"]["tools"];
-  EXPECT_EQ(tools.size(), 43U);
+  EXPECT_EQ(tools.size(), 41U);
   EXPECT_EQ(std::ranges::find(
                 tools, "kill_session",
                 [](const json& tool) { return tool["name"].get<std::string>(); }),
@@ -2057,7 +2055,7 @@ TEST(McpProtocolCli, UsesTheProductDedicatedDefaultRoute) {
   EXPECT_EQ(document["socket"]["serverState"], "created");
   EXPECT_EQ(document["socket"]["configurationProvenance"], "minimal");
   EXPECT_EQ(document["socket"]["selectionProvenance"], "default-dedicated");
-  EXPECT_EQ(document["toolCount"], 47);
+  EXPECT_EQ(document["toolCount"], 45);
 }
 
 TEST(McpProtocolCli, DoesNotUseAnInvalidInheritedRoute) {

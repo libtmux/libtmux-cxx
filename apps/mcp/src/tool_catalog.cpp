@@ -528,7 +528,7 @@ resolved_pane_targets(const Pane& pane) {
 
 [[nodiscard]] std::vector<ToolDefinition> definitions() {
   std::vector<ToolDefinition> tools;
-  tools.reserve(47U);
+  tools.reserve(45U);
   const std::set<std::string, std::less<>> read_batch_tools{
       "list_sessions",      "list_windows",     "list_panes",
       "get_server_info",    "get_session_info", "get_window_info",
@@ -1296,38 +1296,6 @@ resolved_pane_targets(const Pane& pane) {
                                   : failure(answer.error());
       },
       "Replace one pane title.");
-
-  manage(
-      "enter_copy_mode", "Enter tmux copy mode",
-      {field("paneId", "Stable pane ID.", InputSink::tmux_lookup, true,
-             ArgumentType::string, {}, {}, detail::kTargetCharacters)},
-      [](const Server& server, const Arguments& arguments,
-         const CallContext&) -> ToolResult {
-        const auto pane = server.pane(required(arguments, "paneId"));
-        if (!pane.has_value()) {
-          return failure(pane.error());
-        }
-        const auto answer = pane->enter_copy_mode();
-        return answer.has_value() ? changed("pane_id", pane->id())
-                                  : failure(answer.error());
-      },
-      "Put one pane into copy mode.");
-
-  manage(
-      "exit_copy_mode", "Exit tmux copy mode",
-      {field("paneId", "Stable pane ID.", InputSink::tmux_lookup, true,
-             ArgumentType::string, {}, {}, detail::kTargetCharacters)},
-      [](const Server& server, const Arguments& arguments,
-         const CallContext&) -> ToolResult {
-        const auto pane = server.pane(required(arguments, "paneId"));
-        if (!pane.has_value()) {
-          return failure(pane.error());
-        }
-        const auto answer = pane->leave_mode();
-        return answer.has_value() ? changed("pane_id", pane->id())
-                                  : failure(answer.error());
-      },
-      "Leave the active pane mode.");
 
   manage(
       "wait_for_channel", "Wait for a tmux channel",

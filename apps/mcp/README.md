@@ -5,14 +5,14 @@ A [Model Context Protocol](https://modelcontextprotocol.io) server for
 [libtmux](../../README.md). It speaks newline-delimited JSON-RPC over stdio and
 ships as one native executable.
 
-This is an alpha interface. The same startup-frozen 47-tool manifest is
+This is an alpha interface. The same startup-frozen 45-tool manifest is
 advertised on POSIX and native Windows. Psmux support remains
 command-dependent on Windows: unsupported operations fail explicitly at
 dispatch rather than disappearing from the declared capability surface.
 
 ## Tool catalog
 
-One native registry owns the 47 public tools and their names, titles,
+One native registry owns the 45 public tools and their names, titles,
 controlled descriptions, toolsets, capability claims, conservative
 annotations, schemas, internal input-sink tables, nested authority, and
 handlers. Its startup-filtered definitions govern both listing and calls:
@@ -26,7 +26,7 @@ only schema-keyed `inputLiteralization`, never `inputSinks` or
 | Toolset | Tools |
 |---|---|
 | `inspect` | `list_sessions`, `list_windows`, `list_panes`, `get_server_info`, `get_session_info`, `get_window_info`, `get_pane_info`, `capture_pane`, `capture_since`, `snapshot_pane`, `search_panes`, `find_pane_by_position`, `wait_for_text`, `get_tmux_variables`, `show_option`, `show_environment`, `show_hooks`, `call_read_tools_batch` |
-| `manage` | `rename_session`, `rename_window`, `select_window`, `select_pane`, `select_layout`, `resize_window`, `resize_pane`, `move_window`, `swap_pane`, `set_pane_title`, `enter_copy_mode`, `exit_copy_mode`, `wait_for_channel`, `signal_channel`, `set_mouse_enabled`, `set_history_limit` |
+| `manage` | `rename_session`, `rename_window`, `select_window`, `select_pane`, `select_layout`, `resize_window`, `resize_pane`, `move_window`, `swap_pane`, `set_pane_title`, `wait_for_channel`, `signal_channel`, `set_mouse_enabled`, `set_history_limit` |
 | `execute` | `create_session`, `create_window`, `split_window`, `respawn_pane`, `run_shell_command`, `send_keys`, `send_keys_batch`, `paste_text`, `set_synchronize_panes` |
 | `teardown` | `clear_pane_scrollback`, `kill_pane`, `kill_window`, `kill_session` |
 <!-- END GENERATED TOOL INVENTORY -->
@@ -58,11 +58,19 @@ beside the full generated inventory:
 | `create_session` | `name?`, `windowName?`, `startDirectory?`, `width?`, `height?` | New session ID and name |
 | `create_window` | `session`, `name?`, `startDirectory?` | New window ID and owning session ID |
 | `capture_pane` | `paneId`, `history?` | Visible or retained pane text |
+| `capture_since` | `paneId`, `cursor?` | Text after a byte cursor and a replacement cursor |
+| `snapshot_pane` | `paneId` | Pane metadata and visible text from one call |
 | `paste_text` | `paneId`, `text` | Pane ID after pasting literal text |
 | `send_keys` | `paneId`, `keys` | Pane ID and every resolved synchronized target |
 | `wait_for_text` | `target`, `text`, `timeout_ms?` | Match, timeout, elapsed time, transport mode, and final capture |
 | `search_panes` | `pattern` | Matching pane IDs and matching lines |
 | `call_read_tools_batch` | `operations`, `onError?` | Ordered nested results, counters, and explicit truncation state |
+
+Read terminal text without changing pane modes. `capture_pane` with `history`
+retrieves retained scrollback, `capture_since` follows appended output,
+`snapshot_pane` pairs visible text with metadata, and `search_panes` finds
+matching lines across panes. Copy mode remains in the core C++ API for
+human-client integrations; the MCP omits its modal enter and exit operations.
 
 Creation and respawn tools accept no command or environment payload.
 `run_shell_command` runs an explicit shell command in a pane. `send_keys`,
@@ -235,7 +243,7 @@ in the selected binary directory.
 
 On native Windows, build the repository's `windows-psmux` preset and use the
 audited psmux version described in [the library README](../../README.md#windows-through-psmux).
-The executable advertises the same 47 names. The native smoke records which
+The executable advertises the same 45 names. The native smoke records which
 operations psmux 3.3.7 supports and requires unsupported commands to fail
 explicitly; this remains a bounded preview, not tmux parity.
 
@@ -348,7 +356,7 @@ For Claude Desktop, the equivalent entry is:
 
 ### Native Windows with psmux
 
-Windows MCP uses the same 47-name manifest through a trusted psmux route.
+Windows MCP uses the same 45-name manifest through a trusted psmux route.
 Unsupported psmux commands fail explicitly. The audited example below
 pre-creates an isolated fixture so its exact selector and configuration are
 known before an agent connects. Run it once from native PowerShell outside

@@ -745,16 +745,9 @@ ToolResult ToolRegistry::call_definition(const Server& server,
   return tool.handler(server, arguments, nested);
 }
 
-libtmux::expected<ToolSelection, std::string>
-parse_tool_selection(std::optional<std::string_view> toolsets,
-                     std::optional<std::string_view> include,
-                     std::optional<std::string_view> exclude,
-                     bool retired_safety_present, bool teardown_enabled_by_default) {
-  if (retired_safety_present) {
-    return libtmux::unexpected(
-        std::string{"LIBTMUX_SAFETY is retired; use LIBTMUX_TOOLSETS, "
-                    "LIBTMUX_TOOLS, and LIBTMUX_EXCLUDE_TOOLS"});
-  }
+libtmux::expected<ToolSelection, std::string> parse_tool_selection(
+    std::optional<std::string_view> toolsets, std::optional<std::string_view> include,
+    std::optional<std::string_view> exclude, bool teardown_enabled_by_default) {
   ToolSelection selection;
   if (!toolsets.has_value()) {
     selection.toolsets = {Toolset::inspect, Toolset::manage, Toolset::execute};
@@ -799,10 +792,14 @@ libtmux::expected<ToolRegistry, std::string> configured_tools() {
 
 libtmux::expected<ToolRegistry, std::string>
 configured_tools(bool teardown_enabled_by_default) {
+  if (std::getenv("LIBTMUX_SAFETY") != nullptr) {
+    return libtmux::unexpected(
+        std::string{"LIBTMUX_SAFETY is retired; use LIBTMUX_TOOLSETS, "
+                    "LIBTMUX_TOOLS, and LIBTMUX_EXCLUDE_TOOLS"});
+  }
   auto selection = parse_tool_selection(
       environment("LIBTMUX_TOOLSETS"), environment("LIBTMUX_TOOLS"),
-      environment("LIBTMUX_EXCLUDE_TOOLS"), std::getenv("LIBTMUX_SAFETY") != nullptr,
-      teardown_enabled_by_default);
+      environment("LIBTMUX_EXCLUDE_TOOLS"), teardown_enabled_by_default);
   if (!selection.has_value()) {
     return libtmux::unexpected(selection.error());
   }
