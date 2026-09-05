@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -35,11 +36,36 @@ private:
   std::vector<Atom> atoms_;
 };
 
+struct ShellCommandPayload {
+  std::string marker;
+  std::string text;
+};
+
+struct ShellCommandCompletion {
+  int exit_code{};
+  std::size_t text_begin{};
+  std::size_t record_begin{};
+};
+
+[[nodiscard]] ShellCommandPayload shell_command_payload(std::string_view command,
+                                                        std::string_view nonce);
+[[nodiscard]] std::optional<ShellCommandCompletion>
+shell_command_completion(std::string_view capture, std::string_view marker,
+                         std::size_t search_begin = 0U);
+
 [[nodiscard]] const std::string* argument(const Arguments& arguments,
                                           std::string_view name);
 [[nodiscard]] ToolOutput output(StructuredValue::Object structured,
                                 std::optional<std::size_t> maximum_response_bytes = {});
 [[nodiscard]] ToolError tmux_error(const CommandFailure& error);
+[[nodiscard]] libtmux::expected<void, ToolError>
+guard_pane_input_mode(std::string_view pane_id,
+                      libtmux::expected<std::string, CommandFailure> expanded_mode);
+[[nodiscard]] libtmux::expected<void, ToolError>
+guard_pane_input_mode(const Pane& pane);
+[[nodiscard]] libtmux::expected<bool, ToolError> effective_synchronize_panes(
+    std::string_view pane_id,
+    libtmux::expected<OptionEntry, CommandFailure> effective_option);
 [[nodiscard]] StructuredValue session_value(const Session& session);
 [[nodiscard]] StructuredValue window_value(const Window& window);
 [[nodiscard]] StructuredValue pane_value(const Pane& pane);

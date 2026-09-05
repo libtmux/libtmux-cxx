@@ -213,6 +213,15 @@ json modern_call(const std::string& name, const json& arguments, int id,
                         std::move(progress_token));
 }
 
+std::vector<std::string> buffer_names(const std::vector<libtmux::Buffer>& buffers) {
+  std::vector<std::string> names;
+  for (const libtmux::Buffer& buffer : buffers) {
+    names.emplace_back(buffer.name());
+  }
+  std::ranges::sort(names);
+  return names;
+}
+
 class McpProtocol : public testing::Test {
 protected:
   void SetUp() override {
@@ -224,6 +233,47 @@ protected:
 
   [[nodiscard]] const std::filesystem::path& socket() const {
     return fixture_->socket_path();
+  }
+
+  [[nodiscard]] libtmux::Server connect_server() const {
+    auto connected = libtmux::Server::at_socket_path(socket().string());
+    EXPECT_TRUE(connected.has_value()) << connected.error().diagnostic;
+    return std::move(*connected);
+  }
+
+  [[nodiscard]] json
+  invoke(std::string name, json arguments, int id,
+         std::chrono::milliseconds linger = std::chrono::milliseconds{250}) const {
+    const auto messages =
+        converse_ready(socket(), {call(name, std::move(arguments), id)}, linger);
+    const json* reply = response(messages, id);
+    EXPECT_NE(reply, nullptr);
+    return reply == nullptr ? json::object() : *reply;
+  }
+
+  [[nodiscard]] std::string captured(const libtmux::Pane& pane) const {
+    const auto value = pane.capture();
+    EXPECT_TRUE(value.has_value()) << value.error().diagnostic;
+    return value.has_value() ? *value : std::string{};
+  }
+
+  [[nodiscard]] std::vector<libtmux::Pane>
+  split_sorted_panes(const libtmux::Server& server) const {
+    auto panes = server.panes();
+    EXPECT_TRUE(panes.has_value()) << panes.error().diagnostic;
+    if (!panes.has_value() || panes->empty()) {
+      return {};
+    }
+    const auto split = panes->front().split();
+    EXPECT_TRUE(split.has_value()) << split.error().diagnostic;
+    panes = server.panes();
+    EXPECT_TRUE(panes.has_value()) << panes.error().diagnostic;
+    if (!panes.has_value()) {
+      return {};
+    }
+    std::ranges::sort(*panes, {},
+                      [](const libtmux::Pane& pane) { return std::string{pane.id()}; });
+    return std::move(*panes);
   }
 
   std::unique_ptr<ScopedTmuxServer> fixture_;
@@ -471,6 +521,256 @@ TEST_F(McpProtocol, ValidatesEveryNamedKeyBeforeSending) {
   ASSERT_NE(invalid, nullptr);
   EXPECT_FALSE((*sent)["result"]["isError"].get<bool>());
   EXPECT_EQ((*invalid)["error"]["code"], -32602);
+}
+
+TEST_F(McpProtocol, RunShellCommandWaitsForItsOwnValidCompletionRecord) {
+  const libtmux::Server server = connect_server();
+  auto pane = server.pane("mcp");
+  ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
+  ASSERT_TRUE(
+      server.run({"resize-window", "-t", "mcp", "-x", "40", "-y", "24"}).has_value());
+  ASSERT_TRUE(pane->send_text("printf '\\n__LIBTMUX_MCP_DONE_1__:7\\n'; "
+                              "tmux wait-for -S mcp-legacy-marker-ready")
+                  .has_value());
+  ASSERT_TRUE(pane->send_key("Enter").has_value());
+  ASSERT_TRUE(
+      server.wait_for("mcp-legacy-marker-ready", std::chrono::seconds{2}).has_value());
+
+  const json reply =
+      invoke("run_shell_command",
+             {{"paneId", pane->id()},
+              {"command", "printf '\\n%s:0\\n' \"$__libtmux_mcp_marker\"; sleep 1; "
+                          "sh -c 'exit 23'"},
+              {"timeoutMs", 5000}},
+             1, std::chrono::milliseconds{1500});
+  ASSERT_FALSE(reply["result"]["isError"].get<bool>()) << reply.dump();
+  EXPECT_EQ(reply["result"]["structuredContent"]["exit_code"], 23);
+
+  const json shadowed =
+      invoke("run_shell_command",
+             {{"paneId", pane->id()},
+              {"command", "printf() { command printf '\\n%s%s%s:%s\\n' \"$2\" \"$3\" "
+                          "\"$4\" 0; }; sh -c 'exit 23'"},
+              {"timeoutMs", 1000}},
+             2, std::chrono::milliseconds{1500});
+  ASSERT_FALSE(shadowed["result"]["isError"].get<bool>()) << shadowed.dump();
+  EXPECT_EQ(shadowed["result"]["structuredContent"]["exit_code"], 23);
+
+  ASSERT_TRUE(server.run({"set-option", "-g", "history-limit", "100"}).has_value());
+  ASSERT_TRUE(server.run({"new-window", "-d", "-t", "mcp:", "-n", "mcp-short-history"})
+                  .has_value());
+  auto history_pane = server.pane("mcp:mcp-short-history");
+  ASSERT_TRUE(history_pane.has_value()) << history_pane.error().diagnostic;
+  const json evicted = invoke(
+      "run_shell_command",
+      {{"paneId", history_pane->id()},
+       {"command", "i=0; while [ \"$i\" -lt 300 ]; do printf 'eviction-%s\\n' \"$i\"; "
+                   "i=$((i+1)); done; sh -c 'exit 19'"},
+       {"timeoutMs", 1000}},
+      3, std::chrono::milliseconds{1500});
+  ASSERT_FALSE(evicted["result"]["isError"].get<bool>()) << evicted.dump();
+  EXPECT_EQ(evicted["result"]["structuredContent"]["exit_code"], 19);
+  EXPECT_NE(evicted["result"]["structuredContent"]["text"].get<std::string>().find(
+                "eviction-299"),
+            std::string::npos);
+}
+
+TEST_F(McpProtocol, RefusesEveryInputToolWhileTheNamedPaneIsModal) {
+  const libtmux::Server server = connect_server();
+  auto pane = server.pane("mcp");
+  ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
+  ASSERT_TRUE(pane->enter_copy_mode().has_value());
+  const auto buffers_before = server.buffers();
+  ASSERT_TRUE(buffers_before.has_value()) << buffers_before.error().diagnostic;
+  const auto messages = converse_ready(
+      socket(),
+      {call("send_keys", {{"paneId", pane->id()}, {"keys", "Escape"}}, 1),
+       call("send_keys_batch",
+            {{"operations", json::array({{{"paneId", pane->id()},
+                                          {"keys", "modal-batch"},
+                                          {"literal", true},
+                                          {"enter", true}}})}},
+            2),
+       call("paste_text", {{"paneId", pane->id()}, {"text", "modal-paste"}}, 3),
+       call("run_shell_command",
+            {{"paneId", pane->id()}, {"command", "printf modal-run"}, {"timeoutMs", 1}},
+            4)});
+
+  std::vector<std::string> errors;
+  for (const int id : {1, 3, 4}) {
+    const json* reply = response(messages, id);
+    ASSERT_NE(reply, nullptr);
+    EXPECT_TRUE((*reply)["result"]["isError"].get<bool>());
+    errors.push_back((*reply)["result"]["content"][0]["text"].get<std::string>());
+  }
+  const json* batch = response(messages, 2);
+  ASSERT_NE(batch, nullptr);
+  const json& batch_result = (*batch)["result"]["structuredContent"];
+  EXPECT_EQ(batch_result["completed"], 0);
+  ASSERT_EQ(batch_result["failures"].size(), 1U);
+  errors.push_back(batch_result["failures"][0]["reason"].get<std::string>());
+  for (const std::string& error : errors) {
+    EXPECT_NE(error.find(pane->id()), std::string::npos);
+    EXPECT_NE(error.find("human-owned"), std::string::npos);
+  }
+  const auto mode = pane->expand("#{pane_in_mode}");
+  const std::string after = captured(*pane);
+  const auto buffers_after = server.buffers();
+  ASSERT_TRUE(mode.has_value()) << mode.error().diagnostic;
+  ASSERT_TRUE(buffers_after.has_value()) << buffers_after.error().diagnostic;
+  EXPECT_EQ(*mode, "1");
+  for (const std::string_view marker : {"modal-batch", "modal-paste", "modal-run"}) {
+    EXPECT_EQ(after.find(marker), std::string::npos) << marker;
+  }
+  EXPECT_EQ(buffer_names(*buffers_after), buffer_names(*buffers_before));
+}
+
+TEST_F(McpProtocol, GuardsTheEffectiveSynchronizedCohortButPastesOnlyTheTarget) {
+  const libtmux::Server server = connect_server();
+  const auto panes = split_sorted_panes(server);
+  ASSERT_EQ(panes.size(), 2U);
+  const libtmux::Pane source = panes.front();
+  const libtmux::Pane sibling = panes.back();
+  auto window = source.window();
+  ASSERT_TRUE(window.has_value()) << window.error().diagnostic;
+  const auto window_default = window->option("synchronize-panes");
+  ASSERT_TRUE(window_default.has_value()) << window_default.error().diagnostic;
+  ASSERT_EQ(window_default->value, "off");
+  ASSERT_TRUE(source.set_option("synchronize-panes", "on").has_value());
+  ASSERT_TRUE(sibling.set_option("synchronize-panes", "on").has_value());
+  ASSERT_TRUE(sibling.enter_copy_mode().has_value());
+
+  const auto guarded = converse_ready(
+      socket(), {call("send_keys", {{"paneId", source.id()}, {"keys", "Escape"}}, 1),
+                 call("send_keys_batch",
+                      {{"operations", json::array({{{"paneId", source.id()},
+                                                    {"keys", "cohort-batch"},
+                                                    {"literal", true},
+                                                    {"enter", true}}})}},
+                      2),
+                 call("run_shell_command",
+                      {{"paneId", source.id()},
+                       {"command", "printf cohort-run"},
+                       {"timeoutMs", 1000}},
+                      3)});
+  for (const int id : {1, 3}) {
+    const json* reply = response(guarded, id);
+    ASSERT_NE(reply, nullptr);
+    EXPECT_TRUE((*reply)["result"]["isError"].get<bool>());
+  }
+  const json* batch = response(guarded, 2);
+  ASSERT_NE(batch, nullptr);
+  EXPECT_EQ((*batch)["result"]["structuredContent"]["completed"], 0);
+  EXPECT_EQ((*batch)["result"]["structuredContent"]["failures"][0]["index"], 0);
+  const std::string source_after = captured(source);
+  const std::string sibling_after = captured(sibling);
+  for (const std::string_view marker : {"cohort-batch", "cohort-run"}) {
+    EXPECT_EQ(source_after.find(marker), std::string::npos) << marker;
+    EXPECT_EQ(sibling_after.find(marker), std::string::npos) << marker;
+  }
+
+  const std::string paste_marker = "target-only-paste-marker";
+  const std::string sibling_before_paste = captured(sibling);
+  const json pasted =
+      invoke("paste_text", {{"paneId", source.id()}, {"text", paste_marker}}, 10);
+  ASSERT_FALSE(pasted["result"]["isError"].get<bool>()) << pasted.dump();
+  const std::string source_after_paste = captured(source);
+  const std::string sibling_after_paste = captured(sibling);
+  const auto sibling_mode = sibling.expand("#{pane_in_mode}");
+  ASSERT_TRUE(sibling_mode.has_value()) << sibling_mode.error().diagnostic;
+  EXPECT_NE(source_after_paste.find(paste_marker), std::string::npos);
+  EXPECT_EQ(sibling_after_paste.find(paste_marker), std::string::npos);
+  EXPECT_EQ(sibling_after_paste, sibling_before_paste);
+  EXPECT_EQ(*sibling_mode, "1");
+
+  ASSERT_TRUE(sibling.set_option("synchronize-panes", "off").has_value());
+  const json sent =
+      invoke("send_keys", {{"paneId", source.id()}, {"keys", "Escape"}}, 11);
+  ASSERT_FALSE(sent["result"]["isError"].get<bool>()) << sent.dump();
+  EXPECT_EQ(sent["result"]["structuredContent"]["target_pane_ids"],
+            json::array({source.id()}));
+
+  ASSERT_TRUE(source.set_option("synchronize-panes", "off").has_value());
+  ASSERT_TRUE(sibling.set_option("synchronize-panes", "on").has_value());
+  const std::string source_only_marker = "source-off-delivery-marker";
+  const json source_only =
+      invoke("send_keys_batch",
+             {{"operations", json::array({{{"paneId", source.id()},
+                                           {"keys", source_only_marker},
+                                           {"literal", true},
+                                           {"enter", true}}})}},
+             12);
+  ASSERT_FALSE(source_only["result"]["isError"].get<bool>()) << source_only.dump();
+  EXPECT_EQ(source_only["result"]["structuredContent"]["targets"][0]["resolvedPaneIds"],
+            json::array({source.id()}));
+  const std::string source_only_capture = captured(source);
+  const std::string sibling_source_off = captured(sibling);
+  EXPECT_NE(source_only_capture.find(source_only_marker), std::string::npos);
+  EXPECT_EQ(sibling_source_off.find(source_only_marker), std::string::npos);
+
+  ASSERT_TRUE(sibling.set_option("synchronize-panes", "off").has_value());
+  ASSERT_TRUE(
+      server.run({"send-keys", "-X", "-t", sibling.id(), "cancel"}).has_value());
+  ASSERT_TRUE(sibling.set_option("synchronize-panes", "on").has_value());
+  ASSERT_TRUE(source.set_option("synchronize-panes", "on").has_value());
+  const json refused =
+      invoke("run_shell_command",
+             {{"paneId", source.id()}, {"command", "printf synchronized-run"}}, 13);
+  ASSERT_TRUE(refused["result"]["isError"].get<bool>()) << refused.dump();
+  const std::string error = refused["result"]["content"][0]["text"];
+  EXPECT_NE(error.find(source.id()), std::string::npos);
+  EXPECT_NE(error.find(sibling.id()), std::string::npos);
+  EXPECT_NE(error.find("disable synchronize-panes"), std::string::npos);
+  EXPECT_EQ(error.find("human-owned"), std::string::npos);
+  EXPECT_EQ(error.find("mode"), std::string::npos);
+  EXPECT_EQ(captured(source).find("synchronized-run"), std::string::npos);
+  EXPECT_EQ(captured(sibling).find("synchronized-run"), std::string::npos);
+
+  ASSERT_TRUE(source.set_option("synchronize-panes", "off").has_value());
+  const json singular =
+      invoke("run_shell_command",
+             {{"paneId", source.id()}, {"command", "printf source-only-run"}}, 14);
+  ASSERT_FALSE(singular["result"]["isError"].get<bool>()) << singular.dump();
+  EXPECT_EQ(singular["result"]["structuredContent"]["exit_code"], 0);
+  EXPECT_EQ(captured(sibling).find("source-only-run"), std::string::npos);
+}
+
+TEST_F(McpProtocol, BatchPreflightsEachRowBeforeTextAndOptionalEnter) {
+  const libtmux::Server server = connect_server();
+  const auto panes = split_sorted_panes(server);
+  ASSERT_EQ(panes.size(), 2U);
+  const libtmux::Pane modal = panes.front();
+  const libtmux::Pane clear = panes.back();
+  ASSERT_TRUE(modal.enter_copy_mode().has_value());
+  const std::string refused_marker = "batch-refused-marker";
+  const std::string delivered_marker = "batch-delivered-marker";
+  const json operations = json::array(
+      {{{"paneId", modal.id()},
+        {"keys", refused_marker},
+        {"literal", true},
+        {"enter", true}},
+       {{"paneId", clear.id()}, {"keys", delivered_marker}, {"literal", true}}});
+
+  const json reply = invoke("send_keys_batch",
+                            {{"onError", "continue"}, {"operations", operations}}, 1);
+  ASSERT_FALSE(reply["result"]["isError"].get<bool>()) << reply.dump();
+  const json& result = reply["result"]["structuredContent"];
+  EXPECT_EQ(result["completed"], 1);
+  ASSERT_EQ(result["failures"].size(), 1U);
+  EXPECT_EQ(result["failures"][0]["index"], 0);
+  EXPECT_NE(result["failures"][0]["reason"].get<std::string>().find("human-owned"),
+            std::string::npos);
+  ASSERT_EQ(result["targets"].size(), 1U);
+  EXPECT_EQ(result["targets"][0]["index"], 1);
+  EXPECT_EQ(result["targets"][0]["resolvedPaneIds"], json::array({clear.id()}));
+
+  const std::string modal_after = captured(modal);
+  const std::string clear_after = captured(clear);
+  const auto modal_mode = modal.expand("#{pane_in_mode}");
+  ASSERT_TRUE(modal_mode.has_value()) << modal_mode.error().diagnostic;
+  EXPECT_EQ(modal_after.find(refused_marker), std::string::npos);
+  EXPECT_NE(clear_after.find(delivered_marker), std::string::npos);
+  EXPECT_EQ(*modal_mode, "1");
 }
 
 TEST_F(McpProtocol, ReportsTargetsExpandedBySynchronizedPaneInput) {
@@ -1734,9 +2034,10 @@ TEST(McpProtocolCli, PublishesStaticEffectiveCapabilitiesInBothEras) {
   ASSERT_NE(synchronized, document["tools"].end());
   ASSERT_TRUE((*synchronized).contains("amplifiesFutureInput"));
   EXPECT_TRUE((*synchronized)["amplifiesFutureInput"].get<bool>());
-  EXPECT_NE((*synchronized)["description"].get<std::string>().find(
-                "subsequent input is copied to every pane"),
-            std::string::npos);
+  EXPECT_EQ((*synchronized)["description"],
+            "Change tmux state; no client-supplied executable input. Set the "
+            "inherited window synchronize-panes default; pane-level overrides "
+            "determine effective synchronized input membership.");
   for (const json& tool : document["tools"]) {
     ASSERT_TRUE(tool.contains("amplifiesFutureInput")) << tool["name"];
     EXPECT_EQ(tool["amplifiesFutureInput"].get<bool>(),

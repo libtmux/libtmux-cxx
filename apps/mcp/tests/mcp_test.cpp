@@ -170,6 +170,122 @@ TEST(McpToolsTmux, CapturesAPaneThroughTheLibrary) {
   ASSERT_TRUE(captured.has_value()) << captured.error().message;
 }
 
+TEST(McpTools, PaneInputModeAcceptsOnlyExactZero) {
+  const std::array<std::string_view, 8> refused{"",     "00", " 0", "0\n",
+                                                "text", "1",  "2",  "-1"};
+  for (const std::string_view value : refused) {
+    const auto guarded =
+        libtmux::mcp::detail::guard_pane_input_mode("%7", std::string{value});
+    EXPECT_FALSE(guarded.has_value()) << value;
+  }
+
+  const auto expansion_failure = libtmux::mcp::detail::guard_pane_input_mode(
+      "%7", libtmux::unexpected(
+                libtmux::CommandFailure{.kind = libtmux::FailureKind::refused,
+                                        .delivery = libtmux::DeliveryStatus::replied,
+                                        .exit_code = 1,
+                                        .diagnostic = "scripted expansion failure"}));
+  EXPECT_FALSE(expansion_failure.has_value());
+
+  EXPECT_TRUE(
+      libtmux::mcp::detail::guard_pane_input_mode("%7", std::string{"0"}).has_value());
+}
+
+TEST(McpTools, EffectiveSynchronizePanesRejectsUnknownState) {
+  const auto option = [](std::string value) {
+    return libtmux::OptionEntry{.name = "synchronize-panes",
+                                .index = std::nullopt,
+                                .value = std::move(value),
+                                .inherited = false};
+  };
+  const auto enabled =
+      libtmux::mcp::detail::effective_synchronize_panes("%7", option("on"));
+  const auto disabled =
+      libtmux::mcp::detail::effective_synchronize_panes("%7", option("off"));
+  ASSERT_TRUE(enabled.has_value());
+  ASSERT_TRUE(disabled.has_value());
+  EXPECT_TRUE(*enabled);
+  EXPECT_FALSE(*disabled);
+
+  EXPECT_FALSE(libtmux::mcp::detail::effective_synchronize_panes("%7", option("yes"))
+                   .has_value());
+  EXPECT_FALSE(libtmux::mcp::detail::effective_synchronize_panes(
+                   "%7", libtmux::unexpected(libtmux::CommandFailure{
+                             .kind = libtmux::FailureKind::refused,
+                             .delivery = libtmux::DeliveryStatus::replied,
+                             .exit_code = 1,
+                             .diagnostic = "scripted missing option"}))
+                   .has_value());
+}
+
+TEST(McpTools, ShellCommandPayloadHidesItsCompletionMarkerFromInputEcho) {
+  const auto payload = libtmux::mcp::detail::shell_command_payload(
+      "printf payload-command", "0123456789abcdef");
+  EXPECT_EQ(payload.marker, "__LIBTMUX_MCP_DONE_0123456789abcdef__");
+  EXPECT_EQ(payload.text.find(payload.marker), std::string::npos);
+  EXPECT_EQ(payload.text.find("__libtmux_mcp_marker"), std::string::npos);
+  EXPECT_EQ(payload.text.find("__libtmux_mcp_status"), std::string::npos);
+  EXPECT_NE(payload.text.find("printf payload-command"), std::string::npos);
+}
+
+TEST(McpTools, ShellCommandCompletionRequiresAnExactBoundedStatusRecord) {
+  const std::string marker = "__LIBTMUX_MCP_DONE_nonce__";
+  const std::string prefix = "old\n\n" + marker + ":BEGIN\noutput\n";
+  const std::array<std::pair<std::string_view, std::optional<int>>, 8> cases{{
+      {"0", 0},
+      {"23", 23},
+      {"255", 255},
+      {"", std::nullopt},
+      {"-1", std::nullopt},
+      {"23x", std::nullopt},
+      {"256", std::nullopt},
+      {"%s", std::nullopt},
+  }};
+  for (const auto& [status, expected] : cases) {
+    const std::string capture =
+        prefix + "\n" + marker + ":" + std::string{status} + "\nprompt";
+    const auto parsed = libtmux::mcp::detail::shell_command_completion(
+        capture, marker, std::string_view{"old\n"}.size());
+    ASSERT_EQ(parsed.has_value(), expected.has_value()) << status;
+    if (expected.has_value()) {
+      EXPECT_EQ(parsed->exit_code, *expected);
+      EXPECT_EQ(
+          capture.substr(parsed->text_begin, parsed->record_begin - parsed->text_begin),
+          "output\n");
+    }
+  }
+
+  const std::string evicted = "retained\n\n" + marker + ":23\nprompt";
+  const auto parsed_evicted =
+      libtmux::mcp::detail::shell_command_completion(evicted, marker);
+  ASSERT_TRUE(parsed_evicted.has_value());
+  EXPECT_EQ(parsed_evicted->exit_code, 23);
+  EXPECT_EQ(evicted.substr(parsed_evicted->text_begin,
+                           parsed_evicted->record_begin - parsed_evicted->text_begin),
+            "retained\n");
+  EXPECT_FALSE(libtmux::mcp::detail::shell_command_completion(
+                   "\n" + marker + ":BEGIN\n\n" + marker + ":0", marker)
+                   .has_value());
+}
+
+TEST(McpToolsTmux, PaneInputModeCheckReadsFreshState) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  auto panes = server.panes();
+  ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
+  ASSERT_EQ(panes->size(), 1U);
+  const libtmux::Pane pane = panes->front();
+  EXPECT_FALSE(pane.in_mode());
+
+  ASSERT_TRUE(pane.enter_copy_mode().has_value());
+  const auto guarded = libtmux::mcp::detail::guard_pane_input_mode(pane);
+  ASSERT_FALSE(guarded.has_value());
+  EXPECT_NE(guarded.error().message.find(pane.id()), std::string::npos);
+  EXPECT_EQ(guarded.error().message.find("scripted expansion failure"),
+            std::string::npos);
+}
+
 TEST(McpToolsTmux, CreatesAWindowAndTypesIntoItsPane) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();

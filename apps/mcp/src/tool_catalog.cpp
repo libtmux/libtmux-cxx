@@ -6,6 +6,7 @@
 #include <charconv>
 #include <chrono>
 #include <cstddef>
+#include <random>
 #include <set>
 #include <string>
 #include <string_view>
@@ -35,6 +36,85 @@ ToolOutput output(StructuredValue::Object structured,
 
 ToolError tmux_error(const CommandFailure& error) {
   return ToolError{error.kind == FailureKind::validation, error.diagnostic};
+}
+
+ShellCommandPayload shell_command_payload(std::string_view command,
+                                          std::string_view nonce) {
+  std::string quoted_command{"'"};
+  for (const char value : command) {
+    quoted_command += value == '\'' ? "'\\''" : std::string{value};
+  }
+  quoted_command += '\'';
+  ShellCommandPayload payload;
+  payload.marker = "__LIBTMUX_MCP_DONE_" + std::string{nonce} + "__";
+  payload.text = "printf '\\n%s%s%s:BEGIN\\n' '__LIBTMUX_MCP_DONE_' '" +
+                 std::string{nonce} + "' '__'; ";
+  payload.text += "( eval " + quoted_command + " ); ";
+  payload.text += "printf '\\n%s%s%s:%s\\n' '__LIBTMUX_MCP_DONE_' '" +
+                  std::string{nonce} + "' '__' \"$?\"\n";
+  return payload;
+}
+
+std::optional<ShellCommandCompletion>
+shell_command_completion(std::string_view capture, std::string_view marker,
+                         std::size_t search_begin) {
+  const std::string boundary = "\n" + std::string{marker} + ":BEGIN\n";
+  const auto boundary_begin = capture.find(boundary, search_begin);
+  const std::size_t text_begin = boundary_begin == std::string_view::npos
+                                     ? search_begin
+                                     : boundary_begin + boundary.size();
+  const std::string prefix = "\n" + std::string{marker} + ":";
+  const auto record_begin = capture.find(prefix, text_begin);
+  if (record_begin == std::string_view::npos) {
+    return std::nullopt;
+  }
+  const std::size_t status_begin = record_begin + prefix.size();
+  const auto status_end = capture.find('\n', status_begin);
+  if (status_end == std::string_view::npos || status_end == status_begin) {
+    return std::nullopt;
+  }
+  int status = 0;
+  const char* const first = capture.data() + status_begin;
+  const char* const last = capture.data() + status_end;
+  const auto parsed = std::from_chars(first, last, status);
+  if (parsed.ec != std::errc{} || parsed.ptr != last || status < 0 || status > 255) {
+    return std::nullopt;
+  }
+  return ShellCommandCompletion{
+      .exit_code = status, .text_begin = text_begin, .record_begin = record_begin};
+}
+
+libtmux::expected<void, ToolError>
+guard_pane_input_mode(std::string_view pane_id,
+                      libtmux::expected<std::string, CommandFailure> expanded_mode) {
+  if (expanded_mode.has_value() && *expanded_mode == "0") {
+    return {};
+  }
+  return libtmux::unexpected(ToolError{
+      false, "pane " + std::string{pane_id} +
+                 " input is refused because its human-owned mode state is not clear; "
+                 "capture pane content and wait for the mode to end"});
+}
+
+libtmux::expected<void, ToolError> guard_pane_input_mode(const Pane& pane) {
+  return guard_pane_input_mode(pane.id(), pane.expand("#{pane_in_mode}"));
+}
+
+libtmux::expected<bool, ToolError> effective_synchronize_panes(
+    std::string_view pane_id,
+    libtmux::expected<OptionEntry, CommandFailure> effective_option) {
+  if (!effective_option.has_value()) {
+    return libtmux::unexpected(tmux_error(effective_option.error()));
+  }
+  if (effective_option->value == "on") {
+    return true;
+  }
+  if (effective_option->value == "off") {
+    return false;
+  }
+  return libtmux::unexpected(ToolError{
+      false, "tmux could not prove the effective synchronize-panes state for pane " +
+                 std::string{pane_id}});
 }
 
 StructuredValue session_value(const Session& session) {
@@ -431,35 +511,80 @@ make_tool(std::string name, std::string title, Toolset toolset, ProcessReach rea
   return detail::output({{std::string{key}, id}, {"changed", StructuredValue{true}}});
 }
 
-[[nodiscard]] libtmux::expected<StructuredValue::Array, CommandFailure>
+[[nodiscard]] libtmux::expected<bool, ToolError>
+pane_synchronizes_input(const Pane& pane) {
+  return detail::effective_synchronize_panes(pane.id(),
+                                             pane.option("synchronize-panes"));
+}
+
+[[nodiscard]] libtmux::expected<std::vector<Pane>, ToolError>
 resolved_pane_targets(const Pane& pane) {
+  const auto source_synchronized = pane_synchronizes_input(pane);
+  if (!source_synchronized.has_value()) {
+    return libtmux::unexpected(source_synchronized.error());
+  }
+  if (!*source_synchronized) {
+    return std::vector<Pane>{pane};
+  }
   const auto window = pane.window();
   if (!window.has_value()) {
-    return libtmux::unexpected(window.error());
-  }
-  const auto synchronized = window->option("synchronize-panes");
-  if (!synchronized.has_value()) {
-    return libtmux::unexpected(synchronized.error());
-  }
-  if (synchronized->value != "on") {
-    return StructuredValue::Array{pane.id()};
+    return libtmux::unexpected(detail::tmux_error(window.error()));
   }
   const auto panes = window->panes();
   if (!panes.has_value()) {
-    return libtmux::unexpected(panes.error());
+    return libtmux::unexpected(detail::tmux_error(panes.error()));
   }
-  std::vector<std::string> ids;
-  ids.reserve(panes->size());
+  std::vector<Pane> targets;
+  targets.reserve(panes->size());
   for (const Pane& candidate : *panes) {
-    ids.emplace_back(candidate.id());
+    if (candidate.id() == pane.id()) {
+      targets.push_back(pane);
+      continue;
+    }
+    const auto synchronized = pane_synchronizes_input(candidate);
+    if (!synchronized.has_value()) {
+      return libtmux::unexpected(synchronized.error());
+    }
+    if (*synchronized) {
+      targets.push_back(candidate);
+    }
   }
-  std::ranges::sort(ids);
+  std::ranges::sort(targets, {},
+                    [](const Pane& candidate) { return std::string{candidate.id()}; });
+  return targets;
+}
+
+[[nodiscard]] libtmux::expected<void, ToolError>
+guard_pane_inputs(const std::vector<Pane>& panes) {
+  for (const Pane& pane : panes) {
+    auto guarded = detail::guard_pane_input_mode(pane);
+    if (!guarded.has_value()) {
+      return libtmux::unexpected(std::move(guarded.error()));
+    }
+  }
+  return {};
+}
+
+[[nodiscard]] StructuredValue::Array pane_target_ids(const std::vector<Pane>& panes) {
   StructuredValue::Array targets;
-  targets.reserve(ids.size());
-  for (std::string& id : ids) {
-    targets.emplace_back(std::move(id));
+  targets.reserve(panes.size());
+  for (const Pane& pane : panes) {
+    targets.emplace_back(pane.id());
   }
   return targets;
+}
+
+[[nodiscard]] std::string shell_command_nonce() {
+  constexpr std::string_view digits{"0123456789abcdef"};
+  std::random_device entropy;
+  std::string nonce;
+  nonce.reserve(32U);
+  for (std::size_t index = 0; index < 16U; ++index) {
+    const auto value = entropy();
+    nonce += digits[(value >> 4U) & 0x0fU];
+    nonce += digits[value & 0x0fU];
+  }
+  return nonce;
 }
 
 [[nodiscard]] StructuredValue option_value(const OptionEntry& option) {
@@ -1524,17 +1649,35 @@ resolved_pane_targets(const Pane& pane) {
       OutputShape::object,
       [](const Server& server, const Arguments& arguments,
          const CallContext& context) -> ToolResult {
-        static std::atomic_uint64_t sequence{0U};
         const auto pane = server.pane(required(arguments, "paneId"));
         if (!pane.has_value()) {
           return failure(pane.error());
         }
-        const std::string marker =
-            "__LIBTMUX_MCP_DONE_" + std::to_string(++sequence) + "__";
-        std::string payload = required(arguments, "command");
-        payload += "; __libtmux_mcp_status=$?; printf '\\n" + marker +
-                   ":%s\\n' \"$__libtmux_mcp_status\"\n";
-        const auto sent = pane->send_text(payload);
+        const auto payload = detail::shell_command_payload(
+            required(arguments, "command"), shell_command_nonce());
+        auto targets = resolved_pane_targets(*pane);
+        if (!targets.has_value()) {
+          return libtmux::unexpected(std::move(targets.error()));
+        }
+        auto guarded = guard_pane_inputs(*targets);
+        if (!guarded.has_value()) {
+          return libtmux::unexpected(std::move(guarded.error()));
+        }
+        if (targets->size() != 1U) {
+          std::string ids;
+          for (const Pane& target : *targets) {
+            ids += ids.empty() ? std::string{target.id()}
+                               : ", " + std::string{target.id()};
+          }
+          return libtmux::unexpected(ToolError{
+              false,
+              "run_shell_command requires one configured pane target; configured "
+              "IDs are " +
+                  ids +
+                  "; disable synchronize-panes or use a source pane whose effective "
+                  "synchronize-panes state is off"});
+        }
+        const auto sent = pane->send_text(payload.text);
         if (!sent.has_value()) {
           return failure(sent.error());
         }
@@ -1547,30 +1690,28 @@ resolved_pane_targets(const Pane& pane) {
           }
           CaptureOptions options;
           options.whole_history = true;
+          options.join_wrapped = true;
           const auto captured = pane->capture(options);
           if (!captured.has_value()) {
             return failure(captured.error());
           }
-          const auto found = captured->rfind(marker + ":");
-          if (found != std::string::npos) {
-            const std::size_t status_begin = found + marker.size() + 1U;
-            const std::size_t status_end = captured->find('\n', status_begin);
-            long long status = 0;
-            static_cast<void>(std::from_chars(
-                captured->data() + status_begin,
-                captured->data() +
-                    (status_end == std::string::npos ? captured->size() : status_end),
-                status));
-            return detail::output({{"exit_code", status},
-                                   {"pane_id", pane->id()},
-                                   {"text", captured->substr(0U, found)}});
+          const auto completed =
+              detail::shell_command_completion(*captured, payload.marker);
+          if (completed.has_value()) {
+            return detail::output(
+                {{"exit_code", completed->exit_code},
+                 {"pane_id", pane->id()},
+                 {"text",
+                  captured->substr(completed->text_begin,
+                                   completed->record_begin - completed->text_begin)}});
           }
           std::this_thread::sleep_for(20ms);
         }
         return libtmux::unexpected(ToolError{false, "shell command timed out"});
       },
-      "Send one command, wait for a private completion marker, and return captured "
-      "output."));
+      "Refuse a human-owned mode in the configured synchronized pane cohort and "
+      "refuse a multi-pane cohort, then send one command and return output after "
+      "its private completion boundary."));
 
   add(make_tool(
       "send_keys", "Send keys to a tmux pane", Toolset::execute,
@@ -1589,16 +1730,21 @@ resolved_pane_targets(const Pane& pane) {
         }
         auto targets = resolved_pane_targets(*pane);
         if (!targets.has_value()) {
-          return failure(targets.error());
+          return libtmux::unexpected(std::move(targets.error()));
+        }
+        auto guarded = guard_pane_inputs(*targets);
+        if (!guarded.has_value()) {
+          return libtmux::unexpected(std::move(guarded.error()));
         }
         const auto answer = pane->send_key(required(arguments, "keys"));
         return answer.has_value()
-                   ? detail::output(
-                         {{"pane_id", pane->id()},
-                          {"target_pane_ids", StructuredValue{std::move(*targets)}}})
+                   ? detail::output({{"pane_id", pane->id()},
+                                     {"target_pane_ids",
+                                      StructuredValue{pane_target_ids(*targets)}}})
                    : failure(answer.error());
       },
-      "Deliver one validated tmux key name."));
+      "Refuse a human-owned mode in the configured synchronized pane cohort, then "
+      "deliver one validated tmux key name."));
 
   add(make_tool(
       "send_keys_batch", "Send a key sequence to a tmux pane", Toolset::execute,
@@ -1641,18 +1787,23 @@ resolved_pane_targets(const Pane& pane) {
           } else {
             auto found_targets = resolved_pane_targets(*pane);
             if (!found_targets.has_value()) {
-              error = found_targets.error().diagnostic;
+              error = found_targets.error().message;
             } else {
-              resolved = std::move(*found_targets);
-              const auto sent = boolean(operation, "literal")
-                                    ? pane->send_text(required(operation, "keys"))
-                                    : pane->send_key(required(operation, "keys"));
-              if (!sent.has_value()) {
-                error = sent.error().diagnostic;
-              } else if (boolean(operation, "enter")) {
-                const auto entered = pane->send_key("Enter");
-                if (!entered.has_value()) {
-                  error = entered.error().diagnostic;
+              resolved = pane_target_ids(*found_targets);
+              auto guarded = guard_pane_inputs(*found_targets);
+              if (!guarded.has_value()) {
+                error = guarded.error().message;
+              } else {
+                const auto sent = boolean(operation, "literal")
+                                      ? pane->send_text(required(operation, "keys"))
+                                      : pane->send_key(required(operation, "keys"));
+                if (!sent.has_value()) {
+                  error = sent.error().diagnostic;
+                } else if (boolean(operation, "enter")) {
+                  const auto entered = pane->send_key("Enter");
+                  if (!entered.has_value()) {
+                    error = entered.error().diagnostic;
+                  }
                 }
               }
             }
@@ -1674,7 +1825,8 @@ resolved_pane_targets(const Pane& pane) {
                                {"failures", StructuredValue{std::move(failures)}},
                                {"targets", StructuredValue{std::move(targets)}}});
       },
-      "Deliver an ordered, bounded sequence of pane-input operations."));
+      "Preflight each row's configured synchronized pane cohort independently, "
+      "refusing human-owned modes before its text or key and optional Enter."));
 
   add(make_tool(
       "paste_text", "Paste text into a tmux pane", Toolset::execute,
@@ -1692,6 +1844,10 @@ resolved_pane_targets(const Pane& pane) {
         const auto pane = server.pane(required(arguments, "paneId"));
         if (!pane.has_value()) {
           return failure(pane.error());
+        }
+        auto guarded = detail::guard_pane_input_mode(*pane);
+        if (!guarded.has_value()) {
+          return libtmux::unexpected(std::move(guarded.error()));
         }
         const std::string name = "libtmux-mcp-" + std::to_string(++sequence);
         const auto staged = server.set_buffer(name, required(arguments, "text"));
@@ -1714,7 +1870,8 @@ resolved_pane_targets(const Pane& pane) {
         }
         return changed("pane_id", pane->id());
       },
-      "Stage a private buffer, paste it once, and consume it."));
+      "Refuse a human-owned mode in the target pane, then stage a private buffer, "
+      "paste it once, and consume it."));
 
   add(make_tool(
       "set_synchronize_panes", "Set synchronized pane input", Toolset::execute,
@@ -1738,8 +1895,8 @@ resolved_pane_targets(const Pane& pane) {
                    ? detail::output({{"enabled", enabled}, {"window_id", window->id()}})
                    : failure(answer.error());
       },
-      "Enabling synchronize-panes means subsequent input is copied to every pane "
-      "in the window.",
+      "Set the inherited window synchronize-panes default; pane-level overrides "
+      "determine effective synchronized input membership.",
       true));
   const auto teardown = [&](std::string name, std::string title,
                             std::vector<Field> fields, Handler handler,

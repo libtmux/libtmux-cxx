@@ -77,7 +77,16 @@ Creation and respawn tools accept no command or environment payload.
 `send_keys_batch`, and `paste_text` send input to a pane's existing
 process. `set_synchronize_panes` is the only tool marked as amplifying future
 input; the two key-sending tools report every resolved pane target when tmux
-copies input across the window.
+copies input across the window. Those sorted IDs describe configured preflight
+membership, not proven recipients. `run_shell_command`, `send_keys`, and each
+`send_keys_batch` row refuse input when the addressed pane or any configured
+synchronized cohort member is in a human-owned mode. After that preflight,
+`run_shell_command` also requires a singular configured target; disable
+`synchronize-panes` or address a source whose effective value is off. This
+prevents a singular result from hiding execution in peer panes. `paste_text`
+checks only its explicit target because buffers do not fan out. The MCP checks
+immediately before delivery but cannot make the check and tmux dispatch atomic;
+it never exits or cancels a pane mode.
 
 `call_read_tools_batch` accepts one through 16 serial inspect calls, excluding
 itself and the self-bounded `wait_for_text`. Exact tool exclusions prune its

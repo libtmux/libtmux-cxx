@@ -388,6 +388,15 @@ CATALOGUE: t.Final = (
         "member can run",
     ),
     Mutation(
+        mutation_id="mcp-pane-mode-exact-zero",
+        path="apps/mcp/src/tool_catalog.cpp",
+        find='  if (expanded_mode.has_value() && *expanded_mode == "0") {',
+        replace="  if (expanded_mode.has_value()) {",
+        target="mcp_tools_test",
+        test_regex=r"^consumer[.]mcp$",
+        guards="pane input proceeds only when a fresh mode expansion is exactly zero",
+    ),
+    Mutation(
         mutation_id="mcp-id-held-through-write",
         path="apps/mcp/src/stdio_server.cpp",
         find="      if (response.has_value()) {\n"
