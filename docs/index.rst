@@ -1,10 +1,36 @@
-libtmux-cxx
-===========
+libtmux-cxx API reference
+=========================
 
-The C++ port of libtmux. This reference is generated from the public headers
-in ``include/libtmux``.
+Generated from the public headers in ``include/libtmux``. One page per
+header.
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
 
-   api/index
+   abi
+   async
+   batch
+   capabilities
+   capture
+   cardinality
+   chain
+   command
+   control
+   delivery
+   entities
+   expected
+   filter_expr
+   format
+   keys
+   legacy_lookup
+   libtmux
+   lowered_node
+   lowering
+   notification
+   options
+   relations
+   server
+   snapshot
+   socket
+   target
+   version
