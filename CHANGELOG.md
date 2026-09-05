@@ -11,9 +11,12 @@ was recorded as it landed.
 
 ### MCP server
 
-- Replace the legacy tool catalog with one immutable 47-tool capability
+- Replace the legacy tool catalog with one immutable 45-tool capability
   registry that governs registration, calls, schemas, descriptions, internal
   input-sink claims, annotations, nested authority, and disclosure.
+- Remove `enter_copy_mode` and `exit_copy_mode` from the MCP surface. Use
+  `capture_pane`, `capture_since`, `snapshot_pane`, or `search_panes` for
+  terminal text; the core `Pane` operations remain available.
 - Add startup-frozen `LIBTMUX_TOOLSETS`, `LIBTMUX_TOOLS`, and
   `LIBTMUX_EXCLUDE_TOOLS` selection. `LIBTMUX_SAFETY` now stops startup with a
   migration error.
