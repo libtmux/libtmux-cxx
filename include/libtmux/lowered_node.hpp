@@ -30,12 +30,12 @@ struct LoweredNode {
   };
 
   Kind kind{Kind::string_test};
-  // Field name for a test, relation name for a relation, empty otherwise.
+  /// Field name for a test, relation name for a relation, empty otherwise.
   std::string name;
   std::string op;
   std::string operand;
-  // The value a number_test compares against, kept as a number so a future
-  // tmux `-f` compiler does not have to parse it back out of the operand.
+  /// The value a number_test compares against, kept as a number so a future
+  /// tmux `-f` compiler does not have to parse it back out of the operand.
   long long number{};
   bool conjunction{};
   bool expected{};
@@ -44,8 +44,8 @@ struct LoweredNode {
 
 using LoweredExpression = std::vector<LoweredNode>;
 
-// Collects a lowered expression. This is the sink the relation builders use to
-// capture their child, and it is a plain value so the result is copyable.
+/// Collects a lowered expression. This is the sink the relation builders use to
+/// capture their child, and it is a plain value so the result is copyable.
 class NodeCollector {
 public:
   void string_test(std::string_view field, std::string_view op,

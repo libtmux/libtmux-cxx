@@ -44,8 +44,8 @@ enum class BackendKind {
   return "unknown";
 }
 
-// Coarse-grained promises callers choose around. Raw commands remain unchecked;
-// the psmux preview promises only exact inspection and namespace cleanup.
+/// Coarse-grained promises callers choose around. Raw commands remain unchecked;
+/// the psmux preview promises only exact inspection and namespace cleanup.
 enum class ServerFeature {
   // Exact session/window/pane listings, traversal, refresh, and format reads.
   exact_inspection,
@@ -107,7 +107,7 @@ struct ServerCapabilities {
   ServerImplementation implementation{ServerImplementation::unknown};
   BackendKind backend{BackendKind::custom};
 
-  // Purely local: this never launches tmux or touches a server.
+  /// Purely local: this never launches tmux or touches a server.
   [[nodiscard]] constexpr bool supports(ServerFeature feature) const noexcept {
     if (implementation == ServerImplementation::unknown) {
       return false;
@@ -131,11 +131,11 @@ struct ServerCapabilities {
     return false;
   }
 
-  // Whether this implementation is known to get the feature wrong, which is
-  // the opposite question from `supports` rather than its negation. Both
-  // answer no for a backend nobody recognises: a caller asking what it may
-  // rely on must not be promised anything, and a custom executor running real
-  // tmux must not be refused for being unfamiliar.
+  /// Whether this implementation is known to get the feature wrong, which is
+  /// the opposite question from `supports` rather than its negation. Both
+  /// answer no for a backend nobody recognises: a caller asking what it may
+  /// rely on must not be promised anything, and a custom executor running real
+  /// tmux must not be refused for being unfamiliar.
   [[nodiscard]] constexpr bool refuses(ServerFeature feature) const noexcept {
     return implementation != ServerImplementation::unknown && !supports(feature);
   }

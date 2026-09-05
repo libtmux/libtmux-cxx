@@ -17,12 +17,12 @@
 
 namespace libtmux::test {
 
-// Resolved once per distinct binary and cached. A tmux that cannot be run or
-// whose version cannot be parsed reports as the newest possible version, so
-// version-gated tests run and fail rather than silently skipping.
+/// Resolved once per distinct binary and cached. A tmux that cannot be run or
+/// whose version cannot be parsed reports as the newest possible version, so
+/// version-gated tests run and fail rather than silently skipping.
 [[nodiscard]] Version running_tmux(const std::filesystem::path& tmux_binary = "tmux");
 
-// What `tmux -V` printed, verbatim, or "unknown".
+/// What `tmux -V` printed, verbatim, or "unknown".
 [[nodiscard]] std::string
 describe_running_tmux(const std::filesystem::path& tmux_binary = "tmux");
 
