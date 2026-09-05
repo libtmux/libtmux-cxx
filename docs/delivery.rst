@@ -1,5 +1,5 @@
 delivery
 ========
 
-.. doxygenfile:: delivery.hpp
+.. doxygenfile:: libtmux/delivery.hpp
    :project: cxx

@@ -1,5 +1,5 @@
 socket
 ======
 
-.. doxygenfile:: socket.hpp
+.. doxygenfile:: libtmux/socket.hpp
    :project: cxx

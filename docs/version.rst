@@ -1,5 +1,5 @@
 version
 =======
 
-.. doxygenfile:: version.hpp
+.. doxygenfile:: libtmux/version.hpp
    :project: cxx

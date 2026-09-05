@@ -62,4 +62,4 @@ templates_path = ["_templates"]
 # — see notes/research/03-design-token-bridge.md.
 html_static_path = ["_static"]
 html_css_files = ["libtmux-org.css"]
-html_js_files = [("https://libtmux.org/_shell/shell.js", {"defer": "defer"})]
+html_js_files = [("/_shell/shell.js", {"defer": "defer"})]

@@ -1,5 +1,5 @@
 batch
 =====
 
-.. doxygenfile:: batch.hpp
+.. doxygenfile:: libtmux/batch.hpp
    :project: cxx

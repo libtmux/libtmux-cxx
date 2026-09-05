@@ -1,5 +1,5 @@
 async
 =====
 
-.. doxygenfile:: async.hpp
+.. doxygenfile:: libtmux/async.hpp
    :project: cxx

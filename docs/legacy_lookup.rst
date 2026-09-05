@@ -1,5 +1,5 @@
-legacy lookup
+legacy_lookup
 =============
 
-.. doxygenfile:: legacy_lookup.hpp
+.. doxygenfile:: libtmux/legacy_lookup.hpp
    :project: cxx

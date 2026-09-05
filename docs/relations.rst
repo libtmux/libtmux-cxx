@@ -1,5 +1,5 @@
 relations
 =========
 
-.. doxygenfile:: relations.hpp
+.. doxygenfile:: libtmux/relations.hpp
    :project: cxx

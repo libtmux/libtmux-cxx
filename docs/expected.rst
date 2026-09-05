@@ -1,5 +1,5 @@
 expected
 ========
 
-.. doxygenfile:: expected.hpp
+.. doxygenfile:: libtmux/expected.hpp
    :project: cxx

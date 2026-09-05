@@ -1,5 +1,5 @@
 capture
 =======
 
-.. doxygenfile:: capture.hpp
+.. doxygenfile:: libtmux/capture.hpp
    :project: cxx

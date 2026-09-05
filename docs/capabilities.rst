@@ -1,5 +1,5 @@
 capabilities
 ============
 
-.. doxygenfile:: capabilities.hpp
+.. doxygenfile:: libtmux/capabilities.hpp
    :project: cxx
