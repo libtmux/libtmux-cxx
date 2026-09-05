@@ -467,9 +467,16 @@ TEST(McpProtocolCli, StartsAnAbsentPinnedSocketOnlyForCreateSession) {
                                        {{initialize, std::chrono::milliseconds{750}},
                                         {teardown, std::chrono::milliseconds{750}}},
                                        std::move(environment));
+  auto server = libtmux::Server::at_socket_path(socket.string());
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+  const auto stopped = server->kill();
+  ASSERT_TRUE(stopped.has_value()) << stopped.error().diagnostic;
+  std::error_code cleanup_error;
+  static_cast<void>(std::filesystem::remove(socket, cleanup_error));
 
   const json* created = response(messages, 1);
   const json* killed = response(messages, 2);
+  EXPECT_FALSE(cleanup_error) << cleanup_error.message();
   ASSERT_NE(created, nullptr);
   ASSERT_NE(killed, nullptr);
   EXPECT_FALSE(created->contains("error")) << created->dump();
