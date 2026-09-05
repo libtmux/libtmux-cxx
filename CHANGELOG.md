@@ -9,6 +9,29 @@ was recorded as it landed.
 
 ## Unreleased
 
+### MCP server
+
+- Replace the legacy tool catalog with one immutable 47-tool capability
+  registry that governs registration, calls, schemas, descriptions, internal
+  input-sink claims, annotations, nested authority, and disclosure.
+- Add startup-frozen `LIBTMUX_TOOLSETS`, `LIBTMUX_TOOLS`, and
+  `LIBTMUX_EXCLUDE_TOOLS` selection. `LIBTMUX_SAFETY` now stops startup with a
+  migration error.
+- Add one process-wide socket selected by `LIBTMUX_SOCKET` or
+  `LIBTMUX_SOCKET_PATH`. A new product-dedicated socket uses the bundled
+  minimal configuration unless `LIBTMUX_TMUX_CONFIG` names an absolute path;
+  only its authenticated creator enables teardown by default and stops it when
+  stdio closes.
+- Add the static `tmux://capabilities` resource and matching
+  `com.git-pull.libtmux-mcp/capability` metadata to every advertised tool.
+  Public rows expose schema-keyed input literalization while sink claims remain
+  internal validation data.
+- Add bounded typed read batching that retains every executed row within a
+  1,000,000-byte newline-terminated JSON-RPC response, deterministic bounded
+  pane search, and synchronized-pane target disclosure. Request IDs over 512
+  KiB fail before dispatch rather than consuming that response budget.
+  `set_synchronize_panes` declares that it amplifies subsequent pane input.
+
 ## 0.1.0-alpha.6 (2026-08-31)
 
 This is a source- and ABI-breaking alpha. Asynchronous commands now run under
