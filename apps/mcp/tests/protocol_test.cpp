@@ -157,6 +157,28 @@ std::vector<json> converse_steps(
   return decode_messages(finished);
 }
 
+struct PrivateTmuxEndpointCleanup final {
+  const libtmux::Server& server;
+  const std::filesystem::path& selected;
+  const std::filesystem::path& private_root;
+
+  ~PrivateTmuxEndpointCleanup() noexcept {
+    if (selected.parent_path() != private_root) {
+      return;
+    }
+    static_cast<void>(server.kill());
+    const auto stopped_by = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+    while (server.is_alive(std::chrono::milliseconds{50}) &&
+           std::chrono::steady_clock::now() < stopped_by) {
+      std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    }
+    if (!server.is_alive(std::chrono::milliseconds{50})) {
+      std::error_code ignored;
+      static_cast<void>(std::filesystem::remove(selected, ignored));
+    }
+  }
+};
+
 std::vector<json>
 converse(const std::filesystem::path& socket, const std::vector<json>& requests,
          std::chrono::milliseconds linger = std::chrono::milliseconds{250}) {
@@ -464,16 +486,33 @@ TEST_F(McpProtocol, EnforcesTheInitializationLifecycle) {
 }
 
 TEST(McpProtocolCli, StartsAnAbsentPinnedSocketOnlyForCreateSession) {
+  auto sentinel = ScopedTmuxServer::start(ScopedTmuxServerOptions{
+      .mode = SocketMode::Name,
+      .session_name = "startable-sentinel",
+      .socket_namespace = SocketNamespace::consumer("mcp-start")});
+  ASSERT_TRUE(sentinel.has_value()) << sentinel.error();
+  const auto private_permissions =
+      std::filesystem::status(sentinel->tmux_tmpdir()).permissions();
+  EXPECT_EQ(private_permissions & (std::filesystem::perms::group_all |
+                                   std::filesystem::perms::others_all),
+            std::filesystem::perms::none);
+  const libtmux::test::EnvironmentGuard tmux_tmpdir{"TMUX_TMPDIR",
+                                                    sentinel->tmux_tmpdir().string()};
+
   const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
   const std::filesystem::path socket =
-      std::filesystem::temp_directory_path() /
+      sentinel->tmux_tmpdir() /
       ("libtmux-mcp-startable-" + std::to_string(nonce) + ".sock");
+  EXPECT_EQ(socket.parent_path(), sentinel->tmux_tmpdir());
+  EXPECT_FALSE(std::filesystem::exists(socket));
   const std::string initialize =
       encode_requests({initialize_request(), initialized_notification(),
                        call("create_session", {{"name", "mcp-startable"}}, 1)});
   const std::string teardown =
       encode_requests({call("kill_session", {{"session", "mcp-startable"}}, 2)});
   auto environment = libtmux::test::current_environment();
+  libtmux::test::erase_environment(environment, "TMUX");
+  libtmux::test::erase_environment(environment, "TMUX_PANE");
   libtmux::test::set_environment(environment, "LIBTMUX_TOOLS", "kill_session");
   const auto messages = converse_steps(socket,
                                        {{initialize, std::chrono::milliseconds{750}},
@@ -481,20 +520,34 @@ TEST(McpProtocolCli, StartsAnAbsentPinnedSocketOnlyForCreateSession) {
                                        std::move(environment));
   auto server = libtmux::Server::at_socket_path(socket.string());
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
-  const auto stopped = server->kill();
-  ASSERT_TRUE(stopped.has_value()) << stopped.error().diagnostic;
-  std::error_code cleanup_error;
-  static_cast<void>(std::filesystem::remove(socket, cleanup_error));
-
   const json* created = response(messages, 1);
   const json* killed = response(messages, 2);
-  EXPECT_FALSE(cleanup_error) << cleanup_error.message();
-  ASSERT_NE(created, nullptr);
-  ASSERT_NE(killed, nullptr);
-  EXPECT_FALSE(created->contains("error")) << created->dump();
-  EXPECT_FALSE(killed->contains("error")) << killed->dump();
-  EXPECT_FALSE((*created)["result"]["isError"].get<bool>()) << created->dump();
-  EXPECT_FALSE((*killed)["result"]["isError"].get<bool>()) << killed->dump();
+  EXPECT_THROW(
+      [&] {
+        PrivateTmuxEndpointCleanup cleanup(*server, socket, sentinel->tmux_tmpdir());
+        const auto server_environment = server->run({"show-environment", "-g"});
+        ASSERT_TRUE(server_environment.has_value())
+            << server_environment.error().diagnostic;
+        EXPECT_NE(
+            server_environment->find("TMUX_TMPDIR=" + sentinel->tmux_tmpdir().string()),
+            std::string::npos);
+        ASSERT_NE(created, nullptr);
+        ASSERT_NE(killed, nullptr);
+        EXPECT_FALSE(created->contains("error")) << created->dump();
+        EXPECT_FALSE(killed->contains("error")) << killed->dump();
+        EXPECT_FALSE((*created)["result"]["isError"].get<bool>()) << created->dump();
+        EXPECT_FALSE((*killed)["result"]["isError"].get<bool>()) << killed->dump();
+        throw std::runtime_error{"injected after target creation"};
+      }(),
+      std::runtime_error);
+
+  EXPECT_FALSE(server->is_alive(std::chrono::milliseconds{50}));
+  EXPECT_FALSE(std::filesystem::exists(socket));
+  EXPECT_TRUE(sentinel->is_alive());
+  const auto sibling =
+      libtmux::Server::at_socket_path(sentinel->socket_path().string());
+  ASSERT_TRUE(sibling.has_value()) << sibling.error().diagnostic;
+  EXPECT_TRUE(sibling->is_alive());
 }
 
 TEST_F(McpProtocol, PublishesTheEffectiveCrossPortCatalog) {
