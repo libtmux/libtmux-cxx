@@ -183,6 +183,13 @@ private:
 
 // tmux in a child process: the only executor this library binds to.
 class SubprocessBackend final : public Backend {
+  struct PublishedEndpoint {
+    std::vector<std::string> connection;
+    std::string socket_path;
+    std::string identity;
+    std::shared_ptr<const SocketAlias> alias;
+  };
+
 public:
   [[nodiscard]] static expected<std::shared_ptr<const SubprocessBackend>,
                                 CommandFailure>
@@ -231,16 +238,27 @@ public:
                   std::optional<std::chrono::milliseconds> timeout) const override;
 
   [[nodiscard]] const std::vector<std::string>& connection() const noexcept override {
+    if (auto endpoint = published_endpoint(); endpoint != nullptr) {
+      return endpoint->connection;
+    }
     return connection_;
   }
 
   [[nodiscard]] std::string_view identity() const noexcept override {
+    if (auto endpoint = published_endpoint(); endpoint != nullptr) {
+      return endpoint->identity;
+    }
     return identity_;
   }
 
   [[nodiscard]] std::string_view socket_path() const noexcept override {
-    return socket_missing_.load() && !startable_ ? std::string_view{}
-                                                 : std::string_view{socket_path_};
+    if (socket_missing_.load(std::memory_order_acquire)) {
+      return startable_ ? std::string_view{socket_path_} : std::string_view{};
+    }
+    if (auto endpoint = published_endpoint(); endpoint != nullptr) {
+      return endpoint->socket_path;
+    }
+    return socket_path_;
   }
 
   [[nodiscard]] std::string_view selected_socket_path() const noexcept override {
@@ -249,6 +267,9 @@ public:
 
   [[nodiscard]] std::shared_ptr<const SocketAlias>
   socket_alias() const noexcept override {
+    if (auto endpoint = published_endpoint(); endpoint != nullptr) {
+      return endpoint->alias;
+    }
     return socket_alias_;
   }
 
@@ -315,6 +336,16 @@ private:
   interpret_reply(const CommandRequest& command, std::size_t allowed_bytes,
                   ProcessReply reply, bool notify_observer) const;
 
+  [[nodiscard]] std::shared_ptr<const PublishedEndpoint>
+  published_endpoint() const noexcept {
+    if (socket_missing_.load(std::memory_order_acquire)) {
+      return {};
+    }
+    return std::atomic_load_explicit(&started_endpoint_, std::memory_order_acquire);
+  }
+
+  [[nodiscard]] expected<void, CommandFailure> publish_started_endpoint() const;
+
   std::vector<std::string> connection_;
   // Captured once, at construction. Keeping the alias alive keeps the inode
   // from being reused and prevents this handle from following a replacement.
@@ -323,6 +354,9 @@ private:
   std::string selected_socket_path_;
   std::shared_ptr<const SocketAlias> socket_alias_;
   mutable std::atomic_bool socket_missing_{};
+  // Published once and never replaced, so references returned by the accessors
+  // remain valid for the backend's lifetime.
+  mutable std::shared_ptr<const PublishedEndpoint> started_endpoint_;
   bool startable_{};
   std::optional<std::string> startup_configuration_;
   mutable std::mutex startup_mutex_;

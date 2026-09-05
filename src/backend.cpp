@@ -273,7 +273,7 @@ SubprocessBackend::open_startable(std::vector<std::string> connection,
 
 expected<PreparedAttach, CommandFailure>
 SubprocessBackend::prepare_attach(std::string_view target) const {
-  if (socket_missing_.load()) {
+  if (socket_missing_.load(std::memory_order_acquire)) {
     return unexpected(CommandFailure{
         .kind = FailureKind::missing,
         .delivery = DeliveryStatus::not_started,
@@ -468,7 +468,7 @@ expected<bool, CommandFailure> SubprocessBackend::session_belongs(
 }
 
 expected<void, CommandFailure> SubprocessBackend::async_preflight() const {
-  if (!socket_missing_.load()) {
+  if (!socket_missing_.load(std::memory_order_acquire)) {
     return {};
   }
   return unexpected(CommandFailure{
@@ -485,13 +485,14 @@ SubprocessBackend::build_request(const CommandRequest& command,
                                  std::optional<std::chrono::milliseconds> timeout,
                                  std::optional<std::size_t> output_limit) const {
   ProcessRequest request;
+  const auto& active_connection = connection();
   request.executable = "tmux";
   request.timeout = timeout;
 #if defined(_WIN32)
   // Warm claiming reserializes the caller's cwd into psmux's line protocol.
   request.environment = libtmux_env::psmux_child_environment();
   if (session.has_value()) {
-    if (auto target = psmux_session(connection_, *session); target.has_value()) {
+    if (auto target = psmux_session(active_connection, *session); target.has_value()) {
       request.environment.emplace_back("PSMUX_TARGET_SESSION", std::move(*target));
     }
   }
@@ -501,7 +502,7 @@ SubprocessBackend::build_request(const CommandRequest& command,
   if (output_limit.has_value()) {
     request.capture_limit = *output_limit;
   }
-  request.arguments.reserve(connection_.size() + command.size() + 1U);
+  request.arguments.reserve(active_connection.size() + command.size() + 1U);
   // Force UTF-8. The field separator this library asks tmux to print between
   // format values is U+241E, and a tmux that has decided the terminal is not
   // UTF-8 replaces it with an underscore — at which point every row fails to
@@ -509,11 +510,12 @@ SubprocessBackend::build_request(const CommandRequest& command,
   // always passed this flag; the subprocess one is the reason a caller in a C
   // locale sees a library that cannot read anything.
   request.arguments.push_back(Argument{"-u"});
-  if (socket_missing_.load() && startable_ && startup_configuration_.has_value()) {
+  if (socket_missing_.load(std::memory_order_acquire) && startable_ &&
+      startup_configuration_.has_value()) {
     request.arguments.push_back(Argument{"-f"});
     request.arguments.push_back(Argument{*startup_configuration_});
   }
-  for (const std::string& argument : connection_) {
+  for (const std::string& argument : active_connection) {
     request.arguments.push_back(Argument{argument});
   }
   for (const CommandArgument& argument : command.arguments()) {
@@ -525,13 +527,44 @@ SubprocessBackend::build_request(const CommandRequest& command,
   return request;
 }
 
+expected<void, CommandFailure> SubprocessBackend::publish_started_endpoint() const {
+  auto endpoint = bind_socket_endpoint(connection_);
+  if (!endpoint.has_value()) {
+    return unexpected(CommandFailure{
+        .kind = FailureKind::pipe,
+        .delivery = DeliveryStatus::replied,
+        .exit_code = 0,
+        .diagnostic = "tmux started but its exact endpoint could not be retained: " +
+                      std::move(endpoint.error())});
+  }
+  if (endpoint->missing || endpoint->identity.empty()) {
+    return unexpected(CommandFailure{
+        .kind = FailureKind::missing,
+        .delivery = DeliveryStatus::replied,
+        .exit_code = 0,
+        .diagnostic =
+            "tmux started but its exact endpoint was not available to retain"});
+  }
+
+  auto published = std::make_shared<const PublishedEndpoint>(PublishedEndpoint{
+      .connection = std::move(endpoint->connection),
+      .socket_path = std::move(endpoint->socket_path),
+      .identity = std::move(endpoint->identity),
+      .alias = std::move(endpoint->alias),
+  });
+  std::atomic_store_explicit(&started_endpoint_, std::move(published),
+                             std::memory_order_release);
+  socket_missing_.store(false, std::memory_order_release);
+  return {};
+}
+
 expected<std::string, CommandFailure>
 SubprocessBackend::run_scoped(const CommandRequest& command,
                               std::optional<std::string_view> session,
                               std::optional<std::chrono::milliseconds> timeout,
                               std::optional<std::size_t> output_limit) const {
   std::unique_lock startup_lock{startup_mutex_, std::defer_lock};
-  if (socket_missing_.load()) {
+  if (socket_missing_.load(std::memory_order_acquire)) {
     startup_lock.lock();
   }
   const bool version_query =
@@ -539,7 +572,10 @@ SubprocessBackend::run_scoped(const CommandRequest& command,
   const bool starts_server =
       !command.empty() && (command.arguments().front().value() == "new-session" ||
                            command.arguments().front().value() == "start-server");
-  if (socket_missing_.load() && !version_query && (!startable_ || !starts_server)) {
+  const bool publishes_started_endpoint =
+      socket_missing_.load(std::memory_order_acquire) && startable_ && starts_server;
+  if (socket_missing_.load(std::memory_order_acquire) && !version_query &&
+      (!startable_ || !starts_server)) {
     return report_failure(
         command,
         CommandFailure{
@@ -569,11 +605,21 @@ SubprocessBackend::run_scoped(const CommandRequest& command,
                                    .diagnostic = std::move(reply.error().diagnostic)});
   }
 
-  auto interpreted = interpret(command, allowed_bytes, *std::move(reply));
-  if (interpreted.has_value() && socket_missing_.load() && startable_ &&
-      starts_server) {
-    socket_missing_.store(false);
+  auto interpreted =
+      publishes_started_endpoint
+          ? interpret_unobserved(command, allowed_bytes, *std::move(reply))
+          : interpret(command, allowed_bytes, *std::move(reply));
+  if (!publishes_started_endpoint) {
+    return interpreted;
   }
+  if (!interpreted.has_value()) {
+    observe(command, &interpreted.error());
+    return interpreted;
+  }
+  if (auto published = publish_started_endpoint(); !published.has_value()) {
+    return reported(std::move(published.error()));
+  }
+  observe(command, nullptr);
   return interpreted;
 }
 

@@ -7,6 +7,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <future>
 #include <string>
 #include <thread>
 #include <unordered_set>
@@ -28,6 +29,209 @@ Server connect(const libtmux::test::ScopedTmuxServer& fixture) {
   auto server = Server::at_socket_path(fixture.socket_path().string());
   EXPECT_TRUE(server.has_value());
   return server.value();
+}
+
+class ServerCleanup final {
+public:
+  explicit ServerCleanup(Server server) : server_{std::move(server)} {}
+  ~ServerCleanup() { static_cast<void>(server_.kill()); }
+
+  ServerCleanup(const ServerCleanup&) = delete;
+  ServerCleanup& operator=(const ServerCleanup&) = delete;
+
+private:
+  Server server_;
+};
+
+class ReplacedSocket final {
+public:
+  ReplacedSocket(std::filesystem::path selected, std::filesystem::path retained,
+                 const std::filesystem::path& replacement)
+      : selected_{std::move(selected)}, retained_{std::move(retained)} {
+    removed_ = std::filesystem::remove(selected_, error_);
+    if (error_ || !removed_) {
+      if (!error_) {
+        error_ = std::make_error_code(std::errc::no_such_file_or_directory);
+      }
+      return;
+    }
+    std::filesystem::create_hard_link(replacement, selected_, error_);
+  }
+
+  ~ReplacedSocket() { static_cast<void>(restore()); }
+
+  ReplacedSocket(const ReplacedSocket&) = delete;
+  ReplacedSocket& operator=(const ReplacedSocket&) = delete;
+
+  [[nodiscard]] const std::error_code& error() const noexcept { return error_; }
+
+  [[nodiscard]] std::error_code restore() noexcept {
+    if (!removed_) {
+      return {};
+    }
+    std::error_code ignored;
+    static_cast<void>(std::filesystem::remove(selected_, ignored));
+    std::error_code restored;
+    std::filesystem::create_hard_link(retained_, selected_, restored);
+    if (!restored) {
+      removed_ = false;
+    }
+    return restored;
+  }
+
+private:
+  std::filesystem::path selected_;
+  std::filesystem::path retained_;
+  std::error_code error_;
+  bool removed_{};
+};
+
+enum class StartableSelector { path, name, default_ };
+
+class StartableServerIdentity : public testing::TestWithParam<StartableSelector> {};
+
+std::string
+selector_name(const testing::TestParamInfo<StartableSelector>& information) {
+  switch (information.param) {
+  case StartableSelector::path:
+    return "Path";
+  case StartableSelector::name:
+    return "Name";
+  case StartableSelector::default_:
+    return "Default";
+  }
+  return "Unknown";
+}
+
+TEST_P(StartableServerIdentity, PublishesTheCreatedServersExactIdentity) {
+  libtmux::test::ScopedTmuxServerOptions owner_options;
+  owner_options.mode = libtmux::test::SocketMode::Name;
+  auto owner = libtmux::test::ScopedTmuxServer::start(std::move(owner_options));
+  ASSERT_TRUE(owner.has_value()) << owner.error();
+  const libtmux::test::EnvironmentGuard tmpdir{"TMUX_TMPDIR",
+                                               owner->tmux_tmpdir().string()};
+  const std::filesystem::path selected = owner->tmux_tmpdir() / "startable.sock";
+  constexpr std::string_view socket_name{"startable-name"};
+
+  const auto open = [&]() -> libtmux::expected<Server, libtmux::CommandFailure> {
+    switch (GetParam()) {
+    case StartableSelector::path:
+      return Server::startable_at_socket_path(selected.string(),
+                                              std::filesystem::path{"/dev/null"});
+    case StartableSelector::name:
+      return Server::startable_at_socket_name(socket_name,
+                                              std::filesystem::path{"/dev/null"});
+    case StartableSelector::default_:
+      return Server::startable_at_default(std::filesystem::path{"/dev/null"});
+    }
+    return Server::startable_at_default(std::filesystem::path{"/dev/null"});
+  };
+  auto opened = open();
+  ASSERT_TRUE(opened.has_value()) << opened.error().diagnostic;
+  ServerCleanup cleanup{*opened};
+
+  const auto created = opened->new_session("startable-original");
+  ASSERT_TRUE(created.has_value()) << created.error().diagnostic;
+  const auto attach = created->attach_command();
+  ASSERT_TRUE(attach.has_value()) << attach.error().diagnostic;
+  ASSERT_GE(attach->argv().size(), 5U);
+  EXPECT_EQ(attach->argv()[1], "-S");
+  EXPECT_NE(attach->argv()[2], opened->socket_path());
+  std::error_code compared;
+  EXPECT_TRUE(
+      std::filesystem::equivalent(attach->argv()[2], opened->socket_path(), compared));
+  EXPECT_FALSE(compared) << compared.message();
+
+  const auto reopen = [&]() -> libtmux::expected<Server, libtmux::CommandFailure> {
+    switch (GetParam()) {
+    case StartableSelector::path:
+      return Server::at_socket_path(opened->socket_path());
+    case StartableSelector::name:
+      return Server::at_socket_name(socket_name);
+    case StartableSelector::default_:
+      return Server::at_default();
+    }
+    return Server::at_default();
+  };
+  auto reopened = reopen();
+  ASSERT_TRUE(reopened.has_value()) << reopened.error().diagnostic;
+  const auto sessions = reopened->sessions();
+  ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
+  const auto same = std::ranges::find(*sessions, created->id(), &libtmux::Session::id);
+  ASSERT_NE(same, sessions->end());
+  EXPECT_EQ(*created, *same);
+
+  const auto windows = opened->windows();
+  ASSERT_TRUE(windows.has_value()) << windows.error().diagnostic;
+  ASSERT_FALSE(windows->empty());
+  const auto destination = reopened->new_session("startable-cross-handle");
+  ASSERT_TRUE(destination.has_value()) << destination.error().diagnostic;
+  EXPECT_TRUE(windows->front().link_to(*destination).has_value());
+}
+
+INSTANTIATE_TEST_SUITE_P(AllSelectors, StartableServerIdentity,
+                         testing::Values(StartableSelector::path,
+                                         StartableSelector::name,
+                                         StartableSelector::default_),
+                         selector_name);
+
+TEST(ServerIdentity, ConcurrentFirstStartPinsTheOriginalServer) {
+  auto owner = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(owner.has_value()) << owner.error();
+  const std::filesystem::path selected = owner->tmux_tmpdir() / "concurrent.sock";
+  auto opened = Server::startable_at_socket_path(selected.string(),
+                                                 std::filesystem::path{"/dev/null"});
+  ASSERT_TRUE(opened.has_value()) << opened.error().diagnostic;
+  ServerCleanup cleanup{*opened};
+
+  auto first = std::async(std::launch::async,
+                          [&opened] { return opened->new_session("concurrent-one"); });
+  auto second = std::async(std::launch::async,
+                           [&opened] { return opened->new_session("concurrent-two"); });
+  const auto one = first.get();
+  const auto two = second.get();
+  ASSERT_TRUE(one.has_value()) << one.error().diagnostic;
+  ASSERT_TRUE(two.has_value()) << two.error().diagnostic;
+  EXPECT_EQ(one->connection_identity(), two->connection_identity());
+  const auto attach = one->attach_command();
+  ASSERT_TRUE(attach.has_value()) << attach.error().diagnostic;
+  ASSERT_GE(attach->argv().size(), 3U);
+  const std::filesystem::path retained = attach->argv()[2];
+
+  auto replacement = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(replacement.has_value()) << replacement.error();
+  {
+    ReplacedSocket replaced{selected, retained, replacement->socket_path()};
+    ASSERT_FALSE(replaced.error()) << replaced.error().message();
+    const auto still_original = opened->sessions();
+    ASSERT_TRUE(still_original.has_value()) << still_original.error().diagnostic;
+    std::vector<std::string> names;
+    for (const libtmux::Session& session : *still_original) {
+      names.emplace_back(session.name());
+    }
+    std::ranges::sort(names);
+    EXPECT_EQ(names, (std::vector<std::string>{"concurrent-one", "concurrent-two"}));
+
+    auto now_selected = Server::at_socket_path(selected.string());
+    ASSERT_TRUE(now_selected.has_value()) << now_selected.error().diagnostic;
+    const auto replacement_sessions = now_selected->sessions();
+    ASSERT_TRUE(replacement_sessions.has_value())
+        << replacement_sessions.error().diagnostic;
+    ASSERT_FALSE(replacement_sessions->empty());
+    EXPECT_NE(one.value(), replacement_sessions->front());
+    const auto windows = opened->windows();
+    ASSERT_TRUE(windows.has_value()) << windows.error().diagnostic;
+    ASSERT_FALSE(windows->empty());
+    const auto crossed = windows->front().link_to(replacement_sessions->front());
+    ASSERT_FALSE(crossed.has_value());
+    EXPECT_EQ(crossed.error().kind, libtmux::FailureKind::validation);
+
+    const std::error_code restored = replaced.restore();
+    ASSERT_FALSE(restored) << restored.message();
+  }
+  std::error_code compared;
+  EXPECT_TRUE(std::filesystem::equivalent(selected, retained, compared));
+  EXPECT_FALSE(compared) << compared.message();
 }
 
 // The two servers really do use the same ids, which is what makes every
