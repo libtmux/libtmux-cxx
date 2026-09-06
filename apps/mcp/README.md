@@ -785,8 +785,8 @@ $ & {
 ```
 
 On POSIX, to swap installed agent configurations to a checkout and restore them
-afterward, use [`tools/mcp/mcp_swap.py`](../../tools/README.md). The script does
-not manage the native Windows wrapper or its `--socket-name` state.
+afterward, use the native [`mcp-swap`](../../tools/mcp/README.md) development
+tool. It does not manage the Windows wrapper or its `--socket-name` state.
 
 ## Failure semantics
 
