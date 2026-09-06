@@ -842,19 +842,27 @@ def render(root: pathlib.Path, page: Page) -> str:
     return "\n".join(out).rstrip() + "\n"
 
 
-def _check_fixture(script: pathlib.Path) -> str | None:
-    """Return an error when the focused parser fixture has drifted."""
+def _render_fixture(script: pathlib.Path) -> tuple[pathlib.Path, str] | None:
+    """Return where the focused parser fixture renders, and what it renders to."""
     fixture = script.with_name("fixtures") / "api_index.hpp"
     expected = script.with_name("fixtures") / "api_index.expected.md"
     if not fixture.exists() or not expected.exists():
-        return "API reference parser fixture is missing"
-    rendered = (
+        return None
+    return expected, (
         "\n".join(_render_header(fixture, "fixture/api_index.hpp")).rstrip() + "\n"
     )
-    wanted = expected.read_text(encoding="utf-8")
-    if rendered != wanted:
+
+
+def _check_fixture(script: pathlib.Path) -> str | None:
+    """Return an error when the focused parser fixture has drifted."""
+    rendered = _render_fixture(script)
+    if rendered is None:
+        return "API reference parser fixture is missing"
+    expected, text = rendered
+    if text != expected.read_text(encoding="utf-8"):
         return (
-            f"{expected} is out of date; regenerate it from the focused parser fixture"
+            f"{expected} is out of date; regenerate it with "
+            "`python3 tools/docs/api_index.py --write-fixture`"
         )
     return None
 
@@ -862,11 +870,28 @@ def _check_fixture(script: pathlib.Path) -> str | None:
 def main() -> int:
     """Write or check the reference page."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--include", type=pathlib.Path, required=True)
-    parser.add_argument("--output", type=pathlib.Path, required=True)
+    parser.add_argument("--include", type=pathlib.Path)
+    parser.add_argument("--output", type=pathlib.Path)
     parser.add_argument("--page", choices=sorted(PAGES), default="library")
     parser.add_argument("--check", action="store_true")
+    parser.add_argument(
+        "--write-fixture",
+        action="store_true",
+        help="rewrite the parser fixture's golden file and exit",
+    )
     arguments = parser.parse_args()
+
+    if arguments.write_fixture:
+        fixture = _render_fixture(pathlib.Path(__file__))
+        if fixture is None:
+            sys.stderr.write("API reference parser fixture is missing\n")
+            return 1
+        expected, text = fixture
+        expected.write_text(text, encoding="utf-8")
+        return 0
+
+    if arguments.include is None or arguments.output is None:
+        parser.error("--include and --output are required")
 
     rendered = render(arguments.include, PAGES[arguments.page])
     if arguments.check:
