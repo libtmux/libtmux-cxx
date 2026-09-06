@@ -35,6 +35,16 @@ class ApiIndexTest(unittest.TestCase):
         self.assertNotIn("void hidden", rendered)
         self.assertNotIn("T value_", rendered)
 
+    def test_plain_comment_above_a_declaration_is_reported(self) -> None:
+        """Name the blocks Doxygen drops, which it never warns about."""
+        plain: list[int] = []
+        api_index.read_header(FIXTURE, plain)
+        lines = FIXTURE.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(
+            ["// A plain comment above a declaration is still prose."],
+            [lines[line - 1].strip() for line in plain],
+        )
+
     def test_constructor_stops_before_initializer_list(self) -> None:
         """Document a constructor signature without its definition body."""
         _, sections = api_index.read_header(FIXTURE)
