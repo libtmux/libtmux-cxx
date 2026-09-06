@@ -36,10 +36,10 @@ struct OptionEntry {
 /// Undo the quoting tmux applies when it prints a value.
 ///
 /// tmux picks one of four forms, and a reader that knows only one corrupts the
-/// rest: `''` for an empty value; double quotes when the value contains any of
-/// ` #';${}`; single quotes when it contains a double quote; and otherwise no
+/// rest: ``''`` for an empty value; double quotes when the value contains any of
+/// `` #';${}``; single quotes when it contains a double quote; and otherwise no
 /// quotes at all. Inside any of them the body is escaped the way `vis` does it
-/// — `\\t`, `\\n`, `\\\\`, `\\ooo` for a byte with no printable form — and a
+/// — `\t`, `\n`, `\\`, `\ooo` for a byte with no printable form — and a
 /// leading tilde is escaped whether or not anything else is.
 ///
 /// This is the inverse of tmux's own `args_escape`, so a value read here and
