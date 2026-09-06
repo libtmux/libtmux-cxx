@@ -1,7 +1,10 @@
-add_library(mcp_tools STATIC src/pane_input.cpp src/tool_catalog.cpp src/tool_model.cpp)
-if(NOT WIN32)
-  target_sources(mcp_tools PRIVATE src/wait_for_text.cpp)
-endif()
+# `wait_for_text` is standard C++ over the library's own capture, and the frozen
+# registry advertises it on every platform, so it is built on every platform too.
+# Leaving it out of the Windows build left the catalog naming a symbol nothing
+# defined.
+add_library(
+  mcp_tools STATIC src/pane_input.cpp src/tool_catalog.cpp src/tool_model.cpp
+                   src/wait_for_text.cpp)
 target_include_directories(
   mcp_tools PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
             PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
