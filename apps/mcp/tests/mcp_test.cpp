@@ -402,6 +402,14 @@ TEST(McpToolsTmux, ReportsTheExactSocketPathBytesTmuxCannotSpell) {
   const std::filesystem::path selected = owner->tmux_tmpdir() / name;
   auto opened = Server::startable_at_socket_path(selected.string(), std::nullopt);
   ASSERT_TRUE(opened.has_value()) << opened.error().diagnostic;
+
+  // Before any server exists, so this pins what the answer may depend on rather
+  // than what it happens to say. There is nothing to ask yet: an implementation
+  // that queries tmux cannot answer this at all, on any version. Asserting the
+  // reported path against the configured one only separates the two on 3.4 and
+  // 3.5, which would leave the guard resting on a compatibility lane.
+  EXPECT_EQ(opened->socket_path(), selected.string());
+
   const auto created = opened->new_session("escaped");
   ASSERT_TRUE(created.has_value()) << created.error().diagnostic;
 

@@ -75,9 +75,9 @@ was recorded as it landed.
 - `get_server_info` reports the socket path the handle was configured with, and
   `wait_for_text` opens its control connection on that path. tmux escapes a
   non-printable byte in the path it stores at server start, so asking it for
-  `#{socket_path}` returned a path naming no file on tmux 3.2a through 3.5 —
-  reported to the caller as the resolved socket, and enough to make streaming
-  fall back to polling without saying why.
+  `#{socket_path}` returned a path naming no file on tmux 3.4 and 3.5 — reported
+  to the caller as the resolved socket, and enough to make streaming fall back
+  to polling. 3.3a and earlier answer with the raw byte, and 3.6 does again.
 
 - `mcp-swap use-local` validates every selected agent config and backup
   destination before changing any config. A malformed later config leaves the
