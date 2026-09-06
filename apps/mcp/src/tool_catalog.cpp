@@ -197,7 +197,7 @@ namespace {
 libtmux::expected<ShellCommandPayload, ToolError>
 shell_command_payload(std::string_view command, std::string_view tmux_executable,
                       std::string_view socket_path, std::string_view current_shell,
-                      ShellNonceFactory next_nonce) {
+                      const ShellNonceFactory& next_nonce) {
   if (contains_control_byte(tmux_executable) || contains_control_byte(socket_path)) {
     return libtmux::unexpected(
         ToolError{false, "shell framing rejects a control byte in its endpoint"});
@@ -1618,21 +1618,21 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
 
   const auto inspect_metadata = [&](std::string name, std::string title,
                                     std::vector<Field> fields, OutputShape shape,
-                                    Handler handler, std::string description) {
+                                    Handler handler, std::string_view description) {
     add(make_tool(std::move(name), std::move(title), Toolset::inspect,
                   ProcessReach::none, {Effect::observe}, {OutputClass::tmux_metadata},
                   false, false, kConservativeAnnotations, std::move(fields), shape,
-                  std::move(handler), std::move(description)));
+                  std::move(handler), description));
   };
   const auto inspect_terminal =
       [&](std::string name, std::string title, std::vector<Field> fields,
-          OutputShape shape, Handler handler, std::string description,
+          OutputShape shape, Handler handler, std::string_view description,
           std::set<OutputClass> outputs = {OutputClass::tmux_metadata,
                                            OutputClass::terminal_content}) {
         add(make_tool(std::move(name), std::move(title), Toolset::inspect,
                       ProcessReach::none, {Effect::observe}, std::move(outputs), true,
                       true, kConservativeAnnotations, std::move(fields), shape,
-                      std::move(handler), std::move(description)));
+                      std::move(handler), description));
       };
 
   inspect_metadata(
@@ -2120,7 +2120,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
       false, read_batch_tools));
   const auto manage = [&](std::string name, std::string title,
                           std::vector<Field> fields, Handler handler,
-                          std::string description) {
+                          std::string_view description) {
     const bool state_only = name == "wait_for_channel" || name == "signal_channel" ||
                             name == "set_mouse_enabled" || name == "set_history_limit";
     add(make_tool(std::move(name), std::move(title), Toolset::manage,
@@ -2922,7 +2922,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
       true));
   const auto teardown = [&](std::string name, std::string title,
                             std::vector<Field> fields, Handler handler,
-                            std::string description) {
+                            std::string_view description) {
     const bool observes = name != "clear_pane_scrollback";
     add(make_tool(std::move(name), std::move(title), Toolset::teardown,
                   ProcessReach::none,

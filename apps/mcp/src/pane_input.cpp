@@ -140,7 +140,7 @@ public:
     released_ = true;
   }
 
-  [[nodiscard]] bool covers(std::vector<PaneInputIdentity> candidates) const {
+  [[nodiscard]] bool covers(const std::vector<PaneInputIdentity>& candidates) const {
     std::lock_guard lock{owner_.mutex};
     if (released_ || candidates != identities_) {
       return false;
@@ -199,7 +199,7 @@ void PaneInputLease::abandon() noexcept {
 }
 
 libtmux::expected<PaneInputLease, ToolError>
-reserve_pane_input(std::string endpoint, std::uint64_t server_pid,
+reserve_pane_input(std::string_view endpoint, std::uint64_t server_pid,
                    std::uint64_t server_start_time, std::vector<std::string> pane_ids,
                    PaneInputReservationKind kind, std::string_view tool_name) {
   const auto physical = endpoint_identity(endpoint);
