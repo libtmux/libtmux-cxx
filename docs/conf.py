@@ -41,6 +41,11 @@ exclude_patterns = [
     "superpowers/**",
 ]
 
+# One page per header means every page re-declares the namespace its header
+# opens, and Sphinx's C++ domain holds one global scope across the whole build.
+# The duplication is what a per-header reference is, not a defect in it.
+suppress_warnings = ["duplicate_declaration.cpp"]
+
 html_theme = "furo"
 html_title = "libtmux-cxx"
 

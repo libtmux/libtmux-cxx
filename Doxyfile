@@ -14,6 +14,12 @@ GENERATE_LATEX         = NO
 GENERATE_XML           = YES
 XML_PROGRAMLISTING     = NO
 
+# Emit a declaration without its initialiser. Sphinx's C++ domain cannot parse
+# a lambda inside one, and the field handles in entities.hpp are all built from
+# one — 45 declarations reached the site as unparsed text with no anchor. The
+# values stay in docs/api.md, whose renderer keeps them.
+MAX_INITIALIZER_LINES  = 0
+
 # The first sentence of a comment block is its brief description.
 #
 # Without this, a multi-line /// block becomes the detailed description and
