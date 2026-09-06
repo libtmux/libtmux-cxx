@@ -306,25 +306,34 @@ contract the compiler enforces, which no comment can claim. Prose covers what
 is left over. C++26 contracts are out of reach at this floor, so a
 precondition the type cannot carry stays a sentence.
 
-Write plain `//` prose above the declaration. No Doxygen tags:
-`tools/docs/api_index.py` harvests the comment block above each declaration
-into [`docs/api.md`](../docs/api.md) as prose, and an `@param` line arrives at
-the reader as the characters it is.
+Write the prose above the declaration as `///`. Two generators read it and
+only one of them reads a plain `//`: Doxygen, whose XML is what libtmux.org
+renders, treats `//` as an ordinary source comment and drops the block
+entirely. A file-level block, which documents a file rather than the next
+declaration, stays `//`.
+
+No Doxygen tags. Both generators render the block as prose, so an `@param`
+line arrives at the reader as the characters it is.
+
+Doxygen also parses the Markdown, which is worth two habits: backtick
+anything that would otherwise read as a tag or a command — `<ostream>`,
+`\t` — and write a span containing a lone `'` with double backticks, since a
+`'` outside a word swallows the text after it. CI fails the build on either.
 
 Do not restate the signature. This has negative value:
 
 ```cpp
-// Returns the size.
+/// Returns the size.
 std::size_t size() const;
 ```
 
 Document what the reader cannot see:
 
 ```cpp
-// The number of panes in the snapshot this window came from.
-//
-// Reads no tmux: the listing ran once, when the snapshot was taken, so the
-// count is that moment's and does not follow a pane created since.
+/// The number of panes in the snapshot this window came from.
+///
+/// Reads no tmux: the listing ran once, when the snapshot was taken, so the
+/// count is that moment's and does not follow a pane created since.
 [[nodiscard]] std::size_t pane_count() const noexcept;
 ```
 
