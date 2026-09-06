@@ -1,4 +1,4 @@
-add_library(mcp_tools STATIC src/tool_catalog.cpp src/tool_model.cpp)
+add_library(mcp_tools STATIC src/pane_input.cpp src/tool_catalog.cpp src/tool_model.cpp)
 if(NOT WIN32)
   target_sources(mcp_tools PRIVATE src/wait_for_text.cpp)
 endif()

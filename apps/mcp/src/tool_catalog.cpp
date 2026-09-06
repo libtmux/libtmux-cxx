@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <memory>
 #include <random>
 #include <set>
 #include <string>
@@ -22,6 +23,7 @@
 #include "libtmux/keys.hpp"
 #include "libtmux/server.hpp"
 #include "libtmux/snapshot.hpp"
+#include "pane_input.hpp"
 #include "tool_support.hpp"
 #include "wait_for_text.hpp"
 
@@ -445,6 +447,8 @@ parse_pane_input_snapshot(std::string_view source_pane_id, std::string raw,
                     [](const PaneInputRow* row) { return row->pane_id; });
 
   PaneInputPreflight result{.configured_pane_ids = {},
+                            .session_id = source->session_id,
+                            .server_pid = source->server_pid,
                             .foreground_command = source->command};
   result.configured_pane_ids.reserve(configured.size());
   for (const PaneInputRow* row : configured) {
@@ -524,6 +528,98 @@ preflight_pane_input(const Server& server, std::string_view source_pane_id,
   }
   return parse_pane_input_snapshot(source_pane_id, *panes, scope, *clients,
                                    std::move(*caller));
+}
+
+[[nodiscard]] static libtmux::expected<PaneInputLease, ToolError>
+reserve_pane_input(const Server& server, const PaneInputPreflight& preflight,
+                   PaneInputReservationKind kind, std::string_view tool_name) {
+  return detail::reserve_pane_input(std::string{server.socket_path()},
+                                    preflight.server_pid, preflight.configured_pane_ids,
+                                    kind, tool_name);
+}
+
+[[nodiscard]] static bool same_pane_input_route(const PaneInputPreflight& initial,
+                                                const PaneInputPreflight& final) {
+  return initial.configured_pane_ids == final.configured_pane_ids &&
+         initial.session_id == final.session_id &&
+         initial.server_pid == final.server_pid &&
+         initial.foreground_command == final.foreground_command;
+}
+
+[[nodiscard]] static ToolError changed_pane_input_route(std::string_view tool_name) {
+  return ToolError{false, std::string{tool_name} +
+                              " refuses because the pane input route changed before "
+                              "dispatch; no input was sent"};
+}
+
+[[nodiscard]] static bool pane_identity_absent(std::string raw,
+                                               std::string_view pane_id,
+                                               std::uint64_t server_pid) {
+  constexpr std::array<std::string_view, 2> fields{"pane_id", "pid"};
+  if (raw.empty() || raw.back() != '\n' || raw.front() == '\n' ||
+      raw.find("\n\n") != std::string::npos) {
+    return false;
+  }
+  const auto snapshot = Snapshot::from_recording(fields, std::move(raw));
+  if (snapshot == nullptr || snapshot->rows().empty()) {
+    return false;
+  }
+  for (const auto& values : snapshot->rows()) {
+    if (!canonical_id(values[0], '%') || !canonical_number(values[1]) ||
+        values[1] == "0") {
+      return false;
+    }
+    std::uint64_t row_pid = 0U;
+    const auto parsed =
+        std::from_chars(values[1].data(), values[1].data() + values[1].size(), row_pid);
+    if (parsed.ec != std::errc{} || parsed.ptr != values[1].data() + values[1].size()) {
+      return false;
+    }
+    if (values[0] == pane_id && row_pid == server_pid) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static void retain_run_until_proven_complete(PaneInputLease lease, Server server,
+                                             Pane pane, std::string marker,
+                                             std::uint64_t server_pid) noexcept {
+  PaneInputLease* retained = nullptr;
+  try {
+    retained = new PaneInputLease(std::move(lease));
+    std::thread watcher{[retained, server = std::move(server), pane = std::move(pane),
+                         marker = std::move(marker), server_pid]() mutable {
+      std::unique_ptr<PaneInputLease> ownership{retained};
+      try {
+        CaptureOptions options;
+        options.whole_history = true;
+        options.join_wrapped = true;
+        constexpr std::array<std::string_view, 2> fields{"pane_id", "pid"};
+        for (;;) {
+          const auto captured = pane.capture(options);
+          if (captured.has_value() &&
+              shell_command_completion(*captured, marker).has_value()) {
+            return;
+          }
+          const auto panes =
+              server.run({"list-panes", "-a", "-F", format_request(fields)});
+          if (panes.has_value() &&
+              pane_identity_absent(*panes, pane.id(), server_pid)) {
+            return;
+          }
+          std::this_thread::sleep_for(std::chrono::milliseconds{20});
+        }
+      } catch (...) {
+        static_cast<void>(ownership.release());
+      }
+    }};
+    watcher.detach();
+  } catch (...) {
+    if (retained == nullptr) {
+      lease.abandon();
+    }
+  }
 }
 
 StructuredValue session_value(const Session& session) {
@@ -2065,18 +2161,43 @@ pane_target_ids(const std::vector<std::string>& pane_ids) {
         if (!payload.has_value()) {
           return libtmux::unexpected(payload.error());
         }
+        const auto initial = detail::preflight_pane_input(
+            server, pane->id(), detail::PaneInputScope::singular_posix_shell);
+        if (!initial.has_value()) {
+          return libtmux::unexpected(initial.error());
+        }
+        auto reserved = detail::reserve_pane_input(
+            server, *initial, detail::PaneInputReservationKind::run,
+            "run_shell_command");
+        if (!reserved.has_value()) {
+          return libtmux::unexpected(reserved.error());
+        }
+        detail::PaneInputLease lease = std::move(*reserved);
         Chain dispatch;
         dispatch.send_text(pane->id(), payload->text);
         if (!dispatch.valid()) {
           return libtmux::unexpected(ToolError{true, dispatch.error()});
         }
-        const auto preflight = detail::preflight_pane_input(
+        const auto final = detail::preflight_pane_input(
             server, pane->id(), detail::PaneInputScope::singular_posix_shell);
-        if (!preflight.has_value()) {
-          return libtmux::unexpected(preflight.error());
+        if (!final.has_value()) {
+          return libtmux::unexpected(final.error());
+        }
+        if (!detail::same_pane_input_route(*initial, *final) ||
+            !lease.covers(server.socket_path(), final->server_pid,
+                          final->configured_pane_ids)) {
+          return libtmux::unexpected(
+              detail::changed_pane_input_route("run_shell_command"));
+        }
+        if (context.cancelled()) {
+          return libtmux::unexpected(detail::cancelled());
         }
         const auto sent = server.run_chain(dispatch);
         if (!sent.has_value()) {
+          if (sent.error().delivery != DeliveryStatus::not_started) {
+            detail::retain_run_until_proven_complete(
+                std::move(lease), server, *pane, payload->marker, initial->server_pid);
+          }
           return failure(sent.error());
         }
         const auto deadline =
@@ -2084,6 +2205,8 @@ pane_target_ids(const std::vector<std::string>& pane_ids) {
             std::chrono::milliseconds{integer(arguments, "timeoutMs", 30000)};
         while (std::chrono::steady_clock::now() < deadline) {
           if (context.cancelled()) {
+            detail::retain_run_until_proven_complete(
+                std::move(lease), server, *pane, payload->marker, initial->server_pid);
             return libtmux::unexpected(detail::cancelled());
           }
           CaptureOptions options;
@@ -2091,6 +2214,8 @@ pane_target_ids(const std::vector<std::string>& pane_ids) {
           options.join_wrapped = true;
           const auto captured = pane->capture(options);
           if (!captured.has_value()) {
+            detail::retain_run_until_proven_complete(
+                std::move(lease), server, *pane, payload->marker, initial->server_pid);
             return failure(captured.error());
           }
           const auto completed =
@@ -2105,6 +2230,8 @@ pane_target_ids(const std::vector<std::string>& pane_ids) {
           }
           std::this_thread::sleep_for(20ms);
         }
+        detail::retain_run_until_proven_complete(std::move(lease), server, *pane,
+                                                 payload->marker, initial->server_pid);
         return libtmux::unexpected(ToolError{false, "shell command timed out"});
       },
       "Require one live configured pane, outside human-owned mode and running a "
@@ -2135,6 +2262,11 @@ pane_target_ids(const std::vector<std::string>& pane_ids) {
             server, pane->id(), detail::PaneInputScope::effective_cohort);
         if (!preflight.has_value()) {
           return libtmux::unexpected(preflight.error());
+        }
+        auto reserved = detail::reserve_pane_input(
+            server, *preflight, detail::PaneInputReservationKind::input, "send_keys");
+        if (!reserved.has_value()) {
+          return libtmux::unexpected(reserved.error());
         }
         const auto answer = server.run_chain(dispatch);
         return answer.has_value()
@@ -2203,10 +2335,17 @@ pane_target_ids(const std::vector<std::string>& pane_ids) {
               if (!preflight.has_value()) {
                 error = preflight.error().message;
               } else {
-                resolved = pane_target_ids(preflight->configured_pane_ids);
-                const auto sent = server.run_chain(dispatch);
-                if (!sent.has_value()) {
-                  error = sent.error().diagnostic;
+                auto reserved = detail::reserve_pane_input(
+                    server, *preflight, detail::PaneInputReservationKind::input,
+                    "send_keys_batch");
+                if (!reserved.has_value()) {
+                  error = reserved.error().message;
+                } else {
+                  resolved = pane_target_ids(preflight->configured_pane_ids);
+                  const auto sent = server.run_chain(dispatch);
+                  if (!sent.has_value()) {
+                    error = sent.error().diagnostic;
+                  }
                 }
               }
             }
@@ -2249,11 +2388,17 @@ pane_target_ids(const std::vector<std::string>& pane_ids) {
         if (!pane.has_value()) {
           return failure(pane.error());
         }
-        const auto preflight = detail::preflight_pane_input(
+        const auto initial = detail::preflight_pane_input(
             server, pane->id(), detail::PaneInputScope::target_only);
-        if (!preflight.has_value()) {
-          return libtmux::unexpected(preflight.error());
+        if (!initial.has_value()) {
+          return libtmux::unexpected(initial.error());
         }
+        auto reserved = detail::reserve_pane_input(
+            server, *initial, detail::PaneInputReservationKind::input, "paste_text");
+        if (!reserved.has_value()) {
+          return libtmux::unexpected(reserved.error());
+        }
+        detail::PaneInputLease lease = std::move(*reserved);
         const std::string name = "libtmux-mcp-" + std::to_string(++sequence);
         const auto staged = server.set_buffer(name, required(arguments, "text"));
         if (!staged.has_value()) {
@@ -2267,6 +2412,18 @@ pane_target_ids(const std::vector<std::string>& pane_ids) {
         if (buffer == buffers->end()) {
           return libtmux::unexpected(
               ToolError{false, "temporary paste buffer disappeared"});
+        }
+        const auto final = detail::preflight_pane_input(
+            server, pane->id(), detail::PaneInputScope::target_only);
+        if (!final.has_value()) {
+          static_cast<void>(buffer->remove());
+          return libtmux::unexpected(final.error());
+        }
+        if (!detail::same_pane_input_route(*initial, *final) ||
+            !lease.covers(server.socket_path(), final->server_pid,
+                          final->configured_pane_ids)) {
+          static_cast<void>(buffer->remove());
+          return libtmux::unexpected(detail::changed_pane_input_route("paste_text"));
         }
         const auto answer = pane->paste(*buffer, true);
         if (!answer.has_value()) {

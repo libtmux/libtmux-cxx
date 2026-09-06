@@ -892,6 +892,87 @@ TEST_F(McpProtocol, RunShellCommandWaitsForItsOwnValidCompletionRecord) {
             std::string::npos);
 }
 
+TEST_F(McpProtocol, KeepsTimedOutRunInputReservedUntilCompletion) {
+  const libtmux::Server server = connect_server();
+  auto pane = server.pane("mcp");
+  ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
+  const std::string pane_id{pane->id()};
+  const std::string start =
+      encode_requests({initialize_request(), initialized_notification(),
+                       call("run_shell_command",
+                            {{"paneId", pane_id},
+                             {"command", "sleep 1; printf run-finished"},
+                             {"timeoutMs", 50}},
+                            1)});
+  const std::string blocked = encode_requests(
+      {call("paste_text", {{"paneId", pane_id}, {"text", "blocked-input"}}, 2)});
+  const std::string after = encode_requests(
+      {call("paste_text", {{"paneId", pane_id}, {"text", "after-run"}}, 3)});
+  const auto messages =
+      converse_steps(socket(), {{start, std::chrono::milliseconds{150}},
+                                {blocked, std::chrono::milliseconds{1200}},
+                                {after, std::chrono::milliseconds{300}}});
+
+  const json* timed_out = response(messages, 1);
+  const json* refused = response(messages, 2);
+  const json* accepted = response(messages, 3);
+  ASSERT_NE(timed_out, nullptr);
+  ASSERT_NE(refused, nullptr);
+  ASSERT_NE(accepted, nullptr);
+  EXPECT_TRUE((*timed_out)["result"]["isError"].get<bool>());
+  EXPECT_NE(
+      (*timed_out)["result"]["content"][0]["text"].get<std::string>().find("timed out"),
+      std::string::npos);
+  EXPECT_TRUE((*refused)["result"]["isError"].get<bool>());
+  EXPECT_NE((*refused)["result"]["content"][0]["text"].get<std::string>().find(
+                "still active"),
+            std::string::npos);
+  EXPECT_FALSE((*accepted)["result"]["isError"].get<bool>());
+  const std::string capture = captured(*pane);
+  EXPECT_EQ(capture.find("blocked-input"), std::string::npos);
+  EXPECT_NE(capture.find("run-finished"), std::string::npos);
+  EXPECT_NE(capture.find("after-run"), std::string::npos);
+}
+
+TEST_F(McpProtocol, KeepsCancelledRunInputReservedUntilCompletion) {
+  const libtmux::Server server = connect_server();
+  auto pane = server.pane("mcp");
+  ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
+  const std::string pane_id{pane->id()};
+  const std::string start =
+      encode_requests({initialize_request(), initialized_notification(),
+                       call("run_shell_command",
+                            {{"paneId", pane_id},
+                             {"command", "sleep 1; printf cancelled-run-finished"},
+                             {"timeoutMs", 5000}},
+                            10)});
+  const std::string cancel_and_block = encode_requests(
+      {json{{"jsonrpc", "2.0"},
+            {"method", "notifications/cancelled"},
+            {"params", {{"requestId", 10}, {"reason", "test complete"}}}},
+       call("send_keys", {{"paneId", pane_id}, {"keys", "Escape"}}, 11)});
+  const std::string after = encode_requests(
+      {call("paste_text", {{"paneId", pane_id}, {"text", "after-cancel"}}, 12)});
+  const auto messages =
+      converse_steps(socket(), {{start, std::chrono::milliseconds{150}},
+                                {cancel_and_block, std::chrono::milliseconds{1200}},
+                                {after, std::chrono::milliseconds{300}}});
+
+  EXPECT_EQ(response(messages, 10), nullptr);
+  const json* refused = response(messages, 11);
+  const json* accepted = response(messages, 12);
+  ASSERT_NE(refused, nullptr);
+  ASSERT_NE(accepted, nullptr);
+  EXPECT_TRUE((*refused)["result"]["isError"].get<bool>());
+  EXPECT_NE((*refused)["result"]["content"][0]["text"].get<std::string>().find(
+                "still active"),
+            std::string::npos);
+  EXPECT_FALSE((*accepted)["result"]["isError"].get<bool>());
+  const std::string capture = captured(*pane);
+  EXPECT_NE(capture.find("cancelled-run-finished"), std::string::npos);
+  EXPECT_NE(capture.find("after-cancel"), std::string::npos);
+}
+
 TEST_F(McpProtocol, IsolatesCompletionFramingAcrossInstalledPosixShells) {
   const auto tmux_executable = executable_on_path("tmux");
   ASSERT_TRUE(tmux_executable.has_value());
@@ -1389,13 +1470,14 @@ TEST_F(McpProtocol, ReportsTargetsExpandedBySynchronizedPaneInput) {
   ASSERT_FALSE((*synchronized)["result"]["isError"].get<bool>());
 
   const auto sent_messages = converse_ready(
+      socket(), {call("send_keys", {{"paneId", pane_id}, {"keys", "Escape"}}, 4)});
+  const auto batched_messages = converse_ready(
       socket(),
-      {call("send_keys", {{"paneId", pane_id}, {"keys", "Escape"}}, 4),
-       call("send_keys_batch",
+      {call("send_keys_batch",
             {{"operations", json::array({{{"paneId", pane_id}, {"keys", "Escape"}}})}},
             5)});
   const json* sent = response(sent_messages, 4);
-  const json* batched = response(sent_messages, 5);
+  const json* batched = response(batched_messages, 5);
   ASSERT_NE(sent, nullptr);
   ASSERT_NE(batched, nullptr);
   ASSERT_TRUE(sent->contains("result")) << sent->dump();

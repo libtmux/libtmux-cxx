@@ -20,6 +20,7 @@
 #include "libtmux/format.hpp"
 #include "libtmux/server.hpp"
 #include "libtmux/testing/scoped_server.hpp"
+#include "pane_input.hpp"
 #include "tool_support.hpp"
 
 namespace {
@@ -659,6 +660,70 @@ TEST(McpTools, PaneInputCallerRequiresACompleteCanonicalIdentity) {
     EXPECT_FALSE(parse(tmux, pane).has_value())
         << (tmux.has_value() ? *tmux : "<unset>");
   }
+}
+
+TEST(McpTools, PaneInputReservationsAreProcessWideAndNonqueueing) {
+  using libtmux::mcp::detail::PaneInputReservationKind;
+  using libtmux::mcp::detail::reserve_pane_input;
+  const std::vector<std::string> first_ids{"%1", "%2"};
+  const std::vector<std::string> overlap_ids{"%2"};
+
+  {
+    auto run = reserve_pane_input("endpoint-a", 101U, first_ids,
+                                  PaneInputReservationKind::run, "run_shell_command");
+    ASSERT_TRUE(run.has_value()) << run.error().message;
+    EXPECT_TRUE(run->covers("endpoint-a", 101U, first_ids));
+    EXPECT_FALSE(run->covers("endpoint-a", 101U, overlap_ids));
+
+    const auto input = reserve_pane_input("endpoint-a", 101U, overlap_ids,
+                                          PaneInputReservationKind::input, "send_keys");
+    ASSERT_FALSE(input.has_value());
+    EXPECT_NE(input.error().message.find("still active"), std::string::npos);
+    EXPECT_TRUE(reserve_pane_input("endpoint-a", 101U, {"%3"},
+                                   PaneInputReservationKind::input, "send_keys")
+                    .has_value());
+    EXPECT_TRUE(reserve_pane_input("endpoint-b", 101U, overlap_ids,
+                                   PaneInputReservationKind::input, "send_keys")
+                    .has_value());
+    EXPECT_TRUE(reserve_pane_input("endpoint-a", 102U, overlap_ids,
+                                   PaneInputReservationKind::input, "send_keys")
+                    .has_value());
+  }
+
+  auto after = reserve_pane_input("endpoint-a", 101U, overlap_ids,
+                                  PaneInputReservationKind::input, "send_keys");
+  ASSERT_TRUE(after.has_value()) << after.error().message;
+  const auto run =
+      reserve_pane_input("endpoint-a", 101U, overlap_ids, PaneInputReservationKind::run,
+                         "run_shell_command");
+  ASSERT_FALSE(run.has_value());
+  EXPECT_NE(run.error().message.find("input"), std::string::npos);
+  after->release();
+  EXPECT_FALSE(after->covers("endpoint-a", 101U, overlap_ids));
+
+  EXPECT_FALSE(reserve_pane_input("", 101U, overlap_ids,
+                                  PaneInputReservationKind::input, "send_keys")
+                   .has_value());
+  EXPECT_FALSE(reserve_pane_input("endpoint-a", 0U, overlap_ids,
+                                  PaneInputReservationKind::input, "send_keys")
+                   .has_value());
+  EXPECT_FALSE(reserve_pane_input("endpoint-a", 101U, {"%1", "%1"},
+                                  PaneInputReservationKind::input, "send_keys")
+                   .has_value());
+
+  auto replaced = reserve_pane_input("endpoint-a", 101U, {"%4"},
+                                     PaneInputReservationKind::input, "send_keys");
+  auto replacement = reserve_pane_input("endpoint-a", 101U, {"%5"},
+                                        PaneInputReservationKind::input, "send_keys");
+  ASSERT_TRUE(replaced.has_value()) << replaced.error().message;
+  ASSERT_TRUE(replacement.has_value()) << replacement.error().message;
+  *replaced = std::move(*replacement);
+  EXPECT_TRUE(reserve_pane_input("endpoint-a", 101U, {"%4"},
+                                 PaneInputReservationKind::input, "send_keys")
+                  .has_value());
+  EXPECT_FALSE(reserve_pane_input("endpoint-a", 101U, {"%5"},
+                                  PaneInputReservationKind::input, "send_keys")
+                   .has_value());
 }
 
 TEST(McpTools, ShellCommandPayloadUsesAnIsolatedExactEndpointFrame) {
