@@ -384,11 +384,52 @@ jobs:
             throw "expected one tools/list reply, got $($catalog.Count)"
           }
           $actual = @($catalog[0].result.tools.name | Sort-Object)
+          # Windows advertises the same registry as POSIX and lets psmux refuse
+          # what it cannot do, rather than hiding those tools. See
+          # docs/design/windows-psmux.md. Teardown is absent because an explicit
+          # socket selector excludes it, which leaves 41 of the 45.
           $expected = @(
-            "inspect_tmux"
-            "list_session_panes"
+            "call_read_tools_batch"
+            "capture_pane"
+            "capture_since"
+            "create_session"
+            "create_window"
+            "find_pane_by_position"
+            "get_pane_info"
+            "get_server_info"
+            "get_session_info"
+            "get_tmux_variables"
+            "get_window_info"
+            "list_panes"
             "list_sessions"
             "list_windows"
+            "move_window"
+            "paste_text"
+            "rename_session"
+            "rename_window"
+            "resize_pane"
+            "resize_window"
+            "respawn_pane"
+            "run_shell_command"
+            "search_panes"
+            "select_layout"
+            "select_pane"
+            "select_window"
+            "send_keys"
+            "send_keys_batch"
+            "set_history_limit"
+            "set_mouse_enabled"
+            "set_pane_title"
+            "set_synchronize_panes"
+            "show_environment"
+            "show_hooks"
+            "show_option"
+            "signal_channel"
+            "snapshot_pane"
+            "split_window"
+            "swap_pane"
+            "wait_for_channel"
+            "wait_for_text"
           )
           $difference = @(Compare-Object -ReferenceObject $expected -DifferenceObject $actual)
           if ($difference.Count -ne 0) {
