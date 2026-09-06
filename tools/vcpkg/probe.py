@@ -64,101 +64,6 @@ _LEGACY_ALPHA2_REQUIRED = {
     "wait_for_text": frozenset({"target", "text"}),
 }
 _LEGACY_ALPHA2_TOOLS = frozenset(_LEGACY_ALPHA2_INPUT_TYPES)
-_POSIX_TOOLS = frozenset(
-    {
-        "capture_pane",
-        "create_session",
-        "inspect_tmux",
-        "list_panes",
-        "list_session_panes",
-        "list_sessions",
-        "list_windows",
-        "new_window",
-        "search_panes",
-        "send_keys",
-        "send_text",
-        "wait_for_text",
-    }
-)
-_WINDOWS_TOOLS = frozenset(
-    {"inspect_tmux", "list_session_panes", "list_sessions", "list_windows"}
-)
-_TOOL_INPUTS = {
-    "capture_pane": frozenset({"target"}),
-    "create_session": frozenset({"name"}),
-    "inspect_tmux": frozenset(),
-    "list_panes": frozenset(),
-    "list_session_panes": frozenset({"session"}),
-    "list_sessions": frozenset(),
-    "list_windows": frozenset({"session"}),
-    "new_window": frozenset({"name", "session"}),
-    "search_panes": frozenset({"text"}),
-    "send_keys": frozenset({"keys", "target"}),
-    "send_text": frozenset({"target", "text"}),
-    "wait_for_text": frozenset({"target", "text", "timeout_ms"}),
-}
-_TOOL_REQUIRED = {
-    name: inputs - ({"timeout_ms"} if name == "wait_for_text" else set())
-    for name, inputs in _TOOL_INPUTS.items()
-}
-_TOOL_INPUT_TYPES = {
-    name: {key: "integer" if key == "timeout_ms" else "string" for key in inputs}
-    for name, inputs in _TOOL_INPUTS.items()
-}
-_TOOL_OUTPUTS = {
-    "capture_pane": frozenset({"pane_id", "text"}),
-    "create_session": frozenset({"name", "session_id"}),
-    "inspect_tmux": frozenset({"panes", "sessions", "windows"}),
-    "list_panes": frozenset({"panes"}),
-    "list_session_panes": frozenset({"panes"}),
-    "list_sessions": frozenset({"sessions"}),
-    "list_windows": frozenset({"windows"}),
-    "new_window": frozenset({"session_id", "window_id"}),
-    "search_panes": frozenset({"matches"}),
-    "send_keys": frozenset({"pane_id"}),
-    "send_text": frozenset({"pane_id"}),
-    "wait_for_text": frozenset(
-        {"elapsed_ms", "matched", "mode", "pane_id", "text", "timed_out"}
-    ),
-}
-# Required is not the same set as declared. `wait_for_text` publishes a
-# `pane_id` it cannot fill when the deadline expires before a target resolves,
-# so the field is optional and an answer omitting it is still valid.
-_TOOL_OUTPUT_OPTIONAL = {"wait_for_text": frozenset({"pane_id"})}
-_TOOL_OUTPUT_TYPES = {
-    "capture_pane": {"pane_id": "string", "text": "string"},
-    "create_session": {"name": "string", "session_id": "string"},
-    "inspect_tmux": {"panes": "array", "sessions": "array", "windows": "array"},
-    "list_panes": {"panes": "array"},
-    "list_session_panes": {"panes": "array"},
-    "list_sessions": {"sessions": "array"},
-    "list_windows": {"windows": "array"},
-    "new_window": {"session_id": "string", "window_id": "string"},
-    "search_panes": {"matches": "array"},
-    "send_keys": {"pane_id": "string"},
-    "send_text": {"pane_id": "string"},
-    "wait_for_text": {
-        "elapsed_ms": "integer",
-        "matched": "boolean",
-        "mode": "string",
-        "pane_id": "string",
-        "text": "string",
-        "timed_out": "boolean",
-    },
-}
-_READ_ONLY_TOOLS = frozenset(
-    {
-        "capture_pane",
-        "inspect_tmux",
-        "list_panes",
-        "list_session_panes",
-        "list_sessions",
-        "list_windows",
-        "search_panes",
-        "wait_for_text",
-    }
-)
-_TERMINAL_TOOLS = frozenset({"send_keys", "send_text"})
 
 
 def _host_is_windows() -> bool:
@@ -784,7 +689,16 @@ def _catalog_problem(
     version: str,
     list_id: int,
 ) -> tuple[list[str], str | None]:
-    """Validate the complete initialize and tools/list exchange."""
+    """Validate the complete initialize and tools/list exchange.
+
+    Every tool is checked for shape, not for identity. This probe resolves a
+    *published* package, so which tools it advertises is whatever that release
+    shipped — a list restated here would describe the working tree instead, and
+    the copy that used to live in this file is what rejected a packaged server
+    for all 41 tools it had come to advertise. The current catalog is pinned by
+    `consumer.mcp.readme` and the registry's own contract test, on every pull
+    request rather than only on a tag.
+    """
     legacy_alpha2 = version == _LEGACY_ALPHA2_VERSION
     if legacy_alpha2 and windows:
         return [], "the POSIX-only alpha.2 MCP contract cannot be a Windows package"
@@ -832,32 +746,36 @@ def _catalog_problem(
         ):
             return [], "server returned a malformed MCP tool catalog"
         name = tool["name"]
-        expected_input_types = (
-            _LEGACY_ALPHA2_INPUT_TYPES if legacy_alpha2 else _TOOL_INPUT_TYPES
-        )
-        expected_required = _LEGACY_ALPHA2_REQUIRED if legacy_alpha2 else _TOOL_REQUIRED
-        if name not in expected_input_types:
-            return [], "server returned an unknown MCP tool contract"
         input_properties = frozenset(input_schema["properties"])
         input_required = input_schema.get("required")
         if (
-            input_properties != frozenset(expected_input_types[name])
-            or not isinstance(input_required, list)
+            not isinstance(input_required, list)
             or not all(isinstance(item, str) for item in input_required)
             or len(input_required) != len(frozenset(input_required))
-            or frozenset(input_required) != expected_required[name]
+            or not frozenset(input_required) <= input_properties
         ):
             return [], f"server returned the wrong schema for MCP tool {name}"
         if any(
             not isinstance(schema, dict)
-            or schema.get("type") != expected_input_types[name][key]
+            or not isinstance(schema.get("type"), str)
             or not isinstance(schema.get("description"), str)
             or not schema["description"]
             or (legacy_alpha2 and set(schema) != {"description", "type"})
-            for key, schema in input_schema["properties"].items()
+            for schema in input_schema["properties"].values()
         ):
             return [], f"server returned malformed properties for MCP tool {name}"
         if legacy_alpha2:
+            if name not in _LEGACY_ALPHA2_INPUT_TYPES:
+                return [], "server returned an unknown MCP tool contract"
+            if (
+                input_properties != frozenset(_LEGACY_ALPHA2_INPUT_TYPES[name])
+                or frozenset(input_required) != _LEGACY_ALPHA2_REQUIRED[name]
+                or any(
+                    schema.get("type") != _LEGACY_ALPHA2_INPUT_TYPES[name][key]
+                    for key, schema in input_schema["properties"].items()
+                )
+            ):
+                return [], f"server returned the wrong schema for MCP tool {name}"
             if set(tool) != {"description", "inputSchema", "name"}:
                 return [], f"alpha.2 returned unexpected tool fields for {name}"
             if set(input_schema) != {
@@ -873,13 +791,10 @@ def _catalog_problem(
         output_schema = tool.get("outputSchema")
         annotations = tool.get("annotations")
         if (
-            name not in _TOOL_OUTPUTS
-            or not isinstance(tool.get("title"), str)
+            not isinstance(tool.get("title"), str)
             or not tool["title"]
             or not isinstance(output_schema, dict)
             or output_schema.get("type") != "object"
-            or output_schema.get("additionalProperties") is not False
-            or not isinstance(output_schema.get("properties"), dict)
             or not isinstance(annotations, dict)
             or not isinstance(annotations.get("title"), str)
             or not annotations["title"]
@@ -894,50 +809,36 @@ def _catalog_problem(
             )
         ):
             return [], "server returned a malformed MCP tool catalog"
-        output_properties = frozenset(output_schema["properties"])
-        output_required = output_schema.get("required")
-        if (
-            output_properties != _TOOL_OUTPUTS[name]
-            or not isinstance(output_required, list)
-            or not all(isinstance(item, str) for item in output_required)
-            or len(output_required) != len(frozenset(output_required))
-            or frozenset(output_required)
-            != _TOOL_OUTPUTS[name] - _TOOL_OUTPUT_OPTIONAL.get(name, frozenset())
-        ):
-            return [], f"server returned the wrong schema for MCP tool {name}"
-        if any(
-            not isinstance(schema, dict)
-            or schema.get("type") != _TOOL_OUTPUT_TYPES[name][key]
-            for key, schema in output_schema["properties"].items()
+        # An output schema may be open: a tool reporting tmux variables or
+        # options returns an object whose keys belong to the caller, so unlike
+        # an input schema it names no properties at all. Check what is there.
+        output_properties = output_schema.get("properties")
+        output_required = output_schema.get("required", [])
+        if output_properties is not None and (
+            not isinstance(output_properties, dict)
+            or any(
+                not isinstance(schema, dict) or not isinstance(schema.get("type"), str)
+                for schema in output_properties.values()
+            )
         ):
             return [], f"server returned malformed properties for MCP tool {name}"
-        actual_annotations = (
-            annotations["readOnlyHint"],
-            annotations["destructiveHint"],
-            annotations["idempotentHint"],
-            annotations["openWorldHint"],
-        )
-        expected_annotations = (
-            (True, False, True, False)
-            if name in _READ_ONLY_TOOLS
-            else (False, True, False, True)
-            if name in _TERMINAL_TOOLS
-            else (False, False, False, False)
-        )
-        if actual_annotations != expected_annotations:
-            return [], f"server returned the wrong annotations for MCP tool {name}"
+        if (
+            not isinstance(output_required, list)
+            or not all(isinstance(item, str) for item in output_required)
+            or len(output_required) != len(frozenset(output_required))
+            or (
+                isinstance(output_properties, dict)
+                and not frozenset(output_required) <= frozenset(output_properties)
+            )
+        ):
+            return [], f"server returned the wrong schema for MCP tool {name}"
         names.append(name)
     if len(names) != len(set(names)):
         return [], "server returned duplicate MCP tool names"
-    expected = (
-        _LEGACY_ALPHA2_TOOLS
-        if legacy_alpha2
-        else _WINDOWS_TOOLS
-        if windows
-        else _POSIX_TOOLS
-    )
-    if set(names) != expected:
-        return names, "server returned the wrong platform MCP tool catalog"
+    if legacy_alpha2 and set(names) != _LEGACY_ALPHA2_TOOLS:
+        return names, "server returned the wrong MCP tool catalog"
+    if not names:
+        return names, "server advertised no MCP tools"
     return names, None
 
 
