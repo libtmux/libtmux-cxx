@@ -374,7 +374,9 @@ std::optional<std::string> preflight_spec(const ServerSpec& spec,
   struct sigaction ignored {};
   struct sigaction previous {};
   ignored.sa_handler = SIG_IGN;
-  static_cast<void>(::sigemptyset(&ignored.sa_mask));
+  // Not `::sigemptyset`: macOS defines it as a function-like macro, which a
+  // qualified name cannot expand.
+  static_cast<void>(sigemptyset(&ignored.sa_mask));
   static_cast<void>(::sigaction(SIGPIPE, &ignored, &previous));
   try {
     write_request(input.write, request_frames());

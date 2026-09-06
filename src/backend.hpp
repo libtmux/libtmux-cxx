@@ -341,7 +341,7 @@ private:
     if (socket_missing_.load(std::memory_order_acquire)) {
       return {};
     }
-    return std::atomic_load_explicit(&started_endpoint_, std::memory_order_acquire);
+    return started_endpoint_;
   }
 
   [[nodiscard]] expected<void, CommandFailure> publish_started_endpoint() const;
@@ -354,8 +354,11 @@ private:
   std::string selected_socket_path_;
   std::shared_ptr<const SocketAlias> socket_alias_;
   mutable std::atomic_bool socket_missing_{};
-  // Published once and never replaced, so references returned by the accessors
-  // remain valid for the backend's lifetime.
+  // Written once under `startup_mutex_`, before `socket_missing_` is released,
+  // and read only once that flag has been acquired. The flag publishes this
+  // pointer, so it needs no atomic of its own. Published once and never
+  // replaced, so references returned by the accessors remain valid for the
+  // backend's lifetime.
   mutable std::shared_ptr<const PublishedEndpoint> started_endpoint_;
   bool startable_{};
   std::optional<std::string> startup_configuration_;

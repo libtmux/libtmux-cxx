@@ -552,8 +552,9 @@ expected<void, CommandFailure> SubprocessBackend::publish_started_endpoint() con
       .identity = std::move(endpoint->identity),
       .alias = std::move(endpoint->alias),
   });
-  std::atomic_store_explicit(&started_endpoint_, std::move(published),
-                             std::memory_order_release);
+  started_endpoint_ = std::move(published);
+  // Release last: every reader acquires this flag before touching the pointer
+  // above, so this store is what makes the endpoint visible to them.
   socket_missing_.store(false, std::memory_order_release);
   return {};
 }

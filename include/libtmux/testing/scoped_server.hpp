@@ -71,6 +71,20 @@ void set_environment(std::vector<std::string>& environment, std::string_view nam
                      std::string_view value);
 void erase_environment(std::vector<std::string>& environment, std::string_view name);
 
+// Whether two paths name the same socket.
+//
+// Not `std::filesystem::equivalent`: [fs.op.equivalent] makes it an *error*
+// when both paths are "other" files, and a unix domain socket is one. That is
+// not a corner a tmux suite can avoid — every socket comparison hits it — and
+// the two standard libraries disagree about it. libstdc++ implements the rule
+// and reports `ENOTSUP`; libc++ answers anyway, so the same test passes on one
+// and fails on the other. This asks the kernel for the inode instead.
+//
+// The error is for a path that could not be inspected at all; a readable pair
+// that names two different sockets is a `false`, not a failure.
+[[nodiscard]] libtmux::expected<bool, std::string>
+same_socket_inode(const std::filesystem::path& left, const std::filesystem::path& right);
+
 class ScopedTmuxServer final {
 public:
   static libtmux::expected<ScopedTmuxServer, std::string>

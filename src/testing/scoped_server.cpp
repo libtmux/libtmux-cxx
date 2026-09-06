@@ -26,6 +26,7 @@
 // promises only the `std::` names, and on macOS leaves `::mkdtemp` undeclared.
 #include <stdlib.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -550,6 +551,31 @@ void set_environment(std::vector<std::string>& environment, std::string_view nam
 
 void erase_environment(std::vector<std::string>& environment, std::string_view name) {
   detail::erase_environment(environment, name);
+}
+
+libtmux::expected<bool, std::string>
+same_socket_inode(const std::filesystem::path& left, const std::filesystem::path& right) {
+  const auto inspect =
+      [](const std::filesystem::path& path) -> libtmux::expected<struct stat, std::string> {
+    struct stat metadata {};
+    if (::stat(path.c_str(), &metadata) != 0) {
+      return libtmux::unexpected(path.string() + ": " + std::strerror(errno));
+    }
+    if (!S_ISSOCK(metadata.st_mode)) {
+      return libtmux::unexpected(path.string() + " is not a unix socket");
+    }
+    return metadata;
+  };
+  const auto left_metadata = inspect(left);
+  if (!left_metadata.has_value()) {
+    return libtmux::unexpected(left_metadata.error());
+  }
+  const auto right_metadata = inspect(right);
+  if (!right_metadata.has_value()) {
+    return libtmux::unexpected(right_metadata.error());
+  }
+  return left_metadata->st_dev == right_metadata->st_dev &&
+         left_metadata->st_ino == right_metadata->st_ino;
 }
 
 std::string_view ScopedTmuxServer::socket_namespace() const noexcept {

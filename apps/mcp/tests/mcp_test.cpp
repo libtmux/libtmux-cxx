@@ -318,9 +318,9 @@ TEST(McpToolsTmux, RunsShellFramingThroughThePinnedServerEndpoint) {
   ASSERT_EQ(attach->argv()[1], "-S");
   const std::filesystem::path retained = attach->argv()[2];
   const std::filesystem::path selected = original->socket_path();
-  std::error_code compared;
-  ASSERT_TRUE(std::filesystem::equivalent(retained, selected, compared));
-  ASSERT_FALSE(compared) << compared.message();
+  auto aliased = libtmux::test::same_socket_inode(retained, selected);
+  ASSERT_TRUE(aliased.has_value()) << aliased.error();
+  ASSERT_TRUE(*aliased);
 
   ASSERT_TRUE(other.run({"set-option", "-g", "@mcp-frame-route", "clean"}).has_value());
   ASSERT_TRUE(other
@@ -370,9 +370,9 @@ TEST(McpToolsTmux, RunsShellFramingThroughThePinnedServerEndpoint) {
     const std::error_code restored = replaced.restore();
     ASSERT_FALSE(restored) << restored.message();
   }
-  compared.clear();
-  EXPECT_TRUE(std::filesystem::equivalent(retained, selected, compared));
-  EXPECT_FALSE(compared) << compared.message();
+  aliased = libtmux::test::same_socket_inode(retained, selected);
+  ASSERT_TRUE(aliased.has_value()) << aliased.error();
+  EXPECT_TRUE(*aliased);
 }
 
 TEST(McpToolsTmux, CapturesAPaneThroughTheLibrary) {

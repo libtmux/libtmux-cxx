@@ -137,10 +137,10 @@ TEST_P(StartableServerIdentity, PublishesTheCreatedServersExactIdentity) {
   ASSERT_GE(attach->argv().size(), 5U);
   EXPECT_EQ(attach->argv()[1], "-S");
   EXPECT_NE(attach->argv()[2], opened->socket_path());
-  std::error_code compared;
-  EXPECT_TRUE(
-      std::filesystem::equivalent(attach->argv()[2], opened->socket_path(), compared));
-  EXPECT_FALSE(compared) << compared.message();
+  const auto aliased =
+      libtmux::test::same_socket_inode(attach->argv()[2], opened->socket_path());
+  ASSERT_TRUE(aliased.has_value()) << aliased.error();
+  EXPECT_TRUE(*aliased);
 
   const auto reopen = [&]() -> libtmux::expected<Server, libtmux::CommandFailure> {
     switch (GetParam()) {
@@ -229,9 +229,9 @@ TEST(ServerIdentity, ConcurrentFirstStartPinsTheOriginalServer) {
     const std::error_code restored = replaced.restore();
     ASSERT_FALSE(restored) << restored.message();
   }
-  std::error_code compared;
-  EXPECT_TRUE(std::filesystem::equivalent(selected, retained, compared));
-  EXPECT_FALSE(compared) << compared.message();
+  const auto aliased = libtmux::test::same_socket_inode(selected, retained);
+  ASSERT_TRUE(aliased.has_value()) << aliased.error();
+  EXPECT_TRUE(*aliased);
 }
 
 // The two servers really do use the same ids, which is what makes every

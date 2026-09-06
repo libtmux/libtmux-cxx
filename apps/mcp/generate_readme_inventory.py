@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Generate the README tool inventory from the server's effective registry."""
 
 from __future__ import annotations

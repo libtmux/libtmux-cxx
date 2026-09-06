@@ -524,7 +524,7 @@ TEST(McpProtocolCli, StartsAnAbsentPinnedSocketOnlyForCreateSession) {
   auto sentinel = ScopedTmuxServer::start(ScopedTmuxServerOptions{
       .mode = SocketMode::Name,
       .session_name = "startable-sentinel",
-      .socket_namespace = SocketNamespace::consumer("mcp-start")});
+      .socket_namespace = SocketNamespace::consumer("mcp-new")});
   ASSERT_TRUE(sentinel.has_value()) << sentinel.error();
   const auto private_permissions =
       std::filesystem::status(sentinel->tmux_tmpdir()).permissions();
@@ -2834,7 +2834,7 @@ TEST(McpProtocolCli, EstablishesDefaultMinimalDaemonBeforeFreezingProvenance) {
   auto sentinel = ScopedTmuxServer::start(ScopedTmuxServerOptions{
       .mode = SocketMode::Name,
       .session_name = "provenance-sentinel",
-      .socket_namespace = SocketNamespace::consumer("mcp-provenance")});
+      .socket_namespace = SocketNamespace::consumer("mcp-prov")});
   ASSERT_TRUE(sentinel.has_value()) << sentinel.error();
   const auto private_permissions =
       std::filesystem::status(sentinel->tmux_tmpdir()).permissions();
@@ -2890,7 +2890,7 @@ TEST(McpProtocolCli, StopsTheAuthenticatedDefaultDaemonWhenStdioCloses) {
   auto fixture = ScopedTmuxServer::start(ScopedTmuxServerOptions{
       .mode = SocketMode::Name,
       .session_name = "cleanup-namespace",
-      .socket_namespace = SocketNamespace::consumer("mcp-cleanup")});
+      .socket_namespace = SocketNamespace::consumer("mcp-stop")});
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   auto environment = fixture->child_environment();
   libtmux::test::erase_environment(environment, "TMUX");
@@ -2921,7 +2921,7 @@ TEST(McpProtocolCli, DoesNotClaimAnExistingDedicatedDaemon) {
   auto fixture = ScopedTmuxServer::start(ScopedTmuxServerOptions{
       .mode = SocketMode::Name,
       .session_name = "provenance-holder",
-      .socket_namespace = SocketNamespace::consumer("mcp-owner")});
+      .socket_namespace = SocketNamespace::consumer("mcp-own")});
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   auto environment = fixture->child_environment();
   for (const std::string_view name :
@@ -3421,7 +3421,7 @@ TEST(McpProtocolCli, UsesTheProductDedicatedDefaultRoute) {
   auto fixture = ScopedTmuxServer::start(ScopedTmuxServerOptions{
       .mode = SocketMode::Name,
       .session_name = "default-route-holder",
-      .socket_namespace = SocketNamespace::consumer("mcp-default")});
+      .socket_namespace = SocketNamespace::consumer("mcp-dft")});
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   auto environment = fixture->child_environment();
   const auto messages =
@@ -3452,7 +3452,7 @@ TEST(McpProtocolCli, DoesNotUseAnInvalidInheritedRoute) {
   auto fixture = ScopedTmuxServer::start(ScopedTmuxServerOptions{
       .mode = SocketMode::Name,
       .session_name = "invalid-route-holder",
-      .socket_namespace = SocketNamespace::consumer("mcp-invalid")});
+      .socket_namespace = SocketNamespace::consumer("mcp-inv")});
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   auto environment = fixture->child_environment();
   libtmux::test::set_environment(environment, "TMUX", "");
