@@ -81,15 +81,26 @@ copies input across the window. Those sorted IDs describe configured preflight
 membership, not proven recipients or delivery. Pane-input checks are a final
 observation immediately before dispatch. `run_shell_command`, `send_keys`, and
 each `send_keys_batch` row require the addressed pane and every configured
-synchronized cohort member to be live and outside human-owned mode. A source
-whose effective `synchronize-panes` value is off checks only itself.
+synchronized cohort member to be live, input-enabled, outside human-owned mode,
+outside an attached terminal client's current view, and distinct from the
+calling pane. A source whose effective `synchronize-panes` value is off checks
+only itself. Missing caller variables mean a detached caller; partial,
+malformed, or inconsistent caller identity fails closed.
 `run_shell_command` also requires one configured target running a supported
 POSIX foreground shell; disable `synchronize-panes` or address a source whose
 effective value is off. This prevents a singular result from hiding execution
-in peer panes. `paste_text` requires only its explicit target to be live and
-outside human-owned mode because buffers do not fan out. State may change after
-preflight because the check and tmux dispatch are not atomic; the MCP never
-exits or cancels a pane mode.
+in peer panes. Its child subshell inherits the pane shell's working state and
+options, including Bash and Zsh error/debug traps, without changing the parent
+shell. Trap declarations larger than 64 KiB fail with status 125 before the
+authored command runs. `paste_text` requires only its explicit target to pass
+the same guards because buffers do not fan out. Optional Enter travels in that
+same target-only buffer, while empty text without Enter is a buffer-free no-op.
+
+The MCP reserves each endpoint and pane while an input operation is active, so
+overlapping runs, keys, and pastes fail instead of interleaving. A timed-out or
+cancelled shell run keeps its lease until the completion boundary appears or
+the pane closes. State may still change after preflight because the check and
+tmux dispatch are not atomic; the MCP never exits or cancels a pane mode.
 
 `call_read_tools_batch` accepts one through 16 serial inspect calls, excluding
 itself and the self-bounded `wait_for_text`. Exact tool exclusions prune its
