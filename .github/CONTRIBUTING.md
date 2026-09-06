@@ -72,6 +72,13 @@ directory that costs ten bytes passes every Linux lane and fails there with
 nothing but `File name too long`. `socket_path_fits` in the fixture reports that
 case rather than letting tmux fail obscurely.
 
+A test that starts a second server *inside* the fixture's tree pays for both
+names at once. The fixture spends `libtmux-cxx-<label>-XXXXXX` on its private
+directory, and the MCP suite then adds `tmux-<uid>/libtmux-mcp` beneath it, so
+a `SocketNamespace::consumer` label of nine characters is the first that
+overruns `sun_path` under the temporary directory below. Keep those labels to
+eight.
+
 Run the suite under a temporary directory as long as the one macOS gives:
 
 ```console

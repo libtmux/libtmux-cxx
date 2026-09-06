@@ -217,11 +217,13 @@ It installs as a program at
 `<installed-root>/<triplet>/tools/libtmux/libtmux-mcp-server[.exe]`; manifest
 mode normally uses `vcpkg_installed` as the root, classic mode uses
 `<vcpkg-root>/installed`, and `--x-install-root` overrides both. Nothing links
-the executable. The current checkout accepts `--socket-name` or `--socket-path`
-and retains one positional path on POSIX; without a selector, only a valid
-inherited `TMUX` route is accepted. Alpha.2's legacy POSIX server instead takes
-one socket path as its sole argument. Always supply that release's exact route
-because omitting it falls back to inherited or default tmux.
+the executable. The current checkout uses a dedicated `libtmux-mcp` socket
+without a selector. Pass `--socket inherit` to retain the earlier inherited
+`TMUX` behavior, or select `name:NAME` or `path:/ABSOLUTE/PATH` with `--socket`;
+`--socket-name`, `--socket-path`, and one positional POSIX path remain accepted.
+Use `--tmux-config /ABSOLUTE/PATH` for an explicit tmux configuration. Alpha.2's
+legacy POSIX server instead takes one socket path as its sole argument, and
+omitting it falls back to inherited or default tmux.
 
 The immutable `0.1.0-alpha.2` registry entry predates the Windows backend and
 remains Windows-disabled. A later tagged release can enable the standard x64
@@ -731,11 +733,10 @@ $ cmake --build build/mcp && cmake --install build/mcp --prefix ~/.local
 $ claude mcp add tmux -- ~/.local/bin/libtmux-mcp-server --socket-name libtmux-agent
 ```
 
-On POSIX its deliberately small catalog covers inspection, creation, pane
-capture and input, search, and bounded waits. Windows advertises only four
-read-only operations proven safe through psmux: `inspect_tmux`, `list_sessions`,
-`list_windows`, and `list_session_panes`. It does not advertise creation, pane
-capture, input, search, or streaming there. For full coverage use the Python
+The server advertises the same pinned 45-tool capability catalog on POSIX and
+Windows. On Windows, psmux support remains command-dependent: unsupported
+operations fail at dispatch instead of disappearing from the startup-frozen
+manifest. For the reference implementation, see Python
 [libtmux-mcp](https://github.com/tmux-python/libtmux-mcp).
 **[Full documentation →](apps/mcp/README.md)**
 
@@ -955,8 +956,9 @@ This is subprocess compatibility, not transport equivalence. Windows builds
 the dedicated psmux example and the capability-aware MCP server, but not the
 POSIX examples, fuzzers, or `libtmux::testing` fixture. Asking CMake for either
 of the latter two fails during configuration. The Windows MCP catalog exposes
-only the four psmux-safe read operations listed above; creation, pane output,
-input, search, and streaming tools remain POSIX-only.
+the same 45 names listed in the MCP guide; the native smoke records which of
+those operations psmux 3.3.7 actually supports and requires unsupported
+commands to fail explicitly.
 
 Psmux reports a tmux-shaped version but does not promise every command has
 identical behavior. The native smoke is pinned by behavior, not by a claimed

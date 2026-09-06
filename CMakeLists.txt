@@ -31,7 +31,8 @@ project(
 option(LIBTMUX_BUILD_TESTS "Build libtmux C++ tests" ${PROJECT_IS_TOP_LEVEL})
 # Off by default: a build that would reach the network says so and stops,
 # rather than silently downloading. Covers the test frameworks and the
-# MCP server's JSON parser; the library itself has no dependencies.
+# MCP server's JSON parser and the MCP switcher's TOML validator; the library
+# itself has no dependencies.
 option(LIBTMUX_FETCH_DEPS "Download missing dependencies" OFF)
 option(LIBTMUX_ENABLE_SANITIZERS "Enable ASan and UBSan" OFF)
 option(LIBTMUX_ENABLE_THREAD_SANITIZER "Enable TSan" OFF)
@@ -127,6 +128,10 @@ endif()
 
 if(LIBTMUX_BUILD_MCP_SERVER OR (NOT WIN32 AND LIBTMUX_BUILD_TESTS))
   add_subdirectory(apps/mcp)
+endif()
+
+if(PROJECT_IS_TOP_LEVEL AND LIBTMUX_BUILD_TESTS AND NOT WIN32)
+  add_subdirectory(tools/mcp)
 endif()
 
 if(LIBTMUX_BUILD_EXAMPLES)

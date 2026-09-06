@@ -52,9 +52,13 @@ The connection root.  A Server names which tmux server to talk to and how to rea
 - [`Server`](#libtmux-server-hpp-server)
   - [`Server::at_socket_path`](#libtmux-server-hpp-server-at-socket-path)
   - [`Server::at_socket_name`](#libtmux-server-hpp-server-at-socket-name)
+  - [`Server::startable_at_socket_path`](#libtmux-server-hpp-server-startable-at-socket-path)
+  - [`Server::startable_at_socket_name`](#libtmux-server-hpp-server-startable-at-socket-name)
+  - [`Server::startable_at_default`](#libtmux-server-hpp-server-startable-at-default)
   - [`Server::from_env`](#libtmux-server-hpp-server-from-env)
   - [`Server::at_default`](#libtmux-server-hpp-server-at-default)
   - [`Server::capabilities`](#libtmux-server-hpp-server-capabilities)
+  - [`Server::socket_path`](#libtmux-server-hpp-server-socket-path)
   - [`Server::run`](#libtmux-server-hpp-server-run)
   - [`Server::try_submit`](#libtmux-server-hpp-server-try-submit)
   - [`Server::run_batch`](#libtmux-server-hpp-server-run-batch)
@@ -120,6 +124,28 @@ class Server;
 ```
 `-L name`: resolved under tmux's socket directory, as the tmux flag does.
 
+<a id="libtmux-server-hpp-server-startable-at-socket-path"></a>
+#### `Server::startable_at_socket_path`
+
+```cpp
+[[nodiscard]] static expected<Server, CommandFailure> startable_at_socket_path(std::string_view path, std::optional<std::filesystem::path> configuration, CommandObserver observer = {}, ExecutionPolicy policy = {});
+```
+A socket handle that may create an absent server on its first `new_session` call or an explicit `run({"start-server"})`. `configuration` is passed to tmux as `-f`; absent preserves tmux's user configuration. Every other call remains no-start while the socket is absent. The selector and configuration are frozen in the handle, and concurrent first-session calls are serialized.
+
+<a id="libtmux-server-hpp-server-startable-at-socket-name"></a>
+#### `Server::startable_at_socket_name`
+
+```cpp
+[[nodiscard]] static expected<Server, CommandFailure> startable_at_socket_name(std::string_view name, std::optional<std::filesystem::path> configuration, CommandObserver observer = {}, ExecutionPolicy policy = {});
+```
+
+<a id="libtmux-server-hpp-server-startable-at-default"></a>
+#### `Server::startable_at_default`
+
+```cpp
+[[nodiscard]] static expected<Server, CommandFailure> startable_at_default(std::optional<std::filesystem::path> configuration, CommandObserver observer = {}, ExecutionPolicy policy = {});
+```
+
 <a id="libtmux-server-hpp-server-from-env"></a>
 #### `Server::from_env`
 
@@ -143,6 +169,14 @@ The server tmux would talk to with no `-L` or `-S` at all, which is the one a pe
 [[nodiscard]] ServerCapabilities capabilities() const noexcept;
 ```
 The local backend contract; no command runs. `tmux_version()` separately queries the executable or the connected control server.
+
+<a id="libtmux-server-hpp-server-socket-path"></a>
+#### `Server::socket_path`
+
+```cpp
+[[nodiscard]] std::string_view socket_path() const noexcept;
+```
+The resolved path pinned by this handle, including a startable path whose server has not been created yet. Empty only when the backend has no socket path representation.
 
 <a id="libtmux-server-hpp-server-run"></a>
 #### `Server::run`
@@ -1033,6 +1067,9 @@ The tmux object hierarchy.  A Session, Window, Pane or Client is one row of a sn
   - [`NewSessionOptions::width`](#libtmux-entities-hpp-newsessionoptions-width)
   - [`NewSessionOptions::height`](#libtmux-entities-hpp-newsessionoptions-height)
   - [`NewSessionOptions::environment`](#libtmux-entities-hpp-newsessionoptions-environment)
+- [`RespawnOptions`](#libtmux-entities-hpp-respawnoptions)
+  - [`RespawnOptions::replace_running`](#libtmux-entities-hpp-respawnoptions-replace-running)
+  - [`RespawnOptions::start_directory`](#libtmux-entities-hpp-respawnoptions-start-directory)
 - [`CaptureOptions`](#libtmux-entities-hpp-captureoptions)
   - [`CaptureOptions::start_line`](#libtmux-entities-hpp-captureoptions-start-line)
   - [`CaptureOptions::end_line`](#libtmux-entities-hpp-captureoptions-end-line)
@@ -1167,6 +1204,7 @@ The tmux object hierarchy.  A Session, Window, Pane or Client is one row of a sn
   - [`Pane::session`](#libtmux-entities-hpp-pane-session)
   - [`Pane::send_text`](#libtmux-entities-hpp-pane-send-text)
   - [`Pane::send_key`](#libtmux-entities-hpp-pane-send-key)
+  - [`Pane::split`](#libtmux-entities-hpp-pane-split)
   - [`Pane::capture`](#libtmux-entities-hpp-pane-capture)
   - [`Pane::capture`](#libtmux-entities-hpp-pane-capture-2)
   - [`Pane::set_width`](#libtmux-entities-hpp-pane-set-width)
@@ -1180,6 +1218,7 @@ The tmux object hierarchy.  A Session, Window, Pane or Client is one row of a sn
   - [`Pane::stop_piping`](#libtmux-entities-hpp-pane-stop-piping)
   - [`Pane::set_title`](#libtmux-entities-hpp-pane-set-title)
   - [`Pane::respawn`](#libtmux-entities-hpp-pane-respawn)
+  - [`Pane::respawn`](#libtmux-entities-hpp-pane-respawn-2)
   - [`Pane::clear_history`](#libtmux-entities-hpp-pane-clear-history)
   - [`Pane::expand`](#libtmux-entities-hpp-pane-expand)
   - [`Pane::show_message`](#libtmux-entities-hpp-pane-show-message)
@@ -1481,6 +1520,28 @@ std::optional<int> height{};
 std::vector<std::pair<std::string, std::string>> environment{};
 ```
 Variables the new process starts with, on top of what tmux passes down.  Pairs rather than `NAME=value` strings: tmux takes a `-e` without an `=` without complaint and creates nothing, so the pair is joined here and a name carrying an `=` is refused where the command is built.  An empty value sets the variable to empty. It does not remove it.
+
+<a id="libtmux-entities-hpp-respawnoptions"></a>
+### `RespawnOptions`
+
+```cpp
+struct RespawnOptions;
+```
+
+<a id="libtmux-entities-hpp-respawnoptions-replace-running"></a>
+#### `RespawnOptions::replace_running`
+
+```cpp
+bool replace_running{false};
+```
+
+<a id="libtmux-entities-hpp-respawnoptions-start-directory"></a>
+#### `RespawnOptions::start_directory`
+
+```cpp
+std::string start_directory{};
+```
+Where the configured replacement process starts. Empty inherits the pane's current directory. The command builder escapes tmux format markers exactly once before this value reaches tmux.
 
 <a id="libtmux-entities-hpp-captureoptions"></a>
 ### `CaptureOptions`
@@ -2464,6 +2525,14 @@ Literal text, never interpreted as key names or formats, and never followed by a
 [[nodiscard]] expected<void, CommandFailure> send_key(std::string_view key) const;
 ```
 
+<a id="libtmux-entities-hpp-pane-split"></a>
+#### `Pane::split`
+
+```cpp
+[[nodiscard]] expected<Pane, CommandFailure> split(SplitOptions options = {}) const;
+```
+Split this exact pane rather than whichever pane in its window happens to be active.
+
 <a id="libtmux-entities-hpp-pane-capture"></a>
 #### `Pane::capture`
 
@@ -2563,6 +2632,13 @@ Name this pane. The title is what `#{pane_title}` reports and what a status line
 [[nodiscard]] expected<void, CommandFailure> respawn(bool replace_running = false) const;
 ```
 Start the pane's command again.  tmux refuses a pane whose process is still running unless told to kill it, and that refusal is kept rather than smoothed over: replacing a live process is a decision, so `replace_running` has to be asked for.
+
+<a id="libtmux-entities-hpp-pane-respawn-2"></a>
+#### `Pane::respawn`
+
+```cpp
+[[nodiscard]] expected<void, CommandFailure> respawn(RespawnOptions options) const;
+```
 
 <a id="libtmux-entities-hpp-pane-clear-history"></a>
 #### `Pane::clear_history`

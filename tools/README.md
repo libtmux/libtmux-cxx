@@ -1,11 +1,13 @@
 # Tools
 
-Development tooling. **None of it is installed, exported, or linked by the
-C++ build** — it exists to check the library, not to ship with it.
+Development tooling. **None of it is installed, exported, or linked by the C++
+build** — it exists to check the library, not to ship with it.
 
-It is a Python package so that `python3 -m tools.<x>` resolves as a package
-rather than by whatever happens to be on the path, and so the lint contract in
-[`pyproject.toml`](../pyproject.toml) travels with the code it governs.
+The Python portion is a package so that `python3 -m tools.<x>` resolves from
+this repository rather than from whatever happens to be on the path, and so the
+lint contract in [`pyproject.toml`](../pyproject.toml) travels with the code it
+governs. The repository-internal MCP switcher is a native C++ executable built
+alongside the tests.
 
 ```console
 $ python3 -m tools.parity coverage
@@ -25,7 +27,7 @@ Both are run from the repository root.
 | [`mutate/`](mutate/) | `python3 -m tools.mutate` | Whether the tests can actually fail |
 | [`docs/`](docs/) | `python3 tools/docs/api_index.py` | Generates [`docs/api.md`](../docs/api.md) from the headers, so the reference cannot outrun them |
 | [`docs/`](docs/) | `python3 tools/docs/check_readme.py` | Whether the README's C++ still matches the example it is quoted from |
-| [`mcp/`](mcp/) | `./tools/mcp/mcp_swap.py` | Points POSIX agent CLI configs at a chosen build of [the MCP server](../apps/mcp/README.md), and puts them back |
+| [`mcp/`](mcp/) | `./build/cxx-dev/tools/mcp/mcp-swap` | Points POSIX agent CLI configs at a chosen build of [the MCP server](../apps/mcp/README.md), and puts them back |
 | [`vcpkg/`](vcpkg/) | `python3 -m tools.vcpkg check` | Whether [the registry](../docs/vcpkg-registry.md) still publishes the ports beside it |
 | [`coverage/`](coverage/) | — | How much of the shipped surface the tests reach |
 | [`differential/`](differential/) | — | The same question asked of this library and of Python libtmux, compared |

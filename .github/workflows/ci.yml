@@ -390,11 +390,52 @@ jobs:
             throw "expected one tools/list reply, got $($catalog.Count)"
           }
           $actual = @($catalog[0].result.tools.name | Sort-Object)
+          # Windows advertises the same registry as POSIX and lets psmux refuse
+          # what it cannot do, rather than hiding those tools. See
+          # docs/design/windows-psmux.md. Teardown is absent because an explicit
+          # socket selector excludes it, which leaves 41 of the 45.
           $expected = @(
-            "inspect_tmux"
-            "list_session_panes"
+            "call_read_tools_batch"
+            "capture_pane"
+            "capture_since"
+            "create_session"
+            "create_window"
+            "find_pane_by_position"
+            "get_pane_info"
+            "get_server_info"
+            "get_session_info"
+            "get_tmux_variables"
+            "get_window_info"
+            "list_panes"
             "list_sessions"
             "list_windows"
+            "move_window"
+            "paste_text"
+            "rename_session"
+            "rename_window"
+            "resize_pane"
+            "resize_window"
+            "respawn_pane"
+            "run_shell_command"
+            "search_panes"
+            "select_layout"
+            "select_pane"
+            "select_window"
+            "send_keys"
+            "send_keys_batch"
+            "set_history_limit"
+            "set_mouse_enabled"
+            "set_pane_title"
+            "set_synchronize_panes"
+            "show_environment"
+            "show_hooks"
+            "show_option"
+            "signal_channel"
+            "snapshot_pane"
+            "split_window"
+            "swap_pane"
+            "wait_for_channel"
+            "wait_for_text"
           )
           $difference = @(Compare-Object -ReferenceObject $expected -DifferenceObject $actual)
           if ($difference.Count -ne 0) {
@@ -728,7 +769,7 @@ jobs:
 
       - name: Check formatting
         run: |
-          find include src tests apps examples \
+          find include src tests apps examples tools/mcp \
             \( -name '*.hpp' -o -name '*.cpp' \) \
             -exec clang-format --dry-run --Werror --style=file {} +
 
@@ -748,8 +789,6 @@ jobs:
             tools.docs.test_api_index tools.mutate.test_main \
             tools.mutate.test_runner tools.vcpkg.test_probe \
             tools.vcpkg.test_release
-          uv run --no-project --with tomlkit==0.15.1 \
-            python -m unittest tools.mcp.test_mcp_swap
 
       # The README's C++ is quoted from an example that is compiled and run.
       # This is the half that checks the quoting; the example lane checks that
@@ -877,7 +916,7 @@ jobs:
               send({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
               listed = receive(2)
               send({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
-                    "params": {"name": "capture_pane", "arguments": {"target": 99},
+                    "params": {"name": "capture_pane", "arguments": {"paneId": 99},
                                "_meta": {"progressToken": "ci",
                                          "claudeCode": {"version": "ci"}}}})
               called = receive(3)
@@ -898,7 +937,7 @@ jobs:
           if not names:
               raise RuntimeError("the server advertised no tools")
           if called.get("error") != {"code": -32602,
-                                     "message": "argument target must be a string"}:
+                                     "message": "argument paneId must be a string"}:
               raise RuntimeError(f"tools/call lost arguments or _meta: {called}")
           print("tools:", ", ".join(names))
           PROBE

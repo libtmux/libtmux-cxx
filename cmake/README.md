@@ -11,12 +11,13 @@ Nothing here is part of the public interface except
 | [`ProjectOptions.cmake`](ProjectOptions.cmake) | Warnings, sanitizers, clang-tidy, and the standard selection |
 | [`GoogleTest.cmake`](GoogleTest.cmake) | Finds GoogleTest, or fetches the pinned one when allowed |
 | [`NlohmannJson.cmake`](NlohmannJson.cmake) | The same, for the JSON parser the MCP server needs |
+| [`Tomlplusplus.cmake`](Tomlplusplus.cmake) | The same, for the private TOML validator used by `mcp-swap` |
 | [`YamlCpp.cmake`](YamlCpp.cmake) | The same, for the parser the workspace consumer needs |
 | [`toolchains/clang-libcxx.cmake`](toolchains/clang-libcxx.cmake) | The pinned clang-with-libc++ pairing the presets use |
 
 ## The resolve-or-fetch pattern
 
-The three dependency modules are the same shape, and the shape is deliberate:
+The dependency modules use the same shape, and the shape is deliberate:
 
 1. `find_package(... QUIET)` — use what the system has
 2. If it is missing and `LIBTMUX_FETCH_DEPS` is off, **fail with a message
@@ -25,7 +26,7 @@ The three dependency modules are the same shape, and the shape is deliberate:
 
 A build that would reach the network says so and stops, rather than downloading
 quietly. None of it affects the library itself, which depends on nothing: these
-are for the tests, the examples, and the MCP server.
+are for the tests, the examples, the MCP server, and repository tooling.
 
 ## Related
 

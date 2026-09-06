@@ -57,6 +57,12 @@ def main() -> int:
             "llvm-profdata-18",
             "merge",
             "-sparse",
+            # Tests that kill a child mid-flush leave a truncated profile
+            # behind, and the tmux fixture and the switcher both do that by
+            # design. The default mode rejects the whole merge over one such
+            # file; this one fails only when every profile is unreadable, which
+            # is still the instrumentation collapse this job exists to catch.
+            "--failure-mode=all",
             *map(str, profiles),
             "-o",
             str(merged),

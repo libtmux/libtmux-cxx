@@ -66,6 +66,24 @@ public:
   at_socket_name(std::string_view name, CommandObserver observer = {},
                  ExecutionPolicy policy = {});
 
+  // A socket handle that may create an absent server on its first
+  // `new_session` call or an explicit `run({"start-server"})`. `configuration`
+  // is passed to tmux as `-f`; absent
+  // preserves tmux's user configuration. Every other call remains no-start
+  // while the socket is absent. The selector and configuration are frozen in
+  // the handle, and concurrent first-session calls are serialized.
+  [[nodiscard]] static expected<Server, CommandFailure>
+  startable_at_socket_path(std::string_view path,
+                           std::optional<std::filesystem::path> configuration,
+                           CommandObserver observer = {}, ExecutionPolicy policy = {});
+  [[nodiscard]] static expected<Server, CommandFailure>
+  startable_at_socket_name(std::string_view name,
+                           std::optional<std::filesystem::path> configuration,
+                           CommandObserver observer = {}, ExecutionPolicy policy = {});
+  [[nodiscard]] static expected<Server, CommandFailure>
+  startable_at_default(std::optional<std::filesystem::path> configuration,
+                       CommandObserver observer = {}, ExecutionPolicy policy = {});
+
   // The server this process is running inside.
   //
   // tmux exports `TMUX` to everything it starts, as
@@ -84,6 +102,11 @@ public:
   // The local backend contract; no command runs. `tmux_version()` separately
   // queries the executable or the connected control server.
   [[nodiscard]] ServerCapabilities capabilities() const noexcept;
+
+  // The resolved path pinned by this handle, including a startable path whose
+  // server has not been created yet. Empty only when the backend has no socket
+  // path representation.
+  [[nodiscard]] std::string_view socket_path() const noexcept;
 
   // Run one command and return its standard output.
   //

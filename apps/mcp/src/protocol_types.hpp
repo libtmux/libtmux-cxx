@@ -27,6 +27,7 @@ inline constexpr std::string_view kBatchLegacyProtocolVersion = "2025-03-26";
 inline constexpr std::array<std::string_view, 4> kLegacyProtocolVersions{
     kLatestLegacyProtocolVersion, "2025-06-18", kBatchLegacyProtocolVersion,
     "2024-11-05"};
+inline constexpr std::size_t kMaximumRequestIdBytes = 512U * 1024U;
 inline constexpr std::size_t kMaximumLineBytes = 8U * 1024U * 1024U;
 
 enum class ProtocolEra : std::uint8_t { undecided, legacy, modern };

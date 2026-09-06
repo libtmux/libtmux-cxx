@@ -278,6 +278,7 @@ $profileRoot = Resolve-PsmuxProfileRoot
 $registryRoot = Join-Path $profileRoot ".psmux"
 $configPath = Join-Path ([IO.Path]::GetTempPath()) "libtmux-cxx-mcp-$suffix.conf"
 $environmentNames = @(
+    "LIBTMUX_TOOLSETS",
     "PATHEXT",
     "PSMUX_ACTIVE",
     "PSMUX_CONFIG_FILE",
@@ -320,6 +321,11 @@ try {
         "Process"
     )
     [Environment]::SetEnvironmentVariable("PSMUX_NO_WARM", "1", "Process")
+    [Environment]::SetEnvironmentVariable(
+        "LIBTMUX_TOOLSETS",
+        "inspect,manage,execute,teardown",
+        "Process"
+    )
     $preexisting = @(
         Get-PsmuxRegistryFiles `
             -Root $registryRoot `
@@ -372,6 +378,35 @@ try {
         params = @{}
     }
 
+    $capabilities = Invoke-Request @{
+        jsonrpc = "2.0"
+        id = "capabilities"
+        method = "resources/read"
+        params = @{ uri = "tmux://capabilities" }
+    }
+    $capabilityText = [string]$capabilities.result.contents[0].text
+    $capabilityDocument = ConvertFrom-Json -InputObject $capabilityText
+    $connectionFields = @(
+        $capabilityDocument.connection.PSObject.Properties.Name
+    )
+    Assert-True (
+        $capabilityDocument.connection.socketSelector -eq "name:$socketName"
+    ) "capability resource lost the operator's socket selector"
+    Assert-True (
+        $capabilityDocument.connection.namespaceSelector -eq "psmux:-L:$socketName"
+    ) "capability resource did not report the psmux namespace selector"
+    Assert-True (
+        $connectionFields -contains "resolvedSocketPath" -and
+        $null -eq $capabilityDocument.connection.resolvedSocketPath
+    ) "capability resource reported the psmux namespace as a socket path"
+    Assert-True (
+        $connectionFields -contains "attachCommand" -and
+        $null -eq $capabilityDocument.connection.attachCommand
+    ) "capability resource synthesized an unsupported psmux attach command"
+    Assert-True (
+        $capabilityText.IndexOf("-S psmux:", [StringComparison]::Ordinal) -lt 0
+    ) "capability resource emitted a POSIX route for psmux"
+
     $listed = Invoke-Request @{
         jsonrpc = "2.0"
         id = 1
@@ -380,14 +415,55 @@ try {
     }
     $actualTools = @($listed.result.tools | ForEach-Object { $_.name } | Sort-Object)
     $expectedTools = @(
-        "inspect_tmux",
-        "list_session_panes",
+        "call_read_tools_batch",
+        "capture_pane",
+        "capture_since",
+        "clear_pane_scrollback",
+        "create_session",
+        "create_window",
+        "find_pane_by_position",
+        "get_pane_info",
+        "get_server_info",
+        "get_session_info",
+        "get_tmux_variables",
+        "get_window_info",
+        "kill_pane",
+        "kill_session",
+        "kill_window",
+        "list_panes",
         "list_sessions",
-        "list_windows"
-    )
+        "list_windows",
+        "move_window",
+        "paste_text",
+        "rename_session",
+        "rename_window",
+        "resize_pane",
+        "resize_window",
+        "respawn_pane",
+        "run_shell_command",
+        "search_panes",
+        "select_layout",
+        "select_pane",
+        "select_window",
+        "send_keys",
+        "send_keys_batch",
+        "set_history_limit",
+        "set_mouse_enabled",
+        "set_pane_title",
+        "set_synchronize_panes",
+        "show_environment",
+        "show_hooks",
+        "show_option",
+        "signal_channel",
+        "snapshot_pane",
+        "split_window",
+        "swap_pane",
+        "wait_for_channel",
+        "wait_for_text"
+    ) | Sort-Object
     Assert-True (
         ($actualTools -join ",") -eq ($expectedTools -join ",")
-    ) "Windows MCP tool catalog is not the four-tool read-only subset"
+    ) "Windows MCP tool catalog is not the authoritative 45-tool inventory"
 
     $sessions = Invoke-Tool 2 "list_sessions" @{}
     $ownedSessions = @(
@@ -408,8 +484,8 @@ try {
         ) "window escaped its exact session"
     }
 
-    $panes = Invoke-Tool 4 "list_session_panes" @{ session = $sessionId }
-    $sessionPanes = @($panes.panes)
+    $panes = Invoke-Tool 4 "list_panes" @{}
+    $sessionPanes = @($panes.panes | Where-Object { $_.session_id -eq $sessionId })
     Assert-True ($sessionPanes.Count -ge 1) "created session has no pane"
     foreach ($pane in $sessionPanes) {
         Assert-True (
@@ -417,13 +493,11 @@ try {
         ) "pane escaped its exact session"
     }
 
-    $inspected = Invoke-Tool 5 "inspect_tmux" @{}
-    $inspectedSessions = @(
-        $inspected.sessions | Where-Object { $_.id -eq $sessionId }
+    $serverInfo = Invoke-Tool 5 "get_server_info" @{}
+    Assert-True $serverInfo.running "get_server_info reported a stopped server"
+    Assert-True (-not [string]::IsNullOrEmpty($serverInfo.version)) (
+        "get_server_info omitted the tmux version"
     )
-    Assert-True ($inspectedSessions.Count -eq 1) "inspect_tmux lost the session"
-    Assert-True (@($inspected.windows).Count -ge 1) "inspect_tmux lost the window"
-    Assert-True (@($inspected.panes).Count -ge 1) "inspect_tmux lost the pane"
 
     $script:mcpProcess.StandardInput.Close()
     $processExited = $script:mcpProcess.WaitForExit(5000)

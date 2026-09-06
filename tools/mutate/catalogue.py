@@ -388,6 +388,107 @@ CATALOGUE: t.Final = (
         "member can run",
     ),
     Mutation(
+        mutation_id="mcp-pane-mode-exact-zero",
+        path="apps/mcp/src/tool_catalog.cpp",
+        find="    if (row->mode != 0U) {",
+        replace="    if (false) {",
+        target="mcp_tools_test",
+        test_regex=r"^consumer[.]mcp$",
+        guards="pane input proceeds only when the authoritative mode count is zero",
+    ),
+    Mutation(
+        mutation_id="mcp-pane-input-record-framing",
+        path="apps/mcp/src/tool_catalog.cpp",
+        find=(
+            "  if (!canonical_id(source_pane_id, '%') || raw.empty() || "
+            "raw.back() != '\\n' ||\n"
+            "      raw.front() == '\\n' || raw.find(\"\\n\\n\") != "
+            "std::string::npos) {"
+        ),
+        replace="  if (!canonical_id(source_pane_id, '%')) {",
+        target="mcp_tools_test",
+        test_regex=r"^consumer[.]mcp$",
+        guards="pane snapshots reject blank and unterminated records before parsing",
+    ),
+    Mutation(
+        mutation_id="mcp-pane-input-canonical-identities",
+        path="apps/mcp/src/tool_catalog.cpp",
+        find=(
+            "  return value.size() > 1U && value.front() == prefix &&\n"
+            "         canonical_tmux_number(value.substr(1U));"
+        ),
+        replace="  return value.size() > 1U && value.front() == prefix;",
+        target="mcp_tools_test",
+        test_regex=r"^consumer[.]mcp$",
+        guards="pane and window identities are canonical bounded numeric IDs",
+    ),
+    Mutation(
+        mutation_id="mcp-pane-input-nonempty-command",
+        path="apps/mcp/src/tool_catalog.cpp",
+        find="        values[10].empty()) {",
+        replace="        false) {",
+        target="mcp_tools_test",
+        test_regex=r"^consumer[.]mcp$",
+        guards="every pane snapshot row names a foreground command",
+    ),
+    Mutation(
+        mutation_id="mcp-pane-dead-exact-zero",
+        path="apps/mcp/src/tool_catalog.cpp",
+        find="    if (row->dead) {",
+        replace="    if (false) {",
+        target="mcp_tools_test",
+        test_regex=r"^consumer[.]mcp$",
+        guards="configured pane input refuses a dead foreground process",
+    ),
+    Mutation(
+        mutation_id="mcp-pane-shell-allowlist",
+        path="apps/mcp/src/tool_catalog.cpp",
+        find="    if (!supported_posix_shell(result.foreground_command)) {",
+        replace=(
+            "    if (!supported_posix_shell(result.foreground_command) && false) {"
+        ),
+        target="mcp_tools_test",
+        test_regex=r"^consumer[.]mcp$",
+        guards="shell commands enter only a supported singular POSIX shell",
+    ),
+    Mutation(
+        mutation_id="mcp-pane-cohort-checks",
+        path="apps/mcp/src/tool_catalog.cpp",
+        find="      if (row.window_id == source->window_id && row.synchronized &&",
+        replace="      if (row.window_id == source->window_id &&",
+        target="mcp_tools_test",
+        test_regex=r"^consumer[.]mcp$",
+        guards="only the source pane's effective synchronized cohort is configured",
+    ),
+    Mutation(
+        mutation_id="mcp-shell-marker-collision-retry",
+        path="apps/mcp/src/tool_catalog.cpp",
+        find="    if (payload.text.find(payload.marker) == std::string::npos) {",
+        replace="    if (true) {",
+        target="mcp_tools_test",
+        test_regex=r"^consumer[.]mcp$",
+        guards="a marker candidate embedded anywhere in the complete payload is "
+        "rejected before input is sent",
+    ),
+    Mutation(
+        mutation_id="mcp-shell-frame-output-endpoint",
+        path="apps/mcp/src/tool_catalog.cpp",
+        find=(
+            '  return shell_quote(tmux_executable) + " -N -S " + '
+            "shell_quote(socket_path) +\n"
+            '         " display-message -p " + std::string{message};'
+        ),
+        replace=(
+            "  static_cast<void>(tmux_executable);\n"
+            "  static_cast<void>(socket_path);\n"
+            "  return \"printf '%s\\\\n' \" + std::string{message};"
+        ),
+        target="mcp_tools_test",
+        test_regex=r"^consumer[.]mcp$",
+        guards="completion records use the resolved exact tmux endpoint rather than "
+        "a shadowable shell output command",
+    ),
+    Mutation(
         mutation_id="mcp-id-held-through-write",
         path="apps/mcp/src/stdio_server.cpp",
         find="      if (response.has_value()) {\n"

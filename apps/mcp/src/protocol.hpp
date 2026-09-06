@@ -7,6 +7,7 @@
 #include "libtmux/server.hpp"
 #include "libtmux_consumers/mcp.hpp"
 #include "protocol_types.hpp"
+#include "schema.hpp"
 
 namespace libtmux::mcp::server {
 
@@ -30,7 +31,8 @@ struct Route {
 
 class ProtocolSession {
 public:
-  explicit ProtocolSession(libtmux::Server server);
+  ProtocolSession(libtmux::Server server, ToolRegistry tools,
+                  CapabilityDisclosure disclosure = {});
 
   [[nodiscard]] Route route(const json& request);
   [[nodiscard]] json execute(const CallRequest& request, const CallContext& context);
@@ -47,11 +49,16 @@ private:
   [[nodiscard]] Route cancelled(const json& params, bool notification) const;
   [[nodiscard]] Route list_tools(const json& id, const json& params, bool notification,
                                  ProtocolEra era) const;
+  [[nodiscard]] Route list_resources(const json& id, const json& params,
+                                     bool notification, ProtocolEra era) const;
+  [[nodiscard]] Route read_resource(const json& id, const json& params,
+                                    bool notification, ProtocolEra era) const;
   [[nodiscard]] Route call_tool(const json& id, const json& params, bool notification,
                                 ProtocolEra era) const;
 
   libtmux::Server server_;
-  ToolSet tools_;
+  const ToolRegistry tools_;
+  const CapabilityDisclosure disclosure_;
   ProtocolEra era_{ProtocolEra::undecided};
   LegacyState legacy_state_{LegacyState::fresh};
   std::string legacy_version_;

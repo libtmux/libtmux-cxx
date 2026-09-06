@@ -51,15 +51,6 @@
       }
     },
     {
-      "name": "cxx-transport-measure",
-      "inherits": "cxx-base",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "LIBTMUX_ENABLE_SANITIZERS": "OFF",
-        "LIBTMUX_ENABLE_THREAD_SANITIZER": "OFF"
-      }
-    },
-    {
       "name": "cxx-gcc",
       "displayName": "GCC and libstdc++, unpinned",
       "generator": "Ninja",
@@ -142,10 +133,6 @@
     {
       "name": "cxx-tsan",
       "configurePreset": "cxx-tsan"
-    },
-    {
-      "name": "cxx-transport-measure",
-      "configurePreset": "cxx-transport-measure"
     },
     {
       "name": "cxx-gcc",

@@ -9,6 +9,80 @@ was recorded as it landed.
 
 ## Unreleased
 
+### Breaking
+
+- `enter_copy_mode` and `exit_copy_mode` are gone from the MCP tool surface.
+  Wire-breaking for MCP clients; the core `Pane` operations are unchanged.
+
+  Before: `{"name": "enter_copy_mode", "arguments": {"target": "%1"}}`
+  After:  `{"name": "capture_pane", "arguments": {"paneId": "%1"}}`
+
+- A tool that acts on one pane names that argument `paneId` rather than
+  `target`, and takes a canonical `%`-prefixed id. Wire-breaking for MCP
+  clients. `wait_for_text`, `show_option` and `show_hooks` keep `target`, which
+  is any tmux target expression rather than one pane.
+
+  Before: `{"name": "capture_pane", "arguments": {"target": "%1"}}`
+  After:  `{"name": "capture_pane", "arguments": {"paneId": "%1"}}`
+
+- `LIBTMUX_SAFETY` stops MCP startup with a migration error rather than being
+  honoured. Behavioural.
+
+  Before: `LIBTMUX_SAFETY=read-only libtmux-mcp-server`
+  After:  `LIBTMUX_TOOLSETS=inspect libtmux-mcp-server`
+
+### MCP server
+
+- Replace the legacy tool catalog with one immutable 45-tool capability
+  registry that governs registration, calls, schemas, descriptions, internal
+  input-sink claims, annotations, nested authority, and disclosure.
+- Remove `enter_copy_mode` and `exit_copy_mode` from the MCP surface. Use
+  `capture_pane`, `capture_since`, `snapshot_pane`, or `search_panes` for
+  terminal text; the core `Pane` operations remain available.
+- Add startup-frozen `LIBTMUX_TOOLSETS`, `LIBTMUX_TOOLS`, and
+  `LIBTMUX_EXCLUDE_TOOLS` selection. `LIBTMUX_SAFETY` now stops startup with a
+  migration error.
+- Add one process-wide socket selected by `LIBTMUX_SOCKET` or
+  `LIBTMUX_SOCKET_PATH`. A new product-dedicated socket uses the bundled
+  minimal configuration unless `LIBTMUX_TMUX_CONFIG` names an absolute path;
+  only its authenticated creator enables teardown by default and stops it when
+  stdio closes.
+- Add the static `tmux://capabilities` resource and matching
+  `com.git-pull.libtmux-mcp/capability` metadata to every advertised tool.
+  Public rows expose schema-keyed input literalization while sink claims remain
+  internal validation data.
+- Add bounded typed read batching that retains every executed row within a
+  1,000,000-byte newline-terminated JSON-RPC response, deterministic bounded
+  pane search, and synchronized-pane target disclosure. Request IDs over 512
+  KiB fail before dispatch rather than consuming that response budget.
+  `set_synchronize_panes` declares that it amplifies subsequent pane input.
+- Pane-input tools reject malformed state snapshots and require their
+  configured targets to be live, input-enabled, outside human-owned modes and
+  terminal attention, and distinct from the caller immediately before
+  dispatch. `send_keys` and each `send_keys_batch` row preflight the effective
+  synchronized cohort, while `paste_text` uses one private target-only buffer
+  for text and optional Enter. Process-wide pane leases prevent overlapping
+  input and remain held for uncertain shell runs. `run_shell_command` also
+  requires one configured target running a supported POSIX foreground shell
+  and uses collision-free, subshell-isolated completion framing through the
+  exact tmux endpoint while preserving bounded Bash and Zsh error/debug traps.
+### MCP switcher
+
+- Replace `tools/mcp/mcp_swap.py` with a native `mcp-swap`, built beside the
+  tests. It preserves the formatting of each agent config it edits, locks
+  across concurrent runs, and records one checksummed transaction before any
+  write so a failure rolls back in reverse order.
+- `get_server_info` reports the socket path the handle was configured with, and
+  `wait_for_text` opens its control connection on that path. tmux escapes a
+  non-printable byte in the path it stores at server start, so asking it for
+  `#{socket_path}` returned a path naming no file on tmux 3.4 and 3.5 — reported
+  to the caller as the resolved socket, and enough to make streaming fall back
+  to polling. 3.3a and earlier answer with the raw byte, and 3.6 does again.
+
+- `mcp-swap use-local` validates every selected agent config and backup
+  destination before changing any config. A malformed later config leaves the
+  whole selection unchanged.
+
 ## 0.1.0-alpha.6 (2026-08-31)
 
 This is a source- and ABI-breaking alpha. Asynchronous commands now run under

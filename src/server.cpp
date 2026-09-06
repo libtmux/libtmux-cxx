@@ -1,4 +1,5 @@
 #include "libtmux/server.hpp"
+#include "libtmux/format.hpp"
 
 #include <algorithm>
 #include <array>
@@ -155,6 +156,23 @@ expected<Server, CommandFailure> subprocess_server(std::vector<std::string> conn
   return detail::server_over(*std::move(backend));
 }
 
+expected<Server, CommandFailure>
+startable_subprocess_server(std::vector<std::string> connection,
+                            std::optional<std::filesystem::path> configuration,
+                            CommandObserver observer, ExecutionPolicy policy) {
+  std::optional<std::string> configuration_text;
+  if (configuration.has_value()) {
+    configuration_text = configuration->string();
+  }
+  auto backend = detail::SubprocessBackend::open_startable(
+      std::move(connection), std::move(configuration_text), std::move(observer),
+      policy);
+  if (!backend.has_value()) {
+    return unexpected(std::move(backend.error()));
+  }
+  return detail::server_over(*std::move(backend));
+}
+
 } // namespace
 
 expected<Server, CommandFailure> Server::at_socket_path(std::string_view path,
@@ -165,6 +183,18 @@ expected<Server, CommandFailure> Server::at_socket_path(std::string_view path,
     return unexpected(rejected_selector(path, arguments.error()));
   }
   return subprocess_server(*std::move(arguments), std::move(observer), policy);
+}
+
+expected<Server, CommandFailure>
+Server::startable_at_socket_path(std::string_view path,
+                                 std::optional<std::filesystem::path> configuration,
+                                 CommandObserver observer, ExecutionPolicy policy) {
+  auto arguments = socket_path_arguments(path);
+  if (!arguments.has_value()) {
+    return unexpected(rejected_selector(path, arguments.error()));
+  }
+  return startable_subprocess_server(*std::move(arguments), std::move(configuration),
+                                     std::move(observer), policy);
 }
 
 expected<Server, CommandFailure> Server::from_env(CommandObserver observer,
@@ -211,6 +241,13 @@ expected<Server, CommandFailure> Server::at_default(CommandObserver observer,
   return subprocess_server({}, std::move(observer), policy);
 }
 
+expected<Server, CommandFailure>
+Server::startable_at_default(std::optional<std::filesystem::path> configuration,
+                             CommandObserver observer, ExecutionPolicy policy) {
+  return startable_subprocess_server({}, std::move(configuration), std::move(observer),
+                                     policy);
+}
+
 expected<Server, CommandFailure> Server::at_socket_name(std::string_view name,
                                                         CommandObserver observer,
                                                         ExecutionPolicy policy) {
@@ -227,12 +264,34 @@ expected<Server, CommandFailure> Server::at_socket_name(std::string_view name,
   return subprocess_server(*std::move(arguments), std::move(observer), policy);
 }
 
+expected<Server, CommandFailure>
+Server::startable_at_socket_name(std::string_view name,
+                                 std::optional<std::filesystem::path> configuration,
+                                 CommandObserver observer, ExecutionPolicy policy) {
+  if (auto invalid = libtmux_psmux::invalid_socket_name(name); invalid.has_value()) {
+    return unexpected(CommandFailure{.kind = FailureKind::validation,
+                                     .delivery = DeliveryStatus::not_started,
+                                     .exit_code = 0,
+                                     .diagnostic = std::move(*invalid)});
+  }
+  auto arguments = socket_name_arguments(name);
+  if (!arguments.has_value()) {
+    return unexpected(rejected_selector(name, arguments.error()));
+  }
+  return startable_subprocess_server(*std::move(arguments), std::move(configuration),
+                                     std::move(observer), policy);
+}
+
 bool Server::refuses(ServerFeature feature) const noexcept {
   return backend_ != nullptr && backend_->capabilities().refuses(feature);
 }
 
 ServerCapabilities Server::capabilities() const noexcept {
   return backend_->capabilities();
+}
+
+std::string_view Server::socket_path() const noexcept {
+  return backend_ == nullptr ? std::string_view{} : backend_->selected_socket_path();
 }
 
 expected<std::string, CommandFailure>
@@ -817,14 +876,14 @@ expected<Session, CommandFailure> Server::new_session(NewSessionOptions options)
             "psmux cannot prove ownership of a concurrently created session; "
             "create it with the psmux CLI and reacquire it from this Server"});
   }
-  CommandRequest command{"new-session", "-d", "-P", "-s", options.name};
+  CommandRequest command{"new-session", "-d", "-P", "-s", escape_literal(options.name)};
   if (!options.first_window_name.empty()) {
     command.emplace_back("-n");
-    command.push_back(options.first_window_name);
+    command.push_back(escape_literal(options.first_window_name));
   }
   if (!options.start_directory.empty()) {
     command.emplace_back("-c");
-    command.push_back(std::move(options.start_directory));
+    command.push_back(escape_literal(options.start_directory));
   }
   if (options.width.has_value()) {
     command.emplace_back("-x");

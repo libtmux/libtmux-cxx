@@ -10,6 +10,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -901,31 +902,73 @@ sys.stdin.readline()
 
     def test_protocol_requires_tools_reply_before_stdin_eof(self) -> None:
         """Reject a server that cannot answer a persistent stdio client."""
+        self.work.mkdir()
+        ready = self.work / "tools-list-received"
+        release = self.work / "release-server"
+        stdin_state = self.work / "stdin-state"
         response = self.protocol_response(windows=False).stdout.splitlines()
-        script = """
+        script = (
+            """
+import pathlib
 import sys
+import threading
+import time
 
 sys.stdin.readline()
 print(INITIALIZED, flush=True)
-sys.stdin.read()
-print(LISTED, flush=True)
-""".replace("INITIALIZED", repr(response[0])).replace(
-            "LISTED",
-            repr(response[1]),
-        )
-        started = time.monotonic()
+sys.stdin.readline()
+sys.stdin.readline()
+sys.stdin.readline()
 
-        completed, _, problem = probe._run_protocol(
-            [sys.executable, "-c", script],
-            "{}\n",
-            "{}\n{}\n",
-            version="1.2.3",
-            timeout=0.2,
-        )
+stdin_eof = threading.Event()
+def wait_for_eof():
+    sys.stdin.read()
+    stdin_eof.set()
 
-        self.assertLess(time.monotonic() - started, 2.0)
+threading.Thread(target=wait_for_eof, daemon=True).start()
+pathlib.Path(READY).write_text("ready", encoding="utf-8")
+while not pathlib.Path(RELEASE).exists():
+    time.sleep(0.01)
+pathlib.Path(STATE).write_text(
+    "eof" if stdin_eof.is_set() else "open",
+    encoding="utf-8",
+)
+""".replace("INITIALIZED", repr(response[0]))
+            .replace("READY", repr(str(ready)))
+            .replace("RELEASE", repr(str(release)))
+            .replace("STATE", repr(str(stdin_state)))
+        )
+        result: list[
+            tuple[subprocess.CompletedProcess[list[str]] | None, int | None, str | None]
+        ] = []
+
+        def run_protocol() -> None:
+            result.append(
+                probe._run_protocol(
+                    [sys.executable, "-c", script],
+                    "{}\n",
+                    "{}\n{}\n",
+                    version="1.2.3",
+                    timeout=10,
+                )
+            )
+
+        runner = threading.Thread(target=run_protocol, daemon=True)
+        runner.start()
+        deadline = time.monotonic() + 5
+        while not ready.exists() and runner.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        reached_tools_list = ready.exists()
+        release.touch()
+        runner.join(timeout=5)
+
+        self.assertTrue(reached_tools_list)
+        self.assertFalse(runner.is_alive())
+        self.assertEqual(len(result), 1)
+        completed, _, problem = result[0]
         self.assertIsNone(completed)
-        self.assertIn("waiting for tools/list", str(problem))
+        self.assertEqual(problem, "server exited without answering tools/list")
+        self.assertEqual(stdin_state.read_text(encoding="utf-8"), "open")
 
     def test_keep_must_be_fresh_and_outside_both_repositories(self) -> None:
         """Never overwrite files in either source tree or an existing path."""

@@ -1090,7 +1090,7 @@ TEST(ServerContract, ImmediateCompletionsCannotMissTheRuntimeWake) {
     ASSERT_TRUE(answer.has_value()) << answer.error().diagnostic;
   }
 
-  EXPECT_EQ(runtime.snapshot().completed, 64U);
+  ASSERT_TRUE(wait_until([&runtime] { return runtime.snapshot().completed == 64U; }));
   EXPECT_EQ(runtime.snapshot().in_flight, 0U);
 }
 

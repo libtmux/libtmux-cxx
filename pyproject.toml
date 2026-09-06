@@ -6,7 +6,7 @@ authors = [{ name = "Tony Narlock", email = "tony@git-pull.com" }]
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
-dependencies = ["jsonschema", "referencing", "tomlkit"]
+dependencies = ["jsonschema", "referencing"]
 
 # Not published. This exists so `python3 -m tools.parity` resolves as a real
 # package rather than by whatever happens to be on the path, and so the lint
@@ -48,13 +48,6 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "*/__init__.py" = ["F401"]
-"tools/mcp/mcp_swap.py" = [
-  # The swap rewrites a config file it did not write and must put the
-  # original bytes back if anything at all goes wrong on the way. A narrower
-  # catch here would leave an agent CLI with a half-written config, which is
-  # the one outcome the rollback exists to prevent.
-  "BLE001",
-]
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"

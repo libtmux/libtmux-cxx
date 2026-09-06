@@ -32,9 +32,9 @@ assuming. A caller asks what a route serves before choosing one.
   cannot be attributed to the scope the caller named.
 - **Control mode.** `control_with_options` is rejected before a control client
   is launched.
-- **Pane input, capture, search and streaming**, which is why the MCP server
-  advertises only `inspect_tmux`, `list_sessions`, `list_windows` and
-  `list_session_panes` there.
+- **Pane input, capture, search and streaming.** The MCP server still advertises
+  the same 45-tool catalog as POSIX, but operations psmux cannot provide fail
+  explicitly as `FailureKind::unsupported` instead of being approximated.
 
 ## An id is only unique beside its session
 
@@ -52,6 +52,12 @@ recovers that selector inside a psmux pane.
 An explicit `-L default` is rejected: psmux gives it the same environment
 identity as its unselected default, so accepting it would let two spellings
 address one server while looking like two.
+
+The MCP capability resource reports that identity as `namespaceSelector`:
+`psmux:-L:<name>` for a named namespace or `psmux:default` for the unselected
+default. Its `resolvedSocketPath` and `attachCommand` fields are null because
+psmux supplies neither an exact socket path nor a safe captured-session attach
+route; the resource never converts a `psmux:*` identity into a POSIX `-S` path.
 
 ## Two environment hazards
 

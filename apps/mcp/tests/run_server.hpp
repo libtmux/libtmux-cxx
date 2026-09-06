@@ -14,6 +14,7 @@
 #include <csignal>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -100,18 +101,38 @@ wait_readable(int descriptor, std::chrono::steady_clock::time_point deadline) {
   }
 }
 
+inline libtmux::expected<void, std::string>
+read_output_byte(int descriptor, std::string& pending,
+                 std::chrono::steady_clock::time_point deadline) {
+  if (!pending.empty()) {
+    return {};
+  }
+  if (auto readable = wait_readable(descriptor, deadline); !readable.has_value()) {
+    return readable;
+  }
+  char byte = '\0';
+  const auto size = ::read(descriptor, &byte, 1U);
+  if (size <= 0) {
+    return libtmux::unexpected(std::string{"server output closed before a reply"});
+  }
+  pending.push_back(byte);
+  return {};
+}
+
 } // namespace detail
 
 struct InputStep {
   std::string text;
   std::chrono::milliseconds pause_after{};
+  std::function<libtmux::expected<void, std::string>()> barrier_after_write{};
 };
 
 inline libtmux::expected<std::vector<std::string>, std::string> run_backpressure_probe(
     const std::filesystem::path& program, std::vector<std::string> arguments,
     std::vector<std::string> environment, std::string_view initialize,
     std::string_view initialized, std::string_view first_request,
-    std::string_view duplicate_request, std::chrono::seconds timeout) {
+    std::string_view duplicate_request, std::chrono::seconds timeout,
+    std::size_t barrier_replies = 0U, std::string_view after_barrier = {}) {
   std::array<int, 2> to_child{};
   std::array<int, 2> from_child{};
   if (::pipe(to_child.data()) != 0 || ::pipe(from_child.data()) != 0) {
@@ -166,15 +187,30 @@ inline libtmux::expected<std::vector<std::string>, std::string> run_backpressure
       !written.has_value()) {
     return abort(written.error());
   }
-  if (auto readable = detail::wait_readable(from_child[0], deadline);
-      !readable.has_value()) {
-    return abort(readable.error());
+  std::vector<std::string> replies;
+  replies.reserve(barrier_replies + 3U);
+  replies.push_back(*std::move(initialized_reply));
+  for (std::size_t index = 0; index < barrier_replies; ++index) {
+    auto barrier = detail::read_line(from_child[0], pending, deadline);
+    if (!barrier.has_value()) {
+      return abort(barrier.error());
+    }
+    replies.push_back(*std::move(barrier));
+  }
+  if (!after_barrier.empty()) {
+    if (auto written = detail::write_all(to_child[1], after_barrier);
+        !written.has_value()) {
+      return abort(written.error());
+    }
+  }
+  if (auto output = detail::read_output_byte(from_child[0], pending, deadline);
+      !output.has_value()) {
+    return abort(output.error());
   }
   if (auto written = detail::write_all(to_child[1], duplicate_request);
       !written.has_value()) {
     return abort(written.error());
   }
-  std::this_thread::sleep_for(std::chrono::milliseconds{250});
 
   auto first_reply = detail::read_line(from_child[0], pending, deadline);
   if (!first_reply.has_value()) {
@@ -194,9 +230,9 @@ inline libtmux::expected<std::vector<std::string>, std::string> run_backpressure
       if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
         return libtmux::unexpected(program.string() + " exited abnormally");
       }
-      return std::vector<std::string>{*std::move(initialized_reply),
-                                      *std::move(first_reply),
-                                      *std::move(duplicate_reply)};
+      replies.push_back(*std::move(first_reply));
+      replies.push_back(*std::move(duplicate_reply));
+      return replies;
     }
     if (waited < 0) {
       return libtmux::unexpected(std::string{"waitpid: "} + std::strerror(errno));
@@ -208,11 +244,10 @@ inline libtmux::expected<std::vector<std::string>, std::string> run_backpressure
   return libtmux::unexpected(program.string() + " did not finish in time");
 }
 
-inline libtmux::expected<std::string, std::string>
-run_server_steps(const std::filesystem::path& program,
-                 std::vector<std::string> arguments,
-                 std::vector<std::string> environment,
-                 const std::vector<InputStep>& steps, std::chrono::seconds timeout) {
+inline libtmux::expected<std::string, std::string> run_server_steps(
+    const std::filesystem::path& program, std::vector<std::string> arguments,
+    std::vector<std::string> environment, const std::vector<InputStep>& steps,
+    std::chrono::seconds timeout, std::size_t output_lines_before_eof = 0U) {
   std::array<int, 2> to_child{};
   std::array<int, 2> from_child{};
   if (::pipe(to_child.data()) != 0 || ::pipe(from_child.data()) != 0) {
@@ -243,6 +278,16 @@ run_server_steps(const std::filesystem::path& program,
     return libtmux::unexpected(program.string() + ": " + std::strerror(spawned));
   }
 
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  const auto abort = [&](std::string error) {
+    ::close(to_child[1]);
+    ::close(from_child[0]);
+    static_cast<void>(::kill(child, SIGKILL));
+    static_cast<void>(::waitpid(child, nullptr, 0));
+    return libtmux::expected<std::string, std::string>{
+        libtmux::unexpected(std::move(error))};
+  };
+
   // SIGPIPE would kill the suite if the server exited early; a short write is
   // reported instead.
   static_cast<void>(::signal(SIGPIPE, SIG_IGN));
@@ -256,33 +301,62 @@ run_server_steps(const std::filesystem::path& program,
       }
       written += static_cast<std::size_t>(wrote);
     }
+    if (step.barrier_after_write) {
+      auto ready = step.barrier_after_write();
+      if (!ready.has_value()) {
+        return abort(ready.error());
+      }
+    }
     if (step.pause_after > std::chrono::milliseconds::zero()) {
       std::this_thread::sleep_for(step.pause_after);
     }
   }
-  ::close(to_child[1]);
-
-  const auto deadline = std::chrono::steady_clock::now() + timeout;
   std::string output;
-  while (true) {
+  std::size_t output_lines = 0U;
+  const auto read_output = [&]() -> libtmux::expected<bool, std::string> {
     const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
         deadline - std::chrono::steady_clock::now());
     if (remaining.count() <= 0) {
-      ::kill(child, SIGKILL);
-      ::waitpid(child, nullptr, 0);
-      ::close(from_child[0]);
       return libtmux::unexpected(program.string() + " did not finish in time");
     }
     pollfd waiting{.fd = from_child[0], .events = POLLIN, .revents = 0};
     if (::poll(&waiting, 1, static_cast<int>(remaining.count())) <= 0) {
-      continue;
+      return true;
     }
     std::array<char, 4096> buffer{};
     const auto read_bytes = ::read(from_child[0], buffer.data(), buffer.size());
     if (read_bytes <= 0) {
-      break;
+      return false;
+    }
+    for (ssize_t index = 0; index < read_bytes; ++index) {
+      if (buffer[static_cast<std::size_t>(index)] == '\n') {
+        ++output_lines;
+      }
     }
     output.append(buffer.data(), static_cast<std::size_t>(read_bytes));
+    return true;
+  };
+  while (output_lines < output_lines_before_eof) {
+    auto more = read_output();
+    if (!more.has_value()) {
+      return abort(more.error());
+    }
+    if (!*more) {
+      return abort(program.string() + " closed output before the expected reply");
+    }
+  }
+  ::close(to_child[1]);
+  while (true) {
+    auto more = read_output();
+    if (!more.has_value()) {
+      ::close(from_child[0]);
+      static_cast<void>(::kill(child, SIGKILL));
+      static_cast<void>(::waitpid(child, nullptr, 0));
+      return libtmux::unexpected(more.error());
+    }
+    if (!*more) {
+      break;
+    }
   }
   ::close(from_child[0]);
 
@@ -313,6 +387,14 @@ run_server(const std::filesystem::path& program, std::vector<std::string> argume
            std::chrono::milliseconds linger_before_eof = {}) {
   return run_server_steps(program, std::move(arguments), std::move(environment),
                           {{input, linger_before_eof}}, timeout);
+}
+
+inline libtmux::expected<std::string, std::string> run_server_until_lines(
+    const std::filesystem::path& program, std::vector<std::string> arguments,
+    std::vector<std::string> environment, const std::string& input,
+    std::chrono::seconds timeout, std::size_t output_lines_before_eof) {
+  return run_server_steps(program, std::move(arguments), std::move(environment),
+                          {{input, {}}}, timeout, output_lines_before_eof);
 }
 
 } // namespace libtmux::mcp::test

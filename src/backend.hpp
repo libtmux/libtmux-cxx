@@ -18,9 +18,11 @@
 #include "libtmux/expected.hpp"
 #include "libtmux/version.hpp"
 #include "process.hpp"
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <utility>
@@ -111,6 +113,13 @@ public:
   // not this path.
   [[nodiscard]] virtual std::string_view socket_path() const noexcept { return {}; }
 
+  // The operator-facing path selected before any private hard-link route was
+  // created. This is stable disclosure and attachment data, not the control
+  // transport's private alias.
+  [[nodiscard]] virtual std::string_view selected_socket_path() const noexcept {
+    return socket_path();
+  }
+
   // Retains the socket alias across backend handoff.
   [[nodiscard]] virtual std::shared_ptr<const SocketAlias>
   socket_alias() const noexcept {
@@ -174,11 +183,23 @@ private:
 
 // tmux in a child process: the only executor this library binds to.
 class SubprocessBackend final : public Backend {
+  struct PublishedEndpoint {
+    std::vector<std::string> connection;
+    std::string socket_path;
+    std::string identity;
+    std::shared_ptr<const SocketAlias> alias;
+  };
+
 public:
   [[nodiscard]] static expected<std::shared_ptr<const SubprocessBackend>,
                                 CommandFailure>
   open(std::vector<std::string> connection, CommandObserver observer = {},
        ExecutionPolicy policy = {});
+  [[nodiscard]] static expected<std::shared_ptr<const SubprocessBackend>,
+                                CommandFailure>
+  open_startable(std::vector<std::string> connection,
+                 std::optional<std::string> configuration,
+                 CommandObserver observer = {}, ExecutionPolicy policy = {});
 
   // Declaring an override hides the base's other overload, and the
   // one-argument form is how most callers spell "no timeout".
@@ -217,19 +238,38 @@ public:
                   std::optional<std::chrono::milliseconds> timeout) const override;
 
   [[nodiscard]] const std::vector<std::string>& connection() const noexcept override {
+    if (auto endpoint = published_endpoint(); endpoint != nullptr) {
+      return endpoint->connection;
+    }
     return connection_;
   }
 
   [[nodiscard]] std::string_view identity() const noexcept override {
+    if (auto endpoint = published_endpoint(); endpoint != nullptr) {
+      return endpoint->identity;
+    }
     return identity_;
   }
 
   [[nodiscard]] std::string_view socket_path() const noexcept override {
-    return socket_missing_ ? std::string_view{} : std::string_view{socket_path_};
+    if (socket_missing_.load(std::memory_order_acquire)) {
+      return startable_ ? std::string_view{socket_path_} : std::string_view{};
+    }
+    if (auto endpoint = published_endpoint(); endpoint != nullptr) {
+      return endpoint->socket_path;
+    }
+    return socket_path_;
+  }
+
+  [[nodiscard]] std::string_view selected_socket_path() const noexcept override {
+    return selected_socket_path_;
   }
 
   [[nodiscard]] std::shared_ptr<const SocketAlias>
   socket_alias() const noexcept override {
+    if (auto endpoint = published_endpoint(); endpoint != nullptr) {
+      return endpoint->alias;
+    }
     return socket_alias_;
   }
 
@@ -281,10 +321,11 @@ public:
 
 private:
   SubprocessBackend(std::vector<std::string> connection, std::string socket_path,
-                    std::string identity,
+                    std::string selected_socket_path, std::string identity,
                     std::shared_ptr<const SocketAlias> socket_alias,
-                    bool socket_missing, CommandObserver observer,
-                    ExecutionPolicy policy);
+                    bool socket_missing, bool startable,
+                    std::optional<std::string> startup_configuration,
+                    CommandObserver observer, ExecutionPolicy policy);
 
   [[nodiscard]] expected<std::string, CommandFailure>
   run_scoped(const CommandRequest& command, std::optional<std::string_view> session,
@@ -295,13 +336,33 @@ private:
   interpret_reply(const CommandRequest& command, std::size_t allowed_bytes,
                   ProcessReply reply, bool notify_observer) const;
 
+  [[nodiscard]] std::shared_ptr<const PublishedEndpoint>
+  published_endpoint() const noexcept {
+    if (socket_missing_.load(std::memory_order_acquire)) {
+      return {};
+    }
+    return started_endpoint_;
+  }
+
+  [[nodiscard]] expected<void, CommandFailure> publish_started_endpoint() const;
+
   std::vector<std::string> connection_;
   // Captured once, at construction. Keeping the alias alive keeps the inode
   // from being reused and prevents this handle from following a replacement.
   std::string identity_;
   std::string socket_path_;
+  std::string selected_socket_path_;
   std::shared_ptr<const SocketAlias> socket_alias_;
-  bool socket_missing_{};
+  mutable std::atomic_bool socket_missing_{};
+  // Written once under `startup_mutex_`, before `socket_missing_` is released,
+  // and read only once that flag has been acquired. The flag publishes this
+  // pointer, so it needs no atomic of its own. Published once and never
+  // replaced, so references returned by the accessors remain valid for the
+  // backend's lifetime.
+  mutable std::shared_ptr<const PublishedEndpoint> started_endpoint_;
+  bool startable_{};
+  std::optional<std::string> startup_configuration_;
+  mutable std::mutex startup_mutex_;
 };
 
 // Build a Server over any backend. The only way to reach the private

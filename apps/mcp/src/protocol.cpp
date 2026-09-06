@@ -54,8 +54,10 @@ Route Route::cancelling(json id) {
   return route;
 }
 
-ProtocolSession::ProtocolSession(libtmux::Server server)
-    : server_{std::move(server)}, tools_{default_tools()} {}
+ProtocolSession::ProtocolSession(libtmux::Server server, ToolRegistry tools,
+                                 CapabilityDisclosure disclosure)
+    : server_{std::move(server)}, tools_{std::move(tools)},
+      disclosure_{std::move(disclosure)} {}
 
 Route ProtocolSession::route(const json& request) {
   if (!request.is_object()) {
@@ -187,6 +189,12 @@ Route ProtocolSession::route(const json& request) {
   if (method == "tools/list") {
     return list_tools(id, params, notification, request_era);
   }
+  if (method == "resources/list") {
+    return list_resources(id, params, notification, request_era);
+  }
+  if (method == "resources/read") {
+    return read_resource(id, params, notification, request_era);
+  }
   if (method == "tools/call") {
     Route action = call_tool(id, params, notification, request_era);
     if (action.call.has_value() && request_era == ProtocolEra::modern) {
@@ -204,12 +212,12 @@ json ProtocolSession::execute(const CallRequest& request, const CallContext& con
   if (name == request.params.end() || !name->is_string() || name->empty()) {
     return failure(request.id, kInvalidParams, "tools/call needs a tool name");
   }
-  const Tool* const tool = tools_.find(name->get<std::string>());
+  const ToolDefinition* const tool = tools_.find(name->get<std::string>());
   if (tool == nullptr) {
     return failure(request.id, kInvalidParams,
                    "unknown tool: " + name->get<std::string>());
   }
-  auto arguments = read_arguments(request.params, *tool);
+  auto arguments = read_arguments(request.params, *tool, tools_);
   if (!arguments.has_value()) {
     if (request.tool_input_errors_are_results && arguments.error().tool_input) {
       return success(request.id, tool_failure(arguments.error().message, request.era));
@@ -218,6 +226,16 @@ json ProtocolSession::execute(const CallRequest& request, const CallContext& con
   }
   const auto answer = tools_.call(server_, tool->name, *arguments, context);
   if (answer.has_value()) {
+    if (answer->maximum_response_bytes.has_value()) {
+      const std::size_t empty_result_bytes = json::object().dump().size();
+      const std::size_t envelope_bytes =
+          success(request.id, json::object()).dump().size() - empty_result_bytes + 1U;
+      const std::size_t result_bytes =
+          *answer->maximum_response_bytes > envelope_bytes
+              ? *answer->maximum_response_bytes - envelope_bytes
+              : 0U;
+      return success(request.id, tool_success(*answer, request.era, result_bytes));
+    }
     return success(request.id, tool_success(*answer, request.era));
   }
   if (answer.error().caller_error) {
@@ -350,6 +368,56 @@ Route ProtocolSession::list_tools(const json& id, const json& params, bool notif
         failure(id, kInvalidParams, "this fixed tool catalog does not paginate"));
   }
   return Route::answering(success(id, tools_result(tools_, era)));
+}
+
+Route ProtocolSession::list_resources(const json& id, const json& params,
+                                      bool notification, ProtocolEra era) const {
+  if (notification) {
+    return {};
+  }
+  if (const auto key = unexpected_key(params, {"cursor", "_meta"}); key.has_value()) {
+    return Route::answering(
+        failure(id, kInvalidParams, "unknown resources/list parameter: " + *key));
+  }
+  if (era == ProtocolEra::legacy && !valid_legacy_metadata(params)) {
+    return Route::answering(
+        failure(id, kInvalidParams, "resources/list _meta is invalid"));
+  }
+  if (const auto cursor = params.find("cursor"); cursor != params.end()) {
+    if (!cursor->is_string()) {
+      return Route::answering(
+          failure(id, kInvalidParams, "resources/list cursor must be a string"));
+    }
+    return Route::answering(
+        failure(id, kInvalidParams, "this fixed resource catalog does not paginate"));
+  }
+  return Route::answering(success(id, resources_result(era)));
+}
+
+Route ProtocolSession::read_resource(const json& id, const json& params,
+                                     bool notification, ProtocolEra era) const {
+  if (notification) {
+    return {};
+  }
+  if (const auto key = unexpected_key(params, {"uri", "_meta"}); key.has_value()) {
+    return Route::answering(
+        failure(id, kInvalidParams, "unknown resources/read parameter: " + *key));
+  }
+  if (era == ProtocolEra::legacy && !valid_legacy_metadata(params)) {
+    return Route::answering(
+        failure(id, kInvalidParams, "resources/read _meta is invalid"));
+  }
+  const auto uri = params.find("uri");
+  if (uri == params.end() || !uri->is_string() || uri->empty()) {
+    return Route::answering(
+        failure(id, kInvalidParams, "resources/read needs a resource URI"));
+  }
+  if (uri->get<std::string>() != "tmux://capabilities") {
+    return Route::answering(failure(
+        id, kInvalidParams, "unknown resource URI: " + uri->get<std::string>()));
+  }
+  return Route::answering(
+      success(id, capabilities_resource_result(tools_, era, disclosure_)));
 }
 
 Route ProtocolSession::call_tool(const json& id, const json& params, bool notification,
