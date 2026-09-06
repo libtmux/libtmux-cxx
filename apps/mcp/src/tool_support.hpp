@@ -51,6 +51,35 @@ struct ShellCommandCompletion {
 
 enum class PaneInputScope { effective_cohort, target_only, singular_posix_shell };
 
+enum class PaneInputCallerRelation { detached, foreign, selected };
+
+struct PaneInputCaller {
+  PaneInputCallerRelation relation{};
+  std::string pane_id;
+  std::string session_id;
+  std::uint64_t server_pid{};
+
+  [[nodiscard]] static PaneInputCaller detached() {
+    return PaneInputCaller{.relation = PaneInputCallerRelation::detached,
+                           .pane_id = {},
+                           .session_id = {},
+                           .server_pid = 0U};
+  }
+  [[nodiscard]] static PaneInputCaller foreign() {
+    return PaneInputCaller{.relation = PaneInputCallerRelation::foreign,
+                           .pane_id = {},
+                           .session_id = {},
+                           .server_pid = 0U};
+  }
+  [[nodiscard]] static PaneInputCaller
+  selected(std::string pane_id, std::string session_id, std::uint64_t server_pid) {
+    return PaneInputCaller{.relation = PaneInputCallerRelation::selected,
+                           .pane_id = std::move(pane_id),
+                           .session_id = std::move(session_id),
+                           .server_pid = server_pid};
+  }
+};
+
 struct PaneInputPreflight {
   std::vector<std::string> configured_pane_ids;
   std::string foreground_command;
@@ -73,9 +102,14 @@ shell_command_completion(std::string_view capture, std::string_view marker,
 [[nodiscard]] ToolOutput output(StructuredValue::Object structured,
                                 std::optional<std::size_t> maximum_response_bytes = {});
 [[nodiscard]] ToolError tmux_error(const CommandFailure& error);
+[[nodiscard]] libtmux::expected<PaneInputCaller, ToolError>
+parse_pane_input_caller(std::optional<std::string> tmux,
+                        std::optional<std::string> tmux_pane,
+                        const std::filesystem::path& selected_socket_path);
 [[nodiscard]] libtmux::expected<PaneInputPreflight, ToolError>
 parse_pane_input_snapshot(std::string_view source_pane_id, std::string raw,
-                          PaneInputScope scope);
+                          PaneInputScope scope, std::string clients = {},
+                          PaneInputCaller caller = PaneInputCaller::detached());
 [[nodiscard]] libtmux::expected<PaneInputPreflight, ToolError>
 preflight_pane_input(const Server& server, std::string_view source_pane_id,
                      PaneInputScope scope);

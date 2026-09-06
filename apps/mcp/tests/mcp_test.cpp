@@ -177,10 +177,25 @@ ToolRegistry all_tools() {
 
 std::string pane_input_row(std::string_view pane_id, std::string_view window_id,
                            std::string_view synchronized, std::string_view mode,
-                           std::string_view dead, std::string_view command) {
+                           std::string_view dead, std::string_view command,
+                           std::string_view input_off = "0",
+                           std::string_view session_id = "$3",
+                           std::string_view server_pid = "101") {
   std::string row;
-  for (const std::string_view value :
-       {pane_id, window_id, synchronized, mode, dead, command}) {
+  for (const std::string_view value : {pane_id, window_id, session_id, server_pid,
+                                       synchronized, mode, dead, input_off, command}) {
+    row += value;
+    row += libtmux::kFormatSeparator;
+  }
+  row += '\n';
+  return row;
+}
+
+std::string pane_input_client_row(std::string_view control,
+                                  std::string_view active_pane,
+                                  std::string_view zoomed) {
+  std::string row;
+  for (const std::string_view value : {control, active_pane, zoomed}) {
     row += value;
     row += libtmux::kFormatSeparator;
   }
@@ -517,6 +532,135 @@ TEST(McpTools, PaneInputSnapshotAllowsOnlySupportedSingularPosixShells) {
   }
 }
 
+TEST(McpTools, PaneInputSnapshotRefusesCallerAndDisabledRecipients) {
+  using libtmux::mcp::detail::PaneInputCaller;
+  using libtmux::mcp::detail::PaneInputScope;
+  const std::string source = pane_input_row("%7", "@3", "1", "0", "0", "sh");
+  const std::string peer = pane_input_row("%8", "@3", "1", "0", "0", "cat");
+  const auto parse = [&](std::string recording, const PaneInputCaller& caller) {
+    return libtmux::mcp::detail::parse_pane_input_snapshot(
+        "%7", std::move(recording), PaneInputScope::effective_cohort, {}, caller);
+  };
+
+  EXPECT_TRUE(parse(source + peer, PaneInputCaller::detached()).has_value());
+  EXPECT_TRUE(parse(source + peer, PaneInputCaller::foreign()).has_value());
+  EXPECT_FALSE(
+      parse(source + peer, PaneInputCaller::selected("%7", "$3", 101U)).has_value());
+  EXPECT_FALSE(
+      parse(source + peer, PaneInputCaller::selected("%8", "$3", 101U)).has_value());
+  EXPECT_FALSE(
+      parse(source + peer, PaneInputCaller::selected("%9", "$3", 101U)).has_value());
+  EXPECT_FALSE(
+      parse(source + peer, PaneInputCaller::selected("%7", "$4", 101U)).has_value());
+  EXPECT_FALSE(
+      parse(source + peer, PaneInputCaller::selected("%7", "$3", 102U)).has_value());
+
+  EXPECT_FALSE(parse(pane_input_row("%7", "@3", "0", "0", "0", "sh", "1"),
+                     PaneInputCaller::detached())
+                   .has_value());
+  EXPECT_FALSE(parse(source + pane_input_row("%8", "@3", "1", "0", "0", "cat", "1"),
+                     PaneInputCaller::detached())
+                   .has_value());
+  for (const std::string_view value : {"", "00", "2", "on", "-1"}) {
+    EXPECT_FALSE(parse(pane_input_row("%7", "@3", "0", "0", "0", "sh", value),
+                       PaneInputCaller::detached())
+                     .has_value())
+        << value;
+  }
+  EXPECT_FALSE(
+      parse(source + pane_input_row("%8", "@3", "0", "0", "0", "cat", "0", "$03"),
+            PaneInputCaller::detached())
+          .has_value());
+  EXPECT_FALSE(parse(source + pane_input_row("%8", "@3", "0", "0", "0", "cat", "0",
+                                             "$3", "0101"),
+                     PaneInputCaller::detached())
+                   .has_value());
+}
+
+TEST(McpTools, PaneInputSnapshotProjectsStrictTerminalAttention) {
+  using libtmux::mcp::detail::PaneInputCaller;
+  using libtmux::mcp::detail::PaneInputScope;
+  const std::string rows = pane_input_row("%7", "@3", "1", "0", "0", "sh") +
+                           pane_input_row("%8", "@3", "1", "0", "0", "cat");
+  const auto parse = [&](std::string clients, PaneInputScope scope) {
+    return libtmux::mcp::detail::parse_pane_input_snapshot(
+        "%7", rows, scope, std::move(clients), PaneInputCaller::detached());
+  };
+
+  EXPECT_FALSE(
+      parse(pane_input_client_row("0", "%8", "1"), PaneInputScope::effective_cohort)
+          .has_value());
+  EXPECT_TRUE(parse(pane_input_client_row("0", "%8", "1"), PaneInputScope::target_only)
+                  .has_value());
+  EXPECT_FALSE(parse(pane_input_client_row("0", "%8", "0"), PaneInputScope::target_only)
+                   .has_value());
+  EXPECT_TRUE(parse(pane_input_client_row("1", "%8", "0"), PaneInputScope::target_only)
+                  .has_value());
+  EXPECT_TRUE(parse(pane_input_client_row("0", "%20", "0"), PaneInputScope::target_only)
+                  .has_value());
+  EXPECT_TRUE(parse({}, PaneInputScope::target_only).has_value());
+
+  for (const std::string& malformed :
+       {pane_input_client_row("2", "%8", "0"), pane_input_client_row("0", "8", "0"),
+        pane_input_client_row("0", "%08", "0"), pane_input_client_row("0", "%8", "00"),
+        pane_input_client_row("0", "%8", "0")
+            .substr(0U, pane_input_client_row("0", "%8", "0").size() - 1U)}) {
+    EXPECT_FALSE(parse(malformed, PaneInputScope::target_only).has_value())
+        << malformed;
+  }
+}
+
+TEST(McpTools, PaneInputCallerRequiresACompleteCanonicalIdentity) {
+  using libtmux::mcp::detail::PaneInputCallerRelation;
+  ExecutableTree tree;
+  const std::filesystem::path selected = tree.root() / "selected";
+  const std::filesystem::path alias = tree.root() / "selected-alias";
+  const std::filesystem::path comma_alias = tree.root() / "selected,alias,path";
+  const std::filesystem::path foreign = tree.root() / "foreign";
+  std::ofstream{selected} << "selected";
+  std::ofstream{foreign} << "foreign";
+  std::filesystem::create_hard_link(selected, alias);
+  std::filesystem::create_hard_link(selected, comma_alias);
+  const auto parse = [&](std::optional<std::string> tmux,
+                         std::optional<std::string> pane) {
+    return libtmux::mcp::detail::parse_pane_input_caller(std::move(tmux),
+                                                         std::move(pane), selected);
+  };
+
+  const auto detached = parse(std::nullopt, std::nullopt);
+  ASSERT_TRUE(detached.has_value()) << detached.error().message;
+  EXPECT_EQ(detached->relation, PaneInputCallerRelation::detached);
+  const auto same = parse(alias.string() + ",101,3", "%7");
+  ASSERT_TRUE(same.has_value()) << same.error().message;
+  EXPECT_EQ(same->relation, PaneInputCallerRelation::selected);
+  EXPECT_EQ(same->pane_id, "%7");
+  EXPECT_EQ(same->session_id, "$3");
+  EXPECT_EQ(same->server_pid, 101U);
+  const auto comma_path = parse(comma_alias.string() + ",101,3", "%7");
+  ASSERT_TRUE(comma_path.has_value()) << comma_path.error().message;
+  EXPECT_EQ(comma_path->relation, PaneInputCallerRelation::selected);
+  const auto other = parse(foreign.string() + ",101,3", "%7");
+  ASSERT_TRUE(other.has_value()) << other.error().message;
+  EXPECT_EQ(other->relation, PaneInputCallerRelation::foreign);
+
+  const std::vector<std::pair<std::optional<std::string>, std::optional<std::string>>>
+      malformed{{std::nullopt, "%7"},
+                {selected.string() + ",101,3", std::nullopt},
+                {"", "%7"},
+                {selected.string() + ",101,3", ""},
+                {selected.string(), "%7"},
+                {selected.string() + ",0,3", "%7"},
+                {selected.string() + ",0101,3", "%7"},
+                {selected.string() + ",101,03", "%7"},
+                {selected.string() + ",101,-1", "%7"},
+                {selected.string() + ",101,3", "%07"},
+                {(tree.root() / "missing").string() + ",101,3", "%7"}};
+  for (const auto& [tmux, pane] : malformed) {
+    EXPECT_FALSE(parse(tmux, pane).has_value())
+        << (tmux.has_value() ? *tmux : "<unset>");
+  }
+}
+
 TEST(McpTools, ShellCommandPayloadUsesAnIsolatedExactEndpointFrame) {
   const std::string nonce(32U, 'a');
   const auto payload = libtmux::mcp::detail::shell_command_payload(
@@ -706,6 +850,17 @@ TEST(McpToolsTmux, PaneInputPreflightReadsFreshState) {
   EXPECT_NE(guarded.error().message.find(pane.id()), std::string::npos);
   EXPECT_EQ(guarded.error().message.find("scripted expansion failure"),
             std::string::npos);
+
+  ASSERT_TRUE(pane.leave_mode().has_value());
+  ASSERT_TRUE(server.run({"select-pane", "-t", pane.id(), "-d"}).has_value());
+  const auto input_off = libtmux::mcp::detail::preflight_pane_input(
+      server, pane.id(), libtmux::mcp::detail::PaneInputScope::target_only);
+  ASSERT_FALSE(input_off.has_value());
+  EXPECT_NE(input_off.error().message.find("disabled"), std::string::npos);
+  ASSERT_TRUE(server.run({"select-pane", "-t", pane.id(), "-e"}).has_value());
+  EXPECT_TRUE(libtmux::mcp::detail::preflight_pane_input(
+                  server, pane.id(), libtmux::mcp::detail::PaneInputScope::target_only)
+                  .has_value());
 }
 
 TEST(McpToolsTmux, CreatesAWindowAndTypesIntoItsPane) {

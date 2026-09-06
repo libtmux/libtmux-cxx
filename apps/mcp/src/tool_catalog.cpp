@@ -217,9 +217,13 @@ shell_command_completion(std::string_view capture, std::string_view marker,
 
 namespace {
 
-constexpr std::array<std::string_view, 6> kPaneInputFields{
-    "pane_id",      "window_id", "pane_synchronized",
-    "pane_in_mode", "pane_dead", "pane_current_command"};
+constexpr std::array<std::string_view, 9> kPaneInputFields{
+    "pane_id",   "window_id",         "session_id",
+    "pid",       "pane_synchronized", "pane_in_mode",
+    "pane_dead", "pane_input_off",    "pane_current_command"};
+
+constexpr std::array<std::string_view, 3> kPaneInputClientFields{
+    "client_control_mode", "pane_id", "window_zoomed_flag"};
 
 [[nodiscard]] bool canonical_number(std::string_view value) {
   if (value.empty() || (value.size() > 1U && value.front() == '0')) {
@@ -251,9 +255,12 @@ constexpr std::array<std::string_view, 6> kPaneInputFields{
 struct PaneInputRow {
   std::string pane_id;
   std::string window_id;
+  std::string session_id;
+  std::uint64_t server_pid{};
   bool synchronized{};
   std::uint64_t mode{};
   bool dead{};
+  bool input_off{};
   std::string command;
 };
 
@@ -262,11 +269,67 @@ struct PaneInputRow {
                               std::string{source_pane_id}};
 }
 
+[[nodiscard]] ToolError invalid_pane_caller() {
+  return ToolError{false, "pane input is refused because the caller identity is "
+                          "incomplete, malformed, or inconsistent"};
+}
+
 } // namespace
+
+libtmux::expected<PaneInputCaller, ToolError>
+parse_pane_input_caller(std::optional<std::string> tmux,
+                        std::optional<std::string> tmux_pane,
+                        const std::filesystem::path& selected_socket_path) {
+  if (!tmux.has_value() && !tmux_pane.has_value()) {
+    return PaneInputCaller::detached();
+  }
+  if (!tmux.has_value() || !tmux_pane.has_value() || tmux->empty() ||
+      !canonical_id(*tmux_pane, '%')) {
+    return libtmux::unexpected(invalid_pane_caller());
+  }
+
+  const std::size_t session_separator = tmux->rfind(',');
+  const std::size_t pid_separator = session_separator == std::string::npos
+                                        ? std::string::npos
+                                        : tmux->rfind(',', session_separator - 1U);
+  if (pid_separator == std::string::npos || session_separator == std::string::npos ||
+      pid_separator == 0U || pid_separator + 1U == session_separator ||
+      session_separator + 1U == tmux->size()) {
+    return libtmux::unexpected(invalid_pane_caller());
+  }
+  const std::string_view pid_text{tmux->data() + pid_separator + 1U,
+                                  session_separator - pid_separator - 1U};
+  const std::string_view session_text{tmux->data() + session_separator + 1U,
+                                      tmux->size() - session_separator - 1U};
+  if (!canonical_number(pid_text) || pid_text == "0" ||
+      !canonical_number(session_text)) {
+    return libtmux::unexpected(invalid_pane_caller());
+  }
+  std::uint64_t server_pid = 0U;
+  const auto parsed =
+      std::from_chars(pid_text.data(), pid_text.data() + pid_text.size(), server_pid);
+  if (parsed.ec != std::errc{} || parsed.ptr != pid_text.data() + pid_text.size()) {
+    return libtmux::unexpected(invalid_pane_caller());
+  }
+
+  const std::filesystem::path caller_socket{tmux->substr(0U, pid_separator)};
+  std::error_code compared;
+  const bool selected =
+      std::filesystem::equivalent(caller_socket, selected_socket_path, compared);
+  if (compared) {
+    return libtmux::unexpected(invalid_pane_caller());
+  }
+  if (!selected) {
+    return PaneInputCaller::foreign();
+  }
+  return PaneInputCaller::selected(std::move(*tmux_pane),
+                                   "$" + std::string{session_text}, server_pid);
+}
 
 libtmux::expected<PaneInputPreflight, ToolError>
 parse_pane_input_snapshot(std::string_view source_pane_id, std::string raw,
-                          PaneInputScope scope) {
+                          PaneInputScope scope, std::string clients,
+                          PaneInputCaller caller) {
   if (!canonical_id(source_pane_id, '%') || raw.empty() || raw.back() != '\n' ||
       raw.front() == '\n' || raw.find("\n\n") != std::string::npos) {
     return libtmux::unexpected(invalid_pane_snapshot(source_pane_id));
@@ -280,34 +343,93 @@ parse_pane_input_snapshot(std::string_view source_pane_id, std::string raw,
   rows.reserve(snapshot->rows().size());
   std::set<std::string, std::less<>> pane_ids;
   std::string window_id;
+  std::string session_id;
+  std::uint64_t server_pid = 0U;
   for (const auto& values : snapshot->rows()) {
     if (!canonical_id(values[0], '%') || !canonical_id(values[1], '@') ||
-        (values[2] != "0" && values[2] != "1") || !canonical_number(values[3]) ||
-        (values[4] != "0" && values[4] != "1") || values[5].empty() ||
+        !canonical_id(values[2], '$') || !canonical_number(values[3]) ||
+        values[3] == "0" || (values[4] != "0" && values[4] != "1") ||
+        !canonical_number(values[5]) || (values[6] != "0" && values[6] != "1") ||
+        (values[7] != "0" && values[7] != "1") || values[8].empty() ||
         !pane_ids.emplace(values[0]).second ||
-        (!window_id.empty() && values[1] != window_id)) {
+        (!window_id.empty() && values[1] != window_id) ||
+        (!session_id.empty() && values[2] != session_id)) {
       return libtmux::unexpected(invalid_pane_snapshot(source_pane_id));
     }
     std::uint64_t mode = 0U;
     const auto parsed =
-        std::from_chars(values[3].data(), values[3].data() + values[3].size(), mode);
-    if (parsed.ec != std::errc{} || parsed.ptr != values[3].data() + values[3].size()) {
+        std::from_chars(values[5].data(), values[5].data() + values[5].size(), mode);
+    std::uint64_t row_server_pid = 0U;
+    const auto parsed_pid = std::from_chars(
+        values[3].data(), values[3].data() + values[3].size(), row_server_pid);
+    if (parsed.ec != std::errc{} || parsed.ptr != values[5].data() + values[5].size() ||
+        parsed_pid.ec != std::errc{} ||
+        parsed_pid.ptr != values[3].data() + values[3].size() ||
+        (server_pid != 0U && row_server_pid != server_pid)) {
       return libtmux::unexpected(invalid_pane_snapshot(source_pane_id));
     }
     if (window_id.empty()) {
       window_id = std::string{values[1]};
+      session_id = std::string{values[2]};
+      server_pid = row_server_pid;
     }
     rows.push_back(PaneInputRow{.pane_id = std::string{values[0]},
                                 .window_id = std::string{values[1]},
-                                .synchronized = values[2] == "1",
+                                .session_id = std::string{values[2]},
+                                .server_pid = row_server_pid,
+                                .synchronized = values[4] == "1",
                                 .mode = mode,
-                                .dead = values[4] == "1",
-                                .command = std::string{values[5]}});
+                                .dead = values[6] == "1",
+                                .input_off = values[7] == "1",
+                                .command = std::string{values[8]}});
   }
 
   const auto source = std::ranges::find(rows, source_pane_id, &PaneInputRow::pane_id);
   if (source == rows.end()) {
     return libtmux::unexpected(invalid_pane_snapshot(source_pane_id));
+  }
+  if (caller.relation == PaneInputCallerRelation::selected) {
+    const auto caller_row =
+        std::ranges::find(rows, caller.pane_id, &PaneInputRow::pane_id);
+    if (caller_row == rows.end() || caller_row->session_id != caller.session_id ||
+        caller_row->server_pid != caller.server_pid) {
+      return libtmux::unexpected(invalid_pane_caller());
+    }
+  }
+
+  std::set<std::string, std::less<>> attended;
+  if (!clients.empty()) {
+    if (clients.back() != '\n' || clients.front() == '\n' ||
+        clients.find("\n\n") != std::string::npos) {
+      return libtmux::unexpected(invalid_pane_snapshot(source_pane_id));
+    }
+    const auto client_snapshot =
+        Snapshot::from_recording(kPaneInputClientFields, std::move(clients));
+    if (client_snapshot == nullptr || client_snapshot->rows().empty()) {
+      return libtmux::unexpected(invalid_pane_snapshot(source_pane_id));
+    }
+    for (const auto& values : client_snapshot->rows()) {
+      if ((values[0] != "0" && values[0] != "1") || !canonical_id(values[1], '%') ||
+          (values[2] != "0" && values[2] != "1")) {
+        return libtmux::unexpected(invalid_pane_snapshot(source_pane_id));
+      }
+      if (values[0] == "1") {
+        continue;
+      }
+      const auto active = std::ranges::find(rows, values[1], &PaneInputRow::pane_id);
+      if (active == rows.end()) {
+        continue;
+      }
+      if (values[2] == "1") {
+        attended.emplace(active->pane_id);
+      } else {
+        for (const PaneInputRow& row : rows) {
+          if (row.window_id == active->window_id) {
+            attended.emplace(row.pane_id);
+          }
+        }
+      }
+    }
   }
   std::vector<const PaneInputRow*> configured;
   if (scope == PaneInputScope::target_only || !source->synchronized) {
@@ -331,11 +453,27 @@ parse_pane_input_snapshot(std::string_view source_pane_id, std::string raw,
           false, "pane " + row->pane_id +
                      " input is refused because its configured process is dead"});
     }
+    if (row->input_off) {
+      return libtmux::unexpected(
+          ToolError{false, "pane " + row->pane_id +
+                               " input is refused because tmux input is disabled"});
+    }
     if (row->mode != 0U) {
       return libtmux::unexpected(ToolError{
           false, "pane " + row->pane_id +
                      " input is refused because its human-owned mode is active; "
                      "capture pane content and wait for the mode to end"});
+    }
+    if (caller.relation == PaneInputCallerRelation::selected &&
+        row->pane_id == caller.pane_id) {
+      return libtmux::unexpected(
+          ToolError{false, "pane " + row->pane_id +
+                               " input is refused because it belongs to the caller"});
+    }
+    if (attended.contains(row->pane_id)) {
+      return libtmux::unexpected(ToolError{
+          false, "pane " + row->pane_id +
+                     " input is refused because a terminal client attends it"});
     }
     result.configured_pane_ids.push_back(row->pane_id);
   }
@@ -365,12 +503,27 @@ parse_pane_input_snapshot(std::string_view source_pane_id, std::string raw,
 libtmux::expected<PaneInputPreflight, ToolError>
 preflight_pane_input(const Server& server, std::string_view source_pane_id,
                      PaneInputScope scope) {
-  const auto raw = server.run({"list-panes", "-t", std::string{source_pane_id}, "-F",
-                               format_request(kPaneInputFields)});
-  if (!raw.has_value()) {
-    return libtmux::unexpected(tmux_error(raw.error()));
+  const auto panes = server.run({"list-panes", "-t", std::string{source_pane_id}, "-F",
+                                 format_request(kPaneInputFields)});
+  if (!panes.has_value()) {
+    return libtmux::unexpected(tmux_error(panes.error()));
   }
-  return parse_pane_input_snapshot(source_pane_id, *raw, scope);
+  const auto clients =
+      server.run({"list-clients", "-F", format_request(kPaneInputClientFields)});
+  if (!clients.has_value()) {
+    return libtmux::unexpected(tmux_error(clients.error()));
+  }
+  const char* const tmux_value = std::getenv("TMUX");
+  const char* const pane_value = std::getenv("TMUX_PANE");
+  auto caller = parse_pane_input_caller(
+      tmux_value == nullptr ? std::nullopt : std::optional<std::string>{tmux_value},
+      pane_value == nullptr ? std::nullopt : std::optional<std::string>{pane_value},
+      server.socket_path());
+  if (!caller.has_value()) {
+    return libtmux::unexpected(caller.error());
+  }
+  return parse_pane_input_snapshot(source_pane_id, *panes, scope, *clients,
+                                   std::move(*caller));
 }
 
 StructuredValue session_value(const Session& session) {
