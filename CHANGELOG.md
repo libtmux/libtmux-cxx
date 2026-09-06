@@ -35,12 +35,15 @@ was recorded as it landed.
   KiB fail before dispatch rather than consuming that response budget.
   `set_synchronize_panes` declares that it amplifies subsequent pane input.
 - Pane-input tools reject malformed state snapshots and require their
-  configured targets to be live and outside human-owned modes immediately
-  before dispatch. `send_keys` and each `send_keys_batch` row preflight the
-  effective synchronized cohort, while `paste_text` remains target-only.
-  `run_shell_command` also requires one configured target running a supported
-  POSIX foreground shell and uses collision-free, subshell-isolated completion
-  framing through the exact tmux endpoint.
+  configured targets to be live, input-enabled, outside human-owned modes and
+  terminal attention, and distinct from the caller immediately before
+  dispatch. `send_keys` and each `send_keys_batch` row preflight the effective
+  synchronized cohort, while `paste_text` uses one private target-only buffer
+  for text and optional Enter. Process-wide pane leases prevent overlapping
+  input and remain held for uncertain shell runs. `run_shell_command` also
+  requires one configured target running a supported POSIX foreground shell
+  and uses collision-free, subshell-isolated completion framing through the
+  exact tmux endpoint while preserving bounded Bash and Zsh error/debug traps.
 - `mcp_swap.py use-local` validates every selected agent config and backup
   destination before changing any config. A malformed later config leaves the
   whole selection unchanged.
