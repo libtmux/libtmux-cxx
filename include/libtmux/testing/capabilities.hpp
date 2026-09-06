@@ -16,7 +16,7 @@
 
 #include <gtest/gtest.h>
 
-// Skip unless tmux is at least `major.minor`, naming what is missing below it.
+/// Skip unless tmux is at least `major.minor`, naming what is missing below it.
 #define LIBTMUX_REQUIRES_TMUX(major_version, minor_version, capability)                \
   do {                                                                                 \
     const ::libtmux::Version required{.major = (major_version),                        \
@@ -28,9 +28,9 @@
     }                                                                                  \
   } while (false)
 
-// Skip while tmux is inside a closed range of releases with a known defect.
-// Both ends are inclusive, and `last` is the newest release still affected —
-// so a fix in 3.6 is written as a window ending at 3.5.
+/// Skip while tmux is inside a closed range of releases with a known defect.
+/// Both ends are inclusive, and `last` is the newest release still affected —
+/// so a fix in 3.6 is written as a window ending at 3.5.
 #define LIBTMUX_SKIP_TMUX_DEFECT(first_major, first_minor, last_major, last_minor,     \
                                  description)                                          \
   do {                                                                                 \

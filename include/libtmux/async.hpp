@@ -72,9 +72,9 @@ public:
   CommandRuntime& operator=(CommandRuntime&&) noexcept;
   CommandRuntime(const CommandRuntime&) = delete;
   CommandRuntime& operator=(const CommandRuntime&) = delete;
-  // Stops and joins owned threads; pending observers are discarded, not
-  // invoked.
-  // Call `close` first when its terminal report matters.
+  /// Stops and joins owned threads; pending observers are discarded, not
+  /// invoked.
+  /// Call `close` first when its terminal report matters.
   ~CommandRuntime();
 
   /// Stops admission and requests cancellation without waiting.

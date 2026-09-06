@@ -263,16 +263,16 @@ public:
   /// could not be created.
   [[nodiscard]] int notification_fd() const noexcept;
 
-  // Stop or resume `%output` for one pane, on a connection that asked for it.
-  //
-  // The direction is not symmetrical, because tmux is not: a connection that
-  // started without `pane_output` cannot be made to listen to anything, and
-  // muting is the only per-pane control it offers. So this narrows what a
-  // listening connection receives; it cannot widen a silent one.
-  //
-  // `resume` on a pane that tmux paused also clears the pause, and tmux moves
-  // that pane's offset to the current end — so whatever was produced while it
-  // was paused or muted is not delivered afterwards.
+  /// Stop or resume `%output` for one pane, on a connection that asked for it.
+  ///
+  /// The direction is not symmetrical, because tmux is not: a connection that
+  /// started without `pane_output` cannot be made to listen to anything, and
+  /// muting is the only per-pane control it offers. So this narrows what a
+  /// listening connection receives; it cannot widen a silent one.
+  ///
+  /// `resume` on a pane that tmux paused also clears the pause, and tmux moves
+  /// that pane's offset to the current end — so whatever was produced while it
+  /// was paused or muted is not delivered afterwards.
   expected<void, ProtocolError>
   set_pane_output(std::string_view pane, bool deliver,
                   std::chrono::steady_clock::time_point deadline);

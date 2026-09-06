@@ -31,20 +31,20 @@ enum class FailureKind {
   timeout,
   refused,
   missing,
-  // tmux ran and answered, and the answer did not fit. Reported rather than
-  // returned, because a truncated answer is indistinguishable from a complete
-  // one: the last line is simply cut, mid-word.
+  /// tmux ran and answered, and the answer did not fit. Reported rather than
+  /// returned, because a truncated answer is indistinguishable from a complete
+  /// one: the last line is simply cut, mid-word.
   truncated,
-  // The backend cannot provide this operation without weakening its contract;
-  // nothing was dispatched.
+  /// The backend cannot provide this operation without weakening its contract;
+  /// nothing was dispatched.
   unsupported,
-  // More work is in flight than the engine accepts. Nothing was dispatched, so
-  // this is the one refusal a caller may simply try again later — appended
-  // rather than grouped, because the values before it are an installed ABI.
+  /// More work is in flight than the engine accepts. Nothing was dispatched, so
+  /// this is the one refusal a caller may simply try again later — appended
+  /// rather than grouped, because the values before it are an installed ABI.
   overloaded,
-  // The caller withdrew the call. Whether tmux acted is a separate question,
-  // and `delivery` is what answers it: a cancellation accepted before dispatch
-  // is not_started, and one accepted after the command was written is not.
+  /// The caller withdrew the call. Whether tmux acted is a separate question,
+  /// and `delivery` is what answers it: a cancellation accepted before dispatch
+  /// is not_started, and one accepted after the command was written is not.
   cancelled,
 };
 

@@ -17,7 +17,7 @@ LIBTMUX_NAMESPACE_BEGIN
 
 enum class TargetError {
   empty_name,
-  // A name holding a separator would re-parse as a different target.
+  /// A name holding a separator would re-parse as a different target.
   separator_in_name,
 };
 
