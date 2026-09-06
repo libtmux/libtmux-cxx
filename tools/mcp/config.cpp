@@ -842,7 +842,13 @@ std::optional<std::size_t> assignment_equals(std::string_view line) {
 
 std::size_t toml_value_end(std::string_view text, std::size_t start,
                            std::size_t limit) {
-  enum class Quote { none, basic, literal, multiline_basic, multiline_literal };
+  enum class Quote : std::uint8_t {
+    none,
+    basic,
+    literal,
+    multiline_basic,
+    multiline_literal
+  };
   Quote quote = Quote::none;
   int square = 0;
   int curly = 0;

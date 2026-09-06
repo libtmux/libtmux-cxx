@@ -77,13 +77,6 @@ struct WaitTarget {
 
 using WaitCommandResult = libtmux::expected<std::optional<std::string>, ToolError>;
 
-[[nodiscard]] std::string without_line_ending(std::string text) {
-  while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) {
-    text.pop_back();
-  }
-  return text;
-}
-
 [[nodiscard]] ToolError cancellation_error() {
   return ToolError{false, "request cancelled"};
 }
@@ -238,20 +231,16 @@ stream_for_text(const Server& server, const WaitTarget& target, std::string_view
   if (context.cancelled()) {
     return libtmux::unexpected(cancellation_error());
   }
-  auto socket = run_before_deadline(
-      server, {"display-message", "-p", "-t", target.pane_id, "--", "#{socket_path}"},
-      deadline, context);
-  if (!socket.has_value()) {
-    if (context.cancelled()) {
-      return libtmux::unexpected(socket.error());
-    }
+  // Not `#{socket_path}`: tmux escapes non-printable bytes in the socket path
+  // when it stores it at server start, so a socket named with one comes back as
+  // its `\376` spelling and names no file. Connecting to that fails, and this
+  // would fall back to polling without ever saying why. The handle already
+  // knows the exact bytes every command here travels over.
+  const std::string_view socket = server.socket_path();
+  if (socket.empty()) {
     return poll_for_text(server, target, wanted, context, deadline,
                          remaining_match_work, "capture-polling",
                          std::move(initial_capture));
-  }
-  if (!socket->has_value()) {
-    return wait_timed_out(deadline, "socket-path", target.pane_id,
-                          std::move(initial_capture));
   }
   const auto remaining = deadline.remaining();
   if (!remaining.has_value()) {
@@ -260,7 +249,7 @@ stream_for_text(const Server& server, const WaitTarget& target, std::string_view
   }
 
   ConnectionOptions options;
-  options.socket_path = without_line_ending(*std::move(*socket));
+  options.socket_path = std::string{socket};
   options.session_name = target.session_name;
   options.startup_timeout = std::min(*remaining, std::chrono::milliseconds{2000});
   options.shutdown_timeout = std::min(*remaining, std::chrono::milliseconds{500});

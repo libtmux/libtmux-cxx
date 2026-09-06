@@ -403,7 +403,7 @@ libtmux::expected<Arguments, ArgumentError> read_arguments(const json& params,
           return libtmux::unexpected(
               ArgumentError{true, prefix + ".arguments must be an object"});
         }
-        const std::string nested_name = name->get<std::string>();
+        std::string nested_name = name->get<std::string>();
         const ToolDefinition* const nested = tools.find_nested(tool, nested_name);
         if (nested == nullptr) {
           return libtmux::unexpected(

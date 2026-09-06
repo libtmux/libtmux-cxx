@@ -182,7 +182,7 @@ void kill_group(pid_t child, bool direct_reaped = false) {
   }
 }
 
-enum class ProtocolOutcome { pending, accepted, rejected };
+enum class ProtocolOutcome : std::uint8_t { pending, accepted, rejected };
 
 struct ProtocolEvaluation {
   ProtocolOutcome outcome{ProtocolOutcome::pending};

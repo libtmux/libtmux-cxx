@@ -1325,7 +1325,7 @@ field(std::string name, std::string description, InputSink type, bool required =
 make_tool(std::string name, std::string title, Toolset toolset, ProcessReach reach,
           std::set<Effect> effects, std::set<OutputClass> outputs, bool secrets,
           bool untrusted, ToolAnnotations annotations, std::vector<Field> fields,
-          OutputShape output_shape, Handler handler, std::string description,
+          OutputShape output_shape, Handler handler, std::string_view description,
           bool amplifies_future_input = false,
           std::set<std::string, std::less<>> nested_tools = {}) {
   ToolDefinition tool{.name = std::move(name),
@@ -1348,7 +1348,7 @@ make_tool(std::string name, std::string title, Toolset toolset, ProcessReach rea
                                 tool.authority.output_classes, tool.authority.effects)};
   if (!description.empty()) {
     tool.description.push_back(' ');
-    tool.description += std::move(description);
+    tool.description.append(description);
   }
   for (Field& item : fields) {
     tool.authority.input_sinks.emplace(item.parameter.name, std::move(item.sinks));
@@ -1651,9 +1651,11 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
           result.emplace("version", std::move(text));
         }
         if (running) {
-          const auto socket = server.expand("#{socket_path}");
-          if (socket.has_value()) {
-            result.emplace("socket_path", *socket);
+          // The configured path, not `#{socket_path}`: tmux escapes a
+          // non-printable byte in the path it stores, and would report a path
+          // that names no file.
+          if (const std::string_view socket = server.socket_path(); !socket.empty()) {
+            result.emplace("socket_path", std::string{socket});
           }
         }
         return detail::output(std::move(result));

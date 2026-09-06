@@ -1,5 +1,7 @@
 #include "libtmux_consumers/mcp.hpp"
 
+#include "libtmux/testing/environment_guard.hpp"
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -383,6 +385,37 @@ TEST(McpToolsTmux, CapturesAPaneThroughTheLibrary) {
       all_tools().call(server, "capture_pane",
                        Arguments{{"paneId", std::string{fixture->session_name()}}});
   ASSERT_TRUE(captured.has_value()) << captured.error().message;
+}
+
+// tmux escapes a non-printable byte in the socket path when it stores it at
+// server start, so `#{socket_path}` reports a path that names no file. Every
+// answer here has to come from the route the handle was configured with.
+TEST(McpToolsTmux, ReportsTheExactSocketPathBytesTmuxCannotSpell) {
+  libtmux::test::ScopedTmuxServerOptions owner_options;
+  owner_options.socket_namespace = libtmux::test::SocketNamespace::consumer("mcp-esc");
+  auto owner = libtmux::test::ScopedTmuxServer::start(std::move(owner_options));
+  ASSERT_TRUE(owner.has_value()) << owner.error();
+  const libtmux::test::EnvironmentGuard tmux_tmpdir{"TMUX_TMPDIR",
+                                                    owner->tmux_tmpdir().string()};
+
+  const std::string name = std::string{"s-"} + static_cast<char>(0xFE) + ".sock";
+  const std::filesystem::path selected = owner->tmux_tmpdir() / name;
+  auto opened = Server::startable_at_socket_path(selected.string(), std::nullopt);
+  ASSERT_TRUE(opened.has_value()) << opened.error().diagnostic;
+  const auto created = opened->new_session("escaped");
+  ASSERT_TRUE(created.has_value()) << created.error().diagnostic;
+
+  // Deliberately not compared against `#{socket_path}`: tmux 3.7 hands the raw
+  // byte back while 3.4 spells it `\376`, so the discrepancy is only visible on
+  // part of the supported range. The invariant below holds on all of it, and
+  // the compatibility lanes at 3.2a through 3.5 are where it bites.
+  const auto reported = all_tools().call(*opened, "get_server_info", Arguments{});
+  ASSERT_TRUE(reported.has_value()) << reported.error().message;
+  ASSERT_TRUE(reported->structured.contains("socket_path"));
+  EXPECT_EQ(std::get<std::string>(reported->structured.at("socket_path").value),
+            selected.string());
+
+  static_cast<void>(opened->run({"kill-server"}));
 }
 
 TEST(McpTools, PaneInputSnapshotRejectsIncompleteAndBlankRecordFraming) {
