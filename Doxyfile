@@ -19,8 +19,7 @@ XML_PROGRAMLISTING     = NO
 # Without this, a multi-line /// block becomes the detailed description and
 # the brief stays empty — which is what every consumer shows in a listing.
 # The headers document themselves in prose paragraphs, so the first sentence
-# is the summary a reader wants; 285 of them reach the XML with this on and
-# none without.
+# is the summary a reader wants; without this, none of them reach the XML.
 JAVADOC_AUTOBRIEF      = YES
 
 # Public API only; the site documents what callers can use.
