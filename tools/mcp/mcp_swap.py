@@ -117,10 +117,12 @@ import contextlib
 import dataclasses
 import difflib
 import fcntl
+import hashlib
 import json
 import os
 import pathlib
 import re
+import secrets
 import shutil
 import stat
 import subprocess
@@ -212,11 +214,58 @@ def _parse_state_entry(v: dict[str, t.Any]) -> SwapEntry | None:
     at sort time. State-file schema is internal — no compatibility
     contract — so silent drop is the right failure mode.
     """
+    expected = {
+        "config_path",
+        "backup_path",
+        "server",
+        "action",
+        "swapped_at",
+        "seq_no",
+        "target_path",
+        "original_sha256",
+        "original_mode",
+        "expected_sha256",
+        "expected_mode",
+        "config_binding",
+        "backup_binding",
+    }
+    if set(v) != expected:
+        return None
     try:
-        v = {**v, "seq_no": int(v["seq_no"])}
-        return SwapEntry(**v)
+        seq_no = v["seq_no"]
+        if isinstance(seq_no, bool) or not isinstance(seq_no, int) or seq_no < 0:
+            return None
+        entry = SwapEntry(
+            config_path=_required_string(v, "config_path"),
+            backup_path=_required_string(v, "backup_path"),
+            server=_required_string(v, "server"),
+            action=v["action"],
+            swapped_at=_required_string(v, "swapped_at"),
+            seq_no=seq_no,
+            target_path=_required_string(v, "target_path"),
+            original_sha256=_required_digest(v, "original_sha256"),
+            original_mode=_required_mode(v, "original_mode"),
+            expected_sha256=_required_digest(v, "expected_sha256"),
+            expected_mode=_required_mode(v, "expected_mode"),
+            config_binding=_parse_path_binding(v["config_binding"]),
+            backup_binding=_parse_path_binding(v["backup_binding"]),
+        )
+        if (
+            entry.action not in ("replaced", "added")
+            or not pathlib.Path(entry.config_path).is_absolute()
+            or not pathlib.Path(entry.backup_path).is_absolute()
+            or not pathlib.Path(entry.target_path).is_absolute()
+            or entry.config_binding.resolved != entry.target_path
+            or entry.config_binding.mode != entry.expected_mode
+            or entry.backup_binding.resolved
+            != str(_absolute_logical(pathlib.Path(entry.backup_path)))
+            or entry.backup_binding.mode != 0o600
+        ):
+            return None
     except (KeyError, TypeError, ValueError):
         return None
+    else:
+        return entry
 
 
 def _xdg_state_home() -> pathlib.Path:
@@ -470,10 +519,62 @@ class SwapEntry:
     #: sequence, …)``.
     seq_no: int
     #: Exact destination changed by the swap. ``config_path`` may be a
-    #: symlink that is later repointed, so it is not sufficient recovery
-    #: identity. Older state entries omit this field and fall back to
-    #: ``config_path`` during revert.
-    target_path: str | None = None
+    #: symlink that is later repointed.
+    target_path: str
+    original_sha256: str
+    original_mode: int
+    expected_sha256: str
+    expected_mode: int
+    config_binding: _PathBinding
+    backup_binding: _PathBinding
+
+
+@dataclasses.dataclass(frozen=True)
+class _PhysicalIdentity:
+    """Kernel identity for one filesystem object."""
+
+    device: int
+    inode: int
+
+
+@dataclasses.dataclass(frozen=True)
+class _TopologyNode:
+    """One directory or symlink on a logical destination route."""
+
+    position: int
+    kind: t.Literal["directory", "symlink"]
+    link: str | None
+    identity: _PhysicalIdentity
+
+
+@dataclasses.dataclass(frozen=True)
+class _PathBinding:
+    """Logical topology, resolved target, identity, and mode for a file."""
+
+    resolved: str
+    nodes: tuple[_TopologyNode, ...]
+    target: _PhysicalIdentity
+    mode: int
+
+
+@dataclasses.dataclass(frozen=True)
+class _MissingBinding:
+    """Resolved destination and existing-parent identity for a missing file."""
+
+    resolved: str
+    parent: str
+    parent_identity: _PhysicalIdentity
+
+
+@dataclasses.dataclass
+class _StateSnapshot:
+    """Authenticated state bytes plus their observed destination."""
+
+    entries: dict[tuple[CLIName, Scope], SwapEntry]
+    transaction: dict[str, t.Any] | None
+    raw: bytes | None
+    binding: _PathBinding | None
+    missing: _MissingBinding | None
 
 
 @dataclasses.dataclass
@@ -488,13 +589,311 @@ class _PreparedTarget:
     original_bytes: bytes
     new_bytes: bytes
     action: t.Literal["replaced", "added"]
-    backup_base: pathlib.Path | None = None
+    config_binding: _PathBinding
     backup_path: pathlib.Path | None = None
+    backup_missing: _MissingBinding | None = None
+    backup_bytes: bytes | None = None
+    backup_binding: _PathBinding | None = None
+    prior_entry: SwapEntry | None = None
     state_entry: SwapEntry | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class _UseRequest:
+    """Resolved immutable inputs shared by dry-run and locked planning."""
+
+    repo: pathlib.Path
+    server: str
+    spec: McpServerSpec
+    source: str
+    targets: tuple[CLIName, ...]
+    extra_env: dict[str, str]
+
+
+@dataclasses.dataclass
+class _ApplyPlan:
+    """All selected config, backup, and state observations for one apply."""
+
+    request: _UseRequest
+    state: _StateSnapshot
+    prepared: list[_PreparedTarget]
+    timestamp: str
+
+
+@dataclasses.dataclass(frozen=True)
+class _PathClaim:
+    """One physical config or recovery destination claimed by a plan."""
+
+    owner: str
+    kind: str
+    resolved: str
+    target: _PhysicalIdentity | None
 
 
 class SwapStateError(RuntimeError):
     """Swap state is unsafe to use for a mutating operation."""
+
+
+STATE_VERSION = 2
+_DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}")
+
+
+def _invalid(message: str) -> t.NoReturn:
+    """Raise a recovery-record validation failure."""
+    raise ValueError(message)
+
+
+def _unsafe(message: str) -> t.NoReturn:
+    """Raise a filesystem ownership or transaction failure."""
+    raise OSError(message)
+
+
+def _unsafe_state(message: str) -> t.NoReturn:
+    """Raise an authenticated recovery-state failure."""
+    raise SwapStateError(message)
+
+
+def _abort(message: str) -> t.NoReturn:
+    """Raise a command-planning failure."""
+    raise RuntimeError(message)
+
+
+def _required_string(values: dict[str, t.Any], key: str) -> str:
+    """Return one required nonempty string from an internal record."""
+    value = values[key]
+    if not isinstance(value, str) or not value:
+        _invalid(key)
+    return value
+
+
+def _required_digest(values: dict[str, t.Any], key: str) -> str:
+    """Return one canonical SHA-256 digest from an internal record."""
+    value = _required_string(values, key)
+    if _DIGEST_PATTERN.fullmatch(value) is None:
+        _invalid(key)
+    return value
+
+
+def _required_mode(values: dict[str, t.Any], key: str) -> int:
+    """Return one permission mode without accepting booleans."""
+    value = values[key]
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 0o777:
+        _invalid(key)
+    return value
+
+
+def _parse_identity(raw: t.Any) -> _PhysicalIdentity:
+    """Decode a physical identity from recovery JSON."""
+    if not isinstance(raw, dict) or set(raw) != {"device", "inode"}:
+        _invalid("identity")
+    device, inode = raw["device"], raw["inode"]
+    if any(
+        isinstance(value, bool) or not isinstance(value, int) or value < 0
+        for value in (device, inode)
+    ):
+        _invalid("identity")
+    return _PhysicalIdentity(device=device, inode=inode)
+
+
+def _parse_path_binding(raw: t.Any) -> _PathBinding:
+    """Decode one strict path binding from recovery JSON."""
+    if not isinstance(raw, dict) or set(raw) != {"resolved", "nodes", "target", "mode"}:
+        _invalid("path binding")
+    resolved = raw["resolved"]
+    nodes = raw["nodes"]
+    if not isinstance(resolved, str) or not pathlib.Path(resolved).is_absolute():
+        _invalid("path binding")
+    if not isinstance(nodes, list):
+        _invalid("path binding")
+    parsed_nodes: list[_TopologyNode] = []
+    for node in nodes:
+        if not isinstance(node, dict) or set(node) != {
+            "position",
+            "kind",
+            "link",
+            "identity",
+        }:
+            _invalid("topology node")
+        position = node["position"]
+        kind = node["kind"]
+        link = node["link"]
+        if isinstance(position, bool) or not isinstance(position, int) or position < 0:
+            _invalid("topology node")
+        if kind not in ("directory", "symlink"):
+            _invalid("topology node")
+        if link is not None and not isinstance(link, str):
+            _invalid("topology node")
+        if kind == "directory" and link is not None:
+            _invalid("topology node")
+        parsed_nodes.append(
+            _TopologyNode(
+                position=position,
+                kind=kind,
+                link=link,
+                identity=_parse_identity(node["identity"]),
+            )
+        )
+    return _PathBinding(
+        resolved=str(pathlib.Path(resolved)),
+        nodes=tuple(parsed_nodes),
+        target=_parse_identity(raw["target"]),
+        mode=_required_mode(raw, "mode"),
+    )
+
+
+def _digest(data: bytes) -> str:
+    """Return the canonical digest used by recovery records."""
+    return hashlib.sha256(data).hexdigest()
+
+
+def _physical_identity(details: os.stat_result) -> _PhysicalIdentity:
+    """Extract stable POSIX identity fields from a stat result."""
+    return _PhysicalIdentity(device=details.st_dev, inode=details.st_ino)
+
+
+def _absolute_logical(path: pathlib.Path) -> pathlib.Path:
+    """Make a path absolute without resolving its symlink topology."""
+    return path.absolute()
+
+
+def _capture_path_binding(path: pathlib.Path) -> _PathBinding:
+    """Capture every logical route node and the resolved regular file."""
+    absolute = _absolute_logical(path)
+    nodes: list[_TopologyNode] = []
+    current = pathlib.Path(absolute.anchor)
+    for position, part in enumerate(absolute.parts[1:], start=1):
+        current /= part
+        details = current.lstat()
+        last = current == absolute
+        if last and stat.S_ISREG(details.st_mode):
+            continue
+        if stat.S_ISLNK(details.st_mode):
+            kind: t.Literal["directory", "symlink"] = "symlink"
+            link: str | None = str(current.readlink())
+        elif stat.S_ISDIR(details.st_mode):
+            kind = "directory"
+            link = None
+        else:
+            _unsafe(f"destination topology contains a non-directory: {current}")
+        nodes.append(
+            _TopologyNode(
+                position=position,
+                kind=kind,
+                link=link,
+                identity=_physical_identity(details),
+            )
+        )
+    resolved = absolute.resolve(strict=True)
+    details = resolved.stat()
+    if not stat.S_ISREG(details.st_mode):
+        _unsafe(f"destination is not a regular file: {path}")
+    return _PathBinding(
+        resolved=str(resolved),
+        nodes=tuple(nodes),
+        target=_physical_identity(details),
+        mode=stat.S_IMODE(details.st_mode),
+    )
+
+
+def _read_bound_file(path: pathlib.Path) -> tuple[bytes, _PathBinding]:
+    """Read one file only while its topology and identity stay unchanged."""
+    before = _capture_path_binding(path)
+    with pathlib.Path(before.resolved).open("rb") as handle:
+        data = handle.read()
+    after = _capture_path_binding(path)
+    if after != before:
+        _unsafe(f"destination changed while it was read: {path}")
+    return data, before
+
+
+def _capture_missing_binding(path: pathlib.Path) -> _MissingBinding:
+    """Bind a missing destination to its nearest existing directory."""
+    absolute = _absolute_logical(path)
+    if os.path.lexists(absolute):
+        _unsafe(f"destination already exists: {path}")
+    ancestor = absolute.parent
+    tail = [absolute.name]
+    while not os.path.lexists(ancestor):
+        tail.insert(0, ancestor.name)
+        ancestor = ancestor.parent
+    resolved_parent = ancestor.resolve(strict=True)
+    details = resolved_parent.stat()
+    if not stat.S_ISDIR(details.st_mode):
+        _unsafe(f"destination parent is not a directory: {ancestor}")
+    if not os.access(resolved_parent, os.W_OK | os.X_OK):
+        _unsafe(f"destination parent is not writable: {ancestor}")
+    return _MissingBinding(
+        resolved=str(resolved_parent.joinpath(*tail)),
+        parent=str(resolved_parent),
+        parent_identity=_physical_identity(details),
+    )
+
+
+def _validate_missing_binding(path: pathlib.Path, binding: _MissingBinding) -> None:
+    """Require a planned missing path and its existing ancestor to stay put."""
+    current = _capture_missing_binding(path)
+    if current != binding:
+        _unsafe(f"destination parent changed after planning: {path}")
+
+
+def _validate_bound_contents(
+    path: pathlib.Path,
+    expected: bytes,
+    binding: _PathBinding,
+) -> None:
+    """Require path topology, identity, mode, and bytes to match a plan."""
+    data, current = _read_bound_file(path)
+    if current != binding:
+        _unsafe(f"destination identity changed after planning: {path}")
+    if data != expected:
+        _unsafe(f"destination content changed after planning: {path}")
+
+
+def _binding_claim(owner: str, kind: str, binding: _PathBinding) -> _PathClaim:
+    """Describe one existing file for cross-artifact alias checks."""
+    return _PathClaim(owner, kind, binding.resolved, binding.target)
+
+
+def _missing_claim(owner: str, kind: str, binding: _MissingBinding) -> _PathClaim:
+    """Describe one absent destination for cross-artifact alias checks."""
+    return _PathClaim(owner, kind, binding.resolved, None)
+
+
+def _validate_distinct_claims(claims: list[_PathClaim]) -> None:
+    """Reject matching resolved paths or physical file identities."""
+    for index, claim in enumerate(claims):
+        for previous in claims[:index]:
+            same_target = claim.target is not None and claim.target == previous.target
+            if claim.resolved == previous.resolved or same_target:
+                _unsafe(
+                    f"{previous.owner} {previous.kind} and {claim.owner} "
+                    f"{claim.kind} select the same physical path"
+                )
+
+
+def _remove_bound_file(
+    path: pathlib.Path,
+    data: bytes,
+    binding: _PathBinding,
+) -> None:
+    """Remove exactly the observed file and durably publish its absence."""
+    _validate_bound_contents(path, data, binding)
+    pathlib.Path(binding.resolved).unlink()
+    _sync_directory(pathlib.Path(binding.resolved).parent)
+
+
+def _remove_state_snapshot(snapshot: _StateSnapshot) -> _StateSnapshot:
+    """Remove exactly one authenticated recovery-state file."""
+    if snapshot.raw is None or snapshot.binding is None:
+        _unsafe_state("swap state has no authenticated file to remove")
+    _remove_bound_file(STATE_FILE, snapshot.raw, snapshot.binding)
+    return _StateSnapshot(
+        entries={},
+        transaction=None,
+        raw=None,
+        binding=None,
+        missing=_capture_missing_binding(STATE_FILE),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -932,10 +1331,22 @@ def atomic_write(path: pathlib.Path, data: bytes) -> None:
             if mode is not None:
                 os.fchmod(fh.fileno(), mode)
             fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
         tmp.replace(target)
+        _sync_directory(target.parent)
     except Exception:
         tmp.unlink(missing_ok=True)
         raise
+
+
+def _sync_directory(path: pathlib.Path) -> None:
+    """Make a directory-entry update durable before returning."""
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def write_new_backup(base: pathlib.Path, data: bytes) -> pathlib.Path:
@@ -964,6 +1375,9 @@ def write_new_backup(base: pathlib.Path, data: bytes) -> pathlib.Path:
             continue
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        _sync_directory(candidate.parent)
         return candidate
 
 
@@ -1596,64 +2010,184 @@ def preflight_spec(spec: McpServerSpec, *, timeout: float = 300.0) -> str | None
 # ---------------------------------------------------------------------------
 
 
-def load_state(*, strict: bool = False) -> dict[tuple[CLIName, Scope], SwapEntry]:
-    """Read the swap-state file, returning an empty mapping when absent.
+def _entry_document(entry: SwapEntry) -> dict[str, t.Any]:
+    """Return one recovery entry as JSON-compatible values."""
+    return dataclasses.asdict(entry)
 
-    The state file's schema is internal — no compatibility contract —
-    so this loader assumes a single canonical shape. Malformed keys
-    (those that don't parse as ``cli:scope``) and entries with a
-    non-coercible ``seq_no`` or missing required fields are dropped
-    silently so a hand-edited file cannot crash the script.
 
-    A file that will not parse at all is reported rather than dropped
-    silently: it means the record of every swap is gone, so ``revert``
-    is about to say there is nothing to unwind while swapped configs
-    and their backups sit on disk. Saying so is what lets the operator
-    go find those backups. Mutating callers pass ``strict=True`` so an
-    unreadable or malformed record blocks changes instead of being
-    overwritten as empty state.
-    """
-    if not STATE_FILE.exists():
-        return {}
+def _state_payload(
+    entries: dict[tuple[CLIName, Scope], SwapEntry],
+    transaction: dict[str, t.Any] | None,
+) -> dict[str, t.Any]:
+    """Build the checksummed portion of the recovery document."""
+    return {
+        "version": STATE_VERSION,
+        "entries": {
+            _state_key(cli, scope): _entry_document(entry)
+            for (cli, scope), entry in entries.items()
+        },
+        "transaction": transaction,
+    }
+
+
+def _canonical_json(value: t.Any) -> bytes:
+    """Encode values identically for recovery checksums."""
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+
+
+def _encode_state(
+    entries: dict[tuple[CLIName, Scope], SwapEntry],
+    transaction: dict[str, t.Any] | None,
+) -> bytes:
+    """Encode one strict, versioned, checksummed recovery document."""
+    payload = _state_payload(entries, transaction)
+    document = {**payload, "checksum": _digest(_canonical_json(payload))}
+    return (json.dumps(document, indent=2, ensure_ascii=False) + "\n").encode()
+
+
+def _parse_transaction(raw: t.Any) -> dict[str, t.Any] | None:
+    """Validate one pending transaction without interpreting its bytes."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or set(raw) != {"id", "kind", "changes"}:
+        _invalid("invalid pending transaction")
+    identifier = raw["id"]
+    if (
+        not isinstance(identifier, str)
+        or re.fullmatch(r"[0-9a-f]{32}", identifier) is None
+        or raw["kind"] not in {"apply", "revert"}
+        or not isinstance(raw["changes"], list)
+        or not raw["changes"]
+    ):
+        _invalid("invalid pending transaction")
+    fields = {
+        "key",
+        "config_path",
+        "target_path",
+        "before_sha256",
+        "before_mode",
+        "before_binding",
+        "after_sha256",
+        "after_mode",
+        "backup_path",
+        "backup_binding",
+    }
+    keys: set[str] = set()
+    for change in raw["changes"]:
+        if not isinstance(change, dict) or set(change) != fields:
+            _invalid("invalid pending change")
+        key = _required_string(change, "key")
+        config_path = pathlib.Path(_required_string(change, "config_path"))
+        target_path = pathlib.Path(_required_string(change, "target_path"))
+        backup_path = pathlib.Path(_required_string(change, "backup_path"))
+        before = _parse_path_binding(change["before_binding"])
+        backup_raw = change["backup_binding"]
+        backup = None if backup_raw is None else _parse_path_binding(backup_raw)
+        if (
+            _parse_state_key(key) is None
+            or key in keys
+            or not config_path.is_absolute()
+            or not target_path.is_absolute()
+            or not backup_path.is_absolute()
+            or before.resolved != str(target_path)
+            or before.mode != _required_mode(change, "before_mode")
+            or (
+                backup is not None
+                and (
+                    backup.resolved != str(_absolute_logical(backup_path))
+                    or backup.mode != 0o600
+                )
+            )
+        ):
+            _invalid("invalid pending change")
+        _required_digest(change, "before_sha256")
+        _required_digest(change, "after_sha256")
+        _required_mode(change, "after_mode")
+        keys.add(key)
+    return raw
+
+
+def _decode_state(
+    raw: bytes,
+) -> tuple[
+    dict[tuple[CLIName, Scope], SwapEntry],
+    dict[str, t.Any] | None,
+]:
+    """Validate and decode one recovery document."""
+    document = json.loads(raw)
+    if not isinstance(document, dict) or set(document) != {
+        "version",
+        "entries",
+        "transaction",
+        "checksum",
+    }:
+        _invalid("invalid document shape")
+    if document["version"] != STATE_VERSION:
+        _invalid("unsupported version")
+    checksum = document["checksum"]
+    if not isinstance(checksum, str) or _DIGEST_PATTERN.fullmatch(checksum) is None:
+        _invalid("invalid checksum")
+    payload = {key: value for key, value in document.items() if key != "checksum"}
+    if not secrets.compare_digest(checksum, _digest(_canonical_json(payload))):
+        _invalid("checksum mismatch")
+    raw_entries = document["entries"]
+    transaction = _parse_transaction(document["transaction"])
+    if not isinstance(raw_entries, dict):
+        _invalid("invalid entries")
+    entries: dict[tuple[CLIName, Scope], SwapEntry] = {}
+    for key, value in raw_entries.items():
+        parsed_key = _parse_state_key(key)
+        parsed_entry = _parse_state_entry(value) if isinstance(value, dict) else None
+        if parsed_key is None or parsed_entry is None:
+            _invalid(f"invalid entry {key!r}")
+        entries[parsed_key] = parsed_entry
+    return entries, transaction
+
+
+def _load_state_snapshot(
+    *,
+    strict: bool,
+    allow_transaction: bool = False,
+) -> _StateSnapshot:
+    """Read recovery state while binding its bytes and physical identity."""
+    if not os.path.lexists(STATE_FILE):
+        return _StateSnapshot(
+            entries={},
+            transaction=None,
+            raw=None,
+            binding=None,
+            missing=_capture_missing_binding(STATE_FILE),
+        )
     try:
-        raw = json.loads(STATE_FILE.read_text())
+        raw, binding = _read_bound_file(STATE_FILE)
+        if binding.mode != 0o600:
+            _invalid("state mode is not 0600")
+        entries, transaction = _decode_state(raw)
+        if transaction is not None and not allow_transaction:
+            _invalid("an interrupted transaction requires recovery")
+        return _StateSnapshot(
+            entries=entries,
+            transaction=transaction,
+            raw=raw,
+            binding=binding,
+            missing=None,
+        )
     except (OSError, ValueError) as exc:
         message = f"swap state unreadable ({STATE_FILE}): {exc}"
         print(message, file=sys.stderr)
         if strict:
             raise SwapStateError(message) from exc
-        return {}
-    if not isinstance(raw, dict):
-        if strict:
-            message = f"swap state has invalid shape: {STATE_FILE}"
-            print(message, file=sys.stderr)
-            raise SwapStateError(message)
-        return {}
-    entries = raw.get("entries", {})
-    if not isinstance(entries, dict):
-        if strict:
-            message = f"swap state has invalid entries: {STATE_FILE}"
-            print(message, file=sys.stderr)
-            raise SwapStateError(message)
-        entries = {}
-    out: dict[tuple[CLIName, Scope], SwapEntry] = {}
-    for k, v in entries.items():
-        parsed = _parse_state_key(k)
-        if parsed is None:
-            if strict:
-                message = f"swap state has invalid key {k!r}: {STATE_FILE}"
-                print(message, file=sys.stderr)
-                raise SwapStateError(message)
-            continue
-        entry = _parse_state_entry(v)
-        if entry is None:
-            if strict:
-                message = f"swap state has invalid entry {k!r}: {STATE_FILE}"
-                print(message, file=sys.stderr)
-                raise SwapStateError(message)
-            continue
-        out[parsed] = entry
-    return out
+        return _StateSnapshot({}, None, None, None, None)
+
+
+def load_state(*, strict: bool = False) -> dict[tuple[CLIName, Scope], SwapEntry]:
+    """Return authenticated stable recovery entries, or an empty mapping."""
+    return _load_state_snapshot(strict=strict).entries
 
 
 @contextlib.contextmanager
@@ -1666,24 +2200,48 @@ def _state_lock() -> t.Iterator[None]:
         yield
 
 
-def save_state(entries: dict[tuple[CLIName, Scope], SwapEntry]) -> None:
-    """Write the swap-state file atomically."""
+def _validate_state_snapshot(snapshot: _StateSnapshot) -> None:
+    """Require recovery state to match its planning observation."""
+    if snapshot.binding is not None and snapshot.raw is not None:
+        _validate_bound_contents(STATE_FILE, snapshot.raw, snapshot.binding)
+    elif snapshot.missing is not None:
+        _validate_missing_binding(STATE_FILE, snapshot.missing)
+    else:
+        _unsafe_state("swap state has no authenticated identity")
+
+
+def save_state(
+    entries: dict[tuple[CLIName, Scope], SwapEntry],
+    *,
+    transaction: dict[str, t.Any] | None = None,
+    expected: _StateSnapshot | None = None,
+) -> _StateSnapshot:
+    """Write recovery state atomically and return its new binding."""
+    if expected is not None:
+        _validate_state_snapshot(expected)
     STATE_DIR.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "entries": {
-            _state_key(cli, scope): dataclasses.asdict(v)
-            for (cli, scope), v in entries.items()
-        },
-    }
-    atomic_write(STATE_FILE, (json.dumps(payload, indent=2) + "\n").encode("utf-8"))
+    encoded = _encode_state(entries, transaction)
+    atomic_write(STATE_FILE, encoded)
+    raw, binding = _read_bound_file(STATE_FILE)
+    if raw != encoded or binding.mode != 0o600:
+        _unsafe("recovery state changed while it was written")
+    decoded_entries, decoded_transaction = _decode_state(raw)
+    return _StateSnapshot(
+        decoded_entries,
+        decoded_transaction,
+        raw,
+        binding,
+        None,
+    )
 
 
 def _save_or_clear_state(entries: dict[tuple[CLIName, Scope], SwapEntry]) -> None:
     """Persist ``entries``, removing the state file when the mapping is empty."""
     if entries:
         save_state(entries)
-    elif STATE_FILE.exists():
+    elif os.path.lexists(STATE_FILE):
         STATE_FILE.unlink()
+        _sync_directory(STATE_FILE.parent)
 
 
 # ---------------------------------------------------------------------------
@@ -1843,272 +2401,462 @@ def _points_at(
     return current.command == target.command and current.args == target.args
 
 
-def _cmd_use_local(args: argparse.Namespace) -> int:
-    """Rewrite each target CLI's config to run a chosen build of the server.
-
-    ``--source local`` (the default) takes a binary out of this
-    checkout's build tree; ``--source published`` takes an installed
-    one. Either way the config records an absolute path, so an agent
-    starts the same program this resolved.
-
-    The optional ``--scope`` flag selects Claude's user-level fallback
-    vs. per-project override; see :data:`Scope`. The flag is silently
-    coerced to ``"user"`` for non-Claude CLIs by :func:`_normalize_scope`.
-    """
-    try:
-        repo = find_checkout(pathlib.Path(args.repo))
-    except RuntimeError as exc:
-        print(exc, file=sys.stderr)
-        return 1
+def _resolve_use_request(args: argparse.Namespace) -> _UseRequest:
+    """Resolve immutable command inputs before configuration planning."""
+    repo = find_checkout(pathlib.Path(args.repo))
     server, default_entry = resolve_repo_meta(repo)
     server = args.server or server
     entry = args.entry or default_entry
     extra_env = dict(args.env or [])
-
     source = getattr(args, "source", "local")
     if getattr(args, "prefix", None) is not None:
         source = "published"
     if getattr(args, "build_dir", None) is not None:
         source = "local"
-    socket = getattr(args, "socket", None)
-    try:
-        if source == "published":
-            binary = find_published_binary(entry, getattr(args, "prefix", None))
-        else:
-            binary = find_built_binary(repo, entry, getattr(args, "build_dir", None))
-    except RuntimeError as exc:
-        print(exc, file=sys.stderr)
-        return 1
-    spec = build_binary_spec(binary, socket, extra_env)
-    print(f"{source}: {binary}", file=sys.stderr)
-
-    hint = _naming_hint(repo, server)
-    if hint:
-        print(hint, file=sys.stderr)
-
-    targets: list[CLIName] = list(dict.fromkeys(args.cli or present_clis()))
+    if source == "published":
+        binary = find_published_binary(entry, getattr(args, "prefix", None))
+    else:
+        binary = find_built_binary(repo, entry, getattr(args, "build_dir", None))
+    targets = tuple(dict.fromkeys(args.cli or present_clis()))
     if not targets:
-        print("no CLIs detected — nothing to do", file=sys.stderr)
-        return 1
+        _abort("no CLIs detected — nothing to do")
+    return _UseRequest(
+        repo=repo,
+        server=server,
+        spec=build_binary_spec(binary, getattr(args, "socket", None), extra_env),
+        source=source,
+        targets=targets,
+        extra_env=extra_env,
+    )
 
-    # Runs under --dry-run too: starting the server is the only signal a
-    # dry run can give about whether the swap would actually work.
-    if not args.no_preflight:
-        print(f"preflight: {spec.command} {' '.join(spec.args)}", file=sys.stderr)
-        failure = preflight_spec(spec)
-        if failure is not None:
-            print(f"preflight failed, nothing written:\n{failure}", file=sys.stderr)
-            return 1
 
-    ts = time.strftime("%Y%m%d%H%M%S")
-    state = load_state(strict=True)
+def _authenticate_entry(
+    key: tuple[CLIName, Scope],
+    entry: SwapEntry,
+) -> tuple[bytes, _PathBinding, bytes, _PathBinding]:
+    """Authenticate one stable config and its recovery backup."""
+    cli, _scope = key
+    info = CLIS[cli]
+    if str(_absolute_logical(info.config_path)) != str(
+        _absolute_logical(pathlib.Path(entry.config_path))
+    ):
+        _unsafe_state(f"{_state_key(*key)} config path changed")
+    config, config_binding = _read_bound_file(info.config_path)
+    if (
+        config_binding != entry.config_binding
+        or config_binding.resolved != entry.target_path
+        or config_binding.mode != entry.expected_mode
+        or _digest(config) != entry.expected_sha256
+    ):
+        _unsafe_state(f"{_state_key(*key)} configuration changed after the swap")
+    backup_path = pathlib.Path(entry.backup_path)
+    backup, backup_binding = _read_bound_file(backup_path)
+    if (
+        backup_binding != entry.backup_binding
+        or backup_binding.mode != 0o600
+        or _digest(backup) != entry.original_sha256
+    ):
+        _unsafe_state(f"{_state_key(*key)} backup changed after the swap")
+    return config, config_binding, backup, backup_binding
+
+
+def _state_claim(snapshot: _StateSnapshot) -> _PathClaim:
+    """Return the state file's existing or planned physical claim."""
+    if snapshot.binding is not None:
+        return _binding_claim("swap", "state", snapshot.binding)
+    if snapshot.missing is not None:
+        return _missing_claim("swap", "state", snapshot.missing)
+    _unsafe_state("swap state has no authenticated destination")
+
+
+def _prepare_apply_plan(
+    request: _UseRequest,
+    args: argparse.Namespace,
+    timestamp: str,
+    *,
+    emit: bool,
+) -> _ApplyPlan:
+    """Read, render, and bind every selected config and recovery artifact."""
+    state = _load_state_snapshot(strict=True)
+    authenticated = {
+        key: _authenticate_entry(key, entry) for key, entry in state.entries.items()
+    }
+    claims = [_state_claim(state)]
+    claimed_configs: dict[str, _PathBinding] = {}
+    for key, (_data, binding, _backup, backup_binding) in authenticated.items():
+        logical = str(_absolute_logical(CLIS[key[0]].config_path))
+        previous = claimed_configs.get(logical)
+        if previous is not None and previous != binding:
+            _unsafe_state(f"{logical} has conflicting recovery identities")
+        if previous is None:
+            claimed_configs[logical] = binding
+            claims.append(_binding_claim(_state_key(*key), "configuration", binding))
+        claims.append(_binding_claim(_state_key(*key), "backup", backup_binding))
+
     prepared: list[_PreparedTarget] = []
-    disk_bytes: dict[pathlib.Path, bytes] = {}
-    planned_bytes: dict[pathlib.Path, bytes] = {}
-    had_error = 0
-    for cli in targets:
+    reserved_backups: set[pathlib.Path] = set()
+    planned_keys = set(state.entries)
+    for cli in request.targets:
         scope = _normalize_scope(cli, args.scope)
+        key = (cli, scope)
         label = f"{cli}:{scope}" if cli == "claude" else cli
         info = CLIS[cli]
-        if not info.config_path.exists():
-            print(f"[{label}] skip — config not found at {info.config_path}")
-            had_error = 1
-            continue
-        target_path = info.config_path.resolve()
-        target_info = dataclasses.replace(info, config_path=target_path)
-        try:
-            observed = target_path.read_bytes()
-            baseline = disk_bytes.setdefault(target_path, observed)
-            if observed != baseline:
-                print(f"[{label}] config changed during preparation", file=sys.stderr)
-                had_error = 1
-                continue
-            original_bytes = planned_bytes.get(target_path, baseline)
-            config = _parse_config_bytes(target_info, original_bytes)
-            current = get_server(cli, config, server, repo, scope=scope)
-            if (
-                current
-                and _points_at(current, spec, repo)
-                and all(current.env.get(k) == v for k, v in extra_env.items())
-            ):
-                print(f"[{label}] already {_describe_spec(spec, repo)} — no change")
-                planned_bytes.setdefault(target_path, original_bytes)
-                continue
-            # Keep client-side settings; an explicit --env value wins.
-            base_env = dict(current.env) if current else {}
-            base_env.update(extra_env)
-            cli_spec = (
-                dataclasses.replace(spec, env=base_env)
-                if (current or extra_env)
-                else spec
-            )
-            action = set_server(cli, config, server, cli_spec, repo, scope=scope)
-            new_bytes = dump_config_bytes(info, config, original=original_bytes)
-            planned_bytes[target_path] = new_bytes
-            prepared.append(
-                _PreparedTarget(
-                    cli=cli,
-                    scope=scope,
-                    label=label,
-                    info=info,
-                    target_path=target_path,
-                    original_bytes=original_bytes,
-                    new_bytes=new_bytes,
-                    action=action,
-                )
-            )
-        except (RuntimeError, ValueError, OSError) as exc:
-            print(f"[{label}] {exc}", file=sys.stderr)
-            had_error = 1
-            continue
-
-    if args.dry_run:
-        for item in prepared:
-            print(f"--- {item.info.config_path} (current)")
-            print(f"+++ {item.info.config_path} (proposed)")
-            diff = difflib.unified_diff(
-                item.original_bytes.decode(errors="replace").splitlines(keepends=True),
-                item.new_bytes.decode(errors="replace").splitlines(keepends=True),
-                lineterm="",
-            )
-            sys.stdout.writelines(diff)
-        return had_error
-
-    if had_error:
-        return had_error
-
-    for target_path, original_bytes in disk_bytes.items():
-        try:
-            unchanged = target_path.read_bytes() == original_bytes
-        except OSError as exc:
-            print(
-                f"config changed during preparation: {target_path}: {exc}",
-                file=sys.stderr,
-            )
-            return 1
-        if not unchanged:
-            print(
-                f"config changed during preparation: {target_path}; nothing written",
-                file=sys.stderr,
-            )
-            return 1
-
-    planned_state = dict(state)
-    reserved_backups: set[pathlib.Path] = set()
-    for item in prepared:
-        key = (item.cli, item.scope)
-        prior = planned_state.get(key)
-        prior_backup = pathlib.Path(prior.backup_path) if prior is not None else None
-        # A repeated swap keeps the sole pre-swap copy and its LIFO position.
-        if prior_backup is not None and prior_backup.exists():
-            backup_path = prior_backup
-        else:
-            if prior is not None:
-                print(
-                    f"[{item.label}] recorded backup is gone ({prior.backup_path}); "
-                    "the new backup captures the already-swapped config, not the "
-                    "original",
-                    file=sys.stderr,
-                )
-            backup_suffix = f"{BACKUP_SUFFIX_PREFIX}{ts}"
-            if item.cli == "claude":
-                backup_suffix += f"-{item.scope}"
-            item.backup_base = item.info.config_path.with_suffix(
-                item.info.config_path.suffix + backup_suffix
-            )
-            backup_path = _next_backup_path(item.backup_base, reserved_backups)
-            try:
-                _check_backup_destination(backup_path)
-            except OSError as exc:
-                print(f"[{item.label}] cannot write backup: {exc}", file=sys.stderr)
-                return 1
-            reserved_backups.add(backup_path)
-
-        if prior is not None and backup_path == prior_backup:
-            seq_no, swapped_at = prior.seq_no, prior.swapped_at
-        else:
-            seq_no = max((e.seq_no for e in planned_state.values()), default=-1) + 1
-            swapped_at = ts
-        item.backup_path = backup_path
-        item.state_entry = SwapEntry(
-            config_path=str(item.info.config_path),
-            backup_path=str(backup_path),
-            server=server,
-            action=item.action,
-            swapped_at=swapped_at,
-            seq_no=seq_no,
-            target_path=str(item.target_path),
+        if not os.path.lexists(info.config_path):
+            _unsafe(f"[{label}] config not found at {info.config_path}")
+        current_bytes, config_binding = _read_bound_file(info.config_path)
+        logical = str(_absolute_logical(info.config_path))
+        if logical not in claimed_configs:
+            claimed_configs[logical] = config_binding
+            claims.append(_binding_claim(label, "configuration", config_binding))
+        elif claimed_configs[logical] != config_binding:
+            _unsafe(f"[{label}] configuration identity is inconsistent")
+        target_info = dataclasses.replace(
+            info,
+            config_path=pathlib.Path(config_binding.resolved),
         )
-        planned_state[key] = item.state_entry
-
-    for item in prepared:
-        assert item.backup_path is not None
-        assert item.state_entry is not None
-        backup_path = item.backup_path
-        if item.backup_base is None:
-            backup_note = f"pre-swap backup kept: {backup_path}"
-        else:
-            try:
-                backup_path = write_new_backup(item.backup_base, item.original_bytes)
-            except OSError as exc:
-                print(f"[{item.label}] cannot write backup: {exc}", file=sys.stderr)
-                had_error = 1
-                continue
-            backup_note = f"backup: {backup_path}"
-        entry = dataclasses.replace(item.state_entry, backup_path=str(backup_path))
-        next_state = dict(state)
-        next_state[(item.cli, item.scope)] = entry
-        try:
-            save_state(next_state)
-        except OSError as exc:
-            print(
-                f"[{item.label}] cannot save recovery state ({exc}); config unchanged; "
-                f"backup at {backup_path}",
-                file=sys.stderr,
+        config = _parse_config_bytes(target_info, current_bytes)
+        current = get_server(
+            cli,
+            config,
+            request.server,
+            request.repo,
+            scope=scope,
+        )
+        if (
+            current
+            and _points_at(current, request.spec, request.repo)
+            and all(
+                current.env.get(name) == value
+                for name, value in request.extra_env.items()
             )
-            had_error = 1
+        ):
+            if emit:
+                print(
+                    f"[{label}] already "
+                    f"{_describe_spec(request.spec, request.repo)} — no change"
+                )
             continue
-        previous_state = state
-        state = next_state
+        base_env = dict(current.env) if current else {}
+        base_env.update(request.extra_env)
+        cli_spec = (
+            dataclasses.replace(request.spec, env=base_env)
+            if current or request.extra_env
+            else request.spec
+        )
+        action = set_server(
+            cli,
+            config,
+            request.server,
+            cli_spec,
+            request.repo,
+            scope=scope,
+        )
+        new_bytes = dump_config_bytes(info, config, original=current_bytes)
+        item = _PreparedTarget(
+            cli=cli,
+            scope=scope,
+            label=label,
+            info=info,
+            target_path=pathlib.Path(config_binding.resolved),
+            original_bytes=current_bytes,
+            new_bytes=new_bytes,
+            action=action,
+            config_binding=config_binding,
+            prior_entry=state.entries.get(key),
+        )
+        if item.prior_entry is not None:
+            _, _, item.backup_bytes, item.backup_binding = authenticated[key]
+            item.backup_path = pathlib.Path(item.prior_entry.backup_path)
+        else:
+            suffix = f"{BACKUP_SUFFIX_PREFIX}{timestamp}"
+            if cli == "claude":
+                suffix += f"-{scope}"
+            base = info.config_path.with_suffix(info.config_path.suffix + suffix)
+            item.backup_path = _next_backup_path(base, reserved_backups)
+            _check_backup_destination(item.backup_path)
+            item.backup_missing = _capture_missing_binding(item.backup_path)
+            reserved_backups.add(item.backup_path)
+            claims.append(_missing_claim(label, "backup", item.backup_missing))
+        prepared.append(item)
+        planned_keys.add(key)
+
+    _validate_distinct_claims(claims)
+    if len(planned_keys) != len(state.entries) + sum(
+        (item.cli, item.scope) not in state.entries for item in prepared
+    ):
+        _unsafe_state("recovery keys are not unique")
+    return _ApplyPlan(request, state, prepared, timestamp)
+
+
+def _pending_apply_document(
+    plan: _ApplyPlan,
+    transaction_id: str,
+) -> dict[str, t.Any]:
+    """Describe both sides of an apply before any config becomes visible."""
+    return {
+        "id": transaction_id,
+        "kind": "apply",
+        "changes": [
+            {
+                "key": _state_key(item.cli, item.scope),
+                "config_path": str(item.info.config_path),
+                "target_path": str(item.target_path),
+                "before_sha256": _digest(item.original_bytes),
+                "before_mode": item.config_binding.mode,
+                "before_binding": dataclasses.asdict(item.config_binding),
+                "after_sha256": _digest(item.new_bytes),
+                "after_mode": item.config_binding.mode,
+                "backup_path": str(item.backup_path),
+                "backup_binding": (
+                    dataclasses.asdict(item.backup_binding)
+                    if item.backup_binding is not None
+                    else None
+                ),
+            }
+            for item in plan.prepared
+        ],
+    }
+
+
+def _validate_apply_plan(plan: _ApplyPlan, state: _StateSnapshot) -> None:
+    """Recheck every config, backup, and state immediately before writes."""
+    _validate_state_snapshot(state)
+    for item in plan.prepared:
+        _validate_bound_contents(
+            item.info.config_path,
+            item.original_bytes,
+            item.config_binding,
+        )
+        if item.backup_binding is not None and item.backup_bytes is not None:
+            _validate_bound_contents(
+                pathlib.Path(item.backup_path),
+                item.backup_bytes,
+                item.backup_binding,
+            )
+
+
+def _rollback_applied_configs(
+    plan: _ApplyPlan,
+    applied: list[_PreparedTarget],
+) -> dict[tuple[CLIName, Scope], _PathBinding]:
+    """Restore applied configs in reverse and return their new bindings."""
+    for item in applied:
+        if item.state_entry is None:
+            _unsafe(f"[{item.label}] has no authenticated rollback identity")
+        _validate_bound_contents(
+            item.info.config_path,
+            item.new_bytes,
+            item.state_entry.config_binding,
+        )
+    restored: dict[tuple[CLIName, Scope], _PathBinding] = {}
+    for item in reversed(applied):
+        atomic_write(item.target_path, item.original_bytes)
+        data, binding = _read_bound_file(item.info.config_path)
+        if data != item.original_bytes or binding.mode != item.config_binding.mode:
+            _unsafe(f"[{item.label}] rollback did not restore the config")
+        restored[(item.cli, item.scope)] = binding
+    return restored
+
+
+def _restore_apply_state(
+    plan: _ApplyPlan,
+    state: _StateSnapshot,
+    restored: dict[tuple[CLIName, Scope], _PathBinding],
+) -> None:
+    """Remove new backups and restore stable recovery state after rollback."""
+    for item in reversed(plan.prepared):
+        if item.prior_entry is not None or item.backup_binding is None:
+            continue
+        assert item.backup_bytes is not None
+        _remove_bound_file(item.backup_path, item.backup_bytes, item.backup_binding)
+    entries = dict(plan.state.entries)
+    for key, binding in restored.items():
+        prior = entries.get(key)
+        if prior is not None:
+            entries[key] = dataclasses.replace(
+                prior,
+                config_binding=binding,
+                expected_sha256=_digest(
+                    next(
+                        item.original_bytes
+                        for item in plan.prepared
+                        if (item.cli, item.scope) == key
+                    )
+                ),
+                expected_mode=binding.mode,
+                target_path=binding.resolved,
+            )
+    if entries:
+        save_state(entries, expected=state)
+    else:
+        _remove_state_snapshot(state)
+
+
+def _rollback_apply(
+    plan: _ApplyPlan,
+    applied: list[_PreparedTarget],
+    state: _StateSnapshot,
+    cause: Exception,
+) -> int:
+    """Reverse a failed apply, retaining pending evidence if recovery fails."""
+    failures = [str(cause)]
+    try:
+        restored = _rollback_applied_configs(plan, applied)
+        _restore_apply_state(plan, state, restored)
+    except Exception as rollback_error:
+        failures.append(f"rollback failed: {rollback_error}")
+    print("swap failed: " + "; ".join(failures), file=sys.stderr)
+    return 1
+
+
+def _apply_plan(plan: _ApplyPlan) -> int:
+    """Publish one fully planned apply transaction."""
+    if not plan.prepared:
+        return 0
+    transaction_id = secrets.token_hex(16)
+    state = save_state(
+        plan.state.entries,
+        transaction=_pending_apply_document(plan, transaction_id),
+        expected=plan.state,
+    )
+    try:
+        for item in plan.prepared:
+            if item.backup_binding is not None:
+                continue
+            assert item.backup_path is not None
+            assert item.backup_missing is not None
+            _validate_missing_binding(item.backup_path, item.backup_missing)
+            written = write_new_backup(item.backup_path, item.original_bytes)
+            if _absolute_logical(written) != _absolute_logical(item.backup_path):
+                _unsafe(f"[{item.label}] backup destination changed")
+            item.backup_bytes, item.backup_binding = _read_bound_file(written)
+            if (
+                item.backup_bytes != item.original_bytes
+                or item.backup_binding.mode != 0o600
+            ):
+                _unsafe(f"[{item.label}] backup changed while it was written")
+        state = save_state(
+            plan.state.entries,
+            transaction=_pending_apply_document(plan, transaction_id),
+            expected=state,
+        )
+        _validate_apply_plan(plan, state)
+    except Exception as exc:
+        return _rollback_apply(plan, [], state, exc)
+
+    applied: list[_PreparedTarget] = []
+    next_entries = dict(plan.state.entries)
+    for item in plan.prepared:
         try:
             atomic_write(item.target_path, item.new_bytes)
-            _revalidate(dataclasses.replace(item.info, config_path=item.target_path))
-        except Exception as exc:
-            try:
-                atomic_write(item.target_path, item.original_bytes)
-            except Exception as rollback_exc:
-                rollback_note = f"; rollback failed ({rollback_exc})"
-            else:
-                rollback_note = "; original config restored"
-                try:
-                    _save_or_clear_state(previous_state)
-                except OSError as state_exc:
-                    rollback_note += f"; recovery state cleanup failed ({state_exc})"
-                else:
-                    state = previous_state
-            print(
-                f"[{item.label}] write failed ({exc}){rollback_note}; "
-                f"backup at {backup_path}",
-                file=sys.stderr,
+            _revalidate(
+                dataclasses.replace(
+                    item.info,
+                    config_path=pathlib.Path(item.target_path),
+                )
             )
-            had_error = 1
-            continue
-        print(f"[{item.label}] {item.action}; {backup_note}")
+            current, binding = _read_bound_file(item.info.config_path)
+            if current != item.new_bytes or binding.mode != item.config_binding.mode:
+                _unsafe(f"[{item.label}] config changed while it was written")
+            assert item.backup_path is not None
+            assert item.backup_bytes is not None
+            assert item.backup_binding is not None
+            prior = item.prior_entry
+            item.state_entry = SwapEntry(
+                config_path=str(item.info.config_path),
+                backup_path=str(item.backup_path),
+                server=plan.request.server,
+                action=item.action,
+                swapped_at=prior.swapped_at if prior else plan.timestamp,
+                seq_no=(
+                    prior.seq_no
+                    if prior
+                    else max(
+                        (entry.seq_no for entry in next_entries.values()), default=-1
+                    )
+                    + 1
+                ),
+                target_path=binding.resolved,
+                original_sha256=(
+                    prior.original_sha256 if prior else _digest(item.backup_bytes)
+                ),
+                original_mode=(
+                    prior.original_mode if prior else item.config_binding.mode
+                ),
+                expected_sha256=_digest(current),
+                expected_mode=binding.mode,
+                config_binding=binding,
+                backup_binding=item.backup_binding,
+            )
+            next_entries[(item.cli, item.scope)] = item.state_entry
+            applied.append(item)
+        except Exception as exc:  # noqa: PERF203 - only eight configs are possible
+            try:
+                current, _binding = _read_bound_file(item.info.config_path)
+            except OSError:
+                current = b""
+            if current == item.new_bytes and item not in applied:
+                applied.append(item)
+            return _rollback_apply(plan, applied, state, exc)
 
-    return had_error
+    try:
+        state = save_state(next_entries, expected=state)
+    except Exception as exc:
+        return _rollback_apply(plan, applied, state, exc)
+    del state
+    for item in plan.prepared:
+        assert item.backup_path is not None
+        note = (
+            f"pre-swap backup kept: {item.backup_path}"
+            if item.prior_entry is not None
+            else f"backup: {item.backup_path}"
+        )
+        print(f"[{item.label}] {item.action}; {note}")
+    return 0
+
+
+def _show_apply_plan(plan: _ApplyPlan) -> None:
+    """Print prepared diffs without touching server or filesystem state."""
+    for item in plan.prepared:
+        print(f"--- {item.info.config_path} (current)")
+        print(f"+++ {item.info.config_path} (proposed)")
+        diff = difflib.unified_diff(
+            item.original_bytes.decode(errors="replace").splitlines(keepends=True),
+            item.new_bytes.decode(errors="replace").splitlines(keepends=True),
+            lineterm="",
+        )
+        sys.stdout.writelines(diff)
 
 
 def cmd_use_local(args: argparse.Namespace) -> int:
-    """Run :func:`_cmd_use_local` under the shared mutation lock."""
-    if args.dry_run:
-        return _cmd_use_local(args)
+    """Plan every selected config before starting or mutating anything."""
     try:
+        request = _resolve_use_request(args)
+        print(f"{request.source}: {request.spec.command}", file=sys.stderr)
+        hint = _naming_hint(request.repo, request.server)
+        if hint:
+            print(hint, file=sys.stderr)
+        timestamp = time.strftime("%Y%m%d%H%M%S")
+        plan = _prepare_apply_plan(request, args, timestamp, emit=True)
+        if args.dry_run:
+            _show_apply_plan(plan)
+            return 0
+        if not args.no_preflight:
+            print(
+                f"preflight: {request.spec.command} {' '.join(request.spec.args)}",
+                file=sys.stderr,
+            )
+            failure = preflight_spec(request.spec)
+            if failure is not None:
+                print(f"preflight failed, nothing written:\n{failure}", file=sys.stderr)
+                return 1
         with _state_lock():
-            return _cmd_use_local(args)
+            plan = _prepare_apply_plan(request, args, timestamp, emit=False)
+            return _apply_plan(plan)
     except SwapStateError:
         return 1
-    except OSError as exc:
-        print(f"swap state unavailable: {exc}", file=sys.stderr)
+    except (RuntimeError, ValueError, OSError) as exc:
+        print(exc, file=sys.stderr)
         return 1
 
 

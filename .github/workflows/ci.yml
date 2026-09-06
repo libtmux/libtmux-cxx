@@ -743,7 +743,8 @@ jobs:
             tools.mutate.test_runner tools.vcpkg.test_probe \
             tools.vcpkg.test_release
           uv run --no-project --with tomlkit==0.15.1 \
-            python -m unittest tools.mcp.test_mcp_swap
+            python -m unittest tools.mcp.test_mcp_swap \
+            tools.mcp.test_mcp_swap_recovery
 
       # The README's C++ is quoted from an example that is compiled and run.
       # This is the half that checks the quoting; the example lane checks that
