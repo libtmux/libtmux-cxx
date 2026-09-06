@@ -60,6 +60,7 @@ A private tmux server, torn down with the scope that started it.  Exported as `l
   - [`current_environment`](#libtmux-testing-scoped-server-hpp-free-symbols-current-environment)
   - [`set_environment`](#libtmux-testing-scoped-server-hpp-free-symbols-set-environment)
   - [`erase_environment`](#libtmux-testing-scoped-server-hpp-free-symbols-erase-environment)
+  - [`same_socket_inode`](#libtmux-testing-scoped-server-hpp-free-symbols-same-socket-inode)
 
 <a id="libtmux-testing-scoped-server-hpp-socketmode"></a>
 ### `SocketMode`
@@ -320,6 +321,14 @@ void set_environment(std::vector<std::string>& environment, std::string_view nam
 ```cpp
 void erase_environment(std::vector<std::string>& environment, std::string_view name);
 ```
+
+<a id="libtmux-testing-scoped-server-hpp-free-symbols-same-socket-inode"></a>
+#### `same_socket_inode`
+
+```cpp
+[[nodiscard]] libtmux::expected<bool, std::string> same_socket_inode(const std::filesystem::path& left, const std::filesystem::path& right);
+```
+Whether two paths name the same socket.  Not `std::filesystem::equivalent`: [fs.op.equivalent] makes it an *error* when both paths are "other" files, and a unix domain socket is one. That is not a corner a tmux suite can avoid — every socket comparison hits it — and the two standard libraries disagree about it. libstdc++ implements the rule and reports `ENOTSUP`; libc++ answers anyway, so the same test passes on one and fails on the other. This asks the kernel for the inode instead.  The error is for a path that could not be inspected at all; a readable pair that names two different sockets is a `false`, not a failure.
 
 <a id="libtmux-testing-capabilities-hpp"></a>
 ## `libtmux/testing/capabilities.hpp`
