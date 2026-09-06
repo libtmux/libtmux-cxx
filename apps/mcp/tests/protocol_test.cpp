@@ -1080,6 +1080,7 @@ TEST_F(McpProtocol, IsolatesCompletionFramingAcrossInstalledPosixShells) {
     ASSERT_FALSE(output["result"]["isError"].get<bool>()) << output.dump();
     EXPECT_EQ(output["result"]["structuredContent"]["exit_code"], 0);
     EXPECT_EQ(output["result"]["structuredContent"]["text"], body + "\n");
+    EXPECT_FALSE(std::filesystem::exists(exit_marker)) << name;
 
     const std::string trailing = "trailing-" + std::string{name};
     const json no_newline =
