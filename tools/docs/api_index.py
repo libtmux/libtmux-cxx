@@ -95,6 +95,7 @@ PAGES = {
     ),
 }
 
+COMMENT_MARKER = re.compile(r"^//[/!]?")
 TYPE_START = re.compile(
     r"^(?:template\s*<.*?>\s*)?(?P<kind>enum\s+class|class|struct)\s+"
     r"(?P<tail>.+)$"
@@ -218,6 +219,16 @@ def _brace_delta(line: str) -> int:
     return code.count("{") - code.count("}")
 
 
+def _uncomment(stripped: str) -> str:
+    """Return a line comment's text, with ``///`` and ``//!`` markers stripped.
+
+    The headers document declarations in Doxygen's ``///`` form, so stripping a
+    bare ``//`` would leave a stray slash on every line and turn a ``///``
+    paragraph separator into content.
+    """
+    return COMMENT_MARKER.sub("", stripped, count=1).strip()
+
+
 def _prose_above(lines: list[str], index: int) -> list[str]:
     """Return the comment block directly above ``index``, markers stripped."""
     collected: list[str] = []
@@ -226,7 +237,7 @@ def _prose_above(lines: list[str], index: int) -> list[str]:
         stripped = lines[cursor].strip()
         if not stripped.startswith("//"):
             break
-        collected.append(stripped.removeprefix("//").strip())
+        collected.append(_uncomment(stripped))
         cursor -= 1
     return list(reversed(collected))
 
@@ -563,7 +574,7 @@ def read_header(path: pathlib.Path) -> tuple[list[str], list[Section]]:
     for line in lines[1:]:
         stripped = line.strip()
         if stripped.startswith("//"):
-            overview.append(stripped.removeprefix("//").strip())
+            overview.append(_uncomment(stripped))
         elif overview:
             break
 
