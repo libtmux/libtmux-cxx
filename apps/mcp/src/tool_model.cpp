@@ -1,4 +1,6 @@
+#include "environment_value.hpp"
 #include "libtmux_consumers/mcp.hpp"
+#include "tool_support.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -12,7 +14,6 @@
 #include <vector>
 
 #include "libtmux/server.hpp"
-#include "tool_support.hpp"
 
 namespace libtmux::mcp {
 namespace {
@@ -506,12 +507,6 @@ parse_names(std::optional<std::string_view> value, std::string_view variable,
   return names;
 }
 
-[[nodiscard]] std::optional<std::string_view> environment(std::string_view name) {
-  const char* const value = std::getenv(std::string{name}.c_str());
-  return value == nullptr ? std::nullopt
-                          : std::optional<std::string_view>{std::string_view{value}};
-}
-
 } // namespace
 
 std::vector<std::string> ToolDefinition::required_names() const {
@@ -844,14 +839,20 @@ libtmux::expected<ToolRegistry, std::string> configured_tools() {
 
 libtmux::expected<ToolRegistry, std::string>
 configured_tools(bool teardown_enabled_by_default) {
-  if (std::getenv("LIBTMUX_SAFETY") != nullptr) {
+  if (detail::environment_value("LIBTMUX_SAFETY").has_value()) {
     return libtmux::unexpected(
         std::string{"LIBTMUX_SAFETY is retired; use LIBTMUX_TOOLSETS, "
                     "LIBTMUX_TOOLS, and LIBTMUX_EXCLUDE_TOOLS"});
   }
-  auto selection = parse_tool_selection(
-      environment("LIBTMUX_TOOLSETS"), environment("LIBTMUX_TOOLS"),
-      environment("LIBTMUX_EXCLUDE_TOOLS"), teardown_enabled_by_default);
+  // Held here because `parse_tool_selection` takes views into them.
+  const auto toolsets = detail::environment_value("LIBTMUX_TOOLSETS");
+  const auto include = detail::environment_value("LIBTMUX_TOOLS");
+  const auto exclude = detail::environment_value("LIBTMUX_EXCLUDE_TOOLS");
+  const auto view = [](const std::optional<std::string>& held) {
+    return held.has_value() ? std::optional<std::string_view>{*held} : std::nullopt;
+  };
+  auto selection = parse_tool_selection(view(toolsets), view(include), view(exclude),
+                                        teardown_enabled_by_default);
   if (!selection.has_value()) {
     return libtmux::unexpected(selection.error());
   }

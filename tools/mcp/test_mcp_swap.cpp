@@ -560,7 +560,12 @@ public:
     if (::mkdtemp(pattern.data()) == nullptr) {
       throw std::runtime_error{std::strerror(errno)};
     }
-    path_ = pattern.data();
+    // Canonical, not as spelled: macOS makes `/tmp` a symlink to `/private/tmp`,
+    // and the switcher records a canonical path in its transaction state while
+    // binding the route it was handed. Given the two spellings it reports the
+    // route as having changed under it, which is the tool being asked about the
+    // platform rather than about itself.
+    path_ = std::filesystem::canonical(pattern.data());
   }
 
   ~TemporaryDirectory() { std::filesystem::remove_all(path_); }

@@ -1,4 +1,5 @@
 #include "cli.hpp"
+#include "environment_value.hpp"
 
 #include <cstdlib>
 #include <filesystem>
@@ -62,16 +63,16 @@ set_configuration(CliOptions& options, std::string_view configuration) {
 }
 
 [[nodiscard]] bool inherited_tmux() {
-  const char* const value = std::getenv("TMUX");
-  return value != nullptr && *value != '\0';
+  const auto value = libtmux::mcp::detail::environment_value("TMUX");
+  return value.has_value() && !value->empty();
 }
 
 [[nodiscard]] std::string inherited_socket_path() {
-  const char* const inherited = std::getenv("TMUX");
-  if (inherited == nullptr) {
+  const auto inherited = libtmux::mcp::detail::environment_value("TMUX");
+  if (!inherited.has_value()) {
     return {};
   }
-  std::string_view value{inherited};
+  std::string_view value{*inherited};
   const auto last = value.find_last_of(',');
   const auto previous = last == std::string_view::npos
                             ? std::string_view::npos
@@ -100,10 +101,7 @@ constexpr std::string_view provenance_option{"@libtmux_mcp_owner"};
 class ScopedEnvironment {
 public:
   explicit ScopedEnvironment(std::string value) : value_(std::move(value)) {
-    if (const char* const previous = std::getenv(provenance_environment.data());
-        previous != nullptr) {
-      previous_ = previous;
-    }
+    previous_ = libtmux::mcp::detail::environment_value(provenance_environment);
 #if defined(_WIN32)
     active_ = _putenv_s(provenance_environment.data(), value_.c_str()) == 0;
 #else
@@ -186,8 +184,9 @@ std::filesystem::path minimal_configuration_path(std::filesystem::path executabl
   if (!executable.empty()) {
     std::error_code error;
     if (!executable.has_parent_path()) {
-      if (const char* const path = std::getenv("PATH"); path != nullptr) {
-        std::string_view remaining{path};
+      if (const auto path = libtmux::mcp::detail::environment_value("PATH");
+          path.has_value()) {
+        std::string_view remaining{*path};
         while (!remaining.empty()) {
           const auto separator = remaining.find(
 #if defined(_WIN32)
@@ -230,29 +229,31 @@ libtmux::expected<CliOptions, std::string> parse_cli(int argc, char** argv) {
     options.packaged_configuration_path =
         minimal_configuration_path(std::filesystem::path{argv[0]}).string();
   }
-  const char* const socket_name = std::getenv("LIBTMUX_SOCKET");
-  const char* const socket_path = std::getenv("LIBTMUX_SOCKET_PATH");
-  if (socket_name != nullptr && socket_path != nullptr) {
+  const auto socket_name = libtmux::mcp::detail::environment_value("LIBTMUX_SOCKET");
+  const auto socket_path =
+      libtmux::mcp::detail::environment_value("LIBTMUX_SOCKET_PATH");
+  if (socket_name.has_value() && socket_path.has_value()) {
     return libtmux::unexpected(
         std::string{"LIBTMUX_SOCKET and LIBTMUX_SOCKET_PATH are mutually exclusive"});
   }
-  if (socket_name != nullptr) {
-    if (auto selected = set_socket(options, "name:" + std::string{socket_name});
+  if (socket_name.has_value()) {
+    if (auto selected = set_socket(options, "name:" + *socket_name);
         !selected.has_value()) {
       return libtmux::unexpected(selected.error());
     }
     options.explicit_selector = true;
   }
-  if (socket_path != nullptr) {
-    if (auto selected = set_socket(options, "path:" + std::string{socket_path});
+  if (socket_path.has_value()) {
+    if (auto selected = set_socket(options, "path:" + *socket_path);
         !selected.has_value()) {
       return libtmux::unexpected(selected.error());
     }
     options.explicit_selector = true;
   }
-  if (const char* const configuration = std::getenv("LIBTMUX_TMUX_CONFIG");
-      configuration != nullptr) {
-    if (auto selected = set_configuration(options, configuration);
+  if (const auto configuration =
+          libtmux::mcp::detail::environment_value("LIBTMUX_TMUX_CONFIG");
+      configuration.has_value()) {
+    if (auto selected = set_configuration(options, *configuration);
         !selected.has_value()) {
       return libtmux::unexpected(selected.error());
     }

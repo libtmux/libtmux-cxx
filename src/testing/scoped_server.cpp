@@ -554,9 +554,10 @@ void erase_environment(std::vector<std::string>& environment, std::string_view n
 }
 
 libtmux::expected<bool, std::string>
-same_socket_inode(const std::filesystem::path& left, const std::filesystem::path& right) {
-  const auto inspect =
-      [](const std::filesystem::path& path) -> libtmux::expected<struct stat, std::string> {
+same_socket_inode(const std::filesystem::path& left,
+                  const std::filesystem::path& right) {
+  const auto inspect = [
+  ](const std::filesystem::path& path) -> libtmux::expected<struct stat, std::string> {
     struct stat metadata {};
     if (::stat(path.c_str(), &metadata) != 0) {
       return libtmux::unexpected(path.string() + ": " + std::strerror(errno));

@@ -111,7 +111,10 @@ TEST_P(StartableServerIdentity, PublishesTheCreatedServersExactIdentity) {
   const libtmux::test::EnvironmentGuard tmpdir{"TMUX_TMPDIR",
                                                owner->tmux_tmpdir().string()};
   const std::filesystem::path selected = owner->tmux_tmpdir() / "startable.sock";
-  constexpr std::string_view socket_name{"startable-name"};
+  // tmux spends `$TMUX_TMPDIR/tmux-<uid>/` before this name, and macOS gives
+  // `sun_path` four fewer bytes than Linux does. `startable-name` overran it by
+  // one byte under a real `$TMPDIR`.
+  constexpr std::string_view socket_name{"startable"};
 
   const auto open = [&]() -> libtmux::expected<Server, libtmux::CommandFailure> {
     switch (GetParam()) {

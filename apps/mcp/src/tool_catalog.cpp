@@ -1,4 +1,6 @@
+#include "environment_value.hpp"
 #include "libtmux_consumers/mcp.hpp"
+#include "tool_support.hpp"
 
 #include <algorithm>
 #include <array>
@@ -31,7 +33,6 @@
 #include "libtmux/server.hpp"
 #include "libtmux/snapshot.hpp"
 #include "pane_input.hpp"
-#include "tool_support.hpp"
 #include "wait_for_text.hpp"
 
 #if !defined(_WIN32)
@@ -782,12 +783,8 @@ preflight_pane_input(const Server& server, std::string_view source_pane_id,
   if (!clients.has_value()) {
     return libtmux::unexpected(tmux_error(clients.error()));
   }
-  const char* const tmux_value = std::getenv("TMUX");
-  const char* const pane_value = std::getenv("TMUX_PANE");
-  auto caller = parse_pane_input_caller(
-      tmux_value == nullptr ? std::nullopt : std::optional<std::string>{tmux_value},
-      pane_value == nullptr ? std::nullopt : std::optional<std::string>{pane_value},
-      *endpoint);
+  auto caller = parse_pane_input_caller(environment_value("TMUX"),
+                                        environment_value("TMUX_PANE"), *endpoint);
   if (!caller.has_value()) {
     return libtmux::unexpected(caller.error());
   }

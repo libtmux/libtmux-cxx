@@ -83,7 +83,8 @@ void erase_environment(std::vector<std::string>& environment, std::string_view n
 // The error is for a path that could not be inspected at all; a readable pair
 // that names two different sockets is a `false`, not a failure.
 [[nodiscard]] libtmux::expected<bool, std::string>
-same_socket_inode(const std::filesystem::path& left, const std::filesystem::path& right);
+same_socket_inode(const std::filesystem::path& left,
+                  const std::filesystem::path& right);
 
 class ScopedTmuxServer final {
 public:

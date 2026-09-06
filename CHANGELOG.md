@@ -9,6 +9,26 @@ was recorded as it landed.
 
 ## Unreleased
 
+### Breaking
+
+- `enter_copy_mode` and `exit_copy_mode` are gone from the MCP tool surface.
+  Wire-breaking for MCP clients; the core `Pane` operations are unchanged.
+
+  Before: `{"name": "enter_copy_mode", "arguments": {"target": "%1"}}`
+  After:  `{"name": "capture_pane", "arguments": {"paneId": "%1"}}`
+
+- Every MCP tool names its pane argument `paneId` rather than `target`.
+  Wire-breaking for MCP clients.
+
+  Before: `{"name": "capture_pane", "arguments": {"target": "%1"}}`
+  After:  `{"name": "capture_pane", "arguments": {"paneId": "%1"}}`
+
+- `LIBTMUX_SAFETY` stops MCP startup with a migration error rather than being
+  honoured. Behavioural.
+
+  Before: `LIBTMUX_SAFETY=read-only libtmux-mcp-server`
+  After:  `LIBTMUX_TOOLSETS=inspect libtmux-mcp-server`
+
 ### MCP server
 
 - Replace the legacy tool catalog with one immutable 45-tool capability
@@ -44,7 +64,13 @@ was recorded as it landed.
   requires one configured target running a supported POSIX foreground shell
   and uses collision-free, subshell-isolated completion framing through the
   exact tmux endpoint while preserving bounded Bash and Zsh error/debug traps.
-- `mcp_swap.py use-local` validates every selected agent config and backup
+### MCP switcher
+
+- Replace `tools/mcp/mcp_swap.py` with a native `mcp-swap`, built beside the
+  tests. It preserves the formatting of each agent config it edits, locks
+  across concurrent runs, and records one checksummed transaction before any
+  write so a failure rolls back in reverse order.
+- `mcp-swap use-local` validates every selected agent config and backup
   destination before changing any config. A malformed later config leaves the
   whole selection unchanged.
 
