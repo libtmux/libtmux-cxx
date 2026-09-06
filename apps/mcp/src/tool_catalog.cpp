@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <random>
 #include <set>
 #include <string>
@@ -542,7 +543,12 @@ reserve_pane_input(const Server& server, const PaneInputPreflight& preflight,
                                                 const PaneInputPreflight& final) {
   return initial.configured_pane_ids == final.configured_pane_ids &&
          initial.session_id == final.session_id &&
-         initial.server_pid == final.server_pid &&
+         initial.server_pid == final.server_pid;
+}
+
+[[nodiscard]] static bool same_shell_input_route(const PaneInputPreflight& initial,
+                                                 const PaneInputPreflight& final) {
+  return same_pane_input_route(initial, final) &&
          initial.foreground_command == final.foreground_command;
 }
 
@@ -866,15 +872,14 @@ void append_json(const StructuredValue& value, std::string& output) {
   };
 }
 
-[[nodiscard]] Field field(std::string name, std::string description, InputSink type,
-                          bool required = true,
-                          ArgumentType argument_type = ArgumentType::string,
-                          std::optional<long long> minimum = {},
-                          std::optional<long long> maximum = {},
-                          std::optional<std::size_t> maximum_length = {},
-                          NestedAuthority nested = NestedAuthority::none,
-                          InputControl control = InputControl::none,
-                          std::vector<std::string> allowed_values = {}) {
+[[nodiscard]] Field
+field(std::string name, std::string description, InputSink type, bool required = true,
+      ArgumentType argument_type = ArgumentType::string,
+      std::optional<long long> minimum = {}, std::optional<long long> maximum = {},
+      std::optional<std::size_t> maximum_length = {},
+      NestedAuthority nested = NestedAuthority::none,
+      InputControl control = InputControl::none,
+      std::vector<std::string> allowed_values = {}, bool allow_empty = false) {
   std::set<Sink> sinks{Sink{type, nested, control}};
   if (type == InputSink::tmux_format && control == InputControl::double_hash_once) {
     sinks.insert(
@@ -891,7 +896,8 @@ void append_json(const StructuredValue& value, std::string& output) {
                              .minimum = minimum,
                              .maximum = maximum,
                              .maximum_length = maximum_length,
-                             .allowed_values = std::move(allowed_values)},
+                             .allowed_values = std::move(allowed_values),
+                             .allow_empty = allow_empty},
                .sinks = std::move(sinks)};
 }
 
@@ -1037,6 +1043,53 @@ pane_target_ids(const std::vector<std::string>& pane_ids) {
     nonce += digits[value & 0x0fU];
   }
   return nonce;
+}
+
+[[nodiscard]] libtmux::expected<std::string, ToolError>
+private_paste_buffer_name(const Server& server) {
+  const auto buffers = server.buffers();
+  if (!buffers.has_value()) {
+    return libtmux::unexpected(detail::tmux_error(buffers.error()));
+  }
+  static std::atomic_uint64_t sequence{0U};
+  for (std::size_t attempt = 0U; attempt < 32U; ++attempt) {
+    const std::string name =
+        "libtmux-mcp-paste-" + shell_command_nonce() + "-" + std::to_string(++sequence);
+    if (std::ranges::none_of(
+            *buffers, [&](const Buffer& buffer) { return buffer.name() == name; })) {
+      return name;
+    }
+  }
+  return libtmux::unexpected(
+      ToolError{false, "could not allocate a private paste buffer name"});
+}
+
+[[nodiscard]] std::optional<ToolError>
+remove_private_paste_buffer(const Server& server, std::string_view name) {
+  const auto removed = server.run({"delete-buffer", "-b", std::string{name}});
+  const auto buffers = server.buffers();
+  if (buffers.has_value() && std::ranges::none_of(*buffers, [&](const Buffer& buffer) {
+        return buffer.name() == name;
+      })) {
+    return std::nullopt;
+  }
+  std::string message{"temporary paste buffer cleanup could not be confirmed"};
+  if (!removed.has_value()) {
+    message += ": " + removed.error().diagnostic;
+  }
+  if (!buffers.has_value()) {
+    message += "; verification failed: " + buffers.error().diagnostic;
+  } else {
+    message += "; the private buffer remains present";
+  }
+  return ToolError{false, std::move(message)};
+}
+
+[[nodiscard]] ToolError with_paste_cleanup_error(ToolError primary,
+                                                 const ToolError& cleanup) {
+  primary.caller_error = false;
+  primary.message += "; " + cleanup.message;
+  return primary;
 }
 
 [[nodiscard]] libtmux::expected<std::string, ToolError> resolve_tmux_executable() {
@@ -2183,7 +2236,7 @@ pane_target_ids(const std::vector<std::string>& pane_ids) {
         if (!final.has_value()) {
           return libtmux::unexpected(final.error());
         }
-        if (!detail::same_pane_input_route(*initial, *final) ||
+        if (!detail::same_shell_input_route(*initial, *final) ||
             !lease.covers(server.socket_path(), final->server_pid,
                           final->configured_pane_ids)) {
           return libtmux::unexpected(
@@ -2378,12 +2431,14 @@ pane_target_ids(const std::vector<std::string>& pane_ids) {
       {field("paneId", "Stable pane ID.", InputSink::tmux_lookup, true,
              ArgumentType::string, {}, {}, detail::kTargetCharacters),
        field("text", "Literal text to paste.", InputSink::pane_input, true,
-             ArgumentType::string, {}, {}, 1024U * 1024U,
+             ArgumentType::string, {}, {}, 1024U * 1024U, NestedAuthority::unrestricted,
+             InputControl::none, {}, true),
+       field("enter", "Append Enter to the same private paste buffer.",
+             InputSink::pane_input, false, ArgumentType::boolean, {}, {}, {},
              NestedAuthority::unrestricted)},
       OutputShape::pane_id,
       [](const Server& server, const Arguments& arguments,
          const CallContext&) -> ToolResult {
-        static std::atomic_uint64_t sequence{0U};
         const auto pane = server.pane(required(arguments, "paneId"));
         if (!pane.has_value()) {
           return failure(pane.error());
@@ -2399,41 +2454,62 @@ pane_target_ids(const std::vector<std::string>& pane_ids) {
           return libtmux::unexpected(reserved.error());
         }
         detail::PaneInputLease lease = std::move(*reserved);
-        const std::string name = "libtmux-mcp-" + std::to_string(++sequence);
-        const auto staged = server.set_buffer(name, required(arguments, "text"));
+        std::string payload = required(arguments, "text");
+        if (boolean(arguments, "enter")) {
+          payload.push_back('\n');
+        }
+        if (payload.empty()) {
+          return detail::output(
+              {{"pane_id", pane->id()}, {"changed", StructuredValue{false}}});
+        }
+        const auto name = private_paste_buffer_name(server);
+        if (!name.has_value()) {
+          return libtmux::unexpected(name.error());
+        }
+        const auto fail_after_cleanup = [&](ToolError primary) -> ToolResult {
+          const auto cleanup = remove_private_paste_buffer(server, *name);
+          return libtmux::unexpected(
+              cleanup.has_value()
+                  ? with_paste_cleanup_error(std::move(primary), *cleanup)
+                  : std::move(primary));
+        };
+        const auto staged = server.set_buffer(*name, payload);
         if (!staged.has_value()) {
-          return failure(staged.error());
+          return fail_after_cleanup(detail::tmux_error(staged.error()));
         }
         const auto buffers = server.buffers();
         if (!buffers.has_value()) {
-          return failure(buffers.error());
+          return fail_after_cleanup(detail::tmux_error(buffers.error()));
         }
-        const auto buffer = std::ranges::find(*buffers, name, &Buffer::name);
+        const auto buffer = std::ranges::find(*buffers, *name, &Buffer::name);
         if (buffer == buffers->end()) {
-          return libtmux::unexpected(
+          return fail_after_cleanup(
               ToolError{false, "temporary paste buffer disappeared"});
         }
         const auto final = detail::preflight_pane_input(
             server, pane->id(), detail::PaneInputScope::target_only);
         if (!final.has_value()) {
-          static_cast<void>(buffer->remove());
-          return libtmux::unexpected(final.error());
+          return fail_after_cleanup(final.error());
         }
         if (!detail::same_pane_input_route(*initial, *final) ||
             !lease.covers(server.socket_path(), final->server_pid,
                           final->configured_pane_ids)) {
-          static_cast<void>(buffer->remove());
-          return libtmux::unexpected(detail::changed_pane_input_route("paste_text"));
+          return fail_after_cleanup(detail::changed_pane_input_route("paste_text"));
         }
         const auto answer = pane->paste(*buffer, true);
         if (!answer.has_value()) {
-          static_cast<void>(buffer->remove());
-          return failure(answer.error());
+          return fail_after_cleanup(detail::tmux_error(answer.error()));
+        }
+        const auto cleanup = remove_private_paste_buffer(server, *name);
+        if (cleanup.has_value()) {
+          return libtmux::unexpected(
+              ToolError{false, "paste completed; " + cleanup->message});
         }
         return changed("pane_id", pane->id());
       },
       "Require the target pane to be live and outside human-owned mode, then stage "
-      "a private buffer, paste it once, and consume it."));
+      "a private target-only buffer, optionally append Enter, paste it once, and "
+      "verify cleanup. Empty text without Enter is a guarded buffer-free no-op."));
 
   add(make_tool(
       "set_synchronize_panes", "Set synchronized pane input", Toolset::execute,

@@ -1218,6 +1218,10 @@ TEST(McpTools, CapabilityRegistryRejectsInvalidDefinitions) {
   invalid.schema.input.front().type = static_cast<libtmux::mcp::ArgumentType>(255);
   rejected(invalid, "invalid schema field type");
   invalid = baseline;
+  invalid.schema.input.front().type = libtmux::mcp::ArgumentType::boolean;
+  invalid.schema.input.front().allow_empty = true;
+  rejected(invalid, "only string schema fields may allow empty values");
+  invalid = baseline;
   invalid.schema.output = static_cast<OutputShape>(255);
   rejected(invalid, "invalid output schema");
   invalid = baseline;

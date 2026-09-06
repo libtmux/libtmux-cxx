@@ -133,6 +133,7 @@ struct Parameter {
   std::optional<long long> maximum{};
   std::optional<std::size_t> maximum_length{};
   std::vector<std::string> allowed_values;
+  bool allow_empty{};
 };
 
 enum class OutputShape : std::uint8_t {

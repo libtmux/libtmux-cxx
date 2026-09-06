@@ -367,6 +367,10 @@ validate_definition(const ToolDefinition& tool) {
     if (!valid(parameter.type)) {
       return libtmux::unexpected("invalid schema field type: " + parameter.name);
     }
+    if (parameter.allow_empty && parameter.type != ArgumentType::string) {
+      return libtmux::unexpected("only string schema fields may allow empty values: " +
+                                 parameter.name);
+    }
     if (!parameter.allowed_values.empty()) {
       if (parameter.type != ArgumentType::string ||
           std::ranges::any_of(parameter.allowed_values,
@@ -766,7 +770,7 @@ ToolResult ToolRegistry::call_definition(const Server& server,
       continue;
     }
     const std::string* const value = argument(arguments, parameter.name);
-    if (value == nullptr || value->empty()) {
+    if (value == nullptr || (value->empty() && !parameter.allow_empty)) {
       return libtmux::unexpected(
           ToolError{true, "missing required argument: " + parameter.name});
     }

@@ -1187,6 +1187,81 @@ TEST_F(McpProtocol, RefusesEveryInputToolWhileTheNamedPaneIsModal) {
   EXPECT_EQ(buffer_names(*buffers_after), buffer_names(*buffers_before));
 }
 
+TEST_F(McpProtocol, KeepsEmptyPasteBufferFreeAndEnterTargetOnly) {
+  const libtmux::Server server = connect_server();
+  const auto panes = split_sorted_panes(server);
+  ASSERT_EQ(panes.size(), 2U);
+  const libtmux::Pane source = panes.front();
+  const libtmux::Pane sibling = panes.back();
+  ASSERT_TRUE(source.set_option("synchronize-panes", "on").has_value());
+  ASSERT_TRUE(sibling.set_option("synchronize-panes", "on").has_value());
+  const auto buffers_before = server.buffers();
+  ASSERT_TRUE(buffers_before.has_value()) << buffers_before.error().diagnostic;
+
+  const json missing =
+      invoke("paste_text", {{"paneId", source.id()}, {"enter", false}}, 0);
+  ASSERT_TRUE(missing.contains("error")) << missing.dump();
+  EXPECT_EQ(missing["error"]["code"], -32602);
+
+  ASSERT_TRUE(server
+                  .run({"set-hook", "-g", "after-set-buffer",
+                        "copy-mode -t " + std::string{source.id()}})
+                  .has_value());
+  const json empty = invoke(
+      "paste_text", {{"paneId", source.id()}, {"text", ""}, {"enter", false}}, 1);
+  ASSERT_TRUE(empty.contains("result")) << empty.dump();
+  ASSERT_FALSE(empty["result"]["isError"].get<bool>()) << empty.dump();
+  EXPECT_FALSE(empty["result"]["structuredContent"]["changed"].get<bool>());
+  const auto mode = source.expand("#{pane_in_mode}");
+  const auto buffers_after_empty = server.buffers();
+  ASSERT_TRUE(mode.has_value()) << mode.error().diagnostic;
+  ASSERT_TRUE(buffers_after_empty.has_value())
+      << buffers_after_empty.error().diagnostic;
+  EXPECT_EQ(*mode, "0");
+  EXPECT_EQ(buffer_names(*buffers_after_empty), buffer_names(*buffers_before));
+
+  const json refused =
+      invoke("paste_text", {{"paneId", source.id()}, {"text", "late-refusal"}}, 2);
+  ASSERT_TRUE(refused.contains("result")) << refused.dump();
+  ASSERT_TRUE(refused["result"]["isError"].get<bool>()) << refused.dump();
+  EXPECT_NE(
+      refused["result"]["content"][0]["text"].get<std::string>().find("human-owned"),
+      std::string::npos);
+  const auto refused_mode = source.expand("#{pane_in_mode}");
+  const auto buffers_after_refusal = server.buffers();
+  ASSERT_TRUE(refused_mode.has_value()) << refused_mode.error().diagnostic;
+  ASSERT_TRUE(buffers_after_refusal.has_value())
+      << buffers_after_refusal.error().diagnostic;
+  EXPECT_EQ(*refused_mode, "1");
+  EXPECT_EQ(buffer_names(*buffers_after_refusal), buffer_names(*buffers_before));
+
+  ASSERT_TRUE(server.run({"set-hook", "-gu", "after-set-buffer"}).has_value());
+  ASSERT_TRUE(source.send_key("q").has_value());
+  const auto cleared_mode = wait_for_pane_value(source, "#{pane_in_mode}", "0");
+  ASSERT_TRUE(cleared_mode.has_value()) << cleared_mode.error().diagnostic;
+  ASSERT_EQ(*cleared_mode, "0");
+  const std::string marker = "target-only-paste-enter-marker";
+  const std::string channel = "target-only-paste-enter-ready";
+  const std::string sibling_before = captured(sibling);
+  const json entered =
+      invoke("paste_text",
+             {{"paneId", source.id()},
+              {"text", "printf " + marker + "; tmux wait-for -S " + channel},
+              {"enter", true}},
+             3);
+  ASSERT_TRUE(entered.contains("result")) << entered.dump();
+  ASSERT_FALSE(entered["result"]["isError"].get<bool>()) << entered.dump();
+  EXPECT_TRUE(entered["result"]["structuredContent"]["changed"].get<bool>());
+  const auto completed = server.wait_for(channel, std::chrono::seconds{2});
+  ASSERT_TRUE(completed.has_value()) << completed.error().diagnostic;
+  EXPECT_NE(captured(source).find(marker), std::string::npos);
+  EXPECT_EQ(captured(sibling), sibling_before);
+  const auto buffers_after_enter = server.buffers();
+  ASSERT_TRUE(buffers_after_enter.has_value())
+      << buffers_after_enter.error().diagnostic;
+  EXPECT_EQ(buffer_names(*buffers_after_enter), buffer_names(*buffers_before));
+}
+
 TEST_F(McpProtocol, GuardsTheEffectiveSynchronizedCohortButPastesOnlyTheTarget) {
   const libtmux::Server server = connect_server();
   const auto panes = split_sorted_panes(server);
