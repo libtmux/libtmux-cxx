@@ -182,13 +182,7 @@ def _state_key(cli: CLIName, scope: Scope) -> str:
 
 
 def _parse_state_key(key: str) -> tuple[CLIName, Scope] | None:
-    """Decode a ``cli:scope`` state key, returning ``None`` for malformed input.
-
-    The script declares no compatibility contract for its state file —
-    schema is internal — so this only accepts the canonical
-    ``f"{cli}:{scope}"`` form. Hand-edited or unrecognised keys return
-    ``None`` so ``load_state`` can drop them without crashing.
-    """
+    """Decode the canonical internal ``cli:scope`` recovery key."""
     if ":" not in key:
         return None
     cli_str, _, scope_str = key.partition(":")
@@ -198,22 +192,7 @@ def _parse_state_key(key: str) -> tuple[CLIName, Scope] | None:
 
 
 def _parse_state_entry(v: dict[str, t.Any]) -> SwapEntry | None:
-    """Build a :class:`SwapEntry` from a raw state-file dict, or ``None``.
-
-    Validates at the trust boundary so a hand-edited ``state.json`` can't
-    crash later code paths — particularly :func:`cmd_revert`'s LIFO sort,
-    which compares ``SwapEntry.seq_no`` and would raise ``TypeError`` on a
-    mixed ``int``/``str`` ordering. ``seq_no`` is coerced via ``int()``;
-    any ``KeyError`` (missing required field), ``ValueError`` (non-numeric
-    string), or ``TypeError`` (wrong shape, extra keys for the dataclass)
-    drops the entry silently. Same drop-on-malformed posture as
-    :func:`_parse_state_key`.
-
-    Mirrors CPython's ``Lib/sched.py`` discipline: validate at the
-    counter's *origin* (``enterabs`` for sched, ``load_state`` here), not
-    at sort time. State-file schema is internal — no compatibility
-    contract — so silent drop is the right failure mode.
-    """
+    """Decode one exact internal entry; callers reject ``None`` fail-closed."""
     expected = {
         "config_path",
         "backup_path",
@@ -257,8 +236,6 @@ def _parse_state_entry(v: dict[str, t.Any]) -> SwapEntry | None:
             or not pathlib.Path(entry.target_path).is_absolute()
             or entry.config_binding.resolved != entry.target_path
             or entry.config_binding.mode != entry.expected_mode
-            or entry.backup_binding.resolved
-            != str(_absolute_logical(pathlib.Path(entry.backup_path)))
             or entry.backup_binding.mode != 0o600
         ):
             return None
@@ -621,6 +598,42 @@ class _ApplyPlan:
 
 
 @dataclasses.dataclass(frozen=True)
+class _RecoveryLayer:
+    """One authenticated LIFO layer and its original-byte backup."""
+
+    key: tuple[CLIName, Scope]
+    label: str
+    entry: SwapEntry
+    backup_path: pathlib.Path
+    backup_bytes: bytes
+    backup_binding: _PathBinding
+
+
+@dataclasses.dataclass
+class _RevertTarget:
+    """One physical config and the contiguous top layers to unwind."""
+
+    info: CLIInfo
+    config_path: pathlib.Path
+    target_path: pathlib.Path
+    current_bytes: bytes
+    current_binding: _PathBinding
+    layers: list[_RecoveryLayer]
+    restored_bytes: bytes
+    restored_mode: int
+    restored_binding: _PathBinding | None = None
+
+
+@dataclasses.dataclass
+class _RevertPlan:
+    """Every config, backup, and state observation for one revert."""
+
+    state: _StateSnapshot
+    targets: list[_RevertTarget]
+    selected: set[tuple[CLIName, Scope]]
+
+
+@dataclasses.dataclass(frozen=True)
 class _PathClaim:
     """One physical config or recovery destination claimed by a plan."""
 
@@ -706,6 +719,7 @@ def _parse_path_binding(raw: t.Any) -> _PathBinding:
     if not isinstance(nodes, list):
         _invalid("path binding")
     parsed_nodes: list[_TopologyNode] = []
+    positions: set[int] = set()
     for node in nodes:
         if not isinstance(node, dict) or set(node) != {
             "position",
@@ -723,8 +737,9 @@ def _parse_path_binding(raw: t.Any) -> _PathBinding:
             _invalid("topology node")
         if link is not None and not isinstance(link, str):
             _invalid("topology node")
-        if kind == "directory" and link is not None:
+        if (kind == "directory") != (link is None) or position in positions:
             _invalid("topology node")
+        positions.add(position)
         parsed_nodes.append(
             _TopologyNode(
                 position=position,
@@ -849,6 +864,13 @@ def _validate_bound_contents(
         _unsafe(f"destination content changed after planning: {path}")
 
 
+def _check_bound_mutation(path: pathlib.Path, binding: _PathBinding) -> None:
+    """Require the resolved parent needed for replace or removal."""
+    parent = pathlib.Path(binding.resolved).parent
+    if not parent.is_dir() or not os.access(parent, os.W_OK | os.X_OK):
+        _unsafe(f"destination parent is not writable: {path}")
+
+
 def _binding_claim(owner: str, kind: str, binding: _PathBinding) -> _PathClaim:
     """Describe one existing file for cross-artifact alias checks."""
     return _PathClaim(owner, kind, binding.resolved, binding.target)
@@ -894,6 +916,31 @@ def _remove_state_snapshot(snapshot: _StateSnapshot) -> _StateSnapshot:
         binding=None,
         missing=_capture_missing_binding(STATE_FILE),
     )
+
+
+def _restore_known_state(
+    snapshot: _StateSnapshot,
+    alternatives: set[bytes | None],
+) -> _StateSnapshot:
+    """Restore pending state only from an authenticated transaction outcome."""
+    if snapshot.raw is None or snapshot.binding is None:
+        _unsafe_state("pending transaction has no authenticated state")
+    if os.path.lexists(STATE_FILE):
+        raw, binding = _read_bound_file(STATE_FILE)
+        if raw == snapshot.raw and binding == snapshot.binding:
+            return snapshot
+        if raw not in alternatives or binding.mode != 0o600:
+            _unsafe_state("recovery state changed outside the transaction")
+    elif None not in alternatives:
+        _unsafe_state("recovery state disappeared outside the transaction")
+    atomic_write(STATE_FILE, snapshot.raw)
+    raw, binding = _read_bound_file(STATE_FILE)
+    if raw != snapshot.raw or binding.mode != 0o600:
+        _unsafe_state("pending recovery state could not be restored")
+    entries, transaction = _decode_state(raw)
+    if transaction is None:
+        _unsafe_state("restored recovery state is not pending")
+    return _StateSnapshot(entries, transaction, raw, binding, None)
 
 
 # ---------------------------------------------------------------------------
@@ -1349,36 +1396,16 @@ def _sync_directory(path: pathlib.Path) -> None:
         os.close(descriptor)
 
 
-def write_new_backup(base: pathlib.Path, data: bytes) -> pathlib.Path:
-    """Write ``data`` to ``base``, or to ``base-1`` / ``base-2`` / … if taken.
-
-    A backup is the only copy of the config as it stood before a swap, so
-    clobbering one is unrecoverable data loss. The timestamp embedded in
-    ``base`` has one-second granularity, which is not fine enough on its
-    own: two swaps inside the same second derive the same path. Creation
-    goes through ``O_CREAT | O_EXCL`` so the check and the claim are one
-    atomic step and an existing file can never be truncated — the same
-    exclusive-create discipline CPython's ``tempfile`` uses to hand out
-    unique names.
-
-    Returns the path actually written.
-    """
-    base.parent.mkdir(parents=True, exist_ok=True)
-    candidate = base
-    attempt = 0
-    while True:
-        try:
-            fd = os.open(candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        except FileExistsError:
-            attempt += 1
-            candidate = base.with_name(f"{base.name}-{attempt}")
-            continue
-        with os.fdopen(fd, "wb") as fh:
-            fh.write(data)
-            fh.flush()
-            os.fsync(fh.fileno())
-        _sync_directory(candidate.parent)
-        return candidate
+def write_new_backup(path: pathlib.Path, data: bytes) -> pathlib.Path:
+    """Create one preplanned backup without overwriting or falling back."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(data)
+        fh.flush()
+        os.fsync(fh.fileno())
+    _sync_directory(path.parent)
+    return path
 
 
 def _next_backup_path(base: pathlib.Path, reserved: set[pathlib.Path]) -> pathlib.Path:
@@ -2096,13 +2123,7 @@ def _parse_transaction(raw: t.Any) -> dict[str, t.Any] | None:
             or not backup_path.is_absolute()
             or before.resolved != str(target_path)
             or before.mode != _required_mode(change, "before_mode")
-            or (
-                backup is not None
-                and (
-                    backup.resolved != str(_absolute_logical(backup_path))
-                    or backup.mode != 0o600
-                )
-            )
+            or (backup is not None and backup.mode != 0o600)
         ):
             _invalid("invalid pending change")
         _required_digest(change, "before_sha256")
@@ -2140,12 +2161,18 @@ def _decode_state(
     if not isinstance(raw_entries, dict):
         _invalid("invalid entries")
     entries: dict[tuple[CLIName, Scope], SwapEntry] = {}
+    sequences: set[int] = set()
     for key, value in raw_entries.items():
         parsed_key = _parse_state_key(key)
         parsed_entry = _parse_state_entry(value) if isinstance(value, dict) else None
-        if parsed_key is None or parsed_entry is None:
+        if (
+            parsed_key is None
+            or parsed_entry is None
+            or parsed_entry.seq_no in sequences
+        ):
             _invalid(f"invalid entry {key!r}")
         entries[parsed_key] = parsed_entry
+        sequences.add(parsed_entry.seq_no)
     return entries, transaction
 
 
@@ -2179,9 +2206,9 @@ def _load_state_snapshot(
         )
     except (OSError, ValueError) as exc:
         message = f"swap state unreadable ({STATE_FILE}): {exc}"
-        print(message, file=sys.stderr)
         if strict:
             raise SwapStateError(message) from exc
+        print(message, file=sys.stderr)
         return _StateSnapshot({}, None, None, None, None)
 
 
@@ -2233,15 +2260,6 @@ def save_state(
         binding,
         None,
     )
-
-
-def _save_or_clear_state(entries: dict[tuple[CLIName, Scope], SwapEntry]) -> None:
-    """Persist ``entries``, removing the state file when the mapping is empty."""
-    if entries:
-        save_state(entries)
-    elif os.path.lexists(STATE_FILE):
-        STATE_FILE.unlink()
-        _sync_directory(STATE_FILE.parent)
 
 
 # ---------------------------------------------------------------------------
@@ -2430,18 +2448,27 @@ def _resolve_use_request(args: argparse.Namespace) -> _UseRequest:
     )
 
 
-def _authenticate_entry(
+def _entry_config_path(
     key: tuple[CLIName, Scope],
     entry: SwapEntry,
-) -> tuple[bytes, _PathBinding, bytes, _PathBinding]:
-    """Authenticate one stable config and its recovery backup."""
+) -> pathlib.Path:
+    """Return the configured logical path only when it matches recovery."""
     cli, _scope = key
     info = CLIS[cli]
     if str(_absolute_logical(info.config_path)) != str(
         _absolute_logical(pathlib.Path(entry.config_path))
     ):
         _unsafe_state(f"{_state_key(*key)} config path changed")
-    config, config_binding = _read_bound_file(info.config_path)
+    return info.config_path
+
+
+def _authenticate_current(
+    key: tuple[CLIName, Scope],
+    entry: SwapEntry,
+) -> tuple[bytes, _PathBinding]:
+    """Authenticate the currently visible top recovery layer."""
+    config_path = _entry_config_path(key, entry)
+    config, config_binding = _read_bound_file(config_path)
     if (
         config_binding != entry.config_binding
         or config_binding.resolved != entry.target_path
@@ -2449,6 +2476,14 @@ def _authenticate_entry(
         or _digest(config) != entry.expected_sha256
     ):
         _unsafe_state(f"{_state_key(*key)} configuration changed after the swap")
+    return config, config_binding
+
+
+def _authenticate_backup(
+    key: tuple[CLIName, Scope],
+    entry: SwapEntry,
+) -> tuple[bytes, _PathBinding]:
+    """Authenticate one immutable original-byte recovery backup."""
     backup_path = pathlib.Path(entry.backup_path)
     backup, backup_binding = _read_bound_file(backup_path)
     if (
@@ -2457,7 +2492,58 @@ def _authenticate_entry(
         or _digest(backup) != entry.original_sha256
     ):
         _unsafe_state(f"{_state_key(*key)} backup changed after the swap")
-    return config, config_binding, backup, backup_binding
+    return backup, backup_binding
+
+
+def _recovery_groups(
+    entries: dict[tuple[CLIName, Scope], SwapEntry],
+) -> dict[str, list[tuple[CLIName, Scope]]]:
+    """Group recovery keys by logical config in descending LIFO order."""
+    groups: dict[str, list[tuple[CLIName, Scope]]] = {}
+    for key, entry in entries.items():
+        logical = str(_absolute_logical(_entry_config_path(key, entry)))
+        groups.setdefault(logical, []).append(key)
+    for keys in groups.values():
+        keys.sort(key=lambda candidate: entries[candidate].seq_no, reverse=True)
+    return groups
+
+
+def _authenticate_recovery(
+    state: _StateSnapshot,
+) -> tuple[
+    dict[tuple[CLIName, Scope], tuple[bytes, _PathBinding]],
+    dict[str, tuple[bytes, _PathBinding]],
+    dict[str, list[tuple[CLIName, Scope]]],
+    list[_PathClaim],
+]:
+    """Authenticate every backup and each physical config's top layer."""
+    groups = _recovery_groups(state.entries)
+    backups = {
+        key: _authenticate_backup(key, entry) for key, entry in state.entries.items()
+    }
+    current: dict[str, tuple[bytes, _PathBinding]] = {}
+    claims = [_state_claim(state)]
+    for logical, keys in groups.items():
+        top = keys[0]
+        current[logical] = _authenticate_current(top, state.entries[top])
+        for index, key in enumerate(keys[:-1]):
+            entry = state.entries[key]
+            below = state.entries[keys[index + 1]]
+            if (
+                _digest(backups[key][0]) != below.expected_sha256
+                or entry.original_mode != below.expected_mode
+                or entry.target_path != below.target_path
+            ):
+                _unsafe_state(f"{_state_key(*key)} breaks the recovery chain")
+        claims.append(
+            _binding_claim(_state_key(*top), "configuration", current[logical][1])
+        )
+    claims.extend(
+        _binding_claim(_state_key(*key), "backup", binding)
+        for key, (_data, binding) in backups.items()
+    )
+    _validate_distinct_claims(claims)
+    return backups, current, groups, claims
 
 
 def _state_claim(snapshot: _StateSnapshot) -> _PathClaim:
@@ -2478,24 +2564,15 @@ def _prepare_apply_plan(
 ) -> _ApplyPlan:
     """Read, render, and bind every selected config and recovery artifact."""
     state = _load_state_snapshot(strict=True)
-    authenticated = {
-        key: _authenticate_entry(key, entry) for key, entry in state.entries.items()
+    authenticated, current_configs, groups, claims = _authenticate_recovery(state)
+    claimed_configs = {
+        logical: binding for logical, (_data, binding) in current_configs.items()
     }
-    claims = [_state_claim(state)]
-    claimed_configs: dict[str, _PathBinding] = {}
-    for key, (_data, binding, _backup, backup_binding) in authenticated.items():
-        logical = str(_absolute_logical(CLIS[key[0]].config_path))
-        previous = claimed_configs.get(logical)
-        if previous is not None and previous != binding:
-            _unsafe_state(f"{logical} has conflicting recovery identities")
-        if previous is None:
-            claimed_configs[logical] = binding
-            claims.append(_binding_claim(_state_key(*key), "configuration", binding))
-        claims.append(_binding_claim(_state_key(*key), "backup", backup_binding))
 
     prepared: list[_PreparedTarget] = []
     reserved_backups: set[pathlib.Path] = set()
     planned_keys = set(state.entries)
+    selected_logicals: set[str] = set()
     for cli in request.targets:
         scope = _normalize_scope(cli, args.scope)
         key = (cli, scope)
@@ -2505,17 +2582,22 @@ def _prepare_apply_plan(
             _unsafe(f"[{label}] config not found at {info.config_path}")
         current_bytes, config_binding = _read_bound_file(info.config_path)
         logical = str(_absolute_logical(info.config_path))
+        if logical in selected_logicals:
+            _unsafe(f"[{label}] duplicates a selected configuration")
+        selected_logicals.add(logical)
         if logical not in claimed_configs:
             claimed_configs[logical] = config_binding
             claims.append(_binding_claim(label, "configuration", config_binding))
-        elif claimed_configs[logical] != config_binding:
+        elif claimed_configs[logical] != config_binding or (
+            logical in current_configs and current_configs[logical][0] != current_bytes
+        ):
             _unsafe(f"[{label}] configuration identity is inconsistent")
         target_info = dataclasses.replace(
             info,
             config_path=pathlib.Path(config_binding.resolved),
         )
         config = _parse_config_bytes(target_info, current_bytes)
-        current = get_server(
+        existing = get_server(
             cli,
             config,
             request.server,
@@ -2523,10 +2605,10 @@ def _prepare_apply_plan(
             scope=scope,
         )
         if (
-            current
-            and _points_at(current, request.spec, request.repo)
+            existing
+            and _points_at(existing, request.spec, request.repo)
             and all(
-                current.env.get(name) == value
+                existing.env.get(name) == value
                 for name, value in request.extra_env.items()
             )
         ):
@@ -2536,11 +2618,11 @@ def _prepare_apply_plan(
                     f"{_describe_spec(request.spec, request.repo)} — no change"
                 )
             continue
-        base_env = dict(current.env) if current else {}
+        base_env = dict(existing.env) if existing else {}
         base_env.update(request.extra_env)
         cli_spec = (
             dataclasses.replace(request.spec, env=base_env)
-            if current or request.extra_env
+            if existing or request.extra_env
             else request.spec
         )
         action = set_server(
@@ -2565,7 +2647,9 @@ def _prepare_apply_plan(
             prior_entry=state.entries.get(key),
         )
         if item.prior_entry is not None:
-            _, _, item.backup_bytes, item.backup_binding = authenticated[key]
+            if groups[logical][0] != key:
+                _unsafe_state(f"[{label}] is not the active recovery layer")
+            item.backup_bytes, item.backup_binding = authenticated[key]
             item.backup_path = pathlib.Path(item.prior_entry.backup_path)
         else:
             suffix = f"{BACKUP_SUFFIX_PREFIX}{timestamp}"
@@ -2650,6 +2734,12 @@ def _rollback_applied_configs(
         )
     restored: dict[tuple[CLIName, Scope], _PathBinding] = {}
     for item in reversed(applied):
+        assert item.state_entry is not None
+        _validate_bound_contents(
+            item.info.config_path,
+            item.new_bytes,
+            item.state_entry.config_binding,
+        )
         atomic_write(item.target_path, item.original_bytes)
         data, binding = _read_bound_file(item.info.config_path)
         if data != item.original_bytes or binding.mode != item.config_binding.mode:
@@ -2664,32 +2754,95 @@ def _restore_apply_state(
     restored: dict[tuple[CLIName, Scope], _PathBinding],
 ) -> None:
     """Remove new backups and restore stable recovery state after rollback."""
-    for item in reversed(plan.prepared):
-        if item.prior_entry is not None or item.backup_binding is None:
-            continue
-        assert item.backup_bytes is not None
-        _remove_bound_file(item.backup_path, item.backup_bytes, item.backup_binding)
     entries = dict(plan.state.entries)
     for key, binding in restored.items():
-        prior = entries.get(key)
-        if prior is not None:
-            entries[key] = dataclasses.replace(
-                prior,
+        item = next(
+            candidate
+            for candidate in plan.prepared
+            if (candidate.cli, candidate.scope) == key
+        )
+        logical = str(_absolute_logical(item.info.config_path))
+        matching = [
+            candidate
+            for candidate, entry in entries.items()
+            if str(_absolute_logical(pathlib.Path(entry.config_path))) == logical
+        ]
+        if matching:
+            top = max(matching, key=lambda candidate: entries[candidate].seq_no)
+            entries[top] = dataclasses.replace(
+                entries[top],
                 config_binding=binding,
-                expected_sha256=_digest(
-                    next(
-                        item.original_bytes
-                        for item in plan.prepared
-                        if (item.cli, item.scope) == key
-                    )
-                ),
+                expected_sha256=_digest(item.original_bytes),
                 expected_mode=binding.mode,
                 target_path=binding.resolved,
             )
-    if entries:
-        save_state(entries, expected=state)
-    else:
-        _remove_state_snapshot(state)
+    final_state = _encode_state(entries, None) if entries else None
+    new_items = [item for item in plan.prepared if item.prior_entry is None]
+    transaction = state.transaction
+    if transaction is None:
+        _unsafe_state("apply recovery lost its pending transaction")
+    pending_state = _encode_state(
+        plan.state.entries,
+        _pending_apply_document(plan, transaction["id"]),
+    )
+    committed_entries = dict(plan.state.entries)
+    committed_entries.update(
+        {
+            (item.cli, item.scope): item.state_entry
+            for item in plan.prepared
+            if item.state_entry is not None
+        }
+    )
+    committed_state = _encode_state(committed_entries, None)
+    try:
+        for item in reversed(new_items):
+            if item.backup_binding is None or item.backup_bytes is None:
+                continue
+            _remove_bound_file(
+                item.backup_path,
+                item.backup_bytes,
+                item.backup_binding,
+            )
+        if entries:
+            save_state(entries, expected=state)
+        else:
+            _remove_state_snapshot(state)
+    except Exception:
+        state_error: Exception | None = None
+        try:
+            state = _restore_known_state(
+                state,
+                {final_state, pending_state, committed_state},
+            )
+        except Exception as exc:
+            state_error = exc
+        for item in new_items:
+            if item.backup_bytes is None or item.backup_binding is None:
+                continue
+            if os.path.lexists(item.backup_path):
+                _validate_bound_contents(
+                    item.backup_path,
+                    item.backup_bytes,
+                    item.backup_binding,
+                )
+                continue
+            written = write_new_backup(item.backup_path, item.backup_bytes)
+            if _absolute_logical(written) != _absolute_logical(item.backup_path):
+                _unsafe(f"[{item.label}] backup could not be recreated in place")
+            item.backup_bytes, item.backup_binding = _read_bound_file(item.backup_path)
+            if item.backup_binding.mode != 0o600:
+                _unsafe(f"[{item.label}] recreated backup is not owned")
+        if state_error is not None:
+            raise state_error from None
+        restored_transaction = state.transaction
+        if restored_transaction is None:
+            _unsafe_state("apply recovery lost its pending transaction")
+        save_state(
+            entries,
+            transaction=_pending_apply_document(plan, restored_transaction["id"]),
+            expected=state,
+        )
+        raise
 
 
 def _rollback_apply(
@@ -2748,6 +2901,11 @@ def _apply_plan(plan: _ApplyPlan) -> int:
     next_entries = dict(plan.state.entries)
     for item in plan.prepared:
         try:
+            _validate_bound_contents(
+                item.info.config_path,
+                item.original_bytes,
+                item.config_binding,
+            )
             atomic_write(item.target_path, item.new_bytes)
             _revalidate(
                 dataclasses.replace(
@@ -2853,7 +3011,8 @@ def cmd_use_local(args: argparse.Namespace) -> int:
         with _state_lock():
             plan = _prepare_apply_plan(request, args, timestamp, emit=False)
             return _apply_plan(plan)
-    except SwapStateError:
+    except SwapStateError as exc:
+        print(exc, file=sys.stderr)
         return 1
     except (RuntimeError, ValueError, OSError) as exc:
         print(exc, file=sys.stderr)
@@ -2865,104 +3024,369 @@ def _revalidate(info: CLIInfo) -> None:
     load_config(info)
 
 
-def _cmd_revert(args: argparse.Namespace) -> int:
-    """Restore each target CLI's config from the backup recorded in the state file.
-
-    Without ``--scope``, every recorded entry for the targeted CLIs is
-    reverted (so a Claude install that has both user-scope and
-    project-scope swaps gets both restored). With ``--scope``, only
-    the matching scope is reverted; the parameter is silently coerced
-    to ``"user"`` for non-Claude CLIs.
-    """
-    state = load_state(strict=True)
-    # Without --cli, revert every CLI that has any recorded swap.
-    targets = list(args.cli) if args.cli else list({cli for cli, _scope in state})
-    if not targets:
-        print("no recorded swaps — nothing to revert", file=sys.stderr)
-        return 1
-
-    had_error = 0
-    for cli in targets:
-        if args.scope is not None:
-            wanted_scopes: tuple[Scope, ...] = (_normalize_scope(cli, args.scope),)
-        else:
-            wanted_scopes = ALL_SCOPES
-        cli_keys = [
-            (sc_cli, sc_scope)
-            for (sc_cli, sc_scope) in state
-            if sc_cli == cli and sc_scope in wanted_scopes
-        ]
-        if not cli_keys:
+def _select_revert_keys(
+    entries: dict[tuple[CLIName, Scope], SwapEntry],
+    args: argparse.Namespace,
+    *,
+    emit: bool,
+) -> set[tuple[CLIName, Scope]]:
+    """Resolve requested recovery keys while preserving empty-target behavior."""
+    clients = (
+        list(dict.fromkeys(args.cli)) if args.cli else sorted({k[0] for k in entries})
+    )
+    if not clients:
+        _abort("no recorded swaps — nothing to revert")
+    selected: set[tuple[CLIName, Scope]] = set()
+    for cli in clients:
+        scopes = (
+            (_normalize_scope(cli, args.scope),)
+            if args.scope is not None
+            else ALL_SCOPES
+        )
+        matches = {key for key in entries if key[0] == cli and key[1] in scopes}
+        if not matches and emit:
             label = f"{cli}:{args.scope}" if args.scope and cli == "claude" else cli
             print(f"[{label}] no state entry — skip")
+        selected.update(matches)
+    return selected
+
+
+def _recovery_label(key: tuple[CLIName, Scope]) -> str:
+    """Render a scoped label only for Claude's layered config."""
+    cli, scope = key
+    return f"{cli}:{scope}" if cli == "claude" else cli
+
+
+def _prepare_revert_plan(
+    args: argparse.Namespace,
+    *,
+    emit: bool,
+) -> _RevertPlan:
+    """Authenticate all recovery and compose one write per physical config."""
+    state = _load_state_snapshot(strict=True)
+    backups, current, groups, _claims = _authenticate_recovery(state)
+    if state.binding is None:
+        _unsafe_state("recorded recovery has no state-file identity")
+    _check_bound_mutation(STATE_FILE, state.binding)
+    selected = _select_revert_keys(state.entries, args, emit=emit)
+    targets: list[_RevertTarget] = []
+    for logical, keys in groups.items():
+        selected_keys = [key for key in keys if key in selected]
+        if not selected_keys:
             continue
-        # Unwind in reverse-registration order (LIFO) — sort by the
-        # explicit ``SwapEntry.seq_no`` counter so order is independent
-        # of JSON parse order, dict iteration, and wall-clock
-        # collisions. ``seq_no`` is coerced to ``int`` at load time by
-        # ``_parse_state_entry``; entries with a non-coercible value
-        # are dropped before they reach this sort, so the comparison
-        # is always int vs int. When two scopes back the same physical
-        # file (Claude user + project), the later swap's backup
-        # contains the earlier swap's modifications, so each backup
-        # must restore its own layer before the prior one is restored.
-        # Same explicit counter pattern CPython's ``Lib/sched.py`` uses
-        # to break ties on ``Event(time, priority, sequence, …)``.
-        cli_keys.sort(key=lambda k: state[k].seq_no, reverse=True)
-        for key in cli_keys:
-            sc_cli, sc_scope = key
-            entry = state[key]
-            label = f"{sc_cli}:{sc_scope}" if sc_cli == "claude" else sc_cli
-            backup = pathlib.Path(entry.backup_path)
-            dest = pathlib.Path(entry.target_path or entry.config_path)
-            if not backup.exists():
-                print(f"[{label}] backup missing: {backup}", file=sys.stderr)
-                had_error = 1
-                break
-            if args.dry_run:
-                print(f"[{label}] would restore {dest} from {backup}")
-                continue
-            try:
-                atomic_write(dest, backup.read_bytes())
-            except OSError as exc:
-                print(f"[{label}] restore failed: {exc}", file=sys.stderr)
-                had_error = 1
-                break
-            next_state = dict(state)
-            next_state.pop(key)
-            try:
-                _save_or_clear_state(next_state)
-            except OSError as exc:
-                print(
-                    f"[{label}] restored, but recovery state could not be updated: "
-                    f"{exc}",
-                    file=sys.stderr,
+        if keys[: len(selected_keys)] != selected_keys:
+            _unsafe_state(f"{logical} has a newer recovery layer")
+        current_bytes, current_binding = current[logical]
+        _check_bound_mutation(pathlib.Path(logical), current_binding)
+        layers: list[_RecoveryLayer] = []
+        for key in selected_keys:
+            entry = state.entries[key]
+            backup_bytes, backup_binding = backups[key]
+            _check_bound_mutation(pathlib.Path(entry.backup_path), backup_binding)
+            layers.append(
+                _RecoveryLayer(
+                    key=key,
+                    label=_recovery_label(key),
+                    entry=entry,
+                    backup_path=pathlib.Path(entry.backup_path),
+                    backup_bytes=backup_bytes,
+                    backup_binding=backup_binding,
                 )
-                had_error = 1
-                break
-            state = next_state
+            )
+        oldest = layers[-1]
+        targets.append(
+            _RevertTarget(
+                info=CLIS[keys[0][0]],
+                config_path=pathlib.Path(state.entries[keys[0]].config_path),
+                target_path=pathlib.Path(current_binding.resolved),
+                current_bytes=current_bytes,
+                current_binding=current_binding,
+                layers=layers,
+                restored_bytes=oldest.backup_bytes,
+                restored_mode=oldest.entry.original_mode,
+            )
+        )
+    targets.sort(key=lambda target: target.layers[0].entry.seq_no, reverse=True)
+    return _RevertPlan(state, targets, selected)
+
+
+def _pending_revert_document(
+    plan: _RevertPlan,
+    transaction_id: str,
+) -> dict[str, t.Any]:
+    """Describe every physical revert before its first config write."""
+    return {
+        "id": transaction_id,
+        "kind": "revert",
+        "changes": [
+            {
+                "key": _state_key(*target.layers[0].key),
+                "config_path": str(target.config_path),
+                "target_path": str(target.target_path),
+                "before_sha256": _digest(target.current_bytes),
+                "before_mode": target.current_binding.mode,
+                "before_binding": dataclasses.asdict(target.current_binding),
+                "after_sha256": _digest(target.restored_bytes),
+                "after_mode": target.restored_mode,
+                "backup_path": str(target.layers[-1].backup_path),
+                "backup_binding": dataclasses.asdict(target.layers[-1].backup_binding),
+            }
+            for target in plan.targets
+        ],
+    }
+
+
+def _validate_revert_plan(plan: _RevertPlan, state: _StateSnapshot) -> None:
+    """Recheck selected config, backup, and state identities before writes."""
+    _validate_state_snapshot(state)
+    for target in plan.targets:
+        _validate_bound_contents(
+            target.config_path,
+            target.current_bytes,
+            target.current_binding,
+        )
+        for layer in target.layers:
+            _validate_bound_contents(
+                layer.backup_path,
+                layer.backup_bytes,
+                layer.backup_binding,
+            )
+
+
+def _publish_config(
+    target: _RevertTarget,
+    data: bytes,
+    mode: int,
+) -> _PathBinding:
+    """Atomically publish and authenticate one planned config image."""
+    atomic_write(target.target_path, data)
+    target.target_path.chmod(mode)
+    with target.target_path.open("rb") as handle:
+        os.fsync(handle.fileno())
+    _revalidate(dataclasses.replace(target.info, config_path=target.target_path))
+    current, binding = _read_bound_file(target.config_path)
+    if current != data or binding.mode != mode:
+        _unsafe(f"[{target.layers[0].label}] config changed while it was written")
+    return binding
+
+
+def _selected_revert_layers(plan: _RevertPlan) -> list[_RecoveryLayer]:
+    """Return selected recovery layers in global LIFO order."""
+    return sorted(
+        (layer for target in plan.targets for layer in target.layers),
+        key=lambda layer: layer.entry.seq_no,
+        reverse=True,
+    )
+
+
+def _next_recovery_entries(
+    plan: _RevertPlan,
+) -> dict[tuple[CLIName, Scope], SwapEntry]:
+    """Remove selected layers and bind each newly visible top layer."""
+    entries = {
+        key: entry
+        for key, entry in plan.state.entries.items()
+        if key not in plan.selected
+    }
+    for target in plan.targets:
+        if target.restored_binding is None:
+            _unsafe_state("reverted config has no authenticated identity")
+        remaining = [
+            (key, entry)
+            for key, entry in entries.items()
+            if str(_absolute_logical(pathlib.Path(entry.config_path)))
+            == str(_absolute_logical(target.config_path))
+        ]
+        if not remaining:
+            continue
+        key, entry = max(remaining, key=lambda pair: pair[1].seq_no)
+        if (
+            entry.expected_sha256 != _digest(target.restored_bytes)
+            or entry.expected_mode != target.restored_binding.mode
+        ):
+            _unsafe_state(f"{_state_key(*key)} does not match the restored layer")
+        entries[key] = dataclasses.replace(
+            entry,
+            target_path=target.restored_binding.resolved,
+            config_binding=target.restored_binding,
+        )
+    return entries
+
+
+def _recreate_removed_backups(
+    layers: list[_RecoveryLayer],
+    entries: dict[tuple[CLIName, Scope], SwapEntry],
+) -> None:
+    """Recreate only proven-owned backups removed by a failed transaction."""
+    for layer in layers:
+        if os.path.lexists(layer.backup_path):
+            _validate_bound_contents(
+                layer.backup_path,
+                layer.backup_bytes,
+                layer.backup_binding,
+            )
+            continue
+        missing = _capture_missing_binding(layer.backup_path)
+        _validate_missing_binding(layer.backup_path, missing)
+        written = write_new_backup(layer.backup_path, layer.backup_bytes)
+        if _absolute_logical(written) != _absolute_logical(layer.backup_path):
+            _unsafe(f"[{layer.label}] backup could not be recreated in place")
+        data, binding = _read_bound_file(layer.backup_path)
+        if data != layer.backup_bytes or binding.mode != 0o600:
+            _unsafe(f"[{layer.label}] recreated backup is not owned")
+        entries[layer.key] = dataclasses.replace(
+            entries[layer.key],
+            backup_binding=binding,
+        )
+
+
+def _roll_revert_forward(
+    plan: _RevertPlan,
+    applied: list[_RevertTarget],
+    state: _StateSnapshot,
+    entries: dict[tuple[CLIName, Scope], SwapEntry],
+    cause: Exception,
+) -> int:
+    """Undo a failed revert and retain authenticated recovery for retry."""
+    failures = [str(cause)]
+    try:
+        for target in applied:
+            if target.restored_binding is None:
+                _unsafe_state("reverted config has no authenticated identity")
+            _validate_bound_contents(
+                target.config_path,
+                target.restored_bytes,
+                target.restored_binding,
+            )
+        for target in reversed(applied):
+            assert target.restored_binding is not None
+            _validate_bound_contents(
+                target.config_path,
+                target.restored_bytes,
+                target.restored_binding,
+            )
+            binding = _publish_config(
+                target,
+                target.current_bytes,
+                target.current_binding.mode,
+            )
+            top = target.layers[0].key
+            entries[top] = dataclasses.replace(
+                entries[top],
+                target_path=binding.resolved,
+                config_binding=binding,
+            )
+        _authenticate_recovery(dataclasses.replace(state, entries=entries))
+        save_state(entries, expected=state)
+    except Exception as rollback_error:
+        failures.append(f"rollback failed: {rollback_error}")
+    print("revert failed: " + "; ".join(failures), file=sys.stderr)
+    return 1
+
+
+def _apply_revert_plan(plan: _RevertPlan) -> int:
+    """Publish one all-selected revert and clean recovery transactionally."""
+    if not plan.targets:
+        return 0
+    transaction_id = secrets.token_hex(16)
+    state = save_state(
+        plan.state.entries,
+        transaction=_pending_revert_document(plan, transaction_id),
+        expected=plan.state,
+    )
+    try:
+        _validate_revert_plan(plan, state)
+    except Exception as exc:
+        return _roll_revert_forward(plan, [], state, dict(plan.state.entries), exc)
+
+    applied: list[_RevertTarget] = []
+    for target in plan.targets:
+        try:
+            _validate_bound_contents(
+                target.config_path,
+                target.current_bytes,
+                target.current_binding,
+            )
+            target.restored_binding = _publish_config(
+                target,
+                target.restored_bytes,
+                target.restored_mode,
+            )
+            applied.append(target)
+        except Exception as exc:  # noqa: PERF203 - at most eight configs are possible
             try:
-                backup.unlink()
-            except OSError as exc:
-                print(
-                    f"[{label}] restored; backup cleanup failed: {exc}", file=sys.stderr
-                )
-                had_error = 1
-            print(f"[{label}] restored from {backup}")
-    return had_error
+                current, binding = _read_bound_file(target.config_path)
+            except OSError:
+                current, binding = b"", None
+            if current == target.restored_bytes and binding is not None:
+                target.restored_binding = binding
+                applied.append(target)
+            return _roll_revert_forward(
+                plan,
+                applied,
+                state,
+                dict(plan.state.entries),
+                exc,
+            )
+
+    entries = dict(plan.state.entries)
+    layers = _selected_revert_layers(plan)
+    next_entries = _next_recovery_entries(plan)
+    final_state = _encode_state(next_entries, None) if next_entries else None
+    try:
+        for layer in layers:
+            _remove_bound_file(
+                layer.backup_path,
+                layer.backup_bytes,
+                layer.backup_binding,
+            )
+        if next_entries:
+            save_state(next_entries, expected=state)
+        else:
+            _remove_state_snapshot(state)
+    except Exception as exc:
+        try:
+            state = _restore_known_state(state, {final_state})
+        except Exception as state_error:
+            print(f"state recovery failed: {state_error}", file=sys.stderr)
+        try:
+            _recreate_removed_backups(layers, entries)
+        except Exception as recreation_error:
+            print(
+                f"backup recovery failed: {recreation_error}",
+                file=sys.stderr,
+            )
+        return _roll_revert_forward(plan, applied, state, entries, exc)
+
+    for layer in layers:
+        print(f"[{layer.label}] restored from {layer.backup_path}")
+    return 0
+
+
+def _show_revert_plan(plan: _RevertPlan) -> None:
+    """Print all authenticated LIFO layers without mutating recovery."""
+    for layer in _selected_revert_layers(plan):
+        print(
+            f"[{layer.label}] would restore "
+            f"{layer.entry.target_path} from {layer.backup_path}"
+        )
 
 
 def cmd_revert(args: argparse.Namespace) -> int:
-    """Run :func:`_cmd_revert` under the shared mutation lock."""
-    if args.dry_run:
-        return _cmd_revert(args)
+    """Plan all selected recovery before publishing one revert transaction."""
     try:
+        plan = _prepare_revert_plan(args, emit=True)
+        if args.dry_run:
+            _show_revert_plan(plan)
+            return 0
         with _state_lock():
-            return _cmd_revert(args)
-    except SwapStateError:
+            plan = _prepare_revert_plan(args, emit=False)
+            return _apply_revert_plan(plan)
+    except SwapStateError as exc:
+        print(exc, file=sys.stderr)
         return 1
-    except OSError as exc:
-        print(f"swap state unavailable: {exc}", file=sys.stderr)
+    except (RuntimeError, ValueError, OSError) as exc:
+        print(exc, file=sys.stderr)
         return 1
 
 
