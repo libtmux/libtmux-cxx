@@ -883,6 +883,11 @@ bool same_pane_input_route(const PaneInputPreflight& initial,
 [[nodiscard]] static std::optional<std::string>
 process_generation(std::uint64_t process_id) noexcept {
 #if defined(_WIN32)
+  // Safe only while pane input is itself unreachable here: psmux offers no
+  // process table to read a start time from, so a replaced daemon cannot be
+  // told from the one that was reserved against. The library refuses pane
+  // input on this platform first, which is what keeps the pairing honest. A
+  // psmux that grows pane input needs a generation source before it does.
   static_cast<void>(process_id);
   return std::nullopt;
 #else
