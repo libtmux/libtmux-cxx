@@ -415,7 +415,7 @@ CATALOGUE: t.Final = (
         path="apps/mcp/src/tool_catalog.cpp",
         find=(
             "  return value.size() > 1U && value.front() == prefix &&\n"
-            "         canonical_number(value.substr(1U));"
+            "         canonical_tmux_number(value.substr(1U));"
         ),
         replace="  return value.size() > 1U && value.front() == prefix;",
         target="mcp_tools_test",
@@ -425,8 +425,8 @@ CATALOGUE: t.Final = (
     Mutation(
         mutation_id="mcp-pane-input-nonempty-command",
         path="apps/mcp/src/tool_catalog.cpp",
-        find='        (values[4] != "0" && values[4] != "1") || values[5].empty() ||',
-        replace='        (values[4] != "0" && values[4] != "1") || false ||',
+        find="        values[10].empty()) {",
+        replace="        false) {",
         target="mcp_tools_test",
         test_regex=r"^consumer[.]mcp$",
         guards="every pane snapshot row names a foreground command",
@@ -454,8 +454,8 @@ CATALOGUE: t.Final = (
     Mutation(
         mutation_id="mcp-pane-cohort-checks",
         path="apps/mcp/src/tool_catalog.cpp",
-        find="      if (row.synchronized) {",
-        replace="      if (true) {",
+        find="      if (row.window_id == source->window_id && row.synchronized &&",
+        replace="      if (row.window_id == source->window_id &&",
         target="mcp_tools_test",
         test_regex=r"^consumer[.]mcp$",
         guards="only the source pane's effective synchronized cohort is configured",

@@ -67,6 +67,14 @@ if(LIBTMUX_BUILD_TESTS AND LIBTMUX_BUILD_MCP_SERVER AND NOT WIN32)
   if(LIBTMUX_ENABLE_SANITIZERS AND CMAKE_CXX_FLAGS MATCHES "-stdlib=libc\\+\\+")
     target_compile_definitions(
       mcp_protocol_test PRIVATE LIBTMUX_MCP_LIBCXX_EXCEPTION_WORKAROUND=1)
+    # The definition above repairs the child the test drives. These cases throw
+    # and catch inside the test process itself, which needs the same allowance.
+    set_property(
+      TEST consumer.mcp.protocol APPEND PROPERTY ENVIRONMENT
+           "ASAN_OPTIONS=alloc_dealloc_mismatch=0")
+    set_property(
+      TEST consumer.mcp.protocol.real-tmux APPEND PROPERTY ENVIRONMENT
+           "ASAN_OPTIONS=alloc_dealloc_mismatch=0")
   endif()
 endif()
 
