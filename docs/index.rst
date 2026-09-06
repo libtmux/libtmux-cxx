@@ -32,6 +32,7 @@ header that declares something.
    snapshot
    socket
    target
+   testing-capabilities
    testing-environment_guard
    testing-scoped_server
    testing-tmux_version
@@ -40,8 +41,7 @@ header that declares something.
 Umbrella headers
 ----------------
 
-These headers only re-export others, so they have no reference page
-of their own:
+This header only re-exports others, so it has no reference page of its
+own:
 
 - ``libtmux/libtmux.hpp``
-- ``libtmux/testing/capabilities.hpp``
