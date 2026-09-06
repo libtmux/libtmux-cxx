@@ -270,6 +270,22 @@ template <class... Functions> struct Overloaded : Functions... {
           {"openWorldHint", tool.annotations.open_world}};
 }
 
+// The capability row as it rides along on a tool.
+//
+// `tmux://capabilities` carries the whole row, because there the tool is not
+// beside it. Here it is: every key dropped below is already a sibling field on
+// the same object, so repeating it only doubles what a client has to read to
+// learn nothing further. What stays is the part MCP has no field for.
+[[nodiscard]] json inline_capability_row(const ToolDefinition& tool,
+                                         const ToolRegistry& tools) {
+  json row = capability_row(tool, tools);
+  for (const std::string_view key :
+       {"name", "title", "description", "inputSchema", "outputSchema", "annotations"}) {
+    row.erase(std::string{key});
+  }
+  return row;
+}
+
 [[nodiscard]] json describe(const ToolDefinition& tool, const ToolRegistry& tools) {
   return json{{"name", tool.name},
               {"title", tool.title},
@@ -277,7 +293,7 @@ template <class... Functions> struct Overloaded : Functions... {
               {"inputSchema", input_schema(tool, tools)},
               {"outputSchema", output_schema(tool.schema.output)},
               {"annotations", annotations(tool)},
-              {"_meta", {{kCapabilityMetadata, capability_row(tool, tools)}}}};
+              {"_meta", {{kCapabilityMetadata, inline_capability_row(tool, tools)}}}};
 }
 
 [[nodiscard]] std::string_view name(Toolset value) {

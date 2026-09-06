@@ -3075,7 +3075,20 @@ TEST(McpProtocolCli, PublishesStaticEffectiveCapabilitiesInBothEras) {
     });
     ASSERT_NE(row, document["tools"].end()) << listed_tool["name"];
     ASSERT_TRUE(listed_tool.contains("_meta")) << listed_tool["name"];
-    EXPECT_EQ(listed_tool["_meta"]["com.git-pull.libtmux-mcp/capability"], *row)
+    // The inline row drops what the tool already states beside it, so compare
+    // against the resource row with those same keys removed: the two still have
+    // to agree on every claim the inline row does make.
+    json expected_inline = *row;
+    for (const std::string_view key : {"name", "title", "description", "inputSchema",
+                                       "outputSchema", "annotations"}) {
+      EXPECT_TRUE(listed_tool.contains(std::string{key})) << listed_tool["name"];
+      EXPECT_FALSE(listed_tool["_meta"]["com.git-pull.libtmux-mcp/capability"].contains(
+          std::string{key}))
+          << listed_tool["name"] << ' ' << key;
+      expected_inline.erase(std::string{key});
+    }
+    EXPECT_EQ(listed_tool["_meta"]["com.git-pull.libtmux-mcp/capability"],
+              expected_inline)
         << listed_tool["name"];
   }
   for (const json& tool : document["tools"]) {

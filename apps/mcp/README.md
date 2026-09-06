@@ -139,9 +139,11 @@ registry and process-lifecycle limits.
 
 Every tool uses conservative annotations: `readOnlyHint=false`,
 `destructiveHint=true`, `idempotentHint=false`, and `openWorldHint=true`.
-The full capability row appears under
-`_meta["com.git-pull.libtmux-mcp/capability"]` and matches the row in
-`tmux://capabilities`.
+`tmux://capabilities` carries the full capability row. The copy under
+`_meta["com.git-pull.libtmux-mcp/capability"]` on each advertised tool leaves
+out `name`, `title`, `description`, `inputSchema`, `outputSchema` and
+`annotations`, which the tool already states beside it; on every claim it does
+make, the two agree.
 
 ## Protocol and lifecycle
 
