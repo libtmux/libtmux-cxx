@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <functional>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -16,6 +17,51 @@
 #include "pane_input.hpp"
 
 namespace libtmux::mcp::detail {
+
+// The sentence every tool description opens with, naming the authority the
+// caller is granting before the tool says what it does.
+//
+// One definition on purpose: the catalog prepends this when it builds a tool
+// and the registry validator re-derives it to check the tool kept it, so two
+// copies would be two predicates enforcing one invariant. They had already
+// drifted — the builder keyed the change sentence off the toolset while the
+// validator keyed it off the declared effect, which agree only for as long as
+// no tool pairs `inspect` with `Effect::change`.
+[[nodiscard]] inline std::string_view
+controlled_opener(Toolset toolset, ProcessReach reach,
+                  const std::set<OutputClass>& outputs,
+                  const std::set<Effect>& effects) {
+  switch (reach) {
+  case ProcessReach::configured_process:
+    return "Start a pane's configured process; accepts no command payload.";
+  case ProcessReach::pane_input:
+    return "Send input to a pane's program; a shell that receives it runs it with "
+           "your user's permissions.";
+  case ProcessReach::pane_command:
+    return "Run a shell command in a pane with your user's permissions.";
+  case ProcessReach::none:
+    break;
+  }
+  if (toolset == Toolset::teardown) {
+    return "Delete tmux state; accepts no command payload.";
+  }
+  if (outputs.contains(OutputClass::terminal_content)) {
+    return "Read pane output; accepts no client-supplied executable input. Returned "
+           "content may be sensitive or untrusted.";
+  }
+  if (outputs.contains(OutputClass::process_environment)) {
+    return "Read the tmux environment; accepts no client-supplied executable input. "
+           "Returned values may contain secrets.";
+  }
+  if (outputs.contains(OutputClass::configured_command)) {
+    return "Read configured tmux commands; accepts no client-supplied executable "
+           "input. Returned values may contain executable configuration.";
+  }
+  if (effects.contains(Effect::change) || effects.contains(Effect::delete_)) {
+    return "Change tmux state; no client-supplied executable input.";
+  }
+  return "Inspect tmux metadata; accepts no client-supplied executable input.";
+}
 
 inline constexpr std::size_t kTargetCharacters = 512U;
 inline constexpr std::size_t kSearchCharacters = 4096U;

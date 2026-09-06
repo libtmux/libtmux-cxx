@@ -1321,40 +1321,6 @@ field(std::string name, std::string description, InputSink type, bool required =
   };
 }
 
-[[nodiscard]] std::string_view opener(Toolset toolset, ProcessReach reach,
-                                      const std::set<OutputClass>& outputs) {
-  switch (reach) {
-  case ProcessReach::configured_process:
-    return "Start a pane's configured process; accepts no command payload.";
-  case ProcessReach::pane_input:
-    return "Send input to a pane's program; a shell that receives it runs it with "
-           "your user's permissions.";
-  case ProcessReach::pane_command:
-    return "Run a shell command in a pane with your user's permissions.";
-  case ProcessReach::none:
-    break;
-  }
-  if (toolset == Toolset::teardown) {
-    return "Delete tmux state; accepts no command payload.";
-  }
-  if (outputs.contains(OutputClass::terminal_content)) {
-    return "Read pane output; accepts no client-supplied executable input. Returned "
-           "content may be sensitive or untrusted.";
-  }
-  if (outputs.contains(OutputClass::process_environment)) {
-    return "Read the tmux environment; accepts no client-supplied executable input. "
-           "Returned values may contain secrets.";
-  }
-  if (outputs.contains(OutputClass::configured_command)) {
-    return "Read configured tmux commands; accepts no client-supplied executable "
-           "input. Returned values may contain executable configuration.";
-  }
-  if (toolset == Toolset::manage || toolset == Toolset::execute) {
-    return "Change tmux state; no client-supplied executable input.";
-  }
-  return "Inspect tmux metadata; accepts no client-supplied executable input.";
-}
-
 [[nodiscard]] ToolDefinition
 make_tool(std::string name, std::string title, Toolset toolset, ProcessReach reach,
           std::set<Effect> effects, std::set<OutputClass> outputs, bool secrets,
@@ -1377,8 +1343,9 @@ make_tool(std::string name, std::string title, Toolset toolset, ProcessReach rea
                       .annotations = annotations,
                       .schema = {.input = {}, .output = output_shape},
                       .handler = std::move(handler)};
-  tool.description = std::string{opener(tool.toolset, tool.authority.process_reach,
-                                        tool.authority.output_classes)};
+  tool.description = std::string{
+      detail::controlled_opener(tool.toolset, tool.authority.process_reach,
+                                tool.authority.output_classes, tool.authority.effects)};
   if (!description.empty()) {
     tool.description.push_back(' ');
     tool.description += std::move(description);

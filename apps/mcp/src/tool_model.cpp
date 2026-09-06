@@ -236,39 +236,6 @@ validate_send_key_operations(const std::vector<FlatArguments>& operations) {
   return false;
 }
 
-[[nodiscard]] std::string_view controlled_opener(const ToolDefinition& tool) {
-  switch (tool.authority.process_reach) {
-  case ProcessReach::configured_process:
-    return "Start a pane's configured process; accepts no command payload.";
-  case ProcessReach::pane_input:
-    return "Send input to a pane's program; a shell that receives it runs it with "
-           "your user's permissions.";
-  case ProcessReach::pane_command:
-    return "Run a shell command in a pane with your user's permissions.";
-  case ProcessReach::none:
-    break;
-  }
-  if (tool.toolset == Toolset::teardown) {
-    return "Delete tmux state; accepts no command payload.";
-  }
-  if (tool.authority.output_classes.contains(OutputClass::terminal_content)) {
-    return "Read pane output; accepts no client-supplied executable input. Returned "
-           "content may be sensitive or untrusted.";
-  }
-  if (tool.authority.output_classes.contains(OutputClass::process_environment)) {
-    return "Read the tmux environment; accepts no client-supplied executable input. "
-           "Returned values may contain secrets.";
-  }
-  if (tool.authority.output_classes.contains(OutputClass::configured_command)) {
-    return "Read configured tmux commands; accepts no client-supplied executable "
-           "input. Returned values may contain executable configuration.";
-  }
-  if (tool.authority.effects.contains(Effect::change)) {
-    return "Change tmux state; no client-supplied executable input.";
-  }
-  return "Inspect tmux metadata; accepts no client-supplied executable input.";
-}
-
 [[nodiscard]] libtmux::expected<void, std::string>
 validate_definition(const ToolDefinition& tool) {
   if (tool.name.empty()) {
@@ -460,7 +427,9 @@ validate_definition(const ToolDefinition& tool) {
   if (process_argv) {
     return libtmux::unexpected("process-argv input is prohibited: " + tool.name);
   }
-  if (!tool.description.starts_with(controlled_opener(tool))) {
+  if (!tool.description.starts_with(detail::controlled_opener(
+          tool.toolset, tool.authority.process_reach, tool.authority.output_classes,
+          tool.authority.effects))) {
     return libtmux::unexpected("description has the wrong controlled opener: " +
                                tool.name);
   }
