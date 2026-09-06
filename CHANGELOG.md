@@ -17,8 +17,10 @@ was recorded as it landed.
   Before: `{"name": "enter_copy_mode", "arguments": {"target": "%1"}}`
   After:  `{"name": "capture_pane", "arguments": {"paneId": "%1"}}`
 
-- Every MCP tool names its pane argument `paneId` rather than `target`.
-  Wire-breaking for MCP clients.
+- A tool that acts on one pane names that argument `paneId` rather than
+  `target`, and takes a canonical `%`-prefixed id. Wire-breaking for MCP
+  clients. `wait_for_text`, `show_option` and `show_hooks` keep `target`, which
+  is any tmux target expression rather than one pane.
 
   Before: `{"name": "capture_pane", "arguments": {"target": "%1"}}`
   After:  `{"name": "capture_pane", "arguments": {"paneId": "%1"}}`
