@@ -3,16 +3,22 @@
 #include <algorithm>
 #include <charconv>
 #include <cstdint>
+#include <filesystem>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <tuple>
 #include <utility>
+
+#if !defined(_WIN32)
+#include <sys/stat.h>
+#endif
 
 namespace libtmux::mcp::detail {
 namespace {
 
 struct PaneInputIdentity {
-  std::string endpoint;
+  PaneInputEndpointIdentity endpoint;
   std::uint64_t server_pid{};
   std::uint64_t server_start_time{};
   std::string pane_id;
@@ -41,15 +47,40 @@ struct Registry {
       (value.size() > 2U && value[1] == '0')) {
     return false;
   }
-  std::uint64_t parsed = 0U;
+  std::uint32_t parsed = 0U;
   const char* const first = value.data() + 1U;
   const char* const last = value.data() + value.size();
   const auto answer = std::from_chars(first, last, parsed);
   return answer.ec == std::errc{} && answer.ptr == last;
 }
 
+[[nodiscard]] bool contains_control_byte(std::string_view value) {
+  return std::ranges::any_of(value, [](const char character) {
+    const auto byte = static_cast<unsigned char>(character);
+    return byte <= 0x1FU || byte == 0x7FU;
+  });
+}
+
+[[nodiscard]] std::optional<PaneInputEndpointIdentity>
+endpoint_identity(std::string_view endpoint) {
+  const std::filesystem::path path{endpoint};
+  if (endpoint.empty() || !path.is_absolute() || contains_control_byte(endpoint)) {
+    return std::nullopt;
+  }
+#if defined(_WIN32)
+  return std::nullopt;
+#else
+  struct stat status {};
+  if (::stat(path.c_str(), &status) != 0 || !S_ISSOCK(status.st_mode)) {
+    return std::nullopt;
+  }
+  return PaneInputEndpointIdentity{.device = static_cast<std::uintmax_t>(status.st_dev),
+                                   .inode = static_cast<std::uintmax_t>(status.st_ino)};
+#endif
+}
+
 [[nodiscard]] std::vector<PaneInputIdentity>
-identities(std::string endpoint, std::uint64_t server_pid,
+identities(const PaneInputEndpointIdentity& endpoint, std::uint64_t server_pid,
            std::uint64_t server_start_time, const std::vector<std::string>& pane_ids) {
   std::vector<PaneInputIdentity> answer;
   answer.reserve(pane_ids.size());
@@ -82,6 +113,11 @@ identities(std::string endpoint, std::uint64_t server_pid,
 }
 
 } // namespace
+
+std::optional<PaneInputEndpointIdentity>
+pane_input_endpoint_identity(std::string_view endpoint) {
+  return endpoint_identity(endpoint);
+}
 
 class PaneInputLease::Impl {
 public:
@@ -146,9 +182,10 @@ PaneInputLease::~PaneInputLease() {
 bool PaneInputLease::covers(std::string_view endpoint, std::uint64_t server_pid,
                             std::uint64_t server_start_time,
                             const std::vector<std::string>& pane_ids) const {
-  return implementation_ != nullptr &&
-         implementation_->covers(identities(std::string{endpoint}, server_pid,
-                                            server_start_time, pane_ids));
+  const auto physical = endpoint_identity(endpoint);
+  return implementation_ != nullptr && physical.has_value() &&
+         implementation_->covers(
+             identities(*physical, server_pid, server_start_time, pane_ids));
 }
 
 void PaneInputLease::release() {
@@ -165,7 +202,8 @@ libtmux::expected<PaneInputLease, ToolError>
 reserve_pane_input(std::string endpoint, std::uint64_t server_pid,
                    std::uint64_t server_start_time, std::vector<std::string> pane_ids,
                    PaneInputReservationKind kind, std::string_view tool_name) {
-  if (endpoint.empty() || server_pid == 0U || server_start_time == 0U ||
+  const auto physical = endpoint_identity(endpoint);
+  if (!physical.has_value() || server_pid == 0U || server_start_time == 0U ||
       pane_ids.empty() || tool_name.empty() ||
       !std::ranges::all_of(pane_ids, canonical_pane_id)) {
     return libtmux::unexpected(invalid_reservation());
@@ -175,7 +213,7 @@ reserve_pane_input(std::string endpoint, std::uint64_t server_pid,
     return libtmux::unexpected(invalid_reservation());
   }
   std::vector<PaneInputIdentity> wanted =
-      identities(std::move(endpoint), server_pid, server_start_time, pane_ids);
+      identities(*physical, server_pid, server_start_time, pane_ids);
   Registry& owner = registry();
   std::lock_guard lock{owner.mutex};
   for (const PaneInputIdentity& identity : wanted) {

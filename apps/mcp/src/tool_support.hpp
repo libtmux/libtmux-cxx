@@ -1,15 +1,19 @@
 #pragma once
 
+#include <compare>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "libtmux/server.hpp"
 #include "libtmux_consumers/mcp.hpp"
+#include "pane_input.hpp"
 
 namespace libtmux::mcp::detail {
 
@@ -58,30 +62,68 @@ struct PaneInputCaller {
   std::string pane_id;
   std::string session_id;
   std::uint64_t server_pid{};
+  PaneInputEndpointIdentity endpoint;
 
   [[nodiscard]] static PaneInputCaller detached() {
     return PaneInputCaller{.relation = PaneInputCallerRelation::detached,
                            .pane_id = {},
                            .session_id = {},
-                           .server_pid = 0U};
+                           .server_pid = 0U,
+                           .endpoint = {}};
   }
-  [[nodiscard]] static PaneInputCaller foreign() {
+  [[nodiscard]] static PaneInputCaller foreign(std::string pane_id,
+                                               std::string session_id,
+                                               std::uint64_t server_pid,
+                                               PaneInputEndpointIdentity endpoint) {
     return PaneInputCaller{.relation = PaneInputCallerRelation::foreign,
-                           .pane_id = {},
-                           .session_id = {},
-                           .server_pid = 0U};
+                           .pane_id = std::move(pane_id),
+                           .session_id = std::move(session_id),
+                           .server_pid = server_pid,
+                           .endpoint = endpoint};
   }
-  [[nodiscard]] static PaneInputCaller
-  selected(std::string pane_id, std::string session_id, std::uint64_t server_pid) {
+  [[nodiscard]] static PaneInputCaller selected(std::string pane_id,
+                                                std::string session_id,
+                                                std::uint64_t server_pid,
+                                                PaneInputEndpointIdentity endpoint) {
     return PaneInputCaller{.relation = PaneInputCallerRelation::selected,
                            .pane_id = std::move(pane_id),
                            .session_id = std::move(session_id),
-                           .server_pid = server_pid};
+                           .server_pid = server_pid,
+                           .endpoint = endpoint};
   }
+
+  bool operator==(const PaneInputCaller&) const = default;
+};
+
+struct PaneInputMemberState {
+  std::string pane_id;
+  std::string window_id;
+  std::uint32_t window_index{};
+  std::string session_id;
+  bool synchronized{};
+  std::uint64_t mode{};
+  bool dead{};
+  bool input_off{};
+
+  auto operator<=>(const PaneInputMemberState&) const = default;
+};
+
+struct PaneInputClientState {
+  std::string session_id;
+  std::string window_id;
+  std::uint32_t window_index{};
+  std::string pane_id;
+  bool zoomed{};
+
+  auto operator<=>(const PaneInputClientState&) const = default;
 };
 
 struct PaneInputPreflight {
   std::vector<std::string> configured_pane_ids;
+  std::vector<PaneInputMemberState> configured_state;
+  std::vector<PaneInputClientState> terminal_clients;
+  PaneInputCaller caller;
+  std::string endpoint_path;
   std::string window_id;
   std::uint64_t server_pid{};
   std::uint64_t server_start_time{};
@@ -120,6 +162,8 @@ parse_pane_input_snapshot(std::string_view source_pane_id, std::string raw,
 [[nodiscard]] libtmux::expected<PaneInputPreflight, ToolError>
 preflight_pane_input(const Server& server, std::string_view source_pane_id,
                      PaneInputScope scope);
+[[nodiscard]] bool same_pane_input_route(const PaneInputPreflight& initial,
+                                         const PaneInputPreflight& final);
 [[nodiscard]] StructuredValue session_value(const Session& session);
 [[nodiscard]] StructuredValue window_value(const Window& window);
 [[nodiscard]] StructuredValue pane_value(const Pane& pane);

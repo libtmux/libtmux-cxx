@@ -1,7 +1,9 @@
 #pragma once
 
+#include <compare>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -12,6 +14,16 @@
 namespace libtmux::mcp::detail {
 
 enum class PaneInputReservationKind { input, run };
+
+struct PaneInputEndpointIdentity {
+  std::uintmax_t device{};
+  std::uintmax_t inode{};
+
+  auto operator<=>(const PaneInputEndpointIdentity&) const = default;
+};
+
+[[nodiscard]] std::optional<PaneInputEndpointIdentity>
+pane_input_endpoint_identity(std::string_view endpoint);
 
 class PaneInputLease {
 public:
