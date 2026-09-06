@@ -729,7 +729,7 @@ TEST(McpTools, PaneInputReservationsAreProcessWideAndNonqueueing) {
 TEST(McpTools, ShellCommandPayloadUsesAnIsolatedExactEndpointFrame) {
   const std::string nonce(32U, 'a');
   const auto payload = libtmux::mcp::detail::shell_command_payload(
-      "true", "/opt/tmux", "/tmp/mcp.sock", [nonce] { return nonce; });
+      "true", "/opt/tmux", "/tmp/mcp.sock", "bash", [nonce] { return nonce; });
   ASSERT_TRUE(payload.has_value()) << payload.error().message;
   EXPECT_EQ(payload->marker, "__LIBTMUX_MCP_DONE_" + nonce + "__");
   EXPECT_EQ(payload->text.find(payload->marker), std::string::npos);
@@ -738,12 +738,14 @@ TEST(McpTools, ShellCommandPayloadUsesAnIsolatedExactEndpointFrame) {
   EXPECT_EQ(payload->text.find("__libtmux_mcp_status"), std::string::npos);
   EXPECT_NE(payload->text.find("'/opt/tmux' -N -S '/tmp/mcp.sock' display-message -p"),
             std::string::npos);
-  EXPECT_EQ(occurrences(payload->text, "\\eval "), 4U);
-  EXPECT_EQ(occurrences(payload->text, "\\trap "), 4U);
-  EXPECT_EQ(occurrences(payload->text, "display-message -p"), 16U);
-  EXPECT_EQ(occurrences(payload->text, "display-message -p ''"), 4U);
-  EXPECT_EQ(occurrences(payload->text, ":BEGIN"), 4U);
-  EXPECT_EQ(occurrences(payload->text, "\\exit 0"), 4U);
+  EXPECT_EQ(occurrences(payload->text, "\\eval "), 1U);
+  EXPECT_EQ(occurrences(payload->text, "\\trap "), 3U);
+  EXPECT_EQ(occurrences(payload->text, "display-message -p"), 4U);
+  EXPECT_EQ(occurrences(payload->text, "display-message -p ''"), 1U);
+  EXPECT_EQ(occurrences(payload->text, ":BEGIN"), 1U);
+  EXPECT_EQ(occurrences(payload->text, "\\exit 0"), 1U);
+  EXPECT_NE(payload->text.find("\\trap -p ERR DEBUG"), std::string::npos);
+  EXPECT_NE(payload->text.find("/usr/bin/head -c 65537"), std::string::npos);
   const std::size_t trap = payload->text.find("\\trap ");
   const std::size_t opening = payload->text.find(":BEGIN");
   const std::size_t saved_status = payload->text.find("\\set -- \"$?\"");
@@ -769,7 +771,8 @@ TEST(McpTools, ShellCommandPayloadRetriesEveryCandidateCollision) {
   std::size_t calls = 0U;
   const auto payload = libtmux::mcp::detail::shell_command_payload(
       "command " + marker(first), "/tmp/" + marker(second) + "/tmux",
-      "/tmp/" + marker(third) + ".sock", [&] { return candidates.at(calls++); });
+      "/tmp/" + marker(third) + ".sock", "bash",
+      [&] { return candidates.at(calls++); });
   ASSERT_TRUE(payload.has_value()) << payload.error().message;
   EXPECT_EQ(calls, candidates.size());
   EXPECT_EQ(payload->marker, marker(fourth));
@@ -777,7 +780,7 @@ TEST(McpTools, ShellCommandPayloadRetriesEveryCandidateCollision) {
 
   calls = 0U;
   const auto exhausted = libtmux::mcp::detail::shell_command_payload(
-      "true", "/opt/tmux", "/tmp/mcp.sock", [&] {
+      "true", "/opt/tmux", "/tmp/mcp.sock", "bash", [&] {
         ++calls;
         return std::string{"invalid"};
       });
@@ -789,13 +792,52 @@ TEST(McpTools, ShellCommandPayloadRetriesEveryCandidateCollision) {
 TEST(McpTools, ShellCommandPayloadKeepsArbitraryCallerSyntaxInsideEval) {
   const std::string command = "printf output; echo tail\n'quote' # trailing\nexit 23";
   const auto payload = libtmux::mcp::detail::shell_command_payload(
-      command, "/opt/tmux", "/tmp/mcp.sock", [] { return std::string(32U, 'b'); });
+      command, "/opt/tmux", "/tmp/mcp.sock", "bash",
+      [] { return std::string(32U, 'b'); });
   ASSERT_TRUE(payload.has_value()) << payload.error().message;
   EXPECT_NE(payload->text.find("printf output"), std::string::npos);
   EXPECT_NE(payload->text.find("echo tail"), std::string::npos);
   EXPECT_NE(payload->text.find("# trailing"), std::string::npos);
   EXPECT_NE(payload->text.find("exit 23"), std::string::npos);
   EXPECT_EQ(payload->text.find(payload->marker), std::string::npos);
+}
+
+TEST(McpTools, ShellCommandPayloadRejectsControlBytesInRetainedEndpoint) {
+  std::vector<unsigned char> controls;
+  for (unsigned int value = 0U; value <= 0x1FU; ++value) {
+    controls.push_back(static_cast<unsigned char>(value));
+  }
+  controls.push_back(0x7FU);
+
+  for (const unsigned char control : controls) {
+    std::string executable{"/opt/tmux"};
+    executable.push_back(static_cast<char>(control));
+    const auto executable_result = libtmux::mcp::detail::shell_command_payload(
+        "true", executable, "/tmp/mcp.sock", "bash",
+        [] { return std::string(32U, 'c'); });
+    ASSERT_FALSE(executable_result.has_value()) << static_cast<unsigned int>(control);
+    EXPECT_NE(executable_result.error().message.find("control byte"),
+              std::string::npos);
+
+    std::string socket{"/tmp/mcp.sock"};
+    socket.push_back(static_cast<char>(control));
+    const auto socket_result = libtmux::mcp::detail::shell_command_payload(
+        "true", "/opt/tmux", socket, "bash", [] { return std::string(32U, 'd'); });
+    ASSERT_FALSE(socket_result.has_value()) << static_cast<unsigned int>(control);
+    EXPECT_NE(socket_result.error().message.find("control byte"), std::string::npos);
+  }
+}
+
+TEST(McpTools, ShellCommandPayloadPreservesNonControlEndpointBytes) {
+  std::string executable{"/opt/tmux !#$&()+,-.;=@[]^_{}~"};
+  executable.push_back(static_cast<char>(0x80U));
+  std::string socket{"/tmp/mcp !#$&()+,-.;=@[]^_{}~.sock"};
+  socket.push_back(static_cast<char>(0xFFU));
+  const auto payload = libtmux::mcp::detail::shell_command_payload(
+      "true", executable, socket, "bash", [] { return std::string(32U, 'e'); });
+  ASSERT_TRUE(payload.has_value()) << payload.error().message;
+  EXPECT_NE(payload->text.find(executable), std::string::npos);
+  EXPECT_NE(payload->text.find(socket), std::string::npos);
 }
 
 TEST(McpTools, ExecutableResolutionUsesPathOrderAndCanonicalFiles) {

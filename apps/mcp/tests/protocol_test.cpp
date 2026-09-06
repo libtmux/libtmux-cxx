@@ -320,6 +320,41 @@ bool contains_completion_marker(std::string_view text) {
   return false;
 }
 
+std::size_t line_occurrences(std::string_view text, std::string_view expected) {
+  std::size_t count = 0U;
+  std::size_t begin = 0U;
+  while (begin <= text.size()) {
+    const std::size_t end = text.find('\n', begin);
+    const std::string_view line = text.substr(
+        begin, end == std::string_view::npos ? std::string_view::npos : end - begin);
+    count += line == expected ? 1U : 0U;
+    if (end == std::string_view::npos) {
+      break;
+    }
+    begin = end + 1U;
+  }
+  return count;
+}
+
+std::vector<std::string> run_shell_trap_files() {
+  std::vector<std::string> files;
+  std::error_code error;
+  const std::filesystem::path temporary = std::filesystem::temp_directory_path(error);
+  if (error) {
+    return files;
+  }
+  std::filesystem::directory_iterator entries{temporary, error};
+  for (; !error && entries != std::filesystem::directory_iterator{};
+       entries.increment(error)) {
+    const std::string name = entries->path().filename().string();
+    if (name.starts_with("libtmux-mcp-traps-")) {
+      files.push_back(name);
+    }
+  }
+  std::ranges::sort(files);
+  return files;
+}
+
 class McpProtocol : public testing::Test {
 protected:
   void SetUp() override {
@@ -978,12 +1013,15 @@ TEST_F(McpProtocol, IsolatesCompletionFramingAcrossInstalledPosixShells) {
   ASSERT_TRUE(tmux_executable.has_value());
   const libtmux::Server server = connect_server();
   const std::array<std::string_view, 4> names{"sh", "bash", "dash", "zsh"};
-  const std::array<std::tuple<std::string_view, std::string_view, bool>, 4> flags{{
-      {"neither", "\\set +e; \\set +x", false},
-      {"errexit", "\\set +x; \\set -e", true},
-      {"xtrace", "\\set +e; \\set -x", false},
-      {"both", "\\set +e; \\set +x; \\set -e; \\set -x", true},
-  }};
+  const std::array<std::tuple<std::string_view, std::string_view, bool, bool>, 6> flags{
+      {
+          {"neither", "\\set +e; \\set +x; \\set +f", false, false},
+          {"errexit", "\\set +x; \\set +f; \\set -e", true, false},
+          {"xtrace", "\\set +e; \\set +f; \\set -x", false, false},
+          {"both", "\\set +e; \\set +x; \\set +f; \\set -e; \\set -x", true, false},
+          {"noglob", "\\set +e; \\set +x; \\set -f", false, true},
+          {"all", "\\set +e; \\set +x; \\set -e; \\set -x; \\set -f", true, true},
+      }};
   int request_id = 100;
 
   for (const std::string_view name : names) {
@@ -1068,7 +1106,8 @@ TEST_F(McpProtocol, IsolatesCompletionFramingAcrossInstalledPosixShells) {
     ASSERT_FALSE(bare_exit["result"]["isError"].get<bool>()) << bare_exit.dump();
     EXPECT_EQ(bare_exit["result"]["structuredContent"]["exit_code"], 23);
 
-    for (const auto& [flag_name, flag_command, inherited_errexit] : flags) {
+    for (const auto& [flag_name, flag_command, inherited_errexit, inherited_noglob] :
+         flags) {
       send_shell_and_wait(server, *pane, *tmux_executable, std::string{flag_command});
       const std::string parent_before =
           parent_shell_state(server, *pane, *tmux_executable,
@@ -1078,7 +1117,9 @@ TEST_F(McpProtocol, IsolatesCompletionFramingAcrossInstalledPosixShells) {
           " ] || exit 90; [ \"$MCP_PARENT_VALUE\" = kept ] || exit 91; "
           "[ \"$MCP_PARENT_EXPORT\" = kept ] || exit 92; "
           "mcp_parent_function || exit 93; "
-          "sh -c '[ \"$MCP_PARENT_EXPORT\" = kept ]' || exit 94";
+          "sh -c '[ \"$MCP_PARENT_EXPORT\" = kept ]' || exit 94; " +
+          (inherited_noglob ? "case $- in *f*) ;; *) exit 95 ;; esac"
+                            : "case $- in *f*) exit 95 ;; *) : ;; esac");
       const json isolated = invoke(
           "run_shell_command",
           {{"paneId", pane_id},
@@ -1134,6 +1175,129 @@ TEST_F(McpProtocol, IsolatesCompletionFramingAcrossInstalledPosixShells) {
     ASSERT_TRUE(dead.has_value()) << dead.error().diagnostic;
     ASSERT_EQ(*dead, "1");
     EXPECT_TRUE(std::filesystem::exists(exit_marker)) << name;
+  }
+}
+
+TEST_F(McpProtocol, PreservesInheritedErrorAndDebugTrapsAcrossBashAndZsh) {
+  const auto tmux_executable = executable_on_path("tmux");
+  ASSERT_TRUE(tmux_executable.has_value());
+  const libtmux::Server server = connect_server();
+  int request_id = 200;
+
+  for (const std::string_view name :
+       {std::string_view{"bash"}, std::string_view{"zsh"}}) {
+    const auto shell = executable_on_path(name);
+    if (!shell.has_value()) {
+      std::cout << "Skipping unavailable shell: " << name << '\n';
+      continue;
+    }
+    const auto created = server.run({"new-window", "-d", "-P", "-F", "#{pane_id}", "-t",
+                                     "mcp:", "-n", "traps-" + std::string{name}});
+    ASSERT_TRUE(created.has_value()) << created.error().diagnostic;
+    const std::string pane_id = created->substr(0U, created->find('\n'));
+    auto pane = server.pane(pane_id);
+    ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
+
+    const std::string flags = name == "bash" ? " --noprofile --norc -i" : " -f -i";
+    ASSERT_TRUE(
+        pane->send_text("exec " + shell_quote(shell->string()) + flags).has_value());
+    ASSERT_TRUE(pane->send_key("Enter").has_value());
+    const auto foreground = wait_for_pane_value(*pane, "#{pane_current_command}",
+                                                shell->filename().string());
+    ASSERT_TRUE(foreground.has_value()) << foreground.error().diagnostic;
+    ASSERT_EQ(*foreground, shell->filename().string());
+
+    const std::string debug_out = "trap-debug-" + std::string{name} + "-stdout";
+    const std::string debug_error = "trap-debug-" + std::string{name} + "-stderr";
+    const std::string error_out = "trap-error-" + std::string{name} + "-stdout";
+    const std::string error_error = "trap-error-" + std::string{name} + "-stderr";
+    const std::string debug_action =
+        "/usr/bin/printf '%s\\n' " + shell_quote(debug_out) +
+        "; /usr/bin/printf '%s\\n' " + shell_quote(debug_error) + " >&2";
+    const std::string error_action =
+        "/usr/bin/printf '%s\\n' " + shell_quote(error_out) +
+        "; /usr/bin/printf '%s\\n' " + shell_quote(error_error) + " >&2";
+    const std::string error_signal = name == "bash" ? "ERR" : "ZERR";
+    send_shell_and_wait(server, *pane, *tmux_executable,
+                        "PS1=''; \\trap " + shell_quote(debug_action) +
+                            " DEBUG; \\trap " + shell_quote(error_action) + " " +
+                            error_signal + "; \\set -e; \\set -x");
+
+    const std::string parent_before = parent_shell_state(
+        server, *pane, *tmux_executable, "traps-before-" + std::string{name});
+    const auto files_before = run_shell_trap_files();
+    const std::string success_marker = "trap-success-" + std::string{name};
+    const json success = invoke("run_shell_command",
+                                {{"paneId", pane_id},
+                                 {"command", "case $- in *e*) ;; *) exit 90 ;; esac; "
+                                             "case $- in *x*) ;; *) exit 91 ;; esac; "
+                                             "/usr/bin/printf '%s\\n' " +
+                                                 shell_quote(success_marker)},
+                                 {"timeoutMs", 5000}},
+                                ++request_id);
+    ASSERT_FALSE(success["result"]["isError"].get<bool>()) << success.dump();
+    EXPECT_EQ(success["result"]["structuredContent"]["exit_code"], 0) << name;
+    const std::string success_text =
+        success["result"]["structuredContent"]["text"].get<std::string>();
+    EXPECT_EQ(line_occurrences(success_text, success_marker), 1U) << name;
+    EXPECT_GT(line_occurrences(success_text, debug_out), 0U) << name;
+    EXPECT_GT(line_occurrences(success_text, debug_error), 0U) << name;
+
+    const std::string unreachable = "trap-unreachable-" + std::string{name};
+    const json failure = invoke(
+        "run_shell_command",
+        {{"paneId", pane_id},
+         {"command", "false; /usr/bin/printf '%s\\n' " + shell_quote(unreachable)},
+         {"timeoutMs", 5000}},
+        ++request_id);
+    ASSERT_FALSE(failure["result"]["isError"].get<bool>()) << failure.dump();
+    EXPECT_NE(failure["result"]["structuredContent"]["exit_code"], 0) << name;
+    const std::string failure_text =
+        failure["result"]["structuredContent"]["text"].get<std::string>();
+    EXPECT_EQ(line_occurrences(failure_text, error_out), 1U) << name;
+    EXPECT_EQ(line_occurrences(failure_text, error_error), 1U) << name;
+    EXPECT_EQ(line_occurrences(failure_text, unreachable), 0U) << name;
+
+    send_shell_and_wait(
+        server, *pane, *tmux_executable,
+        "\\set +x; __libtmux_test_trap=\"true; : "
+        "$(/usr/bin/printf '%070000d' 0)\"; \\trap \"$__libtmux_test_trap\" " +
+            error_signal + "; \\unset __libtmux_test_trap; \\set -x");
+    const std::string refused_marker = "trap-refused-" + std::string{name};
+    const json refused =
+        invoke("run_shell_command",
+               {{"paneId", pane_id},
+                {"command", "/usr/bin/printf '%s\\n' " + shell_quote(refused_marker)},
+                {"timeoutMs", 5000}},
+               ++request_id);
+    ASSERT_FALSE(refused["result"]["isError"].get<bool>()) << refused.dump();
+    EXPECT_EQ(refused["result"]["structuredContent"]["exit_code"], 125) << name;
+    const std::string refused_text =
+        refused["result"]["structuredContent"]["text"].get<std::string>();
+    EXPECT_EQ(line_occurrences(refused_text, refused_marker), 0U) << name;
+
+    send_shell_and_wait(server, *pane, *tmux_executable,
+                        "\\set +x; \\trap " + shell_quote(error_action) + " " +
+                            error_signal + "; \\set -x");
+    const std::string recovered_marker = "trap-recovered-" + std::string{name};
+    const json recovered =
+        invoke("run_shell_command",
+               {{"paneId", pane_id},
+                {"command", "/usr/bin/printf '%s\\n' " + shell_quote(recovered_marker)},
+                {"timeoutMs", 5000}},
+               ++request_id);
+    ASSERT_FALSE(recovered["result"]["isError"].get<bool>()) << recovered.dump();
+    EXPECT_EQ(recovered["result"]["structuredContent"]["exit_code"], 0) << name;
+    EXPECT_EQ(line_occurrences(
+                  recovered["result"]["structuredContent"]["text"].get<std::string>(),
+                  recovered_marker),
+              1U)
+        << name;
+
+    const std::string parent_after = parent_shell_state(
+        server, *pane, *tmux_executable, "traps-after-" + std::string{name});
+    EXPECT_EQ(parent_after, parent_before) << name;
+    EXPECT_EQ(run_shell_trap_files(), files_before) << name;
   }
 }
 

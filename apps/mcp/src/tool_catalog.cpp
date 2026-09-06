@@ -67,10 +67,88 @@ namespace {
          " display-message -p " + std::string{message};
 }
 
-[[nodiscard]] std::string
-shell_frame_branch(std::string_view command, std::string_view tmux_executable,
-                   std::string_view socket_path, std::string_view nonce,
-                   std::string_view disable_flags, std::string_view restore_flags) {
+[[nodiscard]] std::string_view shell_name(std::string_view command) {
+  const std::size_t slash = command.rfind('/');
+  std::string_view basename =
+      command.substr(slash == std::string_view::npos ? 0U : slash + 1U);
+  if (!basename.empty() && basename.front() == '-') {
+    basename.remove_prefix(1U);
+  }
+  return basename;
+}
+
+[[nodiscard]] bool contains_control_byte(std::string_view value) {
+  return std::ranges::any_of(value, [](const char character) {
+    const auto byte = static_cast<unsigned char>(character);
+    return byte <= 0x1FU || byte == 0x7FU;
+  });
+}
+
+[[nodiscard]] std::string inherited_trap_capture(std::string_view current_shell,
+                                                 std::string_view nonce,
+                                                 std::string_view declarations,
+                                                 std::string_view capture_status,
+                                                 std::string_view inherited_flags) {
+  const std::string_view name = shell_name(current_shell);
+  if (name != "bash" && name != "zsh") {
+    return std::string{declarations} + "=; " + std::string{capture_status} + "=0";
+  }
+
+  const std::string file = "__libtmux_mcp_trap_file_" + std::string{nonce};
+  const std::string read_owned = "__libtmux_mcp_trap_read_owned_" + std::string{nonce};
+  const std::string write_owned =
+      "__libtmux_mcp_trap_write_owned_" + std::string{nonce};
+  const std::string prefix = "/tmp/libtmux-mcp-traps-" + std::string{nonce};
+  const std::string declarations_name{declarations};
+  const std::string capture_status_name{capture_status};
+  std::string acquire;
+  std::string query;
+  if (name == "bash") {
+    const std::string files = "__libtmux_mcp_trap_files_" + std::string{nonce};
+    acquire = "\\set +f; " + files + "=(); if /usr/bin/mktemp " +
+              shell_quote(prefix + ".XXXXXX") + " >/dev/null; then " + files + "=(" +
+              shell_quote(prefix) +
+              ".?????"
+              "?); if [ \"${#" +
+              files + "[@]}\" -eq 1 ]; then " + file + "=\"${" + files +
+              "[0]}\"; else /bin/rm -f \"${" + files + "[@]}\"; fi; fi; case \"$" +
+              std::string{inherited_flags} + "\" in *f*) \\set -f ;; esac";
+    query = "\\trap -p ERR DEBUG";
+  } else {
+    acquire = "if /usr/bin/mktemp " + shell_quote(prefix + ".XXXXXX") +
+              " | IFS= \\read -r " + file + "; then :; else " + file + "=; fi";
+    query = "\\trap";
+  }
+
+  constexpr std::size_t maximum_bytes = 64U * 1024U;
+  return declarations_name + "=; " + capture_status_name + "=125; " + file + "=; " +
+         read_owned + "=0; " + write_owned + "=0; \\umask 077; " + acquire +
+         "; if [ -n \"$" + file + "\" ] && [ -f \"$" + file + "\" ] && [ -O \"$" +
+         file +
+         "\" ] && ! ( : >&8 ) 2>/dev/null && ! ( : <&8 ) 2>/dev/null && "
+         "! ( : >&9 ) 2>/dev/null && ! ( : <&9 ) 2>/dev/null && \\exec 8<> \"$" +
+         file + "\" && " + write_owned + "=1 && \\exec 9< \"$" + file + "\" && " +
+         read_owned + "=1 && /bin/rm -f \"$" + file + "\"; then if " + query +
+         " >&8; then " + capture_status_name +
+         "=0; fi; fi; \\trap - ERR DEBUG; if [ \"$" + write_owned +
+         "\" -eq 1 ]; then if ! \\exec 8>&-; then " + capture_status_name +
+         "=125; fi; " + write_owned + "=0; fi; if [ \"$" + capture_status_name +
+         "\" -eq 0 ] && [ \"$" + read_owned + "\" -eq 1 ]; then LC_ALL=C; if " +
+         declarations_name + "=$(/usr/bin/head -c " +
+         std::to_string(maximum_bytes + 1U) + " <&9); then if [ \"${#" +
+         declarations_name + "}\" -gt " + std::to_string(maximum_bytes) + " ]; then " +
+         declarations_name + "=; " + capture_status_name + "=125; fi; else " +
+         declarations_name + "=; " + capture_status_name + "=125; fi; fi; if [ \"$" +
+         read_owned + "\" -eq 1 ]; then if ! \\exec 9<&-; then " + capture_status_name +
+         "=125; fi; " + read_owned + "=0; fi; if [ -n \"$" + file +
+         "\" ]; then /bin/rm -f \"$" + file + "\"; fi";
+}
+
+[[nodiscard]] std::string shell_frame(std::string_view command,
+                                      std::string_view current_shell,
+                                      std::string_view tmux_executable,
+                                      std::string_view socket_path,
+                                      std::string_view nonce) {
   const std::string marker_parts = "'__LIBTMUX_MCP_DONE_''" + std::string{nonce} + "'";
   const std::string empty = display_writer(tmux_executable, socket_path, "''");
   const std::string opening =
@@ -79,19 +157,22 @@ shell_frame_branch(std::string_view command, std::string_view tmux_executable,
       display_writer(tmux_executable, socket_path, marker_parts + "'__:'\"$1\"");
   const std::string trap_action =
       "\\set -- \"$?\"; " + empty + "; " + closing + "; \\exit 0";
-  std::string frame{"( "};
-  if (!disable_flags.empty()) {
-    frame += disable_flags;
-    frame += "; ";
-  }
-  frame +=
-      "\\trap " + shell_quote(trap_action) + " 0; " + empty + "; " + opening + "; ( ";
-  if (!restore_flags.empty()) {
-    frame += restore_flags;
-    frame += "; ";
-  }
-  frame += "\\eval " + shell_quote(command) + " ); \\exit \"$?\" )";
-  return frame;
+  const std::string flags = "__libtmux_mcp_flags_" + std::string{nonce};
+  const std::string command_text = "__libtmux_mcp_command_" + std::string{nonce};
+  const std::string declarations = "__libtmux_mcp_traps_" + std::string{nonce};
+  const std::string capture_status = "__libtmux_mcp_trap_status_" + std::string{nonce};
+  const std::string remember = flags + "=$-";
+  const std::string restore = "case \"$" + flags +
+                              "\" in *e*) \\set -e ;; esac; case \"$" + flags +
+                              "\" in *x*) \\set -x ;; esac";
+  return "( " + remember + "; \\set +e; \\set +x; " + command_text + "=" +
+         shell_quote(command) + "; " +
+         inherited_trap_capture(current_shell, nonce, declarations, capture_status,
+                                flags) +
+         "; \\trap " + shell_quote(trap_action) + " 0; " + empty + "; " + opening +
+         "; if [ \"$" + capture_status + "\" -ne 0 ]; then \\exit 125; fi; ( " +
+         restore + "; \\eval \"$" + declarations + "\n$" + command_text +
+         "\" ); \\exit \"$?\" )\n";
 }
 
 [[nodiscard]] bool valid_shell_nonce(std::string_view nonce) {
@@ -104,7 +185,12 @@ shell_frame_branch(std::string_view command, std::string_view tmux_executable,
 
 libtmux::expected<ShellCommandPayload, ToolError>
 shell_command_payload(std::string_view command, std::string_view tmux_executable,
-                      std::string_view socket_path, ShellNonceFactory next_nonce) {
+                      std::string_view socket_path, std::string_view current_shell,
+                      ShellNonceFactory next_nonce) {
+  if (contains_control_byte(tmux_executable) || contains_control_byte(socket_path)) {
+    return libtmux::unexpected(
+        ToolError{false, "shell framing rejects a control byte in its endpoint"});
+  }
   if (!std::filesystem::path{tmux_executable}.is_absolute() || socket_path.empty() ||
       !next_nonce) {
     return libtmux::unexpected(
@@ -119,18 +205,7 @@ shell_command_payload(std::string_view command, std::string_view tmux_executable
     ShellCommandPayload payload{.marker = "__LIBTMUX_MCP_DONE_" + nonce + "__",
                                 .text = {}};
     payload.text =
-        "case $- in\n  *e*x*|*x*e*) " +
-        shell_frame_branch(command, tmux_executable, socket_path, nonce,
-                           "\\set +e; \\set +x", "\\set -e; \\set -x") +
-        " ;;\n  *e*) " +
-        shell_frame_branch(command, tmux_executable, socket_path, nonce, "\\set +e",
-                           "\\set -e") +
-        " ;;\n  *x*) " +
-        shell_frame_branch(command, tmux_executable, socket_path, nonce, "\\set +x",
-                           "\\set -x") +
-        " ;;\n  *) " +
-        shell_frame_branch(command, tmux_executable, socket_path, nonce, {}, {}) +
-        " ;;\nesac\n";
+        shell_frame(command, current_shell, tmux_executable, socket_path, nonce);
     if (payload.text.find(payload.marker) == std::string::npos) {
       return payload;
     }
@@ -244,12 +319,7 @@ constexpr std::array<std::string_view, 3> kPaneInputClientFields{
 }
 
 [[nodiscard]] bool supported_posix_shell(std::string_view command) {
-  const std::size_t slash = command.rfind('/');
-  std::string_view basename =
-      command.substr(slash == std::string_view::npos ? 0U : slash + 1U);
-  if (!basename.empty() && basename.front() == '-') {
-    basename.remove_prefix(1U);
-  }
+  const std::string_view basename = shell_name(command);
   constexpr std::array<std::string_view, 8> shells{"sh",  "ash",  "bash",  "dash",
                                                    "ksh", "mksh", "pdksh", "zsh"};
   return std::ranges::find(shells, basename) != shells.end();
@@ -2208,16 +2278,16 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
           return libtmux::unexpected(ToolError{
               false, "run_shell_command requires a retained POSIX tmux endpoint"});
         }
-        const auto payload = detail::shell_command_payload(
-            required(arguments, "command"), *tmux_executable, route[2],
-            shell_command_nonce);
-        if (!payload.has_value()) {
-          return libtmux::unexpected(payload.error());
-        }
         const auto initial = detail::preflight_pane_input(
             server, pane->id(), detail::PaneInputScope::singular_posix_shell);
         if (!initial.has_value()) {
           return libtmux::unexpected(initial.error());
+        }
+        const auto payload = detail::shell_command_payload(
+            required(arguments, "command"), *tmux_executable, route[2],
+            initial->foreground_command, shell_command_nonce);
+        if (!payload.has_value()) {
+          return libtmux::unexpected(payload.error());
         }
         auto reserved = detail::reserve_pane_input(
             server, *initial, detail::PaneInputReservationKind::run,

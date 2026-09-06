@@ -91,7 +91,8 @@ using ShellNonceFactory = std::function<std::string()>;
 
 [[nodiscard]] libtmux::expected<ShellCommandPayload, ToolError>
 shell_command_payload(std::string_view command, std::string_view tmux_executable,
-                      std::string_view socket_path, ShellNonceFactory next_nonce);
+                      std::string_view socket_path, std::string_view current_shell,
+                      ShellNonceFactory next_nonce);
 [[nodiscard]] libtmux::expected<std::string, ToolError>
 resolve_executable(std::string_view search_path,
                    const std::filesystem::path& current_directory);
