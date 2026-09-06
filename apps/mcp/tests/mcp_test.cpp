@@ -489,7 +489,8 @@ TEST(McpTools, PaneInputSnapshotValidatesAllRowsBeforeSelectingMembership) {
                    PaneInputScope::effective_cohort)
                    .has_value());
   EXPECT_FALSE(libtmux::mcp::detail::parse_pane_input_snapshot(
-                   "%7", source + pane_input_row("%8", "@4", "0", "0", "0", "sh"),
+                   "%7",
+                   source + pane_input_row("%7", "@4", "0", "0", "0", "sh", "0", "$4"),
                    PaneInputScope::effective_cohort)
                    .has_value());
   EXPECT_FALSE(libtmux::mcp::detail::parse_pane_input_snapshot(
@@ -594,11 +595,30 @@ TEST(McpTools, PaneInputSnapshotRefusesCallerAndDisabledRecipients) {
                    .has_value());
 }
 
+TEST(McpTools, PaneInputSnapshotResolvesAnOffWindowCaller) {
+  using libtmux::mcp::detail::PaneInputCaller;
+  using libtmux::mcp::detail::PaneInputScope;
+  const std::string source = pane_input_row("%7", "@3", "0", "0", "0", "sh");
+  const std::string linked_source =
+      pane_input_row("%7", "@3", "0", "0", "0", "sh", "0", "$4");
+  const std::string caller =
+      pane_input_row("%20", "@9", "0", "0", "0", "sh", "0", "$8");
+
+  const auto parsed = libtmux::mcp::detail::parse_pane_input_snapshot(
+      "%7", source + linked_source + caller, PaneInputScope::effective_cohort,
+      pane_input_client_row("0", "%20", "0"),
+      PaneInputCaller::selected("%20", "$8", 101U));
+
+  ASSERT_TRUE(parsed.has_value()) << parsed.error().message;
+  EXPECT_EQ(parsed->configured_pane_ids, std::vector<std::string>{"%7"});
+}
+
 TEST(McpTools, PaneInputSnapshotProjectsStrictTerminalAttention) {
   using libtmux::mcp::detail::PaneInputCaller;
   using libtmux::mcp::detail::PaneInputScope;
   const std::string rows = pane_input_row("%7", "@3", "1", "0", "0", "sh") +
-                           pane_input_row("%8", "@3", "1", "0", "0", "cat");
+                           pane_input_row("%8", "@3", "1", "0", "0", "cat") +
+                           pane_input_row("%20", "@9", "0", "0", "0", "sh", "0", "$8");
   const auto parse = [&](std::string clients, PaneInputScope scope) {
     return libtmux::mcp::detail::parse_pane_input_snapshot(
         "%7", rows, scope, std::move(clients), PaneInputCaller::detached());
@@ -615,6 +635,9 @@ TEST(McpTools, PaneInputSnapshotProjectsStrictTerminalAttention) {
                   .has_value());
   EXPECT_TRUE(parse(pane_input_client_row("0", "%20", "0"), PaneInputScope::target_only)
                   .has_value());
+  EXPECT_FALSE(
+      parse(pane_input_client_row("0", "%99", "0"), PaneInputScope::target_only)
+          .has_value());
   EXPECT_TRUE(parse({}, PaneInputScope::target_only).has_value());
 
   for (const std::string& malformed :

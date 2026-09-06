@@ -1427,6 +1427,49 @@ TEST_F(McpProtocol, KeepsEmptyPasteBufferFreeAndEnterTargetOnly) {
   EXPECT_EQ(buffer_names(*buffers_after_enter), buffer_names(*buffers_before));
 }
 
+TEST_F(McpProtocol, ResolvesAnAuthenticatedCallerOutsideTheTargetWindow) {
+  const libtmux::Server server = connect_server();
+  auto source = server.pane("mcp");
+  ASSERT_TRUE(source.has_value()) << source.error().diagnostic;
+  auto sessions = server.sessions();
+  ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
+  ASSERT_EQ(sessions->size(), 1U);
+  auto caller_window = sessions->front().new_window("mcp-caller");
+  ASSERT_TRUE(caller_window.has_value()) << caller_window.error().diagnostic;
+  auto caller_panes = caller_window->panes();
+  ASSERT_TRUE(caller_panes.has_value()) << caller_panes.error().diagnostic;
+  ASSERT_EQ(caller_panes->size(), 1U);
+  const libtmux::Pane caller = caller_panes->front();
+  const auto identity =
+      server.run({"display-message", "-p", "-t", caller.id(), "#{pid} #{session_id}"});
+  ASSERT_TRUE(identity.has_value()) << identity.error().diagnostic;
+  std::string caller_identity = *identity;
+  ASSERT_FALSE(caller_identity.empty());
+  ASSERT_EQ(caller_identity.back(), '\n');
+  caller_identity.pop_back();
+  const std::size_t separator = caller_identity.find(' ');
+  ASSERT_NE(separator, std::string::npos);
+  ASSERT_LT(separator + 2U, caller_identity.size());
+  ASSERT_EQ(caller_identity[separator + 1U], '$');
+
+  auto environment = libtmux::test::current_environment();
+  libtmux::test::set_environment(environment, "TMUX",
+                                 socket().string() + "," +
+                                     caller_identity.substr(0U, separator) + "," +
+                                     caller_identity.substr(separator + 2U));
+  libtmux::test::set_environment(environment, "TMUX_PANE", std::string{caller.id()});
+  const auto messages = converse_with(
+      {"--socket-path", socket().string()}, std::move(environment),
+      {initialize_request(), initialized_notification(),
+       call("paste_text", {{"paneId", source->id()}, {"text", ""}, {"enter", false}},
+            1)});
+
+  const json* reply = response(messages, 1);
+  ASSERT_NE(reply, nullptr);
+  ASSERT_TRUE(reply->contains("result")) << reply->dump();
+  EXPECT_FALSE((*reply)["result"]["isError"].get<bool>()) << reply->dump();
+}
+
 TEST_F(McpProtocol, GuardsTheEffectiveSynchronizedCohortButPastesOnlyTheTarget) {
   const libtmux::Server server = connect_server();
   const auto panes = split_sorted_panes(server);

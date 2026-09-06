@@ -82,7 +82,7 @@ struct PaneInputCaller {
 
 struct PaneInputPreflight {
   std::vector<std::string> configured_pane_ids;
-  std::string session_id;
+  std::string window_id;
   std::uint64_t server_pid{};
   std::uint64_t server_start_time{};
   std::string server_process_generation;
