@@ -19,7 +19,7 @@ XML_PROGRAMLISTING     = NO
 # Without this, a multi-line /// block becomes the detailed description and
 # the brief stays empty — which is what every consumer shows in a listing.
 # The headers document themselves in prose paragraphs, so the first sentence
-# is the summary a reader wants; 261 of them reach the XML with this on and
+# is the summary a reader wants; 285 of them reach the XML with this on and
 # none without.
 JAVADOC_AUTOBRIEF      = YES
 
@@ -31,6 +31,18 @@ HIDE_UNDOC_MEMBERS     = YES
 
 QUIET                  = YES
 WARN_IF_UNDOCUMENTED   = NO
+
+# A warning here always means prose did not survive the parse: a comment that
+# never reached the XML, or markup that swallowed the text after it. There is
+# no benign case, and a build that only exits zero hides every one — so the
+# same failure reaches a local run, CI, and the site build.
+WARN_AS_ERROR          = FAIL_ON_WARNINGS
+
+# entities.hpp specialises std::hash for the four entity types. Without a
+# model of the STL, Doxygen cannot resolve the scope those specialisations
+# open and reports incomplete input for each — four warnings that hide any
+# real one, and four comments that never reach the XML.
+BUILTIN_STL_SUPPORT    = YES
 
 # libtmux wraps every declaration in an ABI-versioned inline namespace via a
 # macro. Without expanding it here Doxygen sees an unbalanced brace and drops
