@@ -398,7 +398,10 @@ TEST(McpToolsTmux, ReportsTheExactSocketPathBytesTmuxCannotSpell) {
   const libtmux::test::EnvironmentGuard tmux_tmpdir{"TMUX_TMPDIR",
                                                     owner->tmux_tmpdir().string()};
 
-  const std::string name = std::string{"s-"} + static_cast<char>(0xFE) + ".sock";
+  // A control byte, not a high one: tmux escapes both, but a lone byte over
+  // 0x7F is not valid UTF-8 and macOS refuses to name a file with it, so the
+  // case that reaches the escaping has to be one every filesystem will hold.
+  const std::string name = std::string{"s-"} + '\x01' + ".sock";
   const std::filesystem::path selected = owner->tmux_tmpdir() / name;
   auto opened = Server::startable_at_socket_path(selected.string(), std::nullopt);
   ASSERT_TRUE(opened.has_value()) << opened.error().diagnostic;
