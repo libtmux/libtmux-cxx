@@ -788,7 +788,18 @@ jobs:
       - name: Check the Doxygen comments parse
         run: |
           doxygen --version
-          OUTPUT_DIRECTORY="$(mktemp -d)" doxygen Doxyfile
+          OUTPUT_DIRECTORY="${{ runner.temp }}/doxygen" doxygen Doxyfile
+
+      # The same Sphinx build libtmux.org serves, run over the XML above. A
+      # declaration Sphinx cannot parse is not a Doxygen warning: it reaches
+      # the page as unparsed text with no anchor, and only this lane sees it.
+      - name: Check the reference renders
+        run: |
+          cd docs
+          uv run --no-project --with sphinx --with breathe --with furo \
+            sphinx-build -q -W -b dirhtml \
+            -D breathe_projects.cxx="${{ runner.temp }}/doxygen/xml" \
+            -d "${{ runner.temp }}/doctrees" . "${{ runner.temp }}/reference"
 
       - name: Check Python tooling
         run: |
