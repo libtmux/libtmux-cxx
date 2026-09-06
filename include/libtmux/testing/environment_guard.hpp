@@ -19,6 +19,8 @@
 
 namespace libtmux::test {
 
+/// Environment variables set for the lifetime of this value and restored on
+/// destruction, including the ones that were previously unset.
 class EnvironmentGuard final {
 public:
   EnvironmentGuard(std::string name, std::string_view value) : name_{std::move(name)} {

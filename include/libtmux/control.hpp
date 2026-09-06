@@ -41,6 +41,7 @@ struct ProtocolError {
   DeliveryStatus delivery{DeliveryStatus::indeterminate};
 };
 
+/// How tmux closed a reply block: normally, or reporting a failure.
 enum class ControlTerminal : std::uint8_t { end, error };
 
 /// How much of one reply a decoder holds, and how long a single line may grow
@@ -55,6 +56,12 @@ enum class ControlTerminal : std::uint8_t { end, error };
 inline constexpr std::size_t kDefaultRetainedReplyBytes = 1024U * 1024U;
 inline constexpr std::size_t kDefaultLineBytes = 1024U * 1024U;
 
+/// One reply block, framed between tmux's `%begin` and its terminator.
+///
+/// Framing is all this is: whether the command succeeded is
+/// `terminal`, and what it said is `body`. A body that hit the decoder's
+/// retention bound is still framed and still attributable — see
+/// `body_truncated`.
 struct ControlBlock {
   std::uint64_t sequence;
   std::uint64_t command_number;
@@ -70,8 +77,15 @@ struct ControlBlock {
   std::size_t body_bytes{0};
 };
 
+/// Anything the parser produces: a reply to something asked, or something tmux
+/// said on its own. The two arrive interleaved on one stream.
 using Event = std::variant<ControlBlock, Notification>;
 
+/// The control-mode wire format, decoded into whole events.
+///
+/// Owns the partial state between reads, so a caller feeds whatever bytes
+/// arrived and gets back only complete events. It bounds what it retains
+/// because a connection, unlike a subprocess, never gives its memory back.
 class Parser final {
 public:
   Parser() = default;
@@ -92,14 +106,21 @@ private:
   bool finished_{false};
 };
 
+/// One command as argv, before it is joined into a control-mode line.
 struct ControlCommand {
   std::vector<std::string> argv;
 };
 
+/// The commands sent as one group, which tmux runs until one fails.
 struct ControlRequest {
   std::vector<ControlCommand> group;
 };
 
+/// What one request produced: its reply blocks, and the connection error that
+/// ended the exchange if one did.
+///
+/// A connection error is separate from a failed block because they need
+/// different handling: a failed command leaves the connection usable.
 struct ControlRequestResult {
   /// Every synchronous reply block tmux emitted for this request, in wire
   /// order. tmux does not put a request or operation ID on its guards, so a
@@ -108,6 +129,11 @@ struct ControlRequestResult {
   std::optional<ProtocolError> connection_error;
 };
 
+/// How to start a control-mode connection, and what it is allowed to buffer.
+///
+/// Two of these cannot be changed later because tmux cannot: whether pane
+/// output is delivered at all is fixed when the connection starts, and the
+/// decoder's bounds belong to the decoder rather than to whatever reads it.
 struct ConnectionOptions {
   // Which tmux to run. Absent means `tmux` from `PATH` — or, through
   // `Server::control`, the tmux that Server's policy names. Absent rather than
@@ -162,6 +188,8 @@ class Connection;
 /// advances — so copy what you need out of one before asking for the next.
 class NotificationRange final {
 public:
+  /// Single-pass, and the value it yields is borrowed: advancing invalidates
+  /// the notification the previous dereference viewed.
   class iterator final {
   public:
     using difference_type = std::ptrdiff_t;
@@ -209,21 +237,21 @@ private:
   std::size_t index_{0};
 };
 
-// One held-open control client.
-//
-// Shared freely between threads. `execute`, `take_notifications`,
-// `wait_for_notifications`, `watch_notifications`, `set_pane_output` and the
-// muting pair may all be called at once: writes are serialized, and each
-// reply is matched to its own request through a private boundary, which is
-// what lets concurrent callers tell their blocks apart even though tmux puts
-// no request id on a guard.
-//
-// Moving from a connection, or destroying one, may not race with any of
-// those — the same rule `CommandRuntime` states for itself.
-//
-// It remains one FIFO client, so a command that waits on the server also
-// delays whatever another thread asked for next. That is why `Server::run`
-// stays the surface for a command whose final result matters.
+/// One held-open control client.
+///
+/// Shared freely between threads. `execute`, `take_notifications`,
+/// `wait_for_notifications`, `watch_notifications`, `set_pane_output` and the
+/// muting pair may all be called at once: writes are serialized, and each
+/// reply is matched to its own request through a private boundary, which is
+/// what lets concurrent callers tell their blocks apart even though tmux puts
+/// no request id on a guard.
+///
+/// Moving from a connection, or destroying one, may not race with any of
+/// those — the same rule `CommandRuntime` states for itself.
+///
+/// It remains one FIFO client, so a command that waits on the server also
+/// delays whatever another thread asked for next. That is why `Server::run`
+/// stays the surface for a command whose final result matters.
 class Connection final {
 public:
   static expected<Connection, ProtocolError> connect(ConnectionOptions options);

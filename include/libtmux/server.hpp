@@ -66,6 +66,11 @@ struct ExecutorOptions {
   std::optional<Version> version{};
 };
 
+/// One tmux server, addressed by the socket it listens on.
+///
+/// The entry point: sessions, windows and panes are read from here and carry
+/// the server with them. Constructing a handle sends no command. Only a
+/// startable handle may create an absent daemon; ordinary handles never do.
 class Server {
 public:
   /// `-S path`: the socket file, used verbatim.

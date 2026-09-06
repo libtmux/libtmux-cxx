@@ -19,6 +19,10 @@
 
 LIBTMUX_NAMESPACE_BEGIN
 
+/// Why a lookup that required exactly one match did not get one.
+///
+/// The two want opposite fixes, which is why they are distinct: one needs
+/// wider criteria and the other needs narrower.
 enum class CardinalityError { none_matched, several_matched };
 
 [[nodiscard]] constexpr std::string_view to_string(CardinalityError error) noexcept {
@@ -32,6 +36,10 @@ enum class CardinalityError { none_matched, several_matched };
 }
 
 template <std::ranges::input_range Range>
+/// A borrowed element of a range, rather than a copy of it.
+///
+/// These lookups reference an element of the range they were given, so the
+/// range has to outlive the result. That is why they take an lvalue.
 using Referenced = std::reference_wrapper<const std::ranges::range_value_t<Range>>;
 
 // Both take an lvalue on purpose. The result references an element of the

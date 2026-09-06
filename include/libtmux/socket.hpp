@@ -35,6 +35,10 @@ inline constexpr std::size_t kSocketPathLimit = 0U;
 inline constexpr std::size_t kSocketPathLimit = sizeof(sockaddr_un::sun_path) - 1U;
 #endif
 
+/// Why a socket name or path was rejected before any server was contacted.
+///
+/// Length is the one that surprises: a unix socket path is bounded by the
+/// platform, not by tmux.
 enum class SocketError {
   empty,
   name_has_separator,

@@ -24,11 +24,14 @@
 
 LIBTMUX_NAMESPACE_BEGIN
 
+/// How a text field is compared. `iequals` folds case; the rest do not.
 enum class StringOp { equals, iequals, contains, starts_with, ends_with };
 /// tmux renders a count, a size and an index as text. Comparing them as text
 /// puts "9" after "10", so a numeric field is its own kind with its own
 /// operations rather than a string field a caller must remember to convert.
+/// How a numeric field is compared, on the value rather than on its text.
 enum class NumberOp { equals, not_equals, less, less_equal, greater, greater_equal };
+/// Whether a group's operands must all hold or any one of them.
 enum class Combine { conjunction, disjunction };
 
 /// A field is a named accessor: the name is what a future tmux-format lowering
@@ -52,40 +55,57 @@ template <typename Entity> struct StringField {
   std::string_view (*read)(const Entity&);
 };
 
+/// A flag on an entity, named for the expression and read through a function
+/// pointer rather than a member pointer so the same descriptor works for a
+/// field computed from several tmux tokens.
 template <typename Entity> struct BoolField {
   std::string_view name;
   bool (*read)(const Entity&);
 };
 
+/// A numeric field on an entity, read as a number rather than as the text tmux
+/// sends, so `9` orders before `10`.
 template <typename Entity> struct NumberField {
   std::string_view name;
   long long (*read)(const Entity&);
 };
 
+/// A filter over one entity type, as a value.
+///
+/// Owns every operand it compares against, so it outlives the call that built
+/// it and can be stored and copied. The node set is a closed variant rather
+/// than an expression template, which is what lets the same value both filter
+/// a range already in memory and be translated to a tmux `-f` format later.
 template <typename Entity> class FilterExpr {
 public:
+  /// A text field compared against an operand this node owns.
   struct StringTest {
     StringField<Entity> field;
     StringOp op;
     std::string operand;
   };
 
+  /// A flag compared against an expected value.
   struct BoolTest {
     BoolField<Entity> field;
     bool expected;
   };
 
+  /// A numeric field compared against a number.
   struct NumberTest {
     NumberField<Entity> field;
     NumberOp op;
     long long operand;
   };
 
+  /// Several expressions combined, all of them or any of them.
   struct Group {
     Combine combine;
     std::vector<FilterExpr> operands;
   };
 
+  /// One expression inverted. Held indirectly because a node cannot contain
+  /// itself by value.
   struct Negation {
     std::unique_ptr<FilterExpr> operand;
   };
@@ -247,6 +267,8 @@ private:
   }
 };
 
+/// The value a numeric field name resolves to in an expression, whose
+/// comparison operators build the node rather than comparing anything.
 template <typename Entity> struct NumberFieldHandle {
   NumberField<Entity> field;
 
@@ -280,6 +302,8 @@ private:
   }
 };
 
+/// The value a flag's name resolves to in an expression. Converts to a filter
+/// on its own, so naming the field is the same as testing it for true.
 template <typename Entity> struct BoolFieldHandle {
   BoolField<Entity> field;
 

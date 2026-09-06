@@ -20,6 +20,10 @@
 
 LIBTMUX_NAMESPACE_BEGIN
 
+/// One control event tmux sent unprompted, still as bytes.
+///
+/// Kept undecoded because deciding what it is costs a parse a caller may not
+/// need — `ParsedNotification` is that parse.
 struct Notification {
   /// Compatibility name for one outside-block control event. Unknown content
   /// is not proof that tmux emitted a notification rather than delayed output.

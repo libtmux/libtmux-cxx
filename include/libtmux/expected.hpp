@@ -32,18 +32,32 @@ namespace libtmux {
 
 #if defined(LIBTMUX_USE_TL_EXPECTED)
 
+/// A value or the reason there is not one.
+///
+/// `std::expected` where the standard library has it, and a drop-in otherwise,
+/// so a caller writes the same code either way. Nothing in this library throws
+/// to report a tmux failure.
 template <typename Value, typename Error> using expected = tl::expected<Value, Error>;
 
 #else
 
+/// A value or the reason there is not one.
+///
+/// `std::expected` where the standard library has it, and a drop-in otherwise,
+/// so a caller writes the same code either way. Nothing in this library throws
+/// to report a tmux failure.
 template <typename Value, typename Error> using expected = std::expected<Value, Error>;
 
 #endif
 
 // The unexpected type itself, for the rare declaration that names it.
 #if defined(LIBTMUX_USE_TL_EXPECTED)
+/// The error side of `expected`, named for the rare declaration that has to
+/// spell it. Returning one is how a function reports a failure.
 template <typename Error> using unexpected_t = tl::unexpected<Error>;
 #else
+/// The error side of `expected`, named for the rare declaration that has to
+/// spell it. Returning one is how a function reports a failure.
 template <typename Error> using unexpected_t = std::unexpected<Error>;
 #endif
 

@@ -20,6 +20,10 @@
 
 LIBTMUX_NAMESPACE_BEGIN
 
+/// How a filter applies across a relation.
+///
+/// `all_of` and `none_of` hold for an empty relation, which is set theory
+/// rather than an oversight; `any_of` is usually what a caller means.
 enum class Quantifier { any_of, all_of, none_of, is };
 
 /// Join two listings on the id one of them carries.
@@ -69,6 +73,8 @@ using RelatedMany = std::ranges::range_value_t<
     std::remove_cvref_t<std::invoke_result_t<Read, const Entity&>>>;
 
 template <typename Entity, typename Read>
+/// The entity on the far side of a to-one link, with the accessor's
+/// indirection and qualifiers stripped away.
 using RelatedOne = std::remove_cvref_t<
     std::remove_pointer_t<std::invoke_result_t<Read, const Entity&>>>;
 

@@ -15,6 +15,7 @@
 
 LIBTMUX_NAMESPACE_BEGIN
 
+/// Why a tmux version string could not be read.
 enum class VersionError { missing_prefix, malformed };
 
 [[nodiscard]] constexpr std::string_view to_string(VersionError error) noexcept {
@@ -27,6 +28,10 @@ enum class VersionError { missing_prefix, malformed };
   return "unknown version error";
 }
 
+/// A tmux version, ordered so a feature gate can compare against a literal.
+///
+/// tmux marks a development build with a suffix, which orders after the
+/// release it follows rather than before it.
 struct Version {
   std::uint32_t major{};
   std::uint32_t minor{};

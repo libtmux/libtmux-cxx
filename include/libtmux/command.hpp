@@ -26,6 +26,8 @@
 
 LIBTMUX_NAMESPACE_BEGIN
 
+/// Why a command did not produce an answer, in the order a caller would
+/// diagnose them: bad before it left, then how it left, then what came back.
 enum class FailureKind {
   validation,
   spawn,
@@ -79,6 +81,10 @@ enum class FailureKind {
   return "unknown failure";
 }
 
+/// A command that did not produce an answer, and how far it got.
+///
+/// `delivery` is the part that decides whether retrying is safe; `kind` and
+/// `diagnostic` say what to fix.
 struct CommandFailure {
   FailureKind kind{FailureKind::refused};
   /// How far the command is known to have progressed. Only `not_started` is
@@ -113,8 +119,13 @@ struct CommandFailure {
   return text;
 }
 
+/// Whether an argument may appear in a diagnostic, a log, or an error message.
 enum class ArgumentSensitivity : std::uint8_t { public_value, secret };
 
+/// One argument, carrying whether any part of it is a secret.
+///
+/// Implicitly constructible from the string types so building a command reads
+/// as a list of words; marking a part secret is the deliberate act.
 class CommandArgument {
 public:
   CommandArgument(const char* value) : value_{value} {}
@@ -159,6 +170,10 @@ private:
   std::vector<std::string> sensitive_parts_;
 };
 
+/// One tmux command as argv, with no shell between it and tmux.
+///
+/// Arguments are passed as separate words, so a value holding a space, a quote
+/// or a `;` arrives whole and nothing here needs escaping.
 class CommandRequest {
 public:
   CommandRequest() = default;

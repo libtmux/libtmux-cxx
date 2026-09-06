@@ -22,6 +22,11 @@
 
 LIBTMUX_NAMESPACE_BEGIN
 
+/// Several commands built up and sent as one tmux invocation.
+///
+/// tmux runs a chain until a command fails and discards the rest, so the chain
+/// is the unit of atomicity a caller gets — and the reply count alone cannot
+/// say which command failed.
 class Chain {
 public:
   Chain& new_session(std::string_view name, bool detached = true) {

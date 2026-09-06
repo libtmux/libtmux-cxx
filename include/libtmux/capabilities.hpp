@@ -10,6 +10,8 @@
 
 LIBTMUX_NAMESPACE_BEGIN
 
+/// Which server answered: tmux, a compatible reimplementation, or not yet
+/// determined.
 enum class ServerImplementation {
   unknown,
   tmux,
@@ -29,6 +31,8 @@ to_string(ServerImplementation implementation) noexcept {
   return "unknown";
 }
 
+/// How commands reach the server: by spawning a process, or through a backend
+/// the caller supplied.
 enum class BackendKind {
   custom,
   subprocess,
@@ -108,6 +112,10 @@ enum class ServerFeature {
   return "unknown feature";
 }
 
+/// What this server is known to support, decided without asking it.
+///
+/// Every query here is local: the implementation and backend were established
+/// once, and answering from them costs no process and cannot fail.
 struct ServerCapabilities {
   ServerImplementation implementation{ServerImplementation::unknown};
   BackendKind backend{BackendKind::custom};

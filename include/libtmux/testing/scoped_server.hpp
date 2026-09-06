@@ -21,8 +21,11 @@
 
 namespace libtmux::test {
 
+/// Whether the test server is addressed by `tmux -L name` or `tmux -S path`.
 enum class SocketMode { Name, Path };
 
+/// What teardown could not clean up, so a suite can fail loudly rather than
+/// leave a server behind quietly.
 struct TeardownReport {
   std::vector<std::string> messages;
 };
@@ -49,6 +52,10 @@ struct SocketNamespace {
   }
 };
 
+/// How the test server is started and how long teardown may take.
+///
+/// Every member carries an initializer on purpose; see the note on the last
+/// one.
 struct ScopedTmuxServerOptions {
   std::filesystem::path tmux_binary{"tmux"};
   SocketMode mode{SocketMode::Path};
@@ -86,6 +93,12 @@ void erase_environment(std::vector<std::string>& environment, std::string_view n
 same_socket_inode(const std::filesystem::path& left,
                   const std::filesystem::path& right);
 
+/// A tmux server that exists for the lifetime of this value.
+///
+/// Owns a private socket and directory and kills the server on destruction, so
+/// suites running at once cannot see each other's sessions. Teardown reports
+/// rather than throws — a destructor that throws during a failing test hides
+/// the failure.
 class ScopedTmuxServer final {
 public:
   static libtmux::expected<ScopedTmuxServer, std::string>

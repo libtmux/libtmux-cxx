@@ -15,6 +15,7 @@
 
 LIBTMUX_NAMESPACE_BEGIN
 
+/// Why a target could not be built from a name.
 enum class TargetError {
   empty_name,
   /// A name holding a separator would re-parse as a different target.

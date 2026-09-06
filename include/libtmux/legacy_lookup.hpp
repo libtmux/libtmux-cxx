@@ -17,6 +17,7 @@
 
 LIBTMUX_NAMESPACE_BEGIN
 
+/// Why a legacy lookup string could not be read.
 enum class LookupParseError {
   missing_value,
   unknown_field,

@@ -20,6 +20,7 @@
 
 LIBTMUX_NAMESPACE_BEGIN
 
+/// Why a key name could not be resolved to something tmux accepts.
 enum class KeyError { empty, unknown_name };
 
 [[nodiscard]] constexpr std::string_view to_string(KeyError error) noexcept {

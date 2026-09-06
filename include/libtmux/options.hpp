@@ -28,6 +28,8 @@ struct EnvironmentEntry {
   std::optional<std::string> value;
 };
 
+/// One option as tmux reports it: its name, its value, and the array index it
+/// sits at when it is an array option.
 struct OptionEntry {
   std::string name;
   /// Present only for array options, which tmux indexes sparsely: absent

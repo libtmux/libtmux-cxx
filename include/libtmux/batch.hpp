@@ -22,6 +22,10 @@ LIBTMUX_NAMESPACE_BEGIN
 
 inline constexpr std::string_view kCommandSeparator = ";";
 
+/// The argv a chain becomes: commands joined by tmux's separator.
+///
+/// An empty command is rejected rather than emitted, because tmux reads two
+/// adjacent separators as the next command's first argument.
 class CommandBatch {
 public:
   /// Append one command. An empty command is rejected rather than emitted,

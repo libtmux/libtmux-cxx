@@ -29,12 +29,17 @@ enum class ReadyStatus : std::uint8_t { ready, timeout, closed };
 
 /// The maximum number of accepted commands retaining any lifecycle leg.
 /// `start` rejects zero with `DeliveryStatus::not_started`.
+/// How many commands the runtime will admit at once.
 struct CommandRuntimeConfig final {
   std::size_t capacity{256U};
 };
 
 /// A lock-consistent instant; values may change immediately after it is read.
 /// Admission, refusal, and completion totals are monotonic.
+/// The runtime's counters at one instant, for diagnostics rather than control.
+///
+/// Read under a lock and stale immediately after, so a caller must not branch
+/// on `in_flight` expecting it to still hold. The totals only ever increase.
 struct CommandRuntimeSnapshot final {
   std::size_t capacity{};
   /// Accepted commands retaining transport, result, or observer work.

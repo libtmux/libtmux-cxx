@@ -97,6 +97,10 @@ struct SplitOptions {
   std::vector<std::pair<std::string, std::string>> environment{};
 };
 
+/// What a new window is created as, and where it lands.
+///
+/// Placing a window after the current one shifts the windows above it up, so
+/// an index a caller is holding can change.
 struct NewWindowOptions {
   std::string name{};
   std::string start_directory{};
@@ -120,6 +124,11 @@ struct NewWindowOptions {
   std::vector<std::pair<std::string, std::string>> environment{};
 };
 
+/// What a new session is created as, including its first window.
+///
+/// tmux always creates a first window, so the fields naming one are not
+/// optional in effect — leaving them empty takes tmux's defaults rather than
+/// creating nothing.
 struct NewSessionOptions {
   std::string name{};
   std::string start_directory{};
@@ -149,6 +158,10 @@ struct RespawnOptions {
   std::string start_directory{};
 };
 
+/// Which part of a pane's screen and scrollback a capture reads.
+///
+/// A capture reads what the pane is showing, so a line the program redrew is
+/// the redrawn one and a line scrolled past the history limit is gone.
 struct CaptureOptions {
   /// Where to start, counting back into the scrollback. Absent starts at the
   /// top of the visible pane.
@@ -357,6 +370,15 @@ private:
   std::shared_ptr<const State> state_;
 };
 
+/// One session, as one listing saw it.
+///
+/// Reads its own fields without touching tmux: the listing ran once, and every
+/// value here is that moment's. A window created since is not in
+/// `window_count`, and a session killed since still answers.
+///
+/// Equality is the server incarnation and the session id together, so two
+/// handles from separate listings of one live server agree, and a handle kept
+/// across a restart does not become a handle to whatever reused `$0`.
 class Session : private detail::Row {
 public:
   static constexpr std::string_view kNoun{"session"};
@@ -478,6 +500,14 @@ public:
                                                         std::string_view command) const;
 };
 
+/// One window, as one listing saw it.
+///
+/// A window can be linked into more than one session; this handle carries the
+/// session it was reached through, which is the one its qualified target
+/// addresses.
+///
+/// Reads its own fields without touching tmux, on the same terms as
+/// `Session`.
 class Window : private detail::Row {
 public:
   static constexpr std::string_view kNoun{"window"};
@@ -661,6 +691,14 @@ public:
   unset_option(std::string_view name) const;
 };
 
+/// One pane, as one listing saw it.
+///
+/// The narrowest thing tmux addresses, and the only one that owns a process:
+/// `pid` is the command tmux started, not the shell's children, so a pane
+/// running a program under a shell reports the shell.
+///
+/// Reads its own fields without touching tmux, on the same terms as
+/// `Session`.
 class Pane : private detail::Row {
 public:
   static constexpr std::string_view kNoun{"pane"};
@@ -977,6 +1015,11 @@ private:
   friend class Server;
 };
 
+/// One attached client, as one listing saw it.
+///
+/// The shortest-lived of these: a client goes away with its terminal, so a
+/// handle outlives what it names more often than the others do. It is named
+/// by its tty rather than by an id tmux issues.
 class Client : private detail::Row {
 public:
   static constexpr std::string_view kNoun{"client"};
@@ -1238,12 +1281,15 @@ LIBTMUX_NAMESPACE_END
 template <> struct std::hash<libtmux::Session> {
   [[nodiscard]] std::size_t operator()(const libtmux::Session& value) const noexcept;
 };
+/// Hashing a window, on the same terms as its equality.
 template <> struct std::hash<libtmux::Window> {
   [[nodiscard]] std::size_t operator()(const libtmux::Window& value) const noexcept;
 };
+/// Hashing a pane, on the same terms as its equality.
 template <> struct std::hash<libtmux::Pane> {
   [[nodiscard]] std::size_t operator()(const libtmux::Pane& value) const noexcept;
 };
+/// Hashing a client, on the same terms as its equality.
 template <> struct std::hash<libtmux::Client> {
   [[nodiscard]] std::size_t operator()(const libtmux::Client& value) const noexcept;
 };
