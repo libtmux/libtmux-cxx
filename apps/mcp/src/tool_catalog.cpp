@@ -3,16 +3,21 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <charconv>
 #include <chrono>
+#include <csignal>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <random>
 #include <set>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -30,6 +35,10 @@
 
 #if !defined(_WIN32)
 #include <unistd.h>
+#endif
+
+#if defined(__APPLE__)
+#include <sys/sysctl.h>
 #endif
 
 namespace libtmux::mcp::detail {
@@ -293,12 +302,37 @@ shell_command_completion(std::string_view capture, std::string_view marker,
       .exit_code = status, .text_begin = text_begin, .record_begin = record_begin};
 }
 
+std::optional<std::string> parse_linux_process_generation(std::string_view stat) {
+  const std::size_t comm_end = stat.rfind(')');
+  if (comm_end == std::string_view::npos || comm_end + 2U > stat.size() ||
+      stat[comm_end + 1U] != ' ') {
+    return std::nullopt;
+  }
+  std::istringstream fields{std::string{stat.substr(comm_end + 2U)}};
+  std::string field;
+  for (std::size_t number = 3U; number < 22U; ++number) {
+    if (!(fields >> field)) {
+      return std::nullopt;
+    }
+  }
+  if (!(fields >> field)) {
+    return std::nullopt;
+  }
+  std::uint64_t ticks = 0U;
+  const auto parsed = std::from_chars(field.data(), field.data() + field.size(), ticks);
+  if (parsed.ec != std::errc{} || parsed.ptr != field.data() + field.size() ||
+      ticks == 0U) {
+    return std::nullopt;
+  }
+  return std::to_string(ticks);
+}
+
 namespace {
 
-constexpr std::array<std::string_view, 9> kPaneInputFields{
-    "pane_id",   "window_id",         "session_id",
-    "pid",       "pane_synchronized", "pane_in_mode",
-    "pane_dead", "pane_input_off",    "pane_current_command"};
+constexpr std::array<std::string_view, 10> kPaneInputFields{
+    "pane_id",        "window_id",           "session_id",   "pid",
+    "start_time",     "pane_synchronized",   "pane_in_mode", "pane_dead",
+    "pane_input_off", "pane_current_command"};
 
 constexpr std::array<std::string_view, 3> kPaneInputClientFields{
     "client_control_mode", "pane_id", "window_zoomed_flag"};
@@ -330,6 +364,7 @@ struct PaneInputRow {
   std::string window_id;
   std::string session_id;
   std::uint64_t server_pid{};
+  std::uint64_t server_start_time{};
   bool synchronized{};
   std::uint64_t mode{};
   bool dead{};
@@ -418,12 +453,14 @@ parse_pane_input_snapshot(std::string_view source_pane_id, std::string raw,
   std::string window_id;
   std::string session_id;
   std::uint64_t server_pid = 0U;
+  std::uint64_t server_start_time = 0U;
   for (const auto& values : snapshot->rows()) {
     if (!canonical_id(values[0], '%') || !canonical_id(values[1], '@') ||
         !canonical_id(values[2], '$') || !canonical_number(values[3]) ||
-        values[3] == "0" || (values[4] != "0" && values[4] != "1") ||
-        !canonical_number(values[5]) || (values[6] != "0" && values[6] != "1") ||
-        (values[7] != "0" && values[7] != "1") || values[8].empty() ||
+        values[3] == "0" || !canonical_number(values[4]) || values[4] == "0" ||
+        (values[5] != "0" && values[5] != "1") || !canonical_number(values[6]) ||
+        (values[7] != "0" && values[7] != "1") ||
+        (values[8] != "0" && values[8] != "1") || values[9].empty() ||
         !pane_ids.emplace(values[0]).second ||
         (!window_id.empty() && values[1] != window_id) ||
         (!session_id.empty() && values[2] != session_id)) {
@@ -431,30 +468,38 @@ parse_pane_input_snapshot(std::string_view source_pane_id, std::string raw,
     }
     std::uint64_t mode = 0U;
     const auto parsed =
-        std::from_chars(values[5].data(), values[5].data() + values[5].size(), mode);
+        std::from_chars(values[6].data(), values[6].data() + values[6].size(), mode);
     std::uint64_t row_server_pid = 0U;
     const auto parsed_pid = std::from_chars(
         values[3].data(), values[3].data() + values[3].size(), row_server_pid);
-    if (parsed.ec != std::errc{} || parsed.ptr != values[5].data() + values[5].size() ||
+    std::uint64_t row_server_start_time = 0U;
+    const auto parsed_start_time = std::from_chars(
+        values[4].data(), values[4].data() + values[4].size(), row_server_start_time);
+    if (parsed.ec != std::errc{} || parsed.ptr != values[6].data() + values[6].size() ||
         parsed_pid.ec != std::errc{} ||
         parsed_pid.ptr != values[3].data() + values[3].size() ||
-        (server_pid != 0U && row_server_pid != server_pid)) {
+        parsed_start_time.ec != std::errc{} ||
+        parsed_start_time.ptr != values[4].data() + values[4].size() ||
+        (server_pid != 0U && row_server_pid != server_pid) ||
+        (server_start_time != 0U && row_server_start_time != server_start_time)) {
       return libtmux::unexpected(invalid_pane_snapshot(source_pane_id));
     }
     if (window_id.empty()) {
       window_id = std::string{values[1]};
       session_id = std::string{values[2]};
       server_pid = row_server_pid;
+      server_start_time = row_server_start_time;
     }
     rows.push_back(PaneInputRow{.pane_id = std::string{values[0]},
                                 .window_id = std::string{values[1]},
                                 .session_id = std::string{values[2]},
                                 .server_pid = row_server_pid,
-                                .synchronized = values[4] == "1",
+                                .server_start_time = row_server_start_time,
+                                .synchronized = values[5] == "1",
                                 .mode = mode,
-                                .dead = values[6] == "1",
-                                .input_off = values[7] == "1",
-                                .command = std::string{values[8]}});
+                                .dead = values[7] == "1",
+                                .input_off = values[8] == "1",
+                                .command = std::string{values[9]}});
   }
 
   const auto source = std::ranges::find(rows, source_pane_id, &PaneInputRow::pane_id);
@@ -520,6 +565,8 @@ parse_pane_input_snapshot(std::string_view source_pane_id, std::string raw,
   PaneInputPreflight result{.configured_pane_ids = {},
                             .session_id = source->session_id,
                             .server_pid = source->server_pid,
+                            .server_start_time = source->server_start_time,
+                            .server_process_generation = {},
                             .foreground_command = source->command};
   result.configured_pane_ids.reserve(configured.size());
   for (const PaneInputRow* row : configured) {
@@ -575,6 +622,9 @@ parse_pane_input_snapshot(std::string_view source_pane_id, std::string raw,
   return result;
 }
 
+[[nodiscard]] static std::optional<std::string>
+process_generation(std::uint64_t process_id) noexcept;
+
 libtmux::expected<PaneInputPreflight, ToolError>
 preflight_pane_input(const Server& server, std::string_view source_pane_id,
                      PaneInputScope scope) {
@@ -597,23 +647,33 @@ preflight_pane_input(const Server& server, std::string_view source_pane_id,
   if (!caller.has_value()) {
     return libtmux::unexpected(caller.error());
   }
-  return parse_pane_input_snapshot(source_pane_id, *panes, scope, *clients,
-                                   std::move(*caller));
+  auto parsed = parse_pane_input_snapshot(source_pane_id, *panes, scope, *clients,
+                                          std::move(*caller));
+  if (!parsed.has_value()) {
+    return parsed;
+  }
+  if (auto generation = process_generation(parsed->server_pid);
+      generation.has_value()) {
+    parsed->server_process_generation = std::move(*generation);
+  }
+  return parsed;
 }
 
 [[nodiscard]] static libtmux::expected<PaneInputLease, ToolError>
 reserve_pane_input(const Server& server, const PaneInputPreflight& preflight,
                    PaneInputReservationKind kind, std::string_view tool_name) {
   return detail::reserve_pane_input(std::string{server.socket_path()},
-                                    preflight.server_pid, preflight.configured_pane_ids,
-                                    kind, tool_name);
+                                    preflight.server_pid, preflight.server_start_time,
+                                    preflight.configured_pane_ids, kind, tool_name);
 }
 
 [[nodiscard]] static bool same_pane_input_route(const PaneInputPreflight& initial,
                                                 const PaneInputPreflight& final) {
   return initial.configured_pane_ids == final.configured_pane_ids &&
          initial.session_id == final.session_id &&
-         initial.server_pid == final.server_pid;
+         initial.server_pid == final.server_pid &&
+         initial.server_start_time == final.server_start_time &&
+         initial.server_process_generation == final.server_process_generation;
 }
 
 [[nodiscard]] static bool same_shell_input_route(const PaneInputPreflight& initial,
@@ -630,8 +690,9 @@ reserve_pane_input(const Server& server, const PaneInputPreflight& preflight,
 
 [[nodiscard]] static bool pane_identity_absent(std::string raw,
                                                std::string_view pane_id,
-                                               std::uint64_t server_pid) {
-  constexpr std::array<std::string_view, 2> fields{"pane_id", "pid"};
+                                               std::uint64_t server_pid,
+                                               std::uint64_t server_start_time) {
+  constexpr std::array<std::string_view, 3> fields{"pane_id", "pid", "start_time"};
   if (raw.empty() || raw.back() != '\n' || raw.front() == '\n' ||
       raw.find("\n\n") != std::string::npos) {
     return false;
@@ -642,37 +703,117 @@ reserve_pane_input(const Server& server, const PaneInputPreflight& preflight,
   }
   for (const auto& values : snapshot->rows()) {
     if (!canonical_id(values[0], '%') || !canonical_number(values[1]) ||
-        values[1] == "0") {
+        values[1] == "0" || !canonical_number(values[2]) || values[2] == "0") {
       return false;
     }
     std::uint64_t row_pid = 0U;
     const auto parsed =
         std::from_chars(values[1].data(), values[1].data() + values[1].size(), row_pid);
+    std::uint64_t row_start_time = 0U;
+    const auto parsed_start = std::from_chars(
+        values[2].data(), values[2].data() + values[2].size(), row_start_time);
     if (parsed.ec != std::errc{} || parsed.ptr != values[1].data() + values[1].size()) {
       return false;
     }
-    if (values[0] == pane_id && row_pid == server_pid) {
+    if (parsed_start.ec != std::errc{} ||
+        parsed_start.ptr != values[2].data() + values[2].size()) {
+      return false;
+    }
+    if (values[0] == pane_id && row_pid == server_pid &&
+        row_start_time == server_start_time) {
       return false;
     }
   }
   return true;
 }
 
-static void retain_run_until_proven_complete(PaneInputLease lease, Server server,
-                                             Pane pane, std::string marker,
-                                             std::uint64_t server_pid) noexcept {
+[[nodiscard]] static std::optional<std::string>
+process_generation(std::uint64_t process_id) noexcept {
+#if defined(_WIN32)
+  static_cast<void>(process_id);
+  return std::nullopt;
+#else
+  if (process_id == 0U ||
+      process_id > static_cast<std::uint64_t>(std::numeric_limits<pid_t>::max())) {
+    return std::nullopt;
+  }
+  try {
+#if defined(__linux__)
+    std::ifstream process{"/proc/" + std::to_string(process_id) + "/stat"};
+    std::string stat;
+    if (!std::getline(process, stat)) {
+      return std::nullopt;
+    }
+    return parse_linux_process_generation(stat);
+#elif defined(__APPLE__)
+    struct kinfo_proc process {};
+    std::size_t size = sizeof(process);
+    int query[4]{CTL_KERN, KERN_PROC, KERN_PROC_PID, static_cast<int>(process_id)};
+    if (::sysctl(query, 4U, &process, &size, nullptr, 0U) != 0 ||
+        size != sizeof(process) || process.kp_proc.p_starttime.tv_sec <= 0) {
+      return std::nullopt;
+    }
+    return std::to_string(process.kp_proc.p_starttime.tv_sec) + ":" +
+           std::to_string(process.kp_proc.p_starttime.tv_usec);
+#else
+    static_cast<void>(process_id);
+    return std::nullopt;
+#endif
+  } catch (...) {
+    return std::nullopt;
+  }
+#endif
+}
+
+[[nodiscard]] static bool
+process_identity_absent(std::uint64_t process_id, std::uint64_t server_start_time,
+                        std::string_view captured_generation) noexcept {
+#if defined(_WIN32)
+  static_cast<void>(process_id);
+  static_cast<void>(server_start_time);
+  static_cast<void>(captured_generation);
+  return false;
+#else
+  if (process_id == 0U || server_start_time == 0U ||
+      process_id > static_cast<std::uint64_t>(std::numeric_limits<pid_t>::max())) {
+    return false;
+  }
+  errno = 0;
+  if (::kill(static_cast<pid_t>(process_id), 0) == -1) {
+    return errno == ESRCH;
+  }
+  if (captured_generation.empty()) {
+    return false;
+  }
+  const auto current_generation = process_generation(process_id);
+  return current_generation.has_value() && *current_generation != captured_generation;
+#endif
+}
+
+static void
+retain_run_until_proven_complete(PaneInputLease lease, Server server, Pane pane,
+                                 std::string marker,
+                                 const PaneInputPreflight& preflight) noexcept {
   PaneInputLease* retained = nullptr;
   try {
     retained = new PaneInputLease(std::move(lease));
     std::thread watcher{[retained, server = std::move(server), pane = std::move(pane),
-                         marker = std::move(marker), server_pid]() mutable {
+                         marker = std::move(marker), server_pid = preflight.server_pid,
+                         server_start_time = preflight.server_start_time,
+                         process_generation =
+                             preflight.server_process_generation]() mutable {
       std::unique_ptr<PaneInputLease> ownership{retained};
       try {
         CaptureOptions options;
         options.whole_history = true;
         options.join_wrapped = true;
-        constexpr std::array<std::string_view, 2> fields{"pane_id", "pid"};
+        constexpr std::array<std::string_view, 3> fields{"pane_id", "pid",
+                                                         "start_time"};
         for (;;) {
+          if (process_identity_absent(server_pid, server_start_time,
+                                      process_generation)) {
+            return;
+          }
           const auto captured = pane.capture(options);
           if (captured.has_value() &&
               shell_command_completion(*captured, marker).has_value()) {
@@ -681,7 +822,7 @@ static void retain_run_until_proven_complete(PaneInputLease lease, Server server
           const auto panes =
               server.run({"list-panes", "-a", "-F", format_request(fields)});
           if (panes.has_value() &&
-              pane_identity_absent(*panes, pane.id(), server_pid)) {
+              pane_identity_absent(*panes, pane.id(), server_pid, server_start_time)) {
             return;
           }
           std::this_thread::sleep_for(std::chrono::milliseconds{20});
@@ -2308,7 +2449,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
         }
         if (!detail::same_shell_input_route(*initial, *final) ||
             !lease.covers(server.socket_path(), final->server_pid,
-                          final->configured_pane_ids)) {
+                          final->server_start_time, final->configured_pane_ids)) {
           return libtmux::unexpected(
               detail::changed_pane_input_route("run_shell_command"));
         }
@@ -2318,8 +2459,8 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
         const auto sent = server.run_chain(dispatch);
         if (!sent.has_value()) {
           if (sent.error().delivery != DeliveryStatus::not_started) {
-            detail::retain_run_until_proven_complete(
-                std::move(lease), server, *pane, payload->marker, initial->server_pid);
+            detail::retain_run_until_proven_complete(std::move(lease), server, *pane,
+                                                     payload->marker, *initial);
           }
           return failure(sent.error());
         }
@@ -2328,8 +2469,8 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
             std::chrono::milliseconds{integer(arguments, "timeoutMs", 30000)};
         while (std::chrono::steady_clock::now() < deadline) {
           if (context.cancelled()) {
-            detail::retain_run_until_proven_complete(
-                std::move(lease), server, *pane, payload->marker, initial->server_pid);
+            detail::retain_run_until_proven_complete(std::move(lease), server, *pane,
+                                                     payload->marker, *initial);
             return libtmux::unexpected(detail::cancelled());
           }
           CaptureOptions options;
@@ -2337,8 +2478,8 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
           options.join_wrapped = true;
           const auto captured = pane->capture(options);
           if (!captured.has_value()) {
-            detail::retain_run_until_proven_complete(
-                std::move(lease), server, *pane, payload->marker, initial->server_pid);
+            detail::retain_run_until_proven_complete(std::move(lease), server, *pane,
+                                                     payload->marker, *initial);
             return failure(captured.error());
           }
           const auto completed =
@@ -2354,7 +2495,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
           std::this_thread::sleep_for(20ms);
         }
         detail::retain_run_until_proven_complete(std::move(lease), server, *pane,
-                                                 payload->marker, initial->server_pid);
+                                                 payload->marker, *initial);
         return libtmux::unexpected(ToolError{false, "shell command timed out"});
       },
       "Require one live configured pane, outside human-owned mode and running a "
@@ -2563,7 +2704,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
         }
         if (!detail::same_pane_input_route(*initial, *final) ||
             !lease.covers(server.socket_path(), final->server_pid,
-                          final->configured_pane_ids)) {
+                          final->server_start_time, final->configured_pane_ids)) {
           return fail_after_cleanup(detail::changed_pane_input_route("paste_text"));
         }
         const auto answer = pane->paste(*buffer, true);

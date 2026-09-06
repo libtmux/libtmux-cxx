@@ -84,6 +84,8 @@ struct PaneInputPreflight {
   std::vector<std::string> configured_pane_ids;
   std::string session_id;
   std::uint64_t server_pid{};
+  std::uint64_t server_start_time{};
+  std::string server_process_generation;
   std::string foreground_command;
 };
 
@@ -99,6 +101,8 @@ resolve_executable(std::string_view search_path,
 [[nodiscard]] std::optional<ShellCommandCompletion>
 shell_command_completion(std::string_view capture, std::string_view marker,
                          std::size_t search_begin = 0U);
+[[nodiscard]] std::optional<std::string>
+parse_linux_process_generation(std::string_view stat);
 
 [[nodiscard]] const std::string* argument(const Arguments& arguments,
                                           std::string_view name);

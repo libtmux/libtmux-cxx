@@ -23,6 +23,7 @@ public:
   PaneInputLease& operator=(const PaneInputLease&) = delete;
 
   [[nodiscard]] bool covers(std::string_view endpoint, std::uint64_t server_pid,
+                            std::uint64_t server_start_time,
                             const std::vector<std::string>& pane_ids) const;
   void release();
   void abandon() noexcept;
@@ -34,13 +35,14 @@ private:
   std::unique_ptr<Impl> implementation_;
 
   friend libtmux::expected<PaneInputLease, ToolError>
-      reserve_pane_input(std::string, std::uint64_t, std::vector<std::string>,
-                         PaneInputReservationKind, std::string_view);
+      reserve_pane_input(std::string, std::uint64_t, std::uint64_t,
+                         std::vector<std::string>, PaneInputReservationKind,
+                         std::string_view);
 };
 
 [[nodiscard]] libtmux::expected<PaneInputLease, ToolError>
 reserve_pane_input(std::string endpoint, std::uint64_t server_pid,
-                   std::vector<std::string> pane_ids, PaneInputReservationKind kind,
-                   std::string_view tool_name);
+                   std::uint64_t server_start_time, std::vector<std::string> pane_ids,
+                   PaneInputReservationKind kind, std::string_view tool_name);
 
 } // namespace libtmux::mcp::detail

@@ -14,6 +14,7 @@ namespace {
 struct PaneInputIdentity {
   std::string endpoint;
   std::uint64_t server_pid{};
+  std::uint64_t server_start_time{};
   std::string pane_id;
 
   auto operator<=>(const PaneInputIdentity&) const = default;
@@ -49,12 +50,14 @@ struct Registry {
 
 [[nodiscard]] std::vector<PaneInputIdentity>
 identities(std::string endpoint, std::uint64_t server_pid,
-           const std::vector<std::string>& pane_ids) {
+           std::uint64_t server_start_time, const std::vector<std::string>& pane_ids) {
   std::vector<PaneInputIdentity> answer;
   answer.reserve(pane_ids.size());
   for (const std::string& pane_id : pane_ids) {
-    answer.push_back(PaneInputIdentity{
-        .endpoint = endpoint, .server_pid = server_pid, .pane_id = pane_id});
+    answer.push_back(PaneInputIdentity{.endpoint = endpoint,
+                                       .server_pid = server_pid,
+                                       .server_start_time = server_start_time,
+                                       .pane_id = pane_id});
   }
   std::ranges::sort(answer);
   return answer;
@@ -141,10 +144,11 @@ PaneInputLease::~PaneInputLease() {
 }
 
 bool PaneInputLease::covers(std::string_view endpoint, std::uint64_t server_pid,
+                            std::uint64_t server_start_time,
                             const std::vector<std::string>& pane_ids) const {
   return implementation_ != nullptr &&
-         implementation_->covers(
-             identities(std::string{endpoint}, server_pid, pane_ids));
+         implementation_->covers(identities(std::string{endpoint}, server_pid,
+                                            server_start_time, pane_ids));
 }
 
 void PaneInputLease::release() {
@@ -159,9 +163,10 @@ void PaneInputLease::abandon() noexcept {
 
 libtmux::expected<PaneInputLease, ToolError>
 reserve_pane_input(std::string endpoint, std::uint64_t server_pid,
-                   std::vector<std::string> pane_ids, PaneInputReservationKind kind,
-                   std::string_view tool_name) {
-  if (endpoint.empty() || server_pid == 0U || pane_ids.empty() || tool_name.empty() ||
+                   std::uint64_t server_start_time, std::vector<std::string> pane_ids,
+                   PaneInputReservationKind kind, std::string_view tool_name) {
+  if (endpoint.empty() || server_pid == 0U || server_start_time == 0U ||
+      pane_ids.empty() || tool_name.empty() ||
       !std::ranges::all_of(pane_ids, canonical_pane_id)) {
     return libtmux::unexpected(invalid_reservation());
   }
@@ -170,7 +175,7 @@ reserve_pane_input(std::string endpoint, std::uint64_t server_pid,
     return libtmux::unexpected(invalid_reservation());
   }
   std::vector<PaneInputIdentity> wanted =
-      identities(std::move(endpoint), server_pid, pane_ids);
+      identities(std::move(endpoint), server_pid, server_start_time, pane_ids);
   Registry& owner = registry();
   std::lock_guard lock{owner.mutex};
   for (const PaneInputIdentity& identity : wanted) {

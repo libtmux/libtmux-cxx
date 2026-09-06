@@ -181,10 +181,12 @@ std::string pane_input_row(std::string_view pane_id, std::string_view window_id,
                            std::string_view dead, std::string_view command,
                            std::string_view input_off = "0",
                            std::string_view session_id = "$3",
-                           std::string_view server_pid = "101") {
+                           std::string_view server_pid = "101",
+                           std::string_view server_start_time = "1700000000") {
   std::string row;
-  for (const std::string_view value : {pane_id, window_id, session_id, server_pid,
-                                       synchronized, mode, dead, input_off, command}) {
+  for (const std::string_view value :
+       {pane_id, window_id, session_id, server_pid, server_start_time, synchronized,
+        mode, dead, input_off, command}) {
     row += value;
     row += libtmux::kFormatSeparator;
   }
@@ -441,6 +443,13 @@ TEST(McpTools, PaneInputSnapshotRequiresCanonicalRowsAndExactState) {
     EXPECT_FALSE(parse(pane_input_row("%7", "@3", "0", mode, "0", "sh")).has_value())
         << mode;
   }
+  for (const std::string_view start_time :
+       {"", "0", "00", "+1", "-1", "text", "18446744073709551616"}) {
+    EXPECT_FALSE(parse(pane_input_row("%7", "@3", "0", "0", "0", "sh", "0", "$3", "101",
+                                      start_time))
+                     .has_value())
+        << start_time;
+  }
   EXPECT_FALSE(parse(pane_input_row("%7", "@3", "0", "0", "0", "")).has_value());
   EXPECT_TRUE(parse(pane_input_row("%7", "@0", "0", "0", "0", "sh")).has_value());
   EXPECT_TRUE(libtmux::mcp::detail::parse_pane_input_snapshot(
@@ -457,6 +466,7 @@ TEST(McpTools, PaneInputSnapshotValidatesAllRowsBeforeSelectingMembership) {
       "%7", ignored + source, PaneInputScope::effective_cohort);
   ASSERT_TRUE(source_only.has_value()) << source_only.error().message;
   EXPECT_EQ(source_only->configured_pane_ids, std::vector<std::string>{"%7"});
+  EXPECT_EQ(source_only->server_start_time, 1700000000U);
   EXPECT_EQ(source_only->foreground_command, "sh");
 
   EXPECT_FALSE(libtmux::mcp::detail::parse_pane_input_snapshot(
@@ -480,6 +490,12 @@ TEST(McpTools, PaneInputSnapshotValidatesAllRowsBeforeSelectingMembership) {
                    .has_value());
   EXPECT_FALSE(libtmux::mcp::detail::parse_pane_input_snapshot(
                    "%7", source + pane_input_row("%8", "@4", "0", "0", "0", "sh"),
+                   PaneInputScope::effective_cohort)
+                   .has_value());
+  EXPECT_FALSE(libtmux::mcp::detail::parse_pane_input_snapshot(
+                   "%7",
+                   source + pane_input_row("%8", "@3", "0", "0", "0", "sh", "0", "$3",
+                                           "101", "1700000001"),
                    PaneInputScope::effective_cohort)
                    .has_value());
 }
@@ -665,65 +681,128 @@ TEST(McpTools, PaneInputCallerRequiresACompleteCanonicalIdentity) {
 TEST(McpTools, PaneInputReservationsAreProcessWideAndNonqueueing) {
   using libtmux::mcp::detail::PaneInputReservationKind;
   using libtmux::mcp::detail::reserve_pane_input;
+  constexpr std::uint64_t server_start_time = 1700000000U;
   const std::vector<std::string> first_ids{"%1", "%2"};
   const std::vector<std::string> overlap_ids{"%2"};
 
   {
-    auto run = reserve_pane_input("endpoint-a", 101U, first_ids,
+    auto run = reserve_pane_input("endpoint-a", 101U, server_start_time, first_ids,
                                   PaneInputReservationKind::run, "run_shell_command");
     ASSERT_TRUE(run.has_value()) << run.error().message;
-    EXPECT_TRUE(run->covers("endpoint-a", 101U, first_ids));
-    EXPECT_FALSE(run->covers("endpoint-a", 101U, overlap_ids));
+    EXPECT_TRUE(run->covers("endpoint-a", 101U, server_start_time, first_ids));
+    EXPECT_FALSE(run->covers("endpoint-a", 101U, server_start_time, overlap_ids));
+    EXPECT_FALSE(run->covers("endpoint-a", 101U, server_start_time + 1U, first_ids));
 
-    const auto input = reserve_pane_input("endpoint-a", 101U, overlap_ids,
-                                          PaneInputReservationKind::input, "send_keys");
+    const auto input =
+        reserve_pane_input("endpoint-a", 101U, server_start_time, overlap_ids,
+                           PaneInputReservationKind::input, "send_keys");
     ASSERT_FALSE(input.has_value());
     EXPECT_NE(input.error().message.find("still active"), std::string::npos);
-    EXPECT_TRUE(reserve_pane_input("endpoint-a", 101U, {"%3"},
+    EXPECT_TRUE(reserve_pane_input("endpoint-a", 101U, server_start_time + 1U,
+                                   overlap_ids, PaneInputReservationKind::input,
+                                   "send_keys")
+                    .has_value());
+    EXPECT_TRUE(reserve_pane_input("endpoint-a", 101U, server_start_time, {"%3"},
                                    PaneInputReservationKind::input, "send_keys")
                     .has_value());
-    EXPECT_TRUE(reserve_pane_input("endpoint-b", 101U, overlap_ids,
+    EXPECT_TRUE(reserve_pane_input("endpoint-b", 101U, server_start_time, overlap_ids,
                                    PaneInputReservationKind::input, "send_keys")
                     .has_value());
-    EXPECT_TRUE(reserve_pane_input("endpoint-a", 102U, overlap_ids,
+    EXPECT_TRUE(reserve_pane_input("endpoint-a", 102U, server_start_time, overlap_ids,
                                    PaneInputReservationKind::input, "send_keys")
                     .has_value());
   }
 
-  auto after = reserve_pane_input("endpoint-a", 101U, overlap_ids,
+  auto after = reserve_pane_input("endpoint-a", 101U, server_start_time, overlap_ids,
                                   PaneInputReservationKind::input, "send_keys");
   ASSERT_TRUE(after.has_value()) << after.error().message;
   const auto run =
-      reserve_pane_input("endpoint-a", 101U, overlap_ids, PaneInputReservationKind::run,
-                         "run_shell_command");
+      reserve_pane_input("endpoint-a", 101U, server_start_time, overlap_ids,
+                         PaneInputReservationKind::run, "run_shell_command");
   ASSERT_FALSE(run.has_value());
   EXPECT_NE(run.error().message.find("input"), std::string::npos);
   after->release();
-  EXPECT_FALSE(after->covers("endpoint-a", 101U, overlap_ids));
+  EXPECT_FALSE(after->covers("endpoint-a", 101U, server_start_time, overlap_ids));
 
-  EXPECT_FALSE(reserve_pane_input("", 101U, overlap_ids,
+  EXPECT_FALSE(reserve_pane_input("", 101U, server_start_time, overlap_ids,
                                   PaneInputReservationKind::input, "send_keys")
                    .has_value());
-  EXPECT_FALSE(reserve_pane_input("endpoint-a", 0U, overlap_ids,
+  EXPECT_FALSE(reserve_pane_input("endpoint-a", 0U, server_start_time, overlap_ids,
                                   PaneInputReservationKind::input, "send_keys")
                    .has_value());
-  EXPECT_FALSE(reserve_pane_input("endpoint-a", 101U, {"%1", "%1"},
+  EXPECT_FALSE(reserve_pane_input("endpoint-a", 101U, 0U, overlap_ids,
+                                  PaneInputReservationKind::input, "send_keys")
+                   .has_value());
+  EXPECT_FALSE(reserve_pane_input("endpoint-a", 101U, server_start_time, {"%1", "%1"},
                                   PaneInputReservationKind::input, "send_keys")
                    .has_value());
 
-  auto replaced = reserve_pane_input("endpoint-a", 101U, {"%4"},
+  auto replaced = reserve_pane_input("endpoint-a", 101U, server_start_time, {"%4"},
                                      PaneInputReservationKind::input, "send_keys");
-  auto replacement = reserve_pane_input("endpoint-a", 101U, {"%5"},
+  auto replacement = reserve_pane_input("endpoint-a", 101U, server_start_time, {"%5"},
                                         PaneInputReservationKind::input, "send_keys");
   ASSERT_TRUE(replaced.has_value()) << replaced.error().message;
   ASSERT_TRUE(replacement.has_value()) << replacement.error().message;
   *replaced = std::move(*replacement);
-  EXPECT_TRUE(reserve_pane_input("endpoint-a", 101U, {"%4"},
+  EXPECT_TRUE(reserve_pane_input("endpoint-a", 101U, server_start_time, {"%4"},
                                  PaneInputReservationKind::input, "send_keys")
                   .has_value());
-  EXPECT_FALSE(reserve_pane_input("endpoint-a", 101U, {"%5"},
+  EXPECT_FALSE(reserve_pane_input("endpoint-a", 101U, server_start_time, {"%5"},
                                   PaneInputReservationKind::input, "send_keys")
                    .has_value());
+}
+
+TEST(McpTools, LinuxProcessGenerationUsesTheFinalCommDelimiter) {
+  std::string stat{"77 (tmux)worker) S"};
+  for (std::size_t field = 4U; field < 22U; ++field) {
+    stat += " 1";
+  }
+  stat += " 4242";
+
+  EXPECT_EQ(libtmux::mcp::detail::parse_linux_process_generation(stat), "4242");
+}
+
+TEST(McpToolsTmux, ReleasesTimedOutRunReservationWhenDaemonExits) {
+  using namespace std::chrono_literals;
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  auto panes = server.panes();
+  ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
+  ASSERT_EQ(panes->size(), 1U);
+  const std::string pane_id{panes->front().id()};
+  const auto preflight = libtmux::mcp::detail::preflight_pane_input(
+      server, pane_id, libtmux::mcp::detail::PaneInputScope::target_only);
+  ASSERT_TRUE(preflight.has_value()) << preflight.error().message;
+  EXPECT_GT(preflight->server_start_time, 0U);
+  EXPECT_FALSE(preflight->server_process_generation.empty());
+  const auto result = all_tools().call(
+      server, "run_shell_command",
+      {{"paneId", pane_id}, {"command", "sleep 5"}, {"timeoutMs", "50"}});
+  ASSERT_FALSE(result.has_value());
+  EXPECT_EQ(result.error().message, "shell command timed out");
+
+  const auto killed = server.kill();
+  ASSERT_TRUE(killed.has_value()) << killed.error().diagnostic;
+  const auto stopped_by = std::chrono::steady_clock::now() + 2s;
+  while (fixture->is_alive() && std::chrono::steady_clock::now() < stopped_by) {
+    std::this_thread::sleep_for(10ms);
+  }
+  ASSERT_FALSE(fixture->is_alive());
+
+  bool released = false;
+  const auto released_by = std::chrono::steady_clock::now() + 2s;
+  while (!released && std::chrono::steady_clock::now() < released_by) {
+    released = libtmux::mcp::detail::reserve_pane_input(
+                   std::string{server.socket_path()}, preflight->server_pid,
+                   preflight->server_start_time, {pane_id},
+                   libtmux::mcp::detail::PaneInputReservationKind::input, "send_keys")
+                   .has_value();
+    if (!released) {
+      std::this_thread::sleep_for(10ms);
+    }
+  }
+  EXPECT_TRUE(released);
 }
 
 TEST(McpTools, ShellCommandPayloadUsesAnIsolatedExactEndpointFrame) {
