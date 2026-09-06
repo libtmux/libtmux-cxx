@@ -534,10 +534,10 @@ TEST(McpProtocolCli, StartsAnAbsentPinnedSocketOnlyForCreateSession) {
   const libtmux::test::EnvironmentGuard tmux_tmpdir{"TMUX_TMPDIR",
                                                     sentinel->tmux_tmpdir().string()};
 
-  const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
-  const std::filesystem::path socket =
-      sentinel->tmux_tmpdir() /
-      ("libtmux-mcp-startable-" + std::to_string(nonce) + ".sock");
+  // Short, and no nonce: the fixture's tree is already unique to this run, and
+  // a nanosecond count spends nineteen of the bytes `sun_path` has under the
+  // macOS-length temporary directory CI runs.
+  const std::filesystem::path socket = sentinel->tmux_tmpdir() / "startable.sock";
   EXPECT_EQ(socket.parent_path(), sentinel->tmux_tmpdir());
   EXPECT_FALSE(std::filesystem::exists(socket));
   const std::string initialize =
@@ -2844,9 +2844,9 @@ TEST(McpProtocolCli, EstablishesDefaultMinimalDaemonBeforeFreezingProvenance) {
   const libtmux::test::EnvironmentGuard tmux_tmpdir{"TMUX_TMPDIR",
                                                     sentinel->tmux_tmpdir().string()};
   libtmux::mcp::server::CliOptions options;
-  options.value =
-      "libtmux-cxx-default-provenance-" +
-      std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+  // tmux spends `$TMUX_TMPDIR/tmux-<uid>/` before this name, so it stays short
+  // for the same reason the socket above does.
+  options.value = "prov";
   auto opened = libtmux::mcp::server::open_server(options);
   ASSERT_TRUE(opened.has_value()) << opened.error();
   const std::filesystem::path selected_socket{opened->server.socket_path()};
