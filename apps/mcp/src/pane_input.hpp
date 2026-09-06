@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+#include <chrono>
 #include <compare>
 #include <cstdint>
 #include <memory>
@@ -12,6 +14,31 @@
 #include "libtmux_consumers/mcp.hpp"
 
 namespace libtmux::mcp::detail {
+
+inline constexpr auto kPaneInputSettlementProofTimeout = std::chrono::milliseconds{250};
+inline constexpr std::array kPaneInputSettlementAttemptDelays{
+    std::chrono::milliseconds{0},   std::chrono::milliseconds{20},
+    std::chrono::milliseconds{40},  std::chrono::milliseconds{80},
+    std::chrono::milliseconds{160}, std::chrono::milliseconds{250},
+    std::chrono::milliseconds{250}, std::chrono::milliseconds{250}};
+
+template <typename Stopped, typename Prove, typename Wait>
+[[nodiscard]] bool prove_pane_input_settlement(Stopped stopped, Prove prove,
+                                               Wait wait) {
+  for (const auto delay : kPaneInputSettlementAttemptDelays) {
+    if (stopped()) {
+      return false;
+    }
+    wait(delay);
+    if (stopped()) {
+      return false;
+    }
+    if (prove()) {
+      return true;
+    }
+  }
+  return false;
+}
 
 enum class PaneInputReservationKind { input, run };
 

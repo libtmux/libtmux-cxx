@@ -909,6 +909,46 @@ TEST(McpTools, PaneInputReservationsRejectNonSocketEndpoints) {
                    .has_value());
 }
 
+TEST(McpTools, PaneInputSettlementRetryScheduleIsFinite) {
+  using libtmux::mcp::detail::kPaneInputSettlementAttemptDelays;
+  using libtmux::mcp::detail::kPaneInputSettlementProofTimeout;
+  using libtmux::mcp::detail::prove_pane_input_settlement;
+  std::vector<std::chrono::milliseconds> waited;
+  std::size_t attempts = 0U;
+
+  const bool exhausted = prove_pane_input_settlement(
+      [] { return false; },
+      [&] {
+        ++attempts;
+        return false;
+      },
+      [&](std::chrono::milliseconds delay) { waited.push_back(delay); });
+
+  EXPECT_FALSE(exhausted);
+  EXPECT_EQ(attempts, kPaneInputSettlementAttemptDelays.size());
+  EXPECT_EQ(waited, (std::vector<std::chrono::milliseconds>{
+                        kPaneInputSettlementAttemptDelays.begin(),
+                        kPaneInputSettlementAttemptDelays.end()}));
+  auto maximum_lifetime = kPaneInputSettlementProofTimeout * attempts;
+  for (const auto delay : waited) {
+    maximum_lifetime += delay;
+  }
+  EXPECT_LE(maximum_lifetime, std::chrono::seconds{4});
+
+  attempts = 0U;
+  waited.clear();
+  const bool proved = prove_pane_input_settlement(
+      [] { return false; },
+      [&] {
+        ++attempts;
+        return attempts == 3U;
+      },
+      [&](std::chrono::milliseconds delay) { waited.push_back(delay); });
+  EXPECT_TRUE(proved);
+  EXPECT_EQ(attempts, 3U);
+  EXPECT_EQ(waited.size(), 3U);
+}
+
 TEST(McpToolsTmux, PaneInputReservationsAreProcessWideAndNonqueueing) {
   using libtmux::mcp::detail::PaneInputReservationKind;
   using libtmux::mcp::detail::reserve_pane_input;

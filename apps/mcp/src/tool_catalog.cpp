@@ -835,11 +835,12 @@ bool same_pane_input_route(const PaneInputPreflight& initial,
                               "dispatch; no input was sent"};
 }
 
-[[nodiscard]] static bool pane_identity_absent(std::string raw,
-                                               std::string_view pane_id,
-                                               std::uint64_t server_pid,
-                                               std::uint64_t server_start_time) {
-  constexpr std::array<std::string_view, 3> fields{"pane_id", "pid", "start_time"};
+[[nodiscard]] static bool pane_identity_settled(std::string raw,
+                                                std::string_view pane_id,
+                                                std::uint64_t server_pid,
+                                                std::uint64_t server_start_time) {
+  constexpr std::array<std::string_view, 4> fields{"pane_id", "pid", "start_time",
+                                                   "pane_dead"};
   if (raw.empty() || raw.back() != '\n' || raw.front() == '\n' ||
       raw.find("\n\n") != std::string::npos) {
     return false;
@@ -848,9 +849,11 @@ bool same_pane_input_route(const PaneInputPreflight& initial,
   if (snapshot == nullptr || snapshot->rows().empty()) {
     return false;
   }
+  std::optional<bool> matching_dead;
   for (const auto& values : snapshot->rows()) {
     if (!canonical_id(values[0], '%') || !canonical_number(values[1]) ||
-        values[1] == "0" || !canonical_number(values[2]) || values[2] == "0") {
+        values[1] == "0" || !canonical_number(values[2]) || values[2] == "0" ||
+        (values[3] != "0" && values[3] != "1")) {
       return false;
     }
     std::uint64_t row_pid = 0U;
@@ -866,12 +869,18 @@ bool same_pane_input_route(const PaneInputPreflight& initial,
         parsed_start.ptr != values[2].data() + values[2].size()) {
       return false;
     }
-    if (values[0] == pane_id && row_pid == server_pid &&
-        row_start_time == server_start_time) {
+    if (row_pid != server_pid || row_start_time != server_start_time) {
       return false;
     }
+    if (values[0] == pane_id) {
+      const bool dead = values[3] == "1";
+      if (matching_dead.has_value() && *matching_dead != dead) {
+        return false;
+      }
+      matching_dead = dead;
+    }
   }
-  return true;
+  return !matching_dead.has_value() || *matching_dead;
 }
 
 [[nodiscard]] static std::optional<std::string>
@@ -941,48 +950,89 @@ static void
 retain_run_until_proven_complete(PaneInputLease lease, Server server, Pane pane,
                                  std::string marker,
                                  const PaneInputPreflight& preflight) noexcept {
-  PaneInputLease* retained = nullptr;
+  class Settlement final {
+  public:
+    explicit Settlement(PaneInputLease lease) : lease_{std::move(lease)} {}
+
+    ~Settlement() {
+      if (!settled_.load(std::memory_order_acquire)) {
+        lease_.abandon();
+      }
+    }
+
+    [[nodiscard]] bool settled() const noexcept {
+      return settled_.load(std::memory_order_acquire);
+    }
+
+    void settle() {
+      bool expected = false;
+      if (settled_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+        lease_.release();
+      }
+    }
+
+  private:
+    PaneInputLease lease_;
+    std::atomic_bool settled_{};
+  };
+
   try {
-    retained = new PaneInputLease(std::move(lease));
-    std::thread watcher{[retained, server = std::move(server), pane = std::move(pane),
-                         marker = std::move(marker), server_pid = preflight.server_pid,
-                         server_start_time = preflight.server_start_time,
-                         process_generation =
-                             preflight.server_process_generation]() mutable {
-      std::unique_ptr<PaneInputLease> ownership{retained};
+    auto settlement = std::make_shared<Settlement>(std::move(lease));
+    const std::string pane_id{pane.id()};
+    const std::string endpoint = preflight.endpoint_path;
+    const auto retained_endpoint = pane_input_endpoint_identity(endpoint);
+    const auto same_endpoint = [endpoint, retained_endpoint] {
+      return retained_endpoint.has_value() &&
+             pane_input_endpoint_identity(endpoint) == retained_endpoint;
+    };
+    const auto watch = [settlement](auto prove) mutable {
       try {
-        CaptureOptions options;
-        options.whole_history = true;
-        options.join_wrapped = true;
-        constexpr std::array<std::string_view, 3> fields{"pane_id", "pid",
-                                                         "start_time"};
-        for (;;) {
-          if (process_identity_absent(server_pid, server_start_time,
-                                      process_generation)) {
-            return;
-          }
-          const auto captured = pane.capture(options);
-          if (captured.has_value() &&
-              shell_command_completion(*captured, marker).has_value()) {
-            return;
-          }
-          const auto panes =
-              server.run({"list-panes", "-a", "-F", format_request(fields)});
-          if (panes.has_value() &&
-              pane_identity_absent(*panes, pane.id(), server_pid, server_start_time)) {
-            return;
-          }
-          std::this_thread::sleep_for(std::chrono::milliseconds{20});
+        if (prove_pane_input_settlement([&] { return settlement->settled(); },
+                                        std::move(prove),
+                                        [](std::chrono::milliseconds delay) {
+                                          std::this_thread::sleep_for(delay);
+                                        })) {
+          settlement->settle();
         }
       } catch (...) {
-        static_cast<void>(ownership.release());
       }
-    }};
-    watcher.detach();
+    };
+    const auto launch = [&](auto prove) {
+      try {
+        std::thread{watch, std::move(prove)}.detach();
+      } catch (...) {
+      }
+    };
+
+    launch([server, pane_id, marker = std::move(marker), same_endpoint] {
+      if (!same_endpoint()) {
+        return false;
+      }
+      const auto captured =
+          server.run({"capture-pane", "-p", "-t", pane_id, "-S", "-", "-J"},
+                     kPaneInputSettlementProofTimeout);
+      return captured.has_value() && same_endpoint() &&
+             shell_command_completion(*captured, marker).has_value();
+    });
+    launch([server, pane_id, server_pid = preflight.server_pid,
+            server_start_time = preflight.server_start_time, same_endpoint] {
+      if (!same_endpoint()) {
+        return false;
+      }
+      constexpr std::array<std::string_view, 4> fields{"pane_id", "pid", "start_time",
+                                                       "pane_dead"};
+      const auto panes = server.run({"list-panes", "-a", "-F", format_request(fields)},
+                                    kPaneInputSettlementProofTimeout);
+      return panes.has_value() && same_endpoint() &&
+             pane_identity_settled(*panes, pane_id, server_pid, server_start_time);
+    });
+    launch([server_pid = preflight.server_pid,
+            server_start_time = preflight.server_start_time,
+            process_generation = preflight.server_process_generation] {
+      return process_identity_absent(server_pid, server_start_time, process_generation);
+    });
   } catch (...) {
-    if (retained == nullptr) {
-      lease.abandon();
-    }
+    lease.abandon();
   }
 }
 

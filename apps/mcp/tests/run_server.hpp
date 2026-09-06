@@ -14,6 +14,7 @@
 #include <csignal>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -123,6 +124,7 @@ read_output_byte(int descriptor, std::string& pending,
 struct InputStep {
   std::string text;
   std::chrono::milliseconds pause_after{};
+  std::function<libtmux::expected<void, std::string>()> barrier_after_write{};
 };
 
 inline libtmux::expected<std::vector<std::string>, std::string> run_backpressure_probe(
@@ -276,6 +278,16 @@ inline libtmux::expected<std::string, std::string> run_server_steps(
     return libtmux::unexpected(program.string() + ": " + std::strerror(spawned));
   }
 
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  const auto abort = [&](std::string error) {
+    ::close(to_child[1]);
+    ::close(from_child[0]);
+    static_cast<void>(::kill(child, SIGKILL));
+    static_cast<void>(::waitpid(child, nullptr, 0));
+    return libtmux::expected<std::string, std::string>{
+        libtmux::unexpected(std::move(error))};
+  };
+
   // SIGPIPE would kill the suite if the server exited early; a short write is
   // reported instead.
   static_cast<void>(::signal(SIGPIPE, SIG_IGN));
@@ -289,11 +301,16 @@ inline libtmux::expected<std::string, std::string> run_server_steps(
       }
       written += static_cast<std::size_t>(wrote);
     }
+    if (step.barrier_after_write) {
+      auto ready = step.barrier_after_write();
+      if (!ready.has_value()) {
+        return abort(ready.error());
+      }
+    }
     if (step.pause_after > std::chrono::milliseconds::zero()) {
       std::this_thread::sleep_for(step.pause_after);
     }
   }
-  const auto deadline = std::chrono::steady_clock::now() + timeout;
   std::string output;
   std::size_t output_lines = 0U;
   const auto read_output = [&]() -> libtmux::expected<bool, std::string> {
@@ -318,14 +335,6 @@ inline libtmux::expected<std::string, std::string> run_server_steps(
     }
     output.append(buffer.data(), static_cast<std::size_t>(read_bytes));
     return true;
-  };
-  const auto abort = [&](std::string error) {
-    ::close(to_child[1]);
-    ::close(from_child[0]);
-    static_cast<void>(::kill(child, SIGKILL));
-    static_cast<void>(::waitpid(child, nullptr, 0));
-    return libtmux::expected<std::string, std::string>{
-        libtmux::unexpected(std::move(error))};
   };
   while (output_lines < output_lines_before_eof) {
     auto more = read_output();
