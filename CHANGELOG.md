@@ -9,6 +9,20 @@ was recorded as it landed.
 
 ## Unreleased
 
+### Documentation
+
+- The public headers now render as an API reference through Doxygen and
+  Breathe, one page per header that declares something. (#12)
+- Declaration comments reach that reference. Doxygen reads `///` and treats
+  `//` as an ordinary source comment, so every brief description generated
+  from `include/` was empty; declarations now carry `///`, which
+  [`.github/WRITING.md`](.github/WRITING.md#api-documentation) asks for. (#12)
+- The `operator<<` entry in [`docs/api.md`](docs/api.md) no longer loses the
+  word `<ostream>`. GitHub read the unbackticked type as an HTML tag and
+  dropped it, so a sentence naming the header a caller avoids paying for did
+  not name it. (#12)
+
+
 ## 0.1.0-alpha.10 (2026-09-19)
 
 This alpha publishes what `0.1.0-alpha.9` tagged. That release's Windows port
