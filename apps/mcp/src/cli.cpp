@@ -150,8 +150,17 @@ private:
 }
 
 [[nodiscard]] bool means_absent(const libtmux::CommandFailure& failure) noexcept {
+  // A tmux that cannot be launched at all is a daemon that is certainly not
+  // running, so it reads as absent rather than as a provenance the server
+  // failed to establish. POSIX reaches that conclusion through `missing`,
+  // because a probe there runs a command against a socket; Windows probes by
+  // listing psmux sessions, which reports `spawn` when the executable itself
+  // is not there. Without this the server exits before answering initialize
+  // on a Windows host with no psmux, where every other platform starts and
+  // reports the daemon absent.
   return failure.kind == libtmux::FailureKind::refused ||
-         failure.kind == libtmux::FailureKind::missing;
+         failure.kind == libtmux::FailureKind::missing ||
+         failure.kind == libtmux::FailureKind::spawn;
 }
 
 [[nodiscard]] libtmux::expected<void, libtmux::CommandFailure>
