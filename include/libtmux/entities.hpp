@@ -623,7 +623,6 @@ public:
   select_layout(std::string_view layout) const;
   [[nodiscard]] expected<void, CommandFailure> resize(long long width,
                                                       long long height) const;
-  /// Exchange positions with another window, keeping both ids.
   /// Step through tmux's preset arrangements, and turn the panes within the
   /// one in use.
   ///
@@ -657,6 +656,7 @@ public:
   /// of the window wants `kill`, which says so.
   [[nodiscard]] expected<void, CommandFailure> unlink() const;
 
+  /// Exchange positions with another window, keeping both ids.
   [[nodiscard]] expected<void, CommandFailure> swap_with(const Window& other) const;
   /// Move to another index within the same session.
   [[nodiscard]] expected<void, CommandFailure> move_to(long long index) const;
