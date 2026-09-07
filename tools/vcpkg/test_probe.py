@@ -17,6 +17,10 @@ from unittest import mock
 
 from tools.vcpkg import probe
 
+# A modern catalog is whatever the registry says; these stand in for it here,
+# and the probe is told to expect exactly them.
+MODERN_TOOLS = frozenset({"capture_pane", "list_sessions", "send_keys"})
+
 
 class ProbeTest(unittest.TestCase):
     """Keep package artifact discovery exact across host platforms."""
@@ -86,7 +90,7 @@ class ProbeTest(unittest.TestCase):
         list_id: int = 2,
     ) -> subprocess.CompletedProcess:
         """Return one complete successful MCP lifecycle exchange."""
-        expected = probe._WINDOWS_TOOLS if windows else probe._POSIX_TOOLS
+        expected = MODERN_TOOLS
         tools = [
             {
                 "name": name,
@@ -95,33 +99,26 @@ class ProbeTest(unittest.TestCase):
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        key: {
-                            "type": probe._TOOL_INPUT_TYPES[name][key],
-                            "description": f"Supply {key}",
-                        }
-                        for key in probe._TOOL_INPUTS[name]
+                        "paneId": {"type": "string", "description": "Supply paneId"},
                     },
-                    "required": sorted(probe._TOOL_REQUIRED[name]),
+                    "required": ["paneId"],
                     "additionalProperties": False,
                 },
                 "outputSchema": {
                     "type": "object",
-                    "properties": {
-                        key: {"type": probe._TOOL_OUTPUT_TYPES[name][key]}
-                        for key in probe._TOOL_OUTPUTS[name]
-                    },
-                    "required": sorted(
-                        probe._TOOL_OUTPUTS[name]
-                        - probe._TOOL_OUTPUT_OPTIONAL.get(name, frozenset())
-                    ),
+                    "properties": {"text": {"type": "string"}},
+                    "required": ["text"],
                     "additionalProperties": False,
                 },
+                # Conservative for every tool, which is what the server ships;
+                # the probe checks these are booleans and leaves their values
+                # to the registry.
                 "annotations": {
                     "title": name,
-                    "readOnlyHint": name in probe._READ_ONLY_TOOLS,
-                    "destructiveHint": name in probe._TERMINAL_TOOLS,
-                    "idempotentHint": name in probe._READ_ONLY_TOOLS,
-                    "openWorldHint": name in probe._TERMINAL_TOOLS,
+                    "readOnlyHint": False,
+                    "destructiveHint": True,
+                    "idempotentHint": False,
+                    "openWorldHint": True,
                 },
             }
             for name in sorted(expected)
@@ -524,7 +521,7 @@ class ProbeTest(unittest.TestCase):
             "bad input required": ("inputSchema", "required", [{}]),
             "missing output": ("outputSchema", "properties", "remove"),
             "bad output required": ("outputSchema", "required", [{}]),
-            "wrong annotations": ("annotations", "readOnlyHint", False),
+            "non-boolean annotation": ("annotations", "readOnlyHint", "yes"),
         }
         for label, (section, field, value) in schema_cases.items():
             broken = json.loads(json.dumps(messages))
@@ -544,11 +541,21 @@ class ProbeTest(unittest.TestCase):
 
         _, problem = probe._catalog_problem(
             valid.stdout,
-            windows=True,
+            windows=False,
             version="1.2.3",
             list_id=2,
         )
-        self.assertIn("wrong platform", str(problem))
+        self.assertIsNone(problem)
+
+        empty = json.loads(json.dumps(messages))
+        empty[1]["result"]["tools"] = []
+        _, problem = probe._catalog_problem(
+            "".join(json.dumps(reply) + "\n" for reply in empty),
+            windows=False,
+            version="1.2.3",
+            list_id=2,
+        )
+        self.assertIn("advertised no MCP tools", str(problem))
 
     def test_catalog_accepts_only_the_exact_immutable_alpha2_contract(self) -> None:
         """Keep the published alpha.2 probe strict without inventing new metadata."""
