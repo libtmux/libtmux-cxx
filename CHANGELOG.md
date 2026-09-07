@@ -9,6 +9,16 @@ was recorded as it landed.
 
 ## Unreleased
 
+## 0.1.0-alpha.7 (2026-09-06)
+
+This alpha is wire-breaking for MCP clients and source-compatible for the
+library. One immutable capability registry now governs every advertised tool,
+frozen at startup and reported through `tmux://capabilities`, and pane input is
+authenticated against live topology immediately before it is dispatched. The
+configuration switcher is a native `mcp-swap` recording a checksummed
+transaction before any write, and socket paths are taken from configuration
+rather than from tmux, which escapes them on 3.4 and 3.5.
+
 ### Breaking
 
 - `enter_copy_mode` and `exit_copy_mode` are gone from the MCP tool surface.
