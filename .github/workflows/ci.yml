@@ -748,7 +748,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y clang-18 clang-format-18 clang-tidy-18 \
-            libc++-18-dev libc++abi-18-dev ninja-build
+            libc++-18-dev libc++abi-18-dev ninja-build doxygen
           for tool in clang clang++ clang-format clang-tidy; do
             sudo update-alternatives --install /usr/bin/$tool $tool /usr/bin/$tool-18 100
           done
@@ -780,6 +780,26 @@ jobs:
           python3 tools/docs/api_index.py \
             --include include/libtmux/testing --output docs/api-testing.md \
             --page testing --check
+
+      # The headers are the only source of the published reference, and a
+      # Doxygen warning means part of one did not survive the parse: a comment
+      # that never reached the XML, or markup that swallowed the text after it.
+      # Neither is visible in a build that merely exits zero.
+      - name: Check the Doxygen comments parse
+        run: |
+          doxygen --version
+          OUTPUT_DIRECTORY="${{ runner.temp }}/doxygen" doxygen Doxyfile
+
+      # The same Sphinx build libtmux.org serves, run over the XML above. A
+      # declaration Sphinx cannot parse is not a Doxygen warning: it reaches
+      # the page as unparsed text with no anchor, and only this lane sees it.
+      - name: Check the reference renders
+        run: |
+          cd docs
+          uv run --no-project --with sphinx --with breathe --with furo \
+            sphinx-build -q -W -b dirhtml \
+            -D breathe_projects.cxx="${{ runner.temp }}/doxygen/xml" \
+            -d "${{ runner.temp }}/doctrees" . "${{ runner.temp }}/reference"
 
       - name: Check Python tooling
         run: |

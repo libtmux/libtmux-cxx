@@ -25,6 +25,9 @@ Focused declarations that protect the API-reference parser's scope rules.
   - [`BoxAlias`](#fixture-api-index-hpp-free-symbols-boxalias)
   - [`Sized`](#fixture-api-index-hpp-free-symbols-sized)
   - [`identity`](#fixture-api-index-hpp-free-symbols-identity)
+  - [`paragraphed`](#fixture-api-index-hpp-free-symbols-paragraphed)
+  - [`alternate_marker`](#fixture-api-index-hpp-free-symbols-alternate-marker)
+  - [`plain_marker`](#fixture-api-index-hpp-free-symbols-plain-marker)
   - [`transformer`](#fixture-api-index-hpp-free-symbols-transformer)
   - [`named::answer`](#fixture-api-index-hpp-free-symbols-named-answer)
   - [`native_windows`](#fixture-api-index-hpp-free-symbols-native-windows)
@@ -170,6 +173,30 @@ A concept may contain a requires-expression body.
 template <typename T> [[nodiscard]] T identity(T value);
 ```
 A free function template.
+
+<a id="fixture-api-index-hpp-free-symbols-paragraphed"></a>
+#### `paragraphed`
+
+```cpp
+[[nodiscard]] bool paragraphed();
+```
+A Doxygen block keeps its paragraph break.  A bare separator line carries no text, so the marker must strip to nothing rather than leaving the slash behind.
+
+<a id="fixture-api-index-hpp-free-symbols-alternate-marker"></a>
+#### `alternate_marker`
+
+```cpp
+[[nodiscard]] bool alternate_marker();
+```
+An alternate Doxygen marker documents a declaration the same way.
+
+<a id="fixture-api-index-hpp-free-symbols-plain-marker"></a>
+#### `plain_marker`
+
+```cpp
+[[nodiscard]] bool plain_marker();
+```
+A plain comment above a declaration is still prose.
 
 <a id="fixture-api-index-hpp-free-symbols-transformer"></a>
 #### `transformer`

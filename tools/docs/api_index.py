@@ -95,6 +95,8 @@ PAGES = {
     ),
 }
 
+COMMENT_MARKER = re.compile(r"^//[/!]?")
+DOXYGEN_MARKER = re.compile(r"^//[/!]")
 TYPE_START = re.compile(
     r"^(?:template\s*<.*?>\s*)?(?P<kind>enum\s+class|class|struct)\s+"
     r"(?P<tail>.+)$"
@@ -218,17 +220,39 @@ def _brace_delta(line: str) -> int:
     return code.count("{") - code.count("}")
 
 
-def _prose_above(lines: list[str], index: int) -> list[str]:
-    """Return the comment block directly above ``index``, markers stripped."""
+def _uncomment(stripped: str) -> str:
+    """Return a line comment's text, with ``///`` and ``//!`` markers stripped.
+
+    The headers document declarations in Doxygen's ``///`` form, so stripping a
+    bare ``//`` would leave a stray slash on every line and turn a ``///``
+    paragraph separator into content.
+    """
+    return COMMENT_MARKER.sub("", stripped, count=1).strip()
+
+
+def _prose_above(
+    lines: list[str], index: int, plain: list[int] | None = None
+) -> list[str]:
+    """Return the comment block directly above ``index``, markers stripped.
+
+    Pass ``plain`` to collect the line of every block Doxygen would not read,
+    which is every block carrying no ``///`` or ``//!`` line at all.
+    """
     collected: list[str] = []
     cursor = index - 1
     while cursor >= 0:
         stripped = lines[cursor].strip()
         if not stripped.startswith("//"):
             break
-        collected.append(stripped.removeprefix("//").strip())
+        collected.append(stripped)
         cursor -= 1
-    return list(reversed(collected))
+    if (
+        plain is not None
+        and collected
+        and not any(DOXYGEN_MARKER.match(line) for line in collected)
+    ):
+        plain.append(cursor + 2)
+    return [_uncomment(line) for line in reversed(collected)]
 
 
 def _function_symbol(signature: str) -> str | None:
@@ -354,7 +378,11 @@ def _enum_declaration(candidate: str) -> str:
 
 
 def _enum_entries(
-    lines: list[str], start: int, end: int, conditions: list[str]
+    lines: list[str],
+    start: int,
+    end: int,
+    conditions: list[str],
+    plain: list[int] | None = None,
 ) -> list[Entry]:
     """Split enum members at top-level commas while retaining their prose."""
     entries: list[Entry] = []
@@ -372,7 +400,7 @@ def _enum_entries(
         if not signature:
             return
         prose = (
-            _prose_above(lines, current_line)
+            _prose_above(lines, current_line, plain)
             if current_line is not None and current_line > start
             else []
         )
@@ -539,12 +567,16 @@ def _macro(lines: list[str], start: int) -> _Candidate:
     return _Candidate("\n".join(parts), end)
 
 
-def _macro_entry(lines: list[str], start: int, condition: str) -> Entry:
+def _macro_entry(
+    lines: list[str], start: int, condition: str, plain: list[int] | None = None
+) -> Entry:
     """Build an entry for one public macro."""
     candidate = _macro(lines, start)
     match = re.match(r"#define\s+([A-Za-z_]\w*)", candidate.text)
     symbol = match.group(1) if match else "macro"
-    return Entry(candidate.text, _prose_above(lines, start), symbol, "macro", condition)
+    return Entry(
+        candidate.text, _prose_above(lines, start, plain), symbol, "macro", condition
+    )
 
 
 def _namespace_prefix(scopes: list[_NamespaceScope]) -> str:
@@ -555,7 +587,9 @@ def _namespace_prefix(scopes: list[_NamespaceScope]) -> str:
     return "::".join(names)
 
 
-def read_header(path: pathlib.Path) -> tuple[list[str], list[Section]]:
+def read_header(
+    path: pathlib.Path, plain: list[int] | None = None
+) -> tuple[list[str], list[Section]]:
     """Return a header's opening prose and scope-checked public declarations."""
     lines = path.read_text(encoding="utf-8").splitlines()
 
@@ -563,7 +597,7 @@ def read_header(path: pathlib.Path) -> tuple[list[str], list[Section]]:
     for line in lines[1:]:
         stripped = line.strip()
         if stripped.startswith("//"):
-            overview.append(stripped.removeprefix("//").strip())
+            overview.append(_uncomment(stripped))
         elif overview:
             break
 
@@ -612,7 +646,9 @@ def read_header(path: pathlib.Path) -> tuple[list[str], list[Section]]:
                         public=access.group("access") == "public"
                     )
             elif direct_public and stripped.startswith("#define "):
-                free.entries.append(_macro_entry(lines, index, _condition(conditions)))
+                free.entries.append(
+                    _macro_entry(lines, index, _condition(conditions), plain)
+                )
                 consumed_through = _macro(lines, index).end_line
             elif direct_public and (
                 code
@@ -638,7 +674,7 @@ def read_header(path: pathlib.Path) -> tuple[list[str], list[Section]]:
                             section = Section(
                                 name=qualified,
                                 kind=kind,
-                                prose=_prose_above(lines, index),
+                                prose=_prose_above(lines, index, plain),
                                 declaration=(
                                     _enum_declaration(candidate.text)
                                     if kind == "enum class"
@@ -650,6 +686,7 @@ def read_header(path: pathlib.Path) -> tuple[list[str], list[Section]]:
                                         index,
                                         candidate.end_line,
                                         conditions,
+                                        plain,
                                     )
                                     if kind == "enum class"
                                     else []
@@ -669,7 +706,7 @@ def read_header(path: pathlib.Path) -> tuple[list[str], list[Section]]:
                         target = type_scopes[-1].section if type_scopes else free
                         found = _entry(
                             candidate.text,
-                            _prose_above(lines, index),
+                            _prose_above(lines, index, plain),
                             _condition(conditions),
                             bool(type_scopes),
                         )
@@ -831,19 +868,51 @@ def render(root: pathlib.Path, page: Page) -> str:
     return "\n".join(out).rstrip() + "\n"
 
 
-def _check_fixture(script: pathlib.Path) -> str | None:
-    """Return an error when the focused parser fixture has drifted."""
+def _check_markers(root: pathlib.Path, page: Page) -> str | None:
+    """Return an error naming declaration prose Doxygen would never read.
+
+    A block above a declaration that carries no ``///`` reaches this page and
+    nothing else: Doxygen reads it as an ordinary source comment, leaves the
+    member undocumented, and drops it from the XML libtmux.org renders. It
+    warns about none of that, so the page and the site quietly disagree.
+    """
+    offenders: list[str] = []
+    for name in page.headers:
+        path = root / name
+        if not path.exists():
+            continue
+        plain: list[int] = []
+        read_header(path, plain)
+        offenders.extend(f"{path}:{line}" for line in sorted(plain))
+    if not offenders:
+        return None
+    listed = "\n".join(f"  {where}" for where in offenders)
+    count = len(offenders)
+    noun = "comment" if count == 1 else "comments"
+    return f"{count} declaration {noun} Doxygen cannot read; write as `///`:\n{listed}"
+
+
+def _render_fixture(script: pathlib.Path) -> tuple[pathlib.Path, str] | None:
+    """Return where the focused parser fixture renders, and what it renders to."""
     fixture = script.with_name("fixtures") / "api_index.hpp"
     expected = script.with_name("fixtures") / "api_index.expected.md"
     if not fixture.exists() or not expected.exists():
-        return "API reference parser fixture is missing"
-    rendered = (
+        return None
+    return expected, (
         "\n".join(_render_header(fixture, "fixture/api_index.hpp")).rstrip() + "\n"
     )
-    wanted = expected.read_text(encoding="utf-8")
-    if rendered != wanted:
+
+
+def _check_fixture(script: pathlib.Path) -> str | None:
+    """Return an error when the focused parser fixture has drifted."""
+    rendered = _render_fixture(script)
+    if rendered is None:
+        return "API reference parser fixture is missing"
+    expected, text = rendered
+    if text != expected.read_text(encoding="utf-8"):
         return (
-            f"{expected} is out of date; regenerate it from the focused parser fixture"
+            f"{expected} is out of date; regenerate it with "
+            "`python3 tools/docs/api_index.py --write-fixture`"
         )
     return None
 
@@ -851,16 +920,36 @@ def _check_fixture(script: pathlib.Path) -> str | None:
 def main() -> int:
     """Write or check the reference page."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--include", type=pathlib.Path, required=True)
-    parser.add_argument("--output", type=pathlib.Path, required=True)
+    parser.add_argument("--include", type=pathlib.Path)
+    parser.add_argument("--output", type=pathlib.Path)
     parser.add_argument("--page", choices=sorted(PAGES), default="library")
     parser.add_argument("--check", action="store_true")
+    parser.add_argument(
+        "--write-fixture",
+        action="store_true",
+        help="rewrite the parser fixture's golden file and exit",
+    )
     arguments = parser.parse_args()
+
+    if arguments.write_fixture:
+        fixture = _render_fixture(pathlib.Path(__file__))
+        if fixture is None:
+            sys.stderr.write("API reference parser fixture is missing\n")
+            return 1
+        expected, text = fixture
+        expected.write_text(text, encoding="utf-8")
+        return 0
+
+    if arguments.include is None or arguments.output is None:
+        parser.error("--include and --output are required")
 
     rendered = render(arguments.include, PAGES[arguments.page])
     if arguments.check:
         if fixture_error := _check_fixture(pathlib.Path(__file__)):
             sys.stderr.write(fixture_error + "\n")
+            return 1
+        if marker_error := _check_markers(arguments.include, PAGES[arguments.page]):
+            sys.stderr.write(marker_error + "\n")
             return 1
         current = (
             arguments.output.read_text(encoding="utf-8")

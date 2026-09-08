@@ -3110,7 +3110,7 @@ template <> struct std::hash<libtmux::Client>;
 ```cpp
 std::ostream& operator<<(std::ostream& stream, const Session& session);
 ```
-Written as tmux would name it, with the detail that identifies it: an id and the thing a reader recognises it by. Declared against a forward-declared stream so no consumer pays for <ostream> to include an entity.
+Written as tmux would name it, with the detail that identifies it: an id and the thing a reader recognises it by. Declared against a forward-declared stream so no consumer pays for `<ostream>` to include an entity.
 
 <a id="libtmux-entities-hpp-free-symbols-operator-2"></a>
 #### `operator<<`
@@ -4943,7 +4943,7 @@ True when the value comes from a wider scope rather than being set here. `show-o
 ```cpp
 [[nodiscard]] inline std::string unquote(std::string_view value);
 ```
-Undo the quoting tmux applies when it prints a value.  tmux picks one of four forms, and a reader that knows only one corrupts the rest: `''` for an empty value; double quotes when the value contains any of ` #';${}`; single quotes when it contains a double quote; and otherwise no quotes at all. Inside any of them the body is escaped the way `vis` does it — `\t`, `\n`, `\\`, `\ooo` for a byte with no printable form — and a leading tilde is escaped whether or not anything else is.  This is the inverse of tmux's own `args_escape`, so a value read here and written back is the value that was there.
+Undo the quoting tmux applies when it prints a value.  tmux picks one of four forms, and a reader that knows only one corrupts the rest: ``''`` for an empty value; double quotes when the value contains any of `` #';${}``; single quotes when it contains a double quote; and otherwise no quotes at all. Inside any of them the body is escaped the way `vis` does it — `\t`, `\n`, `\\`, `\ooo` for a byte with no printable form — and a leading tilde is escaped whether or not anything else is.  This is the inverse of tmux's own `args_escape`, so a value read here and written back is the value that was there.
 
 <a id="libtmux-options-hpp-free-symbols-parse-option"></a>
 #### `parse_option`

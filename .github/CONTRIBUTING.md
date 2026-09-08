@@ -141,6 +141,20 @@ $ python3 tools/docs/api_index.py \
     --output docs/api.md
 ```
 
+A change to the generator's parser is checked against a focused fixture as
+well. Rewrite its golden file after reading the diff, never before:
+
+```console
+$ python3 tools/docs/api_index.py --write-fixture
+```
+
+The same headers are the Doxygen input libtmux.org renders, and CI fails on a
+warning there because a warning always means prose did not survive the parse:
+
+```console
+$ doxygen Doxyfile
+```
+
 The README's C++ is quoted from `examples/05-readme.cpp`, which is compiled and
 run against real tmux. This checks the quoting; the example lane checks that the
 code still works:

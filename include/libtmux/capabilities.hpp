@@ -44,32 +44,32 @@ enum class BackendKind {
   return "unknown";
 }
 
-// Coarse-grained promises callers choose around. Raw commands remain unchecked;
-// the psmux preview promises only exact inspection and namespace cleanup.
+/// Coarse-grained promises callers choose around. Raw commands remain unchecked;
+/// the psmux preview promises only exact inspection and namespace cleanup.
 enum class ServerFeature {
-  // Exact session/window/pane listings, traversal, refresh, and format reads.
+  /// Exact session/window/pane listings, traversal, refresh, and format reads.
   exact_inspection,
-  // Cleanup of the selected namespace under the Server's execution policy.
+  /// Cleanup of the selected namespace under the Server's execution policy.
   server_cleanup,
-  // `Server::window` and `Server::pane` without an owning session handle.
+  /// `Server::window` and `Server::pane` without an owning session handle.
   server_entity_lookup,
-  // Typed session creation with an attributable result.
+  /// Typed session creation with an attributable result.
   session_creation,
-  // Typed window creation with an attributable result.
+  /// Typed window creation with an attributable result.
   window_creation,
-  // Mutating an object captured in an earlier snapshot.
+  /// Mutating an object captured in an earlier snapshot.
   captured_mutation,
-  // Pane input, capture, copy mode, history, and piping.
+  /// Pane input, capture, copy mode, history, and piping.
   pane_io,
-  // Producing argv that attaches a caller-owned terminal to a session.
+  /// Producing argv that attaches a caller-owned terminal to a session.
   terminal_attach,
-  // A reusable public target that identifies one captured window link.
+  /// A reusable public target that identifies one captured window link.
   reusable_window_target,
-  // Clients, buffers, commands, configuration, options, and hooks.
+  /// Clients, buffers, commands, configuration, options, and hooks.
   server_state,
-  // Latched `wait-for` channels.
+  /// Latched `wait-for` channels.
   wait_channels,
-  // This Server can open a persistent control connection.
+  /// This Server can open a persistent control connection.
   control_mode,
 };
 
@@ -107,7 +107,7 @@ struct ServerCapabilities {
   ServerImplementation implementation{ServerImplementation::unknown};
   BackendKind backend{BackendKind::custom};
 
-  // Purely local: this never launches tmux or touches a server.
+  /// Purely local: this never launches tmux or touches a server.
   [[nodiscard]] constexpr bool supports(ServerFeature feature) const noexcept {
     if (implementation == ServerImplementation::unknown) {
       return false;
@@ -131,11 +131,11 @@ struct ServerCapabilities {
     return false;
   }
 
-  // Whether this implementation is known to get the feature wrong, which is
-  // the opposite question from `supports` rather than its negation. Both
-  // answer no for a backend nobody recognises: a caller asking what it may
-  // rely on must not be promised anything, and a custom executor running real
-  // tmux must not be refused for being unfamiliar.
+  /// Whether this implementation is known to get the feature wrong, which is
+  /// the opposite question from `supports` rather than its negation. Both
+  /// answer no for a backend nobody recognises: a caller asking what it may
+  /// rely on must not be promised anything, and a custom executor running real
+  /// tmux must not be refused for being unfamiliar.
   [[nodiscard]] constexpr bool refuses(ServerFeature feature) const noexcept {
     return implementation != ServerImplementation::unknown && !supports(feature);
   }

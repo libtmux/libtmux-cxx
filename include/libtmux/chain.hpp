@@ -55,7 +55,7 @@ public:
     return add({"split-window", "-t", *target});
   }
 
-  // Literal text, never interpreted as key names or formats.
+  /// Literal text, never interpreted as key names or formats.
   Chain& send_text(std::string_view target, std::string_view text) {
     const auto arguments = literal_arguments(text);
     if (!arguments.has_value()) {
@@ -73,7 +73,7 @@ public:
     return add({"send-keys", "-t", std::string{target}, std::string{key}});
   }
 
-  // Escape hatch for a command the typed steps do not cover.
+  /// Escape hatch for a command the typed steps do not cover.
   Chain& command(std::vector<std::string> argv) { return add(std::move(argv)); }
 
   [[nodiscard]] bool valid() const noexcept { return error_.empty(); }

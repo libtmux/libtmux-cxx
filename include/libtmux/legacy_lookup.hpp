@@ -23,9 +23,9 @@ enum class LookupParseError {
   unknown_lookup,
 };
 
-// `eq` is the implicit lookup, matching Python's bare `field=value`. An empty
-// name reaches here only from a key that carried no separator at all; a key
-// ending in one is refused before this is asked.
+/// `eq` is the implicit lookup, matching Python's bare `field=value`. An empty
+/// name reaches here only from a key that carried no separator at all; a key
+/// ending in one is refused before this is asked.
 [[nodiscard]] inline expected<StringOp, LookupParseError>
 lookup_of(std::string_view name) {
   if (name.empty() || name == "eq" || name == "exact") {
@@ -46,10 +46,10 @@ lookup_of(std::string_view name) {
   return unexpected(LookupParseError::unknown_lookup);
 }
 
-// Parse one `field[__lookup]=value` term against a caller-supplied field table.
-//
-// The value is taken verbatim after the first `=`, so a value containing `=`
-// or `__` survives unchanged; only the key is split.
+/// Parse one `field[__lookup]=value` term against a caller-supplied field table.
+///
+/// The value is taken verbatim after the first `=`, so a value containing `=`
+/// or `__` survives unchanged; only the key is split.
 template <typename Entity>
 [[nodiscard]] expected<FilterExpr<Entity>, LookupParseError>
 parse_lookup(std::string_view term, std::span<const StringFieldHandle<Entity>> fields) {
