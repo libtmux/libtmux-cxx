@@ -162,6 +162,17 @@ std::string arena_evidence(const std::string& output) {
   return output.substr(begin + marker.size(), end - begin - marker.size());
 }
 
+// Every example wired to `ScratchServer::open_or_borrow_arena`, paired with
+// the artifact id it identifies itself as. The `TourArena` tests below run
+// each of these through the same arena contract 01_tour was first proven
+// against.
+constexpr std::array kArenaCapableExamples{
+    std::pair{"01_tour", "cpp-tour"},
+    std::pair{"02_workspace", "cpp-workspace"},
+    std::pair{"05_readme", "cpp-readme"},
+    std::pair{"06_streaming", "cpp-streaming"},
+};
+
 class Example : public testing::TestWithParam<std::string_view> {};
 
 TEST_P(Example, SucceedsAgainstALiveTmux) {
@@ -191,23 +202,26 @@ TEST(TourOutput, NamesTheSessionItCreated) {
 }
 
 TEST(TourArena, AliasesWithoutDescriptorUseAPrivateServer) {
-  auto arena = ScopedTmuxServer::start(
-      {.socket_namespace = SocketNamespace::consumer("arn-als")});
-  ASSERT_TRUE(arena.has_value()) << arena.error();
-  const libtmux::Server server = connect(*arena);
+  for (const auto& [example, artifact] : kArenaCapableExamples) {
+    SCOPED_TRACE(example);
+    auto arena = ScopedTmuxServer::start(
+        {.socket_namespace = SocketNamespace::consumer("arn-als")});
+    ASSERT_TRUE(arena.has_value()) << arena.error();
+    const libtmux::Server server = connect(*arena);
 
-  const auto run =
-      run_example("01_tour", {{"LIBTMUX_ARENA_ARTIFACT", "cpp-tour"},
+    const auto run =
+        run_example(example, {{"LIBTMUX_ARENA_ARTIFACT", artifact},
                               {"LIBTMUX_SOCKET_PATH", arena->socket_path().string()},
                               {"LIBTMUX_TMUX_BIN", "tmux"}});
 
-  EXPECT_EQ(run.exit_code, 0) << run.output;
-  EXPECT_EQ(run.output.find("LIBTMUX_ARENA_EVIDENCE="), std::string::npos)
-      << run.output;
-  EXPECT_TRUE(arena->is_alive());
-  const auto sessions = server.sessions();
-  ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
-  ASSERT_EQ(sessions->size(), 1U);
+    EXPECT_EQ(run.exit_code, 0) << run.output;
+    EXPECT_EQ(run.output.find("LIBTMUX_ARENA_EVIDENCE="), std::string::npos)
+        << run.output;
+    EXPECT_TRUE(arena->is_alive());
+    const auto sessions = server.sessions();
+    ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
+    ASSERT_EQ(sessions->size(), 1U);
+  }
 }
 
 TEST(TourArena, RejectsIncompleteOrMismatchedContracts) {
@@ -217,99 +231,113 @@ TEST(TourArena, RejectsIncompleteOrMismatchedContracts) {
       std::pair{"LIBTMUX_TMUX_BIN", std::optional<std::string_view>{}},
       std::pair{"LIBTMUX_ARENA_ARTIFACT", std::optional<std::string_view>{"other"}},
   };
-  for (const auto& [name, value] : cases) {
-    SCOPED_TRACE(name);
-    const auto run =
-        run_example("01_tour", {{"LIBTMUX_ARENA_DESCRIPTOR", "borrow"},
-                                {"LIBTMUX_ARENA_ARTIFACT", "cpp-tour"},
+  for (const auto& [example, artifact] : kArenaCapableExamples) {
+    SCOPED_TRACE(example);
+    for (const auto& [name, value] : cases) {
+      SCOPED_TRACE(name);
+      const auto run =
+          run_example(example, {{"LIBTMUX_ARENA_DESCRIPTOR", "borrow"},
+                                {"LIBTMUX_ARENA_ARTIFACT", artifact},
                                 {"LIBTMUX_SOCKET_PATH", "/not-a-tmux-socket"},
                                 {"LIBTMUX_TMUX_BIN", "tmux"},
                                 {name, value}});
-    EXPECT_NE(run.exit_code, 0) << run.output;
-    EXPECT_NE(run.output.find("incomplete or mismatched arena contract"),
-              std::string::npos)
-        << run.output;
+      EXPECT_NE(run.exit_code, 0) << run.output;
+      EXPECT_NE(run.output.find("incomplete or mismatched arena contract"),
+                std::string::npos)
+          << run.output;
+    }
   }
 }
 
 TEST(TourArena, RejectsAClientBinaryOutsidePathBeforeContactingTheServer) {
-  auto arena = ScopedTmuxServer::start(
-      {.socket_namespace = SocketNamespace::consumer("arn-cli")});
-  ASSERT_TRUE(arena.has_value()) << arena.error();
+  for (const auto& [example, artifact] : kArenaCapableExamples) {
+    SCOPED_TRACE(example);
+    auto arena = ScopedTmuxServer::start(
+        {.socket_namespace = SocketNamespace::consumer("arn-cli")});
+    ASSERT_TRUE(arena.has_value()) << arena.error();
 
-  const auto run =
-      run_example("01_tour", {{"LIBTMUX_ARENA_DESCRIPTOR", "borrow"},
-                              {"LIBTMUX_ARENA_ARTIFACT", "cpp-tour"},
+    const auto run =
+        run_example(example, {{"LIBTMUX_ARENA_DESCRIPTOR", "borrow"},
+                              {"LIBTMUX_ARENA_ARTIFACT", artifact},
                               {"LIBTMUX_SOCKET_PATH", arena->socket_path().string()},
                               {"LIBTMUX_TMUX_BIN", "/not-an-arena-client/tmux"}});
 
-  EXPECT_NE(run.exit_code, 0) << run.output;
-  EXPECT_NE(run.output.find("arena tmux binary is not PATH's tmux"), std::string::npos)
-      << run.output;
-  EXPECT_TRUE(arena->is_alive());
+    EXPECT_NE(run.exit_code, 0) << run.output;
+    EXPECT_NE(run.output.find("arena tmux binary is not PATH's tmux"),
+              std::string::npos)
+        << run.output;
+    EXPECT_TRUE(arena->is_alive());
+  }
 }
 
 TEST(TourArena, RejectsADirectoryNamedTmuxBeforeTheClientOnPath) {
-  auto arena = ScopedTmuxServer::start(
-      {.socket_namespace = SocketNamespace::consumer("arn-dir")});
-  ASSERT_TRUE(arena.has_value()) << arena.error();
-  const libtmux::Server server = connect(*arena);
-  ASSERT_TRUE(
-      server.set_global_option("@libtmux_arena_challenge", "directory").has_value());
+  for (const auto& [example, artifact] : kArenaCapableExamples) {
+    SCOPED_TRACE(example);
+    auto arena = ScopedTmuxServer::start(
+        {.socket_namespace = SocketNamespace::consumer("arn-dir")});
+    ASSERT_TRUE(arena.has_value()) << arena.error();
+    const libtmux::Server server = connect(*arena);
+    ASSERT_TRUE(
+        server.set_global_option("@libtmux_arena_challenge", "directory").has_value());
 
-  const std::filesystem::path decoy_parent = arena->tmux_tmpdir() / "arena-client";
-  std::error_code error;
-  ASSERT_TRUE(std::filesystem::create_directory(decoy_parent, error))
-      << error.message();
-  ASSERT_TRUE(std::filesystem::create_directory(decoy_parent / "tmux", error))
-      << error.message();
-  const std::filesystem::path client = tmux_binary();
-  const char* const inherited_path = std::getenv("PATH");
-  ASSERT_NE(inherited_path, nullptr);
-  const std::string path = decoy_parent.string() + ":" + client.parent_path().string() +
-                           ":" + inherited_path;
-  const std::string directory_tmux = (decoy_parent / "tmux").string();
+    const std::filesystem::path decoy_parent = arena->tmux_tmpdir() / "arena-client";
+    std::error_code error;
+    ASSERT_TRUE(std::filesystem::create_directory(decoy_parent, error))
+        << error.message();
+    ASSERT_TRUE(std::filesystem::create_directory(decoy_parent / "tmux", error))
+        << error.message();
+    const std::filesystem::path client = tmux_binary();
+    const char* const inherited_path = std::getenv("PATH");
+    ASSERT_NE(inherited_path, nullptr);
+    const std::string path = decoy_parent.string() + ":" +
+                             client.parent_path().string() + ":" + inherited_path;
+    const std::string directory_tmux = (decoy_parent / "tmux").string();
 
-  const auto run =
-      run_example("01_tour", {{"LIBTMUX_ARENA_DESCRIPTOR", "borrow"},
-                              {"LIBTMUX_ARENA_ARTIFACT", "cpp-tour"},
+    const auto run =
+        run_example(example, {{"LIBTMUX_ARENA_DESCRIPTOR", "borrow"},
+                              {"LIBTMUX_ARENA_ARTIFACT", artifact},
                               {"LIBTMUX_SOCKET_PATH", arena->socket_path().string()},
                               {"LIBTMUX_TMUX_BIN", directory_tmux},
                               {"PATH", path}});
 
-  EXPECT_NE(run.exit_code, 0) << run.output;
-  EXPECT_NE(run.output.find("arena tmux binary is not PATH's tmux"), std::string::npos)
-      << run.output;
-  EXPECT_TRUE(arena->is_alive());
+    EXPECT_NE(run.exit_code, 0) << run.output;
+    EXPECT_NE(run.output.find("arena tmux binary is not PATH's tmux"),
+              std::string::npos)
+        << run.output;
+    EXPECT_TRUE(arena->is_alive());
+  }
 }
 
 TEST(TourArena, RunsAgainstABorrowedServerAndEmitsEvidence) {
-  auto arena = ScopedTmuxServer::start(
-      {.socket_namespace = SocketNamespace::consumer("arn-run")});
-  ASSERT_TRUE(arena.has_value()) << arena.error();
-  const libtmux::Server server = connect(*arena);
-  const std::string challenge{"quote \" slash \\\x80"};
-  ASSERT_TRUE(
-      server.set_global_option("@libtmux_arena_challenge", challenge).has_value());
+  for (const auto& [example, artifact] : kArenaCapableExamples) {
+    SCOPED_TRACE(example);
+    auto arena = ScopedTmuxServer::start(
+        {.socket_namespace = SocketNamespace::consumer("arn-run")});
+    ASSERT_TRUE(arena.has_value()) << arena.error();
+    const libtmux::Server server = connect(*arena);
+    const std::string challenge{"quote \" slash \\\x80"};
+    ASSERT_TRUE(
+        server.set_global_option("@libtmux_arena_challenge", challenge).has_value());
 
-  const auto run =
-      run_example("01_tour", {{"LIBTMUX_ARENA_DESCRIPTOR", "borrow"},
-                              {"LIBTMUX_ARENA_ARTIFACT", "cpp-tour"},
+    const auto run =
+        run_example(example, {{"LIBTMUX_ARENA_DESCRIPTOR", "borrow"},
+                              {"LIBTMUX_ARENA_ARTIFACT", artifact},
                               {"LIBTMUX_SOCKET_PATH", arena->socket_path().string()},
                               {"LIBTMUX_TMUX_BIN", tmux_binary().string()}});
 
-  ASSERT_EQ(run.exit_code, 0) << run.output;
-  const std::string evidence = arena_evidence(run.output);
-  const json parsed = json::parse(evidence, nullptr, false);
-  ASSERT_FALSE(parsed.is_discarded()) << evidence;
-  ASSERT_TRUE(parsed.is_object());
-  EXPECT_EQ(parsed.at("schema"), 1);
-  EXPECT_EQ(parsed.at("server_pid"), arena->server_pid());
-  EXPECT_EQ(parsed.at("socket_path"), arena->socket_path().string());
-  EXPECT_TRUE(parsed.at("challenge").is_string());
-  EXPECT_EQ(parsed.at("artifact"), "cpp-tour");
-  EXPECT_TRUE(arena->is_alive());
-  EXPECT_TRUE(server.sessions().has_value());
+    ASSERT_EQ(run.exit_code, 0) << run.output;
+    const std::string evidence = arena_evidence(run.output);
+    const json parsed = json::parse(evidence, nullptr, false);
+    ASSERT_FALSE(parsed.is_discarded()) << evidence;
+    ASSERT_TRUE(parsed.is_object());
+    EXPECT_EQ(parsed.at("schema"), 1);
+    EXPECT_EQ(parsed.at("server_pid"), arena->server_pid());
+    EXPECT_EQ(parsed.at("socket_path"), arena->socket_path().string());
+    EXPECT_TRUE(parsed.at("challenge").is_string());
+    EXPECT_EQ(parsed.at("artifact"), artifact);
+    EXPECT_TRUE(arena->is_alive());
+    EXPECT_TRUE(server.sessions().has_value());
+  }
 }
 
 TEST(Package, ReportsTheRunningTmuxToAConsumer) {

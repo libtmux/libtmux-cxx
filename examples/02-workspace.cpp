@@ -26,7 +26,8 @@ template <typename Result> bool failed(const Result& result, const char* doing) 
 } // namespace
 
 int main() {
-  const example::ScratchServer scratch = example::ScratchServer::open();
+  const example::ScratchServer scratch =
+      example::ScratchServer::open_or_borrow_arena("cpp-workspace");
   const libtmux::Server& server = scratch.get();
 
   const auto session = server.new_session(
@@ -164,6 +165,9 @@ int main() {
   // last.
   if (failed(windows->front().select(), "selecting the first window")) {
     return 1;
+  }
+  if (scratch.borrows_server()) {
+    return scratch.print_arena_evidence("cpp-workspace");
   }
   return 0;
 }
