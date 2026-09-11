@@ -197,7 +197,7 @@ TEST(TourArena, AliasesWithoutDescriptorUseAPrivateServer) {
   const libtmux::Server server = connect(*arena);
 
   const auto run =
-      run_example("01_tour", {{"LIBTMUX_ARENA_ARTIFACT", "libtmux_example_01_tour"},
+      run_example("01_tour", {{"LIBTMUX_ARENA_ARTIFACT", "cpp-tour"},
                               {"LIBTMUX_SOCKET_PATH", arena->socket_path().string()},
                               {"LIBTMUX_TMUX_BIN", "tmux"}});
 
@@ -221,7 +221,7 @@ TEST(TourArena, RejectsIncompleteOrMismatchedContracts) {
     SCOPED_TRACE(name);
     const auto run =
         run_example("01_tour", {{"LIBTMUX_ARENA_DESCRIPTOR", "borrow"},
-                                {"LIBTMUX_ARENA_ARTIFACT", "libtmux_example_01_tour"},
+                                {"LIBTMUX_ARENA_ARTIFACT", "cpp-tour"},
                                 {"LIBTMUX_SOCKET_PATH", "/not-a-tmux-socket"},
                                 {"LIBTMUX_TMUX_BIN", "tmux"},
                                 {name, value}});
@@ -239,7 +239,7 @@ TEST(TourArena, RejectsAClientBinaryOutsidePathBeforeContactingTheServer) {
 
   const auto run =
       run_example("01_tour", {{"LIBTMUX_ARENA_DESCRIPTOR", "borrow"},
-                              {"LIBTMUX_ARENA_ARTIFACT", "libtmux_example_01_tour"},
+                              {"LIBTMUX_ARENA_ARTIFACT", "cpp-tour"},
                               {"LIBTMUX_SOCKET_PATH", arena->socket_path().string()},
                               {"LIBTMUX_TMUX_BIN", "/not-an-arena-client/tmux"}});
 
@@ -272,7 +272,7 @@ TEST(TourArena, RejectsADirectoryNamedTmuxBeforeTheClientOnPath) {
 
   const auto run =
       run_example("01_tour", {{"LIBTMUX_ARENA_DESCRIPTOR", "borrow"},
-                              {"LIBTMUX_ARENA_ARTIFACT", "libtmux_example_01_tour"},
+                              {"LIBTMUX_ARENA_ARTIFACT", "cpp-tour"},
                               {"LIBTMUX_SOCKET_PATH", arena->socket_path().string()},
                               {"LIBTMUX_TMUX_BIN", directory_tmux},
                               {"PATH", path}});
@@ -294,7 +294,7 @@ TEST(TourArena, RunsAgainstABorrowedServerAndEmitsEvidence) {
 
   const auto run =
       run_example("01_tour", {{"LIBTMUX_ARENA_DESCRIPTOR", "borrow"},
-                              {"LIBTMUX_ARENA_ARTIFACT", "libtmux_example_01_tour"},
+                              {"LIBTMUX_ARENA_ARTIFACT", "cpp-tour"},
                               {"LIBTMUX_SOCKET_PATH", arena->socket_path().string()},
                               {"LIBTMUX_TMUX_BIN", tmux_binary().string()}});
 
@@ -307,7 +307,7 @@ TEST(TourArena, RunsAgainstABorrowedServerAndEmitsEvidence) {
   EXPECT_EQ(parsed.at("server_pid"), arena->server_pid());
   EXPECT_EQ(parsed.at("socket_path"), arena->socket_path().string());
   EXPECT_TRUE(parsed.at("challenge").is_string());
-  EXPECT_EQ(parsed.at("artifact"), "libtmux_example_01_tour");
+  EXPECT_EQ(parsed.at("artifact"), "cpp-tour");
   EXPECT_TRUE(arena->is_alive());
   EXPECT_TRUE(server.sessions().has_value());
 }

@@ -99,7 +99,7 @@ int print_arena_evidence(const example::ScratchServer& scratch,
   append_json_string(evidence, socket_path);
   evidence += ",\"challenge\":";
   append_json_string(evidence, challenge);
-  evidence += ",\"artifact\":\"libtmux_example_01_tour\"}\n";
+  evidence += ",\"artifact\":\"cpp-tour\"}\n";
   std::fputs(evidence.c_str(), stdout);
   return 0;
 }
@@ -108,7 +108,7 @@ int print_arena_evidence(const example::ScratchServer& scratch,
 
 int main() {
   const example::ScratchServer scratch =
-      example::ScratchServer::open_or_borrow_arena("libtmux_example_01_tour");
+      example::ScratchServer::open_or_borrow_arena("cpp-tour");
   const libtmux::Server& server = scratch.get();
 
   // Which tmux is on the other end. Nothing throws; every call reports failure
