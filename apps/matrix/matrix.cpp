@@ -44,8 +44,9 @@ struct Row {
 const std::vector<std::pair<std::string, std::string>>& unimplemented_lanes() {
   static const std::vector<std::pair<std::string, std::string>> lanes{
       {"connection",
-       "libtmux::control::Connection carries notifications and pane-output "
-       "policy; it exposes no method that dispatches a command"},
+       "this workload splits windows, and split-window is one of the twelve "
+       "commands that can return CMD_RETURN_WAIT, so tmux may close the "
+       "guarded block before the command has finished"},
       {"concurrent x4", "requires a dispatching control connection"},
       {"chained + connection", "requires a dispatching control connection"},
   };
