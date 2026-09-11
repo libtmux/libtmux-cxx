@@ -239,6 +239,8 @@ int main(int argc, char** argv) {
   std::vector<std::string_view> arguments(argv + 1, argv + argc);
   const bool want_json =
       std::find(arguments.begin(), arguments.end(), "--json") != arguments.end();
+  const bool want_check =
+      std::find(arguments.begin(), arguments.end(), "--check") != arguments.end();
 
   const std::string real_tmux = capture("command -v tmux");
   if (real_tmux.empty()) {
@@ -270,6 +272,40 @@ int main(int argc, char** argv) {
   for (const auto& [mode, reason] : unimplemented_lanes()) {
     rows.push_back(Row{mode, "unimplemented", std::nullopt, std::nullopt, std::nullopt,
                        std::nullopt, reason});
+  }
+
+  if (want_check) {
+    std::vector<std::string> failures;
+    const std::string expected = rows.front().answer.value_or("");
+    for (const Row& row : rows) {
+      if (row.state != "supported") {
+        if (!row.reason.has_value() || row.reason->empty()) {
+          failures.push_back(row.mode + " declares no reason");
+        }
+        continue;
+      }
+      if (row.answer.value_or("") != expected) {
+        failures.push_back(row.mode + " answered " + row.answer.value_or("nothing"));
+      }
+      if (row.elapsed_ns.value_or(0) <= 0) {
+        failures.push_back(row.mode + " reports no duration");
+      }
+    }
+    if (expected.rfind("7 panes on the server [", 0) != 0) {
+      failures.push_back("the answer is not the expected topology: " + expected);
+    }
+    if (rows[0].processes.value_or(0) == 0) {
+      failures.push_back("the process lane recorded no tmux invocations");
+    } else if (rows[1].processes.value_or(0) >= rows[0].processes.value_or(0)) {
+      failures.push_back("chaining did not reduce tmux invocations");
+    }
+    for (const std::string& failure : failures) {
+      std::fprintf(stderr, "FAIL %s\n", failure.c_str());
+    }
+    std::printf(failures.empty() ? "ok: %zu rows, every claim holds\n"
+                                 : "failed: %zu of the table's claims do not hold\n",
+                failures.empty() ? rows.size() : failures.size());
+    return failures.empty() ? 0 : 1;
   }
 
   const std::string version = capture("tmux -V | sed 's/^tmux //'");
