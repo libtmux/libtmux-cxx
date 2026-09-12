@@ -169,6 +169,7 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request,
     return unexpected(std::move(launched.error()));
   }
   auto& child = *launched;
+  // Capture buffers accumulate; publish each new byte exactly once.
   std::array<std::size_t, 2> emitted{};
   const auto publish = [&] {
     if (!output)
@@ -247,6 +248,7 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request,
     }
     bool finished;
     if (descendants == DescendantPolicy::terminate) {
+      // Leave the leader unreaped until cleanup to reserve its process-group ID.
       const auto observed = child.exit_pending(DeliveryStatus::indeterminate);
       if (!observed)
         return abandon(observed.error(), false);
