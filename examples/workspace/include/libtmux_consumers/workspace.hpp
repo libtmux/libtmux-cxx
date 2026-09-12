@@ -109,14 +109,13 @@ struct BuildError {
   // rather than at an opaque tmux message.
   std::size_t window_index{};
   std::string reason;
+  std::vector<std::string> retained_windows{};
 };
 
-// Create the workspace and return the session it made. The session must not
-// already exist: adopting a live session is a different operation with
-// different risks, and conflating them is how a builder silently reshapes
-// something a user was working in.
+namespace detail {
 [[nodiscard]] inline libtmux::expected<libtmux::Session, BuildError>
-build(const Server& server, const Workspace& description) {
+build_windows(const Server& server, const Workspace& description,
+              const std::optional<libtmux::Session>& borrowed) {
   if (description.session_name.empty() || description.windows.empty()) {
     return libtmux::unexpected(BuildError{0, "workspace names no session or window"});
   }
@@ -144,21 +143,39 @@ build(const Server& server, const Workspace& description) {
   const auto shell = [](const Window& window, const Pane& pane) {
     return pane.shell.empty() ? window.shell : pane.shell;
   };
-  auto built = server.new_session({.name = description.session_name,
-                                   .start_directory = description.start_directory,
-                                   .environment = description.environment});
+  auto built = borrowed
+                   ? libtmux::expected<libtmux::Session, CommandFailure>{*borrowed}
+                   : server.new_session({.name = description.session_name,
+                                         .start_directory = description.start_directory,
+                                         .environment = description.environment});
   if (!built.has_value()) {
     return libtmux::unexpected(BuildError{0, built.error().diagnostic});
   }
-  const auto fail = [&built](std::size_t index, std::string reason) {
+  std::vector<std::string> created_windows;
+  const auto fail = [&built, &borrowed, &created_windows](std::size_t index,
+                                                          std::string reason) {
+    if (borrowed)
+      return libtmux::unexpected(BuildError{index, std::move(reason), created_windows});
     if (const auto killed = built->kill(); !killed.has_value()) {
       reason += "; session cleanup failed: " + killed.error().diagnostic;
     }
     return libtmux::unexpected(BuildError{index, std::move(reason)});
   };
-  const auto bootstrap = built->active_window();
-  if (!bootstrap.has_value()) {
-    return fail(0, bootstrap.error().diagnostic);
+  std::optional<libtmux::Window> bootstrap;
+  if (!borrowed) {
+    const auto window = built->active_window();
+    if (!window)
+      return fail(0, window.error().diagnostic);
+    bootstrap = *window;
+  } else {
+    for (const auto& [name, value] : description.environment) {
+      if (name.empty() || name.find('=') != std::string::npos)
+        return fail(0, "an environment name must be non-empty and contain no '='");
+      const auto set =
+          server.run({"set-environment", "-t", std::string{built->id()}, name, value});
+      if (!set)
+        return fail(0, set.error().diagnostic);
+    }
   }
   for (const auto& [option, value] : description.global_options) {
     if (const auto set = server.set_global_option(option, value); !set.has_value()) {
@@ -177,7 +194,7 @@ build(const Server& server, const Workspace& description) {
     const Pane& first = window.panes.front();
     std::vector<std::string> command{
         "new-window", "-d", "-P", "-F", "#{window_id}", "-t", std::string{built->id()}};
-    if (index != 0 && window.index.has_value()) {
+    if ((borrowed || index != 0) && window.index.has_value()) {
       command.back() += ":" + std::to_string(*window.index);
     }
     if (!window.name.empty()) {
@@ -202,12 +219,13 @@ build(const Server& server, const Workspace& description) {
     while (!created->empty() && (created->back() == '\n' || created->back() == '\r')) {
       created->pop_back();
     }
+    created_windows.push_back(*created);
     const auto target = server.window(std::string{built->id()} + ":" + *created);
     if (!target.has_value()) {
       return fail(index, target.error().diagnostic);
     }
     windows.push_back(*target);
-    if (index == 0) {
+    if (index == 0 && !borrowed) {
       const auto base = built->option("base-index");
       if (!base.has_value()) {
         return fail(index, base.error().diagnostic);
@@ -324,6 +342,24 @@ build(const Server& server, const Workspace& description) {
     }
   }
   return *built;
+}
+
+} // namespace detail
+
+// Create a new session. A failed build removes only the session it created.
+[[nodiscard]] inline libtmux::expected<libtmux::Session, BuildError>
+build(const Server& server, const Workspace& description) {
+  return detail::build_windows(server, description, std::nullopt);
+}
+
+// Add windows to a borrowed session. Failure retains that session, applied
+// settings and any new windows, whose IDs are included in the error.
+[[nodiscard]] inline libtmux::expected<libtmux::Session, BuildError>
+append(const libtmux::Session& session, const Workspace& description) {
+  const auto server = session.server();
+  if (!server)
+    return libtmux::unexpected(BuildError{0, server.error().diagnostic});
+  return detail::build_windows(*server, description, session);
 }
 
 } // namespace libtmux::workspace

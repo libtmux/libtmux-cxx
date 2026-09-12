@@ -30,8 +30,8 @@ $ build/cxx-dev/apps/workspace/tmux-workspace --command-tree
 ## Current commands
 
 `ls`, `search`, `convert`, `import teamocil`, `import tmuxinator`, `debug-info`,
-`load -d` and `freeze` have native services. Ordinary search uses C++ ECMAScript
-regular expressions without Python. Whole-word matching groups alternatives.
+`load -d`, `load --append` and `freeze` have native services. Ordinary search
+uses C++ ECMAScript regular expressions without Python. Whole-word matching groups alternatives.
 Python-only expressions are not supported yet.
 
 Load starts tmux when needed, creates sessions or reuses exact existing names.
@@ -42,6 +42,13 @@ builds remove their own session and preserve earlier successful inputs.
 Cold startup verifies the new server and bootstrap session before creating
 workspace windows. A startup identity error reports any unverified bootstrap
 that may remain. Startup uses a five-second process timeout.
+
+Inside tmux, `--append` adds windows to the current pane's session after
+verifying its server identity. `-d` takes precedence if both flags are given.
+Append preserves existing windows. Failure retains the borrowed session,
+applied settings and new windows; machine output identifies retained window
+IDs. An explicit first-window index must name a free slot in that session.
+
 Directories resolve against the configuration and parent directories. Scripts,
 plugins and custom builders remain unsupported and are rejected.
 
@@ -63,7 +70,7 @@ requires `--force`.
 
 ## Remaining work
 
-Append, terminal attachment, editor/Python process services,
+Terminal attachment, editor/Python process services,
 progress/logging, shell completion, full configuration/import/capture coverage
 and supported-platform packaging remain incomplete. The corresponding process
 commands and lifecycle flags return explicit unavailable errors. The parser

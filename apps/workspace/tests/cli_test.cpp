@@ -192,6 +192,88 @@ TEST(WorkspaceCliTmux, NativeLoadCaptureAndConversionRoundTrip) {
   EXPECT_GT(sequence, 2U);
 }
 
+TEST(WorkspaceCliTmux, AppendKeepsItsBorrowedSessionAndReportsRetainedWindows) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-append")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value());
+  const auto session = server->new_session("borrowed");
+  ASSERT_TRUE(session.has_value());
+  const auto pane = session->active_pane();
+  ASSERT_TRUE(pane.has_value());
+  const auto original_window = session->active_window();
+  ASSERT_TRUE(original_window.has_value());
+  const auto pid = pane->expand("#{pid}");
+  ASSERT_TRUE(pid.has_value());
+  libtmux::test::EnvironmentGuard tmux{"TMUX", fixture->socket_path().string() + "," +
+                                                   *pid + ",0"};
+  libtmux::test::EnvironmentGuard current_pane{"TMUX_PANE", pane->id()};
+  const auto file = fixture->socket_path().parent_path() / "append.yaml";
+  std::ofstream{file}
+      << "session_name: ignored-name\nenvironment: {WS_APPEND: 'yes'}\n"
+         "windows: [{window_name: appended, window_index: 9, panes: [null, null]}]\n";
+  const auto result = invoke({"load", file.string(), "--append", "--json"});
+  ASSERT_EQ(result.code, 0) << result.err << result.out;
+  const auto summary = Json::parse(result.out);
+  ASSERT_EQ(summary.at("results").size(), 1U);
+  EXPECT_EQ(summary.at("results")[0].at("action"), "appended");
+  EXPECT_EQ(summary.at("results")[0].at("session_name"), "borrowed");
+  EXPECT_FALSE(server->session("=ignored-name:").has_value());
+  auto windows = session->windows();
+  ASSERT_TRUE(windows.has_value());
+  ASSERT_EQ(windows->size(), 2U);
+  EXPECT_TRUE(original_window->panes().has_value());
+  const auto appended = server->window(std::string{session->id()} + ":9");
+  ASSERT_TRUE(appended.has_value());
+  const auto panes = appended->panes();
+  ASSERT_TRUE(panes.has_value());
+  EXPECT_EQ(panes->size(), 2U);
+  const auto environment =
+      server->run({"show-environment", "-t", std::string{session->id()}, "WS_APPEND"});
+  ASSERT_TRUE(environment.has_value());
+  EXPECT_EQ(*environment, "WS_APPEND=yes\n");
+
+  std::ofstream{file}
+      << "session_name: ignored-name\nwindows: [{layout: invalid-layout}]\n";
+  const auto failed = invoke({"load", file.string(), "--append", "--json"});
+  ASSERT_EQ(failed.code, 1) << failed.err << failed.out;
+  const auto partial = Json::parse(failed.out);
+  EXPECT_EQ(partial.at("status"), "partial");
+  const auto retained = partial.at("errors")[0].at("retained_state");
+  EXPECT_EQ(retained.at("session_id"), session->id());
+  ASSERT_EQ(retained.at("window_ids").size(), 1U);
+  EXPECT_TRUE(server
+                  ->window(std::string{session->id()} + ":" +
+                           retained.at("window_ids")[0].get<std::string>())
+                  .has_value());
+  EXPECT_TRUE(original_window->panes().has_value());
+  windows = session->windows();
+  ASSERT_TRUE(windows.has_value());
+  EXPECT_EQ(windows->size(), 3U);
+
+  const auto cold = fixture->socket_path().parent_path() / "foreign.sock";
+  const auto refused =
+      invoke({"load", file.string(), "--append", "-S", cold.string(), "--json"});
+  EXPECT_EQ(refused.code, 1);
+  EXPECT_FALSE(std::filesystem::exists(cold));
+  EXPECT_TRUE(original_window->panes().has_value());
+  {
+    libtmux::test::EnvironmentGuard stale{"TMUX",
+                                          fixture->socket_path().string() + ",0,0"};
+    std::ofstream{file} << "session_name: ignored-name\nwindows: [{}]\n";
+    const auto rejected = invoke({"load", file.string(), "--append", "--json"});
+    EXPECT_EQ(rejected.code, 1);
+    const auto unchanged = session->windows();
+    ASSERT_TRUE(unchanged.has_value());
+    EXPECT_EQ(unchanged->size(), 3U);
+  }
+  libtmux::test::EnvironmentGuard outside{"TMUX", ""};
+  const auto missing = invoke({"load", file.string(), "--append", "--json"});
+  EXPECT_EQ(missing.code, 2);
+  EXPECT_TRUE(missing.out.empty());
+}
+
 TEST(WorkspaceCliTmux, ColdLoadRetainsTheWorkspaceAndRemovesItsBootstrap) {
   auto fixture = libtmux::test::ScopedTmuxServer::start(
       {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-cold")});
