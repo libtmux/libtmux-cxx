@@ -7,6 +7,7 @@
 
 #include <concepts>
 #include <cstddef>
+#include <format>
 #include <functional>
 #include <memory>
 #include <sstream>
@@ -135,6 +136,13 @@ TEST(ValueSemantics, AnEntityPrintsAsSomethingAReaderRecognises) {
   std::ostringstream out;
   out << Pane{recorded, 0};
   EXPECT_EQ(out.str(), "Pane(%4 nvim)");
+
+  // The formatter is the same renderer, so a caller building a message and a
+  // caller writing to a stream cannot be shown two different panes.
+  EXPECT_EQ(std::format("{}", Pane{recorded, 0}), out.str());
+  EXPECT_EQ(libtmux::to_string(Pane{recorded, 0}), out.str());
+  // Inheriting the string formatter is what keeps the spec working.
+  EXPECT_EQ(std::format("[{:>14}]", Pane{recorded, 0}), "[ Pane(%4 nvim)]");
 }
 
 TEST(ValueSemantics, AFailureComposesAndCanBeNamed) {
@@ -145,6 +153,45 @@ TEST(ValueSemantics, AFailureComposesAndCanBeNamed) {
   ASSERT_FALSE(sessions.has_value());
   EXPECT_EQ(sessions.error().kind, FailureKind::validation);
   EXPECT_EQ(sessions.error().delivery, libtmux::DeliveryStatus::not_started);
+
+  // A failure says itself: what happened, what tmux said, and how far it got.
+  const CommandFailure refused{.kind = FailureKind::refused,
+                               .delivery = libtmux::DeliveryStatus::replied,
+                               .exit_code = 1,
+                               .diagnostic = "can't find session: nope"};
+  EXPECT_EQ(std::format("{}", refused),
+            "tmux refused the command: can't find session: nope (exit 1, replied)");
+  EXPECT_EQ(libtmux::to_string(refused), std::format("{}", refused));
+  // A failure that never reached tmux has no exit status. The backend writes
+  // -1 there, and printing it as a code would report a run that never happened.
+  EXPECT_EQ(
+      std::format("{}", CommandFailure{.kind = FailureKind::spawn,
+                                       .delivery = libtmux::DeliveryStatus::not_started,
+                                       .exit_code = -1,
+                                       .diagnostic = "fork failed"}),
+      "tmux could not be started: fork failed (not_started)");
+
+  // tmux answering is not enough on its own: a child killed by a signal has
+  // no exit status either, and the transport marks that the same way.
+  EXPECT_EQ(
+      std::format("{}", CommandFailure{.kind = FailureKind::refused,
+                                       .delivery = libtmux::DeliveryStatus::replied,
+                                       .exit_code = -1,
+                                       .diagnostic = "killed by a signal"}),
+      "tmux refused the command: killed by a signal (replied)");
+
+  // A status tmux never reached carries no exit code, so none is printed.
+  EXPECT_EQ(
+      std::format("{}", CommandFailure{.kind = FailureKind::validation,
+                                       .delivery = libtmux::DeliveryStatus::not_started,
+                                       .exit_code = 0,
+                                       .diagnostic = {}}),
+      "the request was rejected before tmux ran (not_started)");
+
+  // Nothing here throws on its own, and a caller who wants an exception at a
+  // boundary asks for one by name — the same name in either build.
+  EXPECT_THROW(static_cast<void>(Server::at_socket_path("").value()),
+               libtmux::bad_expected_access<CommandFailure>);
 
   // Every failure a caller can be handed says what it is.
   for (const FailureKind kind :

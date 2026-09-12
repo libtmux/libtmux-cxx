@@ -1204,6 +1204,7 @@ The tmux object hierarchy.  A Session, Window, Pane or Client is one row of a sn
   - [`Pane::session`](#libtmux-entities-hpp-pane-session)
   - [`Pane::send_text`](#libtmux-entities-hpp-pane-send-text)
   - [`Pane::send_key`](#libtmux-entities-hpp-pane-send-key)
+  - [`Pane::send_line`](#libtmux-entities-hpp-pane-send-line)
   - [`Pane::split`](#libtmux-entities-hpp-pane-split)
   - [`Pane::capture`](#libtmux-entities-hpp-pane-capture)
   - [`Pane::capture`](#libtmux-entities-hpp-pane-capture-2)
@@ -1282,11 +1283,23 @@ The tmux object hierarchy.  A Session, Window, Pane or Client is one row of a sn
   - [`std::hash<libtmux::Pane>::operator()`](#libtmux-entities-hpp-std-hash-libtmux-pane-operator)
 - [`std::hash<libtmux::Client>`](#libtmux-entities-hpp-std-hash-libtmux-client)
   - [`std::hash<libtmux::Client>::operator()`](#libtmux-entities-hpp-std-hash-libtmux-client-operator)
+- [`std::formatter<libtmux::Session>`](#libtmux-entities-hpp-std-formatter-libtmux-session)
+  - [`std::formatter<libtmux::Session>::format`](#libtmux-entities-hpp-std-formatter-libtmux-session-format)
+- [`std::formatter<libtmux::Window>`](#libtmux-entities-hpp-std-formatter-libtmux-window)
+  - [`std::formatter<libtmux::Window>::format`](#libtmux-entities-hpp-std-formatter-libtmux-window-format)
+- [`std::formatter<libtmux::Pane>`](#libtmux-entities-hpp-std-formatter-libtmux-pane)
+  - [`std::formatter<libtmux::Pane>::format`](#libtmux-entities-hpp-std-formatter-libtmux-pane-format)
+- [`std::formatter<libtmux::Client>`](#libtmux-entities-hpp-std-formatter-libtmux-client)
+  - [`std::formatter<libtmux::Client>::format`](#libtmux-entities-hpp-std-formatter-libtmux-client-format)
 - [`Free symbols`](#libtmux-entities-hpp-free-symbols)
   - [`operator<<`](#libtmux-entities-hpp-free-symbols-operator)
   - [`operator<<`](#libtmux-entities-hpp-free-symbols-operator-2)
   - [`operator<<`](#libtmux-entities-hpp-free-symbols-operator-3)
   - [`operator<<`](#libtmux-entities-hpp-free-symbols-operator-4)
+  - [`to_string`](#libtmux-entities-hpp-free-symbols-to-string)
+  - [`to_string`](#libtmux-entities-hpp-free-symbols-to-string-2)
+  - [`to_string`](#libtmux-entities-hpp-free-symbols-to-string-3)
+  - [`to_string`](#libtmux-entities-hpp-free-symbols-to-string-4)
   - [`session::id`](#libtmux-entities-hpp-free-symbols-session-id)
   - [`session::name`](#libtmux-entities-hpp-free-symbols-session-name)
   - [`session::attached`](#libtmux-entities-hpp-free-symbols-session-attached)
@@ -2525,6 +2538,14 @@ Literal text, never interpreted as key names or formats, and never followed by a
 [[nodiscard]] expected<void, CommandFailure> send_key(std::string_view key) const;
 ```
 
+<a id="libtmux-entities-hpp-pane-send-line"></a>
+#### `Pane::send_line`
+
+```cpp
+[[nodiscard]] expected<void, CommandFailure> send_line(std::string_view text) const;
+```
+The text and then Enter, as one tmux invocation.  Running a command in a pane is two commands to tmux, and sending them separately costs two round trips and leaves a window where the line is typed and not submitted. This sends both in one batch, which tmux runs fail-fast, so a refused line is not followed by an Enter.  Empty text sends Enter alone, which is what submitting a blank line means. `send_text` refuses it instead: there, nothing would be sent.
+
 <a id="libtmux-entities-hpp-pane-split"></a>
 #### `Pane::split`
 
@@ -3101,6 +3122,64 @@ template <> struct std::hash<libtmux::Client>;
 [[nodiscard]] std::size_t operator()(const libtmux::Client& value) const noexcept;
 ```
 
+<a id="libtmux-entities-hpp-std-formatter-libtmux-session"></a>
+### `std::formatter<libtmux::Session>`
+
+An entity formats as it prints.  Inheriting the string formatter keeps fill, alignment and width working, so `{:>24}` pads a pane exactly as it pads its text. `__cpp_lib_format` is deliberately not tested: libc++ 18 leaves it undefined while `std::format` works, so guarding on it would drop these from the clang lane and keep them on the GCC one.
+
+```cpp
+template <> struct std::formatter<libtmux::Session>;
+```
+
+<a id="libtmux-entities-hpp-std-formatter-libtmux-session-format"></a>
+#### `std::formatter<libtmux::Session>::format`
+
+```cpp
+template <typename Context> auto format(const libtmux::Session& value, Context& context) const;
+```
+
+<a id="libtmux-entities-hpp-std-formatter-libtmux-window"></a>
+### `std::formatter<libtmux::Window>`
+
+```cpp
+template <> struct std::formatter<libtmux::Window>;
+```
+
+<a id="libtmux-entities-hpp-std-formatter-libtmux-window-format"></a>
+#### `std::formatter<libtmux::Window>::format`
+
+```cpp
+template <typename Context> auto format(const libtmux::Window& value, Context& context) const;
+```
+
+<a id="libtmux-entities-hpp-std-formatter-libtmux-pane"></a>
+### `std::formatter<libtmux::Pane>`
+
+```cpp
+template <> struct std::formatter<libtmux::Pane>;
+```
+
+<a id="libtmux-entities-hpp-std-formatter-libtmux-pane-format"></a>
+#### `std::formatter<libtmux::Pane>::format`
+
+```cpp
+template <typename Context> auto format(const libtmux::Pane& value, Context& context) const;
+```
+
+<a id="libtmux-entities-hpp-std-formatter-libtmux-client"></a>
+### `std::formatter<libtmux::Client>`
+
+```cpp
+template <> struct std::formatter<libtmux::Client>;
+```
+
+<a id="libtmux-entities-hpp-std-formatter-libtmux-client-format"></a>
+#### `std::formatter<libtmux::Client>::format`
+
+```cpp
+template <typename Context> auto format(const libtmux::Client& value, Context& context) const;
+```
+
 <a id="libtmux-entities-hpp-free-symbols"></a>
 ### `Free symbols`
 
@@ -3131,6 +3210,35 @@ std::ostream& operator<<(std::ostream& stream, const Pane& pane);
 
 ```cpp
 std::ostream& operator<<(std::ostream& stream, const Client& client);
+```
+
+<a id="libtmux-entities-hpp-free-symbols-to-string"></a>
+#### `to_string`
+
+```cpp
+[[nodiscard]] std::string to_string(const Session& session);
+```
+The same text as a value, for a caller building a message rather than writing to a stream. `std::format` reaches these through the formatters at the end of this header.
+
+<a id="libtmux-entities-hpp-free-symbols-to-string-2"></a>
+#### `to_string`
+
+```cpp
+[[nodiscard]] std::string to_string(const Window& window);
+```
+
+<a id="libtmux-entities-hpp-free-symbols-to-string-3"></a>
+#### `to_string`
+
+```cpp
+[[nodiscard]] std::string to_string(const Pane& pane);
+```
+
+<a id="libtmux-entities-hpp-free-symbols-to-string-4"></a>
+#### `to_string`
+
+```cpp
+[[nodiscard]] std::string to_string(const Client& client);
 ```
 
 <a id="libtmux-entities-hpp-free-symbols-session-id"></a>
@@ -3690,23 +3798,26 @@ Value-semantic filter expressions over explicit snapshots.  An expression owns e
   - [`FilterExpr::RelationTest::child`](#libtmux-filter-expr-hpp-filterexpr-relationtest-child)
 - [`StringFieldHandle`](#libtmux-filter-expr-hpp-stringfieldhandle)
   - [`StringFieldHandle::field`](#libtmux-filter-expr-hpp-stringfieldhandle-field)
-  - [`StringFieldHandle::operator==`](#libtmux-filter-expr-hpp-stringfieldhandle-operator)
+  - [`StringFieldHandle::operator()`](#libtmux-filter-expr-hpp-stringfieldhandle-operator)
+  - [`StringFieldHandle::operator==`](#libtmux-filter-expr-hpp-stringfieldhandle-operator-2)
   - [`StringFieldHandle::iequals`](#libtmux-filter-expr-hpp-stringfieldhandle-iequals)
   - [`StringFieldHandle::contains`](#libtmux-filter-expr-hpp-stringfieldhandle-contains)
   - [`StringFieldHandle::starts_with`](#libtmux-filter-expr-hpp-stringfieldhandle-starts-with)
   - [`StringFieldHandle::ends_with`](#libtmux-filter-expr-hpp-stringfieldhandle-ends-with)
 - [`NumberFieldHandle`](#libtmux-filter-expr-hpp-numberfieldhandle)
   - [`NumberFieldHandle::field`](#libtmux-filter-expr-hpp-numberfieldhandle-field)
-  - [`NumberFieldHandle::operator==`](#libtmux-filter-expr-hpp-numberfieldhandle-operator)
-  - [`NumberFieldHandle::operator!=`](#libtmux-filter-expr-hpp-numberfieldhandle-operator-2)
-  - [`NumberFieldHandle::operator<`](#libtmux-filter-expr-hpp-numberfieldhandle-operator-3)
-  - [`NumberFieldHandle::operator<=`](#libtmux-filter-expr-hpp-numberfieldhandle-operator-4)
-  - [`NumberFieldHandle::operator>`](#libtmux-filter-expr-hpp-numberfieldhandle-operator-5)
-  - [`NumberFieldHandle::operator>=`](#libtmux-filter-expr-hpp-numberfieldhandle-operator-6)
+  - [`NumberFieldHandle::operator()`](#libtmux-filter-expr-hpp-numberfieldhandle-operator)
+  - [`NumberFieldHandle::operator==`](#libtmux-filter-expr-hpp-numberfieldhandle-operator-2)
+  - [`NumberFieldHandle::operator!=`](#libtmux-filter-expr-hpp-numberfieldhandle-operator-3)
+  - [`NumberFieldHandle::operator<`](#libtmux-filter-expr-hpp-numberfieldhandle-operator-4)
+  - [`NumberFieldHandle::operator<=`](#libtmux-filter-expr-hpp-numberfieldhandle-operator-5)
+  - [`NumberFieldHandle::operator>`](#libtmux-filter-expr-hpp-numberfieldhandle-operator-6)
+  - [`NumberFieldHandle::operator>=`](#libtmux-filter-expr-hpp-numberfieldhandle-operator-7)
 - [`BoolFieldHandle`](#libtmux-filter-expr-hpp-boolfieldhandle)
   - [`BoolFieldHandle::field`](#libtmux-filter-expr-hpp-boolfieldhandle-field)
+  - [`BoolFieldHandle::operator()`](#libtmux-filter-expr-hpp-boolfieldhandle-operator)
   - [`BoolFieldHandle::operatorFilterExpr<Entity>`](#libtmux-filter-expr-hpp-boolfieldhandle-operatorfilterexpr-entity)
-  - [`BoolFieldHandle::operator==`](#libtmux-filter-expr-hpp-boolfieldhandle-operator)
+  - [`BoolFieldHandle::operator==`](#libtmux-filter-expr-hpp-boolfieldhandle-operator-2)
 - [`Free symbols`](#libtmux-filter-expr-hpp-free-symbols)
   - [`operator&&`](#libtmux-filter-expr-hpp-free-symbols-operator)
   - [`operator||`](#libtmux-filter-expr-hpp-free-symbols-operator-2)
@@ -4070,7 +4181,7 @@ The child compares another entity, so it cannot live in this variant. Its lowere
 <a id="libtmux-filter-expr-hpp-stringfieldhandle"></a>
 ### `StringFieldHandle`
 
-A typed field handle. Only the operations a field's type actually supports are declared, so `pane::active.starts_with(...)` is a compile error rather than a runtime surprise.
+A typed field handle. Only the operations a field's type actually supports are declared, so `pane::active.starts_with(...)` is a compile error rather than a runtime surprise.  A handle also reads a row, so the same name serves as a ranges projection — and a flag handle as a predicate — rather than a lambda that spells the accessor a second time. `sort(panes, {}, pane::index)` then orders by the number tmux rendered, where projecting the text puts `%10` before `%9`.
 
 ```cpp
 template <typename Entity> struct StringFieldHandle;
@@ -4084,6 +4195,13 @@ StringField<Entity> field;
 ```
 
 <a id="libtmux-filter-expr-hpp-stringfieldhandle-operator"></a>
+#### `StringFieldHandle::operator()`
+
+```cpp
+[[nodiscard]] std::string_view operator()(const Entity& row) const;
+```
+
+<a id="libtmux-filter-expr-hpp-stringfieldhandle-operator-2"></a>
 #### `StringFieldHandle::operator==`
 
 ```cpp
@@ -4133,41 +4251,48 @@ NumberField<Entity> field;
 ```
 
 <a id="libtmux-filter-expr-hpp-numberfieldhandle-operator"></a>
+#### `NumberFieldHandle::operator()`
+
+```cpp
+[[nodiscard]] long long operator()(const Entity& row) const;
+```
+
+<a id="libtmux-filter-expr-hpp-numberfieldhandle-operator-2"></a>
 #### `NumberFieldHandle::operator==`
 
 ```cpp
 [[nodiscard]] FilterExpr<Entity> operator==(long long operand) const;
 ```
 
-<a id="libtmux-filter-expr-hpp-numberfieldhandle-operator-2"></a>
+<a id="libtmux-filter-expr-hpp-numberfieldhandle-operator-3"></a>
 #### `NumberFieldHandle::operator!=`
 
 ```cpp
 [[nodiscard]] FilterExpr<Entity> operator!=(long long operand) const;
 ```
 
-<a id="libtmux-filter-expr-hpp-numberfieldhandle-operator-3"></a>
+<a id="libtmux-filter-expr-hpp-numberfieldhandle-operator-4"></a>
 #### `NumberFieldHandle::operator<`
 
 ```cpp
 [[nodiscard]] FilterExpr<Entity> operator<(long long operand) const;
 ```
 
-<a id="libtmux-filter-expr-hpp-numberfieldhandle-operator-4"></a>
+<a id="libtmux-filter-expr-hpp-numberfieldhandle-operator-5"></a>
 #### `NumberFieldHandle::operator<=`
 
 ```cpp
 [[nodiscard]] FilterExpr<Entity> operator<=(long long operand) const;
 ```
 
-<a id="libtmux-filter-expr-hpp-numberfieldhandle-operator-5"></a>
+<a id="libtmux-filter-expr-hpp-numberfieldhandle-operator-6"></a>
 #### `NumberFieldHandle::operator>`
 
 ```cpp
 [[nodiscard]] FilterExpr<Entity> operator>(long long operand) const;
 ```
 
-<a id="libtmux-filter-expr-hpp-numberfieldhandle-operator-6"></a>
+<a id="libtmux-filter-expr-hpp-numberfieldhandle-operator-7"></a>
 #### `NumberFieldHandle::operator>=`
 
 ```cpp
@@ -4188,6 +4313,13 @@ template <typename Entity> struct BoolFieldHandle;
 BoolField<Entity> field;
 ```
 
+<a id="libtmux-filter-expr-hpp-boolfieldhandle-operator"></a>
+#### `BoolFieldHandle::operator()`
+
+```cpp
+[[nodiscard]] bool operator()(const Entity& row) const;
+```
+
 <a id="libtmux-filter-expr-hpp-boolfieldhandle-operatorfilterexpr-entity"></a>
 #### `BoolFieldHandle::operatorFilterExpr<Entity>`
 
@@ -4195,7 +4327,7 @@ BoolField<Entity> field;
 [[nodiscard]] operator FilterExpr<Entity>() const;
 ```
 
-<a id="libtmux-filter-expr-hpp-boolfieldhandle-operator"></a>
+<a id="libtmux-filter-expr-hpp-boolfieldhandle-operator-2"></a>
 #### `BoolFieldHandle::operator==`
 
 ```cpp
@@ -4581,8 +4713,11 @@ Why a tmux command produced no answer.  `refused` means tmux ran and said no; `m
 - [`ExecutionPolicy`](#libtmux-command-hpp-executionpolicy)
   - [`ExecutionPolicy::timeout`](#libtmux-command-hpp-executionpolicy-timeout)
   - [`ExecutionPolicy::output_limit`](#libtmux-command-hpp-executionpolicy-output-limit)
+- [`std::formatter<libtmux::CommandFailure>`](#libtmux-command-hpp-std-formatter-libtmux-commandfailure)
+  - [`std::formatter<libtmux::CommandFailure>::format`](#libtmux-command-hpp-std-formatter-libtmux-commandfailure-format)
 - [`Free symbols`](#libtmux-command-hpp-free-symbols)
   - [`to_string`](#libtmux-command-hpp-free-symbols-to-string)
+  - [`to_string`](#libtmux-command-hpp-free-symbols-to-string-2)
   - [`CommandObserver`](#libtmux-command-hpp-free-symbols-commandobserver)
 
 <a id="libtmux-command-hpp-failurekind"></a>
@@ -4862,6 +4997,22 @@ std::optional<std::size_t> output_limit{};
 ```
 Absent leaves the transport's own bound, which is one megabyte.
 
+<a id="libtmux-command-hpp-std-formatter-libtmux-commandfailure"></a>
+### `std::formatter<libtmux::CommandFailure>`
+
+Formatting a failure is how it reaches a log line, so the type every call can return knows how to write itself.  Inheriting the string formatter keeps fill, alignment and width working, so `{:>40}` pads a failure exactly as it pads its text. `__cpp_lib_format` is deliberately not tested here: libc++ 18 leaves it undefined while `std::format` works, so guarding on it would drop this from the clang lane and keep it on the GCC one.
+
+```cpp
+template <> struct std::formatter<libtmux::CommandFailure>;
+```
+
+<a id="libtmux-command-hpp-std-formatter-libtmux-commandfailure-format"></a>
+#### `std::formatter<libtmux::CommandFailure>::format`
+
+```cpp
+template <typename Context> auto format(const libtmux::CommandFailure& failure, Context& context) const;
+```
+
 <a id="libtmux-command-hpp-free-symbols"></a>
 ### `Free symbols`
 
@@ -4871,6 +5022,14 @@ Absent leaves the transport's own bound, which is one megabyte.
 ```cpp
 [[nodiscard]] constexpr std::string_view to_string(FailureKind kind) noexcept;
 ```
+
+<a id="libtmux-command-hpp-free-symbols-to-string-2"></a>
+#### `to_string`
+
+```cpp
+[[nodiscard]] inline std::string to_string(const CommandFailure& failure);
+```
+One line naming what happened, what tmux said, and — through the delivery status — whether the call is safe to repeat.
 
 <a id="libtmux-command-hpp-free-symbols-commandobserver"></a>
 #### `CommandObserver`
@@ -6888,6 +7047,8 @@ The one C++23 library facility this package's public surface needs.  Recoverable
   - [`expected`](#libtmux-expected-hpp-free-symbols-expected-2)
   - [`unexpected_t`](#libtmux-expected-hpp-free-symbols-unexpected-t)
   - [`unexpected_t`](#libtmux-expected-hpp-free-symbols-unexpected-t-2)
+  - [`bad_expected_access`](#libtmux-expected-hpp-free-symbols-bad-expected-access)
+  - [`bad_expected_access`](#libtmux-expected-hpp-free-symbols-bad-expected-access-2)
   - [`unexpected`](#libtmux-expected-hpp-free-symbols-unexpected)
 
 <a id="libtmux-expected-hpp-free-symbols"></a>
@@ -6922,6 +7083,22 @@ Available when `defined(LIBTMUX_USE_TL_EXPECTED)`.
 
 ```cpp
 template <typename Error> using unexpected_t = std::unexpected<Error>;
+```
+Available when `!(defined(LIBTMUX_USE_TL_EXPECTED))`.
+
+<a id="libtmux-expected-hpp-free-symbols-bad-expected-access"></a>
+#### `bad_expected_access`
+
+```cpp
+template <typename Error> using bad_expected_access = tl::bad_expected_access<Error>;
+```
+Available when `defined(LIBTMUX_USE_TL_EXPECTED)`.
+
+<a id="libtmux-expected-hpp-free-symbols-bad-expected-access-2"></a>
+#### `bad_expected_access`
+
+```cpp
+template <typename Error> using bad_expected_access = std::bad_expected_access<Error>;
 ```
 Available when `!(defined(LIBTMUX_USE_TL_EXPECTED))`.
 

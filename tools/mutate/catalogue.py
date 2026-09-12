@@ -643,4 +643,44 @@ CATALOGUE: t.Final = (
         guards="a truncation diagnostic names the bound the caller passed, not "
         "the one that was never in force",
     ),
+    Mutation(
+        mutation_id="send-line-submits",
+        path="src/entities.cpp",
+        find='  static_cast<void>(batch.add({"send-keys", "-t", target, "Enter"}));',
+        replace="  static_cast<void>(target);",
+        target="libtmux_entity_test",
+        test_regex=r"^libtmux[.]entity[.]",
+        guards="a line sent to a pane is submitted, not left typed",
+    ),
+    Mutation(
+        mutation_id="entity-render-single-source",
+        path="src/entities.cpp",
+        find="  text += pane.command();",
+        replace="  static_cast<void>(pane.command());",
+        target="libtmux_value_semantics_test",
+        test_regex=r"^libtmux[.]value_semantics[.]",
+        guards="a pane renders with the id and the running command, which is "
+        "the text the value-semantics suite pins for stream and format alike",
+    ),
+    Mutation(
+        mutation_id="failure-text-exit-status",
+        path="include/libtmux/command.hpp",
+        find="  if (failure.delivery == DeliveryStatus::replied && "
+        "failure.exit_code != 0 &&\n      failure.exit_code != -1) {",
+        replace="  if (failure.exit_code != 0) {",
+        target="libtmux_value_semantics_test",
+        test_regex=r"^libtmux[.]value_semantics[.]",
+        guards="a failure that never reached tmux prints no exit status, rather "
+        "than reporting the backend's -1 as a code tmux returned",
+    ),
+    Mutation(
+        mutation_id="failure-text-delivery",
+        path="include/libtmux/command.hpp",
+        find="  text += to_string(failure.delivery);",
+        replace="  static_cast<void>(failure.delivery);",
+        target="libtmux_value_semantics_test",
+        test_regex=r"^libtmux[.]value_semantics[.]",
+        guards="a formatted failure names how far the command got, which is "
+        "what says whether repeating it is safe",
+    ),
 )

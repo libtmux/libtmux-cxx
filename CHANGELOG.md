@@ -9,6 +9,34 @@ was recorded as it landed.
 
 ## Unreleased
 
+### Entities
+
+- `Session`, `Window`, `Pane` and `Client` format with `std::format`, through
+  the renderer `operator<<` already used. `libtmux::to_string(entity)` returns
+  that text, and a format spec works: `std::format("{:>24}", pane)`.
+- Add `Pane::send_line`, which sends literal text and then Enter as one tmux
+  invocation. Empty text sends Enter alone; `send_text` still refuses it.
+
+  Before: `pane.send_text("make"); pane.send_key("Enter");`
+  After:  `pane.send_line("make");`
+
+### Queries
+
+- A field handle is now a ranges projection, and a flag handle a predicate, so
+  the names that build filters also drive the standard algorithms:
+  `std::ranges::sort(windows, {}, libtmux::window::index)` and
+  `std::ranges::count_if(panes, libtmux::pane::active)`.
+
+### Errors
+
+- Add `libtmux::bad_expected_access<Error>`, the exception `value()` throws,
+  aliased to the underlying type so a caller can catch it in the C++20 build
+  as well as the C++23 one.
+- `CommandFailure` formats with `std::format`, naming what happened, what tmux
+  said, the exit code when there is one, and how far the command got:
+  `tmux refused the command: can't find session: nope (exit 1, replied)`.
+  `libtmux::to_string(failure)` returns the same line.
+
 ## 0.1.0-alpha.7 (2026-09-06)
 
 This alpha is wire-breaking for MCP clients and source-compatible for the

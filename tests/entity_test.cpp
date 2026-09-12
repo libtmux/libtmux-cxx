@@ -8,6 +8,7 @@
 #include <array>
 #include <chrono>
 #include <filesystem>
+#include <ranges>
 #include <string>
 #include <thread>
 #include <vector>
@@ -220,6 +221,22 @@ TEST(Entity, APaneRunsWhatItIsSentAndCapturesTheResult) {
     std::this_thread::sleep_for(std::chrono::milliseconds{25});
   }
   EXPECT_NE(captured.find("libtmux-marker"), std::string::npos);
+
+  // The same two acts as one invocation. The quotes do the same work here:
+  // only a line that was submitted can produce the text.
+  ASSERT_TRUE(pane.send_line("echo libtmux''-line").has_value());
+  for (int attempt = 0; attempt < 200; ++attempt) {
+    captured = captured_now();
+    if (captured.find("libtmux-line") != std::string::npos) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds{25});
+  }
+  EXPECT_NE(captured.find("libtmux-line"), std::string::npos);
+
+  // Empty text is Enter alone rather than a refusal, which is what submitting
+  // a blank line means.
+  EXPECT_TRUE(pane.send_line("").has_value());
 }
 
 TEST(Entity, AnAnswerThatDoesNotFitIsReportedNotCut) {
@@ -613,6 +630,20 @@ TEST(Entity, NumericFieldsCompareAsNumbersNotAsText) {
   // The same comparison as text would have said "10" < "2".
   EXPECT_TRUE((window::index == 10)(windows.back()));
   EXPECT_FALSE((window::index <= 2)(windows.back()));
+
+  // A handle projects as well as compares, and a number projects as a number:
+  // ordering on the text tmux rendered would put index 10 ahead of index 2.
+  std::vector<Window> reordered{Window{recorded, 1}, Window{recorded, 0}};
+  std::ranges::sort(reordered, {}, window::index);
+  EXPECT_EQ(reordered.front().index(), 2);
+  EXPECT_EQ(reordered.back().index(), 10);
+
+  // A string handle projects too, and a flag handle is a whole predicate, so
+  // neither needs a lambda repeating the accessor.
+  std::ranges::sort(reordered, std::ranges::greater{}, window::name);
+  EXPECT_EQ(reordered.front().name(), "small");
+  EXPECT_EQ(std::ranges::count_if(reordered, window::active), 1);
+  EXPECT_EQ(std::ranges::max(reordered, {}, window::width).name(), "large");
 }
 
 TEST(Entity, CreationVerbsCarryTheFlagsTmuxHas) {
