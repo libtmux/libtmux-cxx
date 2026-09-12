@@ -350,8 +350,6 @@ Server start_endpoint(const Request& request, Bootstrap& bootstrap) {
     command.insert(command.end(), {"-f", expand(request.value("f"))});
   if (request.flag("2"))
     command.emplace_back("-2");
-  if (request.flag("8"))
-    command.emplace_back("-8");
   std::random_device random;
   std::ostringstream unique;
   unique << "tmux-workspace-bootstrap-" << std::hex;
@@ -669,6 +667,8 @@ std::string encoded(const Json& value, int indent) {
   return value.dump(indent, ' ', false, Json::error_handler_t::replace);
 }
 void validate(const Request& request) {
+  if (request.command == "load" && request.flag("8"))
+    throw Failure{2, "USAGE", "88-colour mode is unsupported; use -2 for 256 colours"};
   if (request.command == "search") {
     if (request.list("query").empty())
       throw Failure{2, "USAGE", "search requires at least one pattern"};

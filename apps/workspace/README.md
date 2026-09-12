@@ -45,6 +45,8 @@ builds remove their own session and preserve earlier successful inputs.
 Cold startup verifies the new server and bootstrap session before creating
 workspace windows. A startup identity error reports any unverified bootstrap
 that may remain. Startup uses a five-second process timeout.
+`-2` selects 256-colour mode. Legacy `-8` is rejected before reading a workspace
+or reaching tmux because supported tmux versions do not provide 88-colour mode.
 
 Inside tmux, `--append` adds windows to the current pane's session after
 verifying its server identity. `-d` takes precedence if both flags are given.

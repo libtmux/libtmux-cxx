@@ -39,7 +39,7 @@ public:
     load->add_flag("-d", "Load without attaching a terminal");
     load->add_flag("-a,--append", "Append windows to the current session");
     auto* two = load->add_flag("-2", "Use 256-colour tmux mode");
-    load->add_flag("-8", "Use 88-colour tmux mode")->excludes(two);
+    load->add_flag("-8", "Unsupported legacy 88-colour mode; use -2")->excludes(two);
     load->add_option("--log-file", "Write diagnostic records to a file");
     load->add_option("--progress-format", "Progress preset or template");
     load->add_option("--progress-lines", "Script panel lines; -1 uses terminal height")

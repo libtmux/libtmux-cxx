@@ -89,6 +89,19 @@ TEST(WorkspaceCli, HelpAndInvalidRequestsDoNotNeedTmux) {
   }
 }
 
+TEST(WorkspaceCli, LegacyColourFailsBeforeDocumentResolution) {
+  Files files;
+  for (const auto* mode : {"--json", "--ndjson"}) {
+    const auto result = invoke({"load", "missing.yaml", "-d", "-8", mode});
+    EXPECT_EQ(result.code, 2);
+    EXPECT_TRUE(result.out.empty());
+    const auto error = Json::parse(result.err);
+    EXPECT_EQ(error.at("code"), "USAGE");
+    EXPECT_NE(error.at("message").get<std::string>().find("88-colour"),
+              std::string::npos);
+  }
+}
+
 TEST(WorkspaceCli, FileServicesKeepTypesAndUseNativeWholeWordMatching) {
   Files files;
   std::ofstream{"dev.yaml"}
