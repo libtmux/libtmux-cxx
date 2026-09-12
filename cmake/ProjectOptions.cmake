@@ -77,6 +77,11 @@ if(LIBTMUX_ENABLE_SANITIZERS)
   target_link_options(
     libtmux_build_options
     INTERFACE -fsanitize=address,undefined)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND LIBTMUX_HAS_LIBCXX_18_1)
+    # Ubuntu's libc++abi binds delete internally, bypassing ASan interposition.
+    # Static linking preserves the allocator pair: llvm-project issue 59432.
+    target_link_options(libtmux_build_options INTERFACE -static-libstdc++)
+  endif()
 elseif(LIBTMUX_ENABLE_THREAD_SANITIZER)
   target_compile_options(libtmux_build_options INTERFACE -fsanitize=thread)
   target_link_options(libtmux_build_options INTERFACE -fsanitize=thread)
