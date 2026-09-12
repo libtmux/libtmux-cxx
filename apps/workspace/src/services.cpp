@@ -698,7 +698,8 @@ Json execute(const Request& request, const EventSink& event) {
     arguments.push_back(path.string());
     event("started", {{"path", private_path(path)}});
     try {
-      const auto child = run_child(arguments, request.terminal_allowed, std::nullopt);
+      const auto child = run_child(
+          arguments, {.terminal = request.terminal_allowed, .timeout = std::nullopt});
       return {{"schema_version", 1},
               {"command", "edit"},
               {"path", private_path(path)},
@@ -764,6 +765,8 @@ Json execute(const Request& request, const EventSink& event) {
     struct Planned {
       fs::path path;
       Workspace workspace;
+      std::vector<std::string> before_script;
+      std::string script_directory;
     };
     std::vector<Planned> plans;
     const auto inputs = request.list("workspace-file");
@@ -772,6 +775,25 @@ Json execute(const Request& request, const EventSink& event) {
       const auto path = resolve(input);
       auto document = read_document(path);
       normalise(document, path.parent_path());
+      std::vector<std::string> script;
+      if (document.contains("before_script") && !document["before_script"].is_null()) {
+        if (!document["before_script"].is_string())
+          throw Failure{1, "INVALID_CONFIG", "before_script must be a command string"};
+        const auto command = document["before_script"].get<std::string>();
+        if (!command.empty()) {
+          try {
+            script = split_command(command);
+          } catch (const Failure& error) {
+            throw Failure{1, "INVALID_CONFIG",
+                          "before_script: " + std::string{error.what()}};
+          }
+          for (const auto& argument : script)
+            if (argument.find('\0') != std::string::npos)
+              throw Failure{1, "INVALID_CONFIG",
+                            "before_script arguments cannot contain NUL"};
+        }
+      }
+      document.erase("before_script");
       if (index + 1 == inputs.size() && !request.value("s").empty())
         document["session_name"] = request.value("s");
       const auto workspace = parse_tmuxp(document.dump());
@@ -780,13 +802,22 @@ Json execute(const Request& request, const EventSink& event) {
                       workspace.error().where + ": " + workspace.error().reason};
       if (!libtmux::session_target(workspace->session_name))
         throw Failure{1, "INVALID_CONFIG", "session name cannot address itself"};
-      plans.push_back({path, *workspace});
+      std::string directory;
+      if (!script.empty()) {
+        directory = workspace->start_directory.empty() ? fs::current_path().string()
+                                                       : workspace->start_directory;
+        if (directory.find('\0') != std::string::npos || !fs::is_directory(directory))
+          throw Failure{1, "INVALID_CONFIG",
+                        "before_script working directory does not exist"};
+      }
+      plans.push_back({path, *workspace, std::move(script), std::move(directory)});
     }
     Json results = Json::array(), errors = Json::array();
     event("started", {{"inputs", plans.size()}});
     Bootstrap bootstrap;
     const bool appending = request.flag("append") && !request.flag("d");
     bool retained_changes{};
+    int failure_status{1};
     std::string stage{"startup"};
     std::size_t active_input{};
     try {
@@ -805,14 +836,57 @@ Json execute(const Request& request, const EventSink& event) {
         const auto existing =
             borrowed ? libtmux::expected<Session, CommandFailure>{*borrowed}
                      : server.session("=" + plan.workspace.session_name + ":");
-        auto built = borrowed   ? append(*borrowed, plan.workspace)
+        Json script_output;
+        std::optional<Failure> script_error;
+        BeforeBuild before;
+        if (!plan.before_script.empty()) {
+          before = [&](const Session& session) -> std::optional<std::string> {
+            stage = "before-script";
+            try {
+              event("script-started",
+                    {{"input_index", index}, {"session_id", session.id()}});
+              const auto child = run_child(
+                  plan.before_script,
+                  {.terminate_descendants = true,
+                   .timeout = std::nullopt,
+                   .directory = plan.script_directory,
+                   .output = [&](std::string_view stream, std::string_view bytes) {
+                     event(
+                         "script-output",
+                         {{"input_index", index}, {"stream", stream}, {"text", bytes}});
+                   }});
+              script_output = child.value();
+              event("script-completed",
+                    {{"input_index", index}, {"script_output", script_output}});
+              if (child.code != 0) {
+                script_error.emplace(
+                    child.code >= 128 ? child.code : 1, "BEFORE_SCRIPT_FAILED",
+                    "before_script exited with status " + std::to_string(child.code));
+                return script_error->what();
+              }
+            } catch (const Failure& error) {
+              script_error = error;
+              script_output = error.child_output;
+              return error.what();
+            }
+            stage = "load";
+            return std::nullopt;
+          };
+        }
+        auto built = borrowed   ? append(*borrowed, plan.workspace, before)
                      : existing ? libtmux::expected<Session, BuildError>{*existing}
-                                : build(server, plan.workspace);
+                                : build(server, plan.workspace, before);
         if (!built) {
-          Json problem{{"code", "BUILD_FAILED"},
+          if (script_error && script_error->code == "OUTPUT_CLOSED")
+            throw *script_error;
+          if (script_error)
+            failure_status = script_error->exit_code;
+          Json problem{{"code", script_error ? script_error->code : "BUILD_FAILED"},
                        {"message", built.error().reason},
                        {"input_index", index},
-                       {"failed_stage", "load"}};
+                       {"failed_stage", stage}};
+          if (!script_output.is_null())
+            problem["script_output"] = script_output;
           if (borrowed) {
             retained_changes = true;
             problem["retained_state"] = {{"session_id", borrowed->id()},
@@ -831,6 +905,8 @@ Json execute(const Request& request, const EventSink& event) {
                     {"action", borrowed   ? "appended"
                                : existing ? "reused"
                                           : "created"}};
+        if (!script_output.is_null())
+          result["script_output"] = script_output;
         results.push_back(result);
         if (!existing)
           event("session-created", result);
@@ -863,11 +939,10 @@ Json execute(const Request& request, const EventSink& event) {
     const auto status = errors.empty()                         ? "ok"
                         : results.empty() && !retained_changes ? "error"
                                                                : "partial";
-    Json summary{{"schema_version", 1},
-                 {"command", "load"},
-                 {"status", status},
-                 {"results", results},
-                 {"errors", errors}};
+    Json summary{
+        {"schema_version", 1}, {"command", "load"},
+        {"status", status},    {"exit_code", errors.empty() ? 0 : failure_status},
+        {"results", results},  {"errors", errors}};
     return summary;
   }
   throw Failure{1, "FEATURE_UNAVAILABLE", "command is not implemented"};

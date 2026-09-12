@@ -111,6 +111,11 @@ struct Utf8Measure final {
   if (executable.empty() || contains_nul(executable)) {
     return false;
   }
+#if !defined(_WIN32)
+  if (contains_nul(request.working_directory.native())) {
+    return false;
+  }
+#endif
   for (const auto& argument : request.arguments) {
     if (contains_nul(argument.value)) {
       return false;

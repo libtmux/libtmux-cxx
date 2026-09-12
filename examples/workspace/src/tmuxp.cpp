@@ -204,8 +204,17 @@ read_environment(const YAML::Node& node, const std::string& where) {
     if (!entry.first.IsScalar() || !entry.second.IsScalar()) {
       return fail(where, "a variable is a name and a value");
     }
-    variables.emplace_back(entry.first.as<std::string>(),
-                           entry.second.as<std::string>());
+    auto name = entry.first.as<std::string>();
+    auto value = entry.second.as<std::string>();
+    if (name.empty() || name.find('=') != std::string::npos ||
+        name.find('\0') != std::string::npos) {
+      return fail(where,
+                  "an environment name must be non-empty and contain no '=' or NUL");
+    }
+    if (value.find('\0') != std::string::npos) {
+      return fail(where, "an environment value cannot contain NUL");
+    }
+    variables.emplace_back(std::move(name), std::move(value));
   }
   return variables;
 }

@@ -87,8 +87,8 @@ poll_and_drain(PosixChild& child, Clock::time_point boundary, DeliveryStatus del
 
 // Ends the child and reads what it left. Cleanup still reports its first fault
 // so a provisional timeout can match the asynchronous runner.
-[[nodiscard]] std::optional<ProcessError> cleanup_group(PosixChild& child,
-                                                        bool allow_term) {
+[[nodiscard]] std::optional<ProcessError>
+cleanup_group(PosixChild& child, bool allow_term, DescendantPolicy descendants) {
   std::optional<ProcessError> failure;
   const auto retain = [&failure](std::optional<ProcessError> candidate) {
     if (candidate && !failure) {
@@ -97,7 +97,8 @@ poll_and_drain(PosixChild& child, Clock::time_point boundary, DeliveryStatus del
   };
   const auto settle = [&](Clock::time_point until) {
     while (child.status() == ChildStatus::running && Clock::now() < until) {
-      retain(child.update_status(DeliveryStatus::indeterminate));
+      if (descendants == DescendantPolicy::leave_running)
+        retain(child.update_status(DeliveryStatus::indeterminate));
       auto drain = poll_and_drain(child, std::min(until, Clock::now() + poll_quantum),
                                   DeliveryStatus::indeterminate);
       if (drain) {
@@ -141,6 +142,12 @@ poll_and_drain(PosixChild& child, Clock::time_point boundary, DeliveryStatus del
 } // namespace
 
 expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) {
+  return run_process(request, {});
+}
+
+expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request,
+                                                 const ProcessOutputObserver& output,
+                                                 DescendantPolicy descendants) {
   if (request.cancelled && request.cancelled()) {
     return unexpected(process_error(
         ProcessError::Kind::cancelled, DeliveryStatus::not_started, "cancelled",
@@ -162,9 +169,31 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
     return unexpected(std::move(launched.error()));
   }
   auto& child = *launched;
+  std::array<std::size_t, 2> emitted{};
+  const auto publish = [&] {
+    if (!output)
+      return;
+    try {
+      const auto& capture = child.capture();
+      const std::array streams{&capture.stdout_bytes, &capture.stderr_bytes};
+      for (std::size_t index = 0; index < streams.size(); ++index) {
+        const auto& bytes = *streams[index];
+        if (bytes.size() > emitted[index]) {
+          output(index == 0 ? "stdout" : "stderr",
+                 {reinterpret_cast<const char*>(bytes.data() + emitted[index]),
+                  bytes.size() - emitted[index]});
+          emitted[index] = bytes.size();
+        }
+      }
+    } catch (...) {
+      (void)cleanup_group(child, true, descendants);
+      throw;
+    }
+  };
 
   const auto abandon = [&](ProcessError error, bool allow_term) {
-    auto cleanup_failure = cleanup_group(child, allow_term);
+    auto cleanup_failure = cleanup_group(child, allow_term, descendants);
+    publish();
     // Timeout is provisional until termination, drain and reap finish. A
     // concrete cleanup fault is the synchronous/asynchronous shared cause.
     if (error.kind == ProcessError::Kind::timeout && cleanup_failure) {
@@ -216,18 +245,28 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
                                    std::make_error_code(std::errc::file_too_large)),
                      true);
     }
-    if (auto failure = child.update_status(DeliveryStatus::indeterminate)) {
-      return abandon(std::move(*failure), false);
+    bool finished;
+    if (descendants == DescendantPolicy::terminate) {
+      const auto observed = child.exit_pending(DeliveryStatus::indeterminate);
+      if (!observed)
+        return abandon(observed.error(), false);
+      finished = *observed;
+    } else {
+      if (auto failure = child.update_status(DeliveryStatus::indeterminate))
+        return abandon(std::move(*failure), false);
+      finished = child.status() != ChildStatus::running;
     }
-    const bool finished = child.status() != ChildStatus::running;
     if (finished && exit_drain_deadline == Clock::time_point::max()) {
       exit_drain_deadline = Clock::now() + post_exit_drain;
     }
-    if (finished && child.output_closed()) {
-      break;
-    }
-    if (finished && Clock::now() >= exit_drain_deadline) {
-      child.close_output();
+    if (finished && (child.output_closed() || Clock::now() >= exit_drain_deadline)) {
+      if (descendants == DescendantPolicy::terminate) {
+        if (auto failure = cleanup_group(child, true, descendants))
+          return abandon(std::move(*failure), false);
+        publish();
+      } else {
+        child.close_output();
+      }
       break;
     }
     if (!finished && deadline.has_value() && Clock::now() >= *deadline) {
@@ -242,6 +281,7 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
     if (auto failure = poll_and_drain(child, boundary, DeliveryStatus::indeterminate)) {
       return abandon(std::move(*failure), false);
     }
+    publish();
   }
 
   auto capture = child.take_capture();

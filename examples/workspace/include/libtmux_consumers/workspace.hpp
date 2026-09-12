@@ -11,6 +11,7 @@
 #include <charconv>
 #include <chrono>
 #include <expected>
+#include <functional>
 #include <optional>
 #include <string>
 #include <thread>
@@ -112,10 +113,15 @@ struct BuildError {
   std::vector<std::string> retained_windows{};
 };
 
+// Runs after session selection and before settings or windows. A returned error
+// uses the builder's owned-session rollback and borrowed-session preservation.
+using BeforeBuild = std::function<std::optional<std::string>(const libtmux::Session&)>;
+
 namespace detail {
 [[nodiscard]] inline libtmux::expected<libtmux::Session, BuildError>
 build_windows(const Server& server, const Workspace& description,
-              const std::optional<libtmux::Session>& borrowed) {
+              const std::optional<libtmux::Session>& borrowed,
+              const BeforeBuild& before) {
   if (description.session_name.empty() || description.windows.empty()) {
     return libtmux::unexpected(BuildError{0, "workspace names no session or window"});
   }
@@ -143,11 +149,14 @@ build_windows(const Server& server, const Workspace& description,
   const auto shell = [](const Window& window, const Pane& pane) {
     return pane.shell.empty() ? window.shell : pane.shell;
   };
+  auto initial_environment = description.environment;
+  if (before)
+    initial_environment.clear();
   auto built = borrowed
                    ? libtmux::expected<libtmux::Session, CommandFailure>{*borrowed}
                    : server.new_session({.name = description.session_name,
                                          .start_directory = description.start_directory,
-                                         .environment = description.environment});
+                                         .environment = initial_environment});
   if (!built.has_value()) {
     return libtmux::unexpected(BuildError{0, built.error().diagnostic});
   }
@@ -161,13 +170,23 @@ build_windows(const Server& server, const Workspace& description,
     }
     return libtmux::unexpected(BuildError{index, std::move(reason)});
   };
+  if (before) {
+    try {
+      if (auto error = before(*built))
+        return fail(0, std::move(*error));
+    } catch (...) {
+      (void)fail(0, "before-build callback failed");
+      throw;
+    }
+  }
   std::optional<libtmux::Window> bootstrap;
   if (!borrowed) {
     const auto window = built->active_window();
     if (!window)
       return fail(0, window.error().diagnostic);
     bootstrap = *window;
-  } else {
+  }
+  if (borrowed || before) {
     for (const auto& [name, value] : description.environment) {
       if (name.empty() || name.find('=') != std::string::npos)
         return fail(0, "an environment name must be non-empty and contain no '='");
@@ -348,18 +367,20 @@ build_windows(const Server& server, const Workspace& description,
 
 // Create a new session. A failed build removes only the session it created.
 [[nodiscard]] inline libtmux::expected<libtmux::Session, BuildError>
-build(const Server& server, const Workspace& description) {
-  return detail::build_windows(server, description, std::nullopt);
+build(const Server& server, const Workspace& description,
+      const BeforeBuild& before = {}) {
+  return detail::build_windows(server, description, std::nullopt, before);
 }
 
 // Add windows to a borrowed session. Failure retains that session, applied
 // settings and any new windows, whose IDs are included in the error.
 [[nodiscard]] inline libtmux::expected<libtmux::Session, BuildError>
-append(const libtmux::Session& session, const Workspace& description) {
+append(const libtmux::Session& session, const Workspace& description,
+       const BeforeBuild& before = {}) {
   const auto server = session.server();
   if (!server)
     return libtmux::unexpected(BuildError{0, server.error().diagnostic});
-  return detail::build_windows(*server, description, session);
+  return detail::build_windows(*server, description, session, before);
 }
 
 } // namespace libtmux::workspace
