@@ -42,6 +42,10 @@ A session-name override
 applies to the final input. New sessions retain explicit window indexes,
 created object identities, command settings, environments and layouts. Failed
 builds remove their own session and preserve earlier successful inputs.
+Layout names, checksums, tree syntax and pane counts are validated before any
+input runs a startup script or changes tmux. Named abbreviations follow the
+running daemon's version. Saved trees accept at most 256 nested levels;
+tmux handles geometry, resizing and removal of unused cells.
 Cold startup verifies the new server and bootstrap session before creating
 workspace windows. A startup identity error reports any unverified bootstrap
 that may remain. Startup uses a five-second process timeout.

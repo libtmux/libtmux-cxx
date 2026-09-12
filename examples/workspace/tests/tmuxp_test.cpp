@@ -443,6 +443,17 @@ windows:
   EXPECT_EQ(commands[3].pause_after, std::chrono::milliseconds{0});
 }
 
+TEST(Tmuxp, RefusesMalformedLayoutsBeforeBuilding) {
+  for (const auto* layout :
+       {"invalid-layout", "32d2,80x24,0,0{}", "ffff,80x24,0,0,0"}) {
+    SCOPED_TRACE(layout);
+    const auto parsed = libtmux::workspace::parse_tmuxp(
+        "session_name: layout\nwindows: [{layout: '" + std::string{layout} + "'}]\n");
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().where, "windows[0].layout");
+  }
+}
+
 TEST(Tmuxp, RefusesMultipleDocumentsAndUnrepresentablePauses) {
   EXPECT_FALSE(parse_tmuxp("session_name: a\nwindows: [{}]\n---\nsession_name: b\n")
                    .has_value());

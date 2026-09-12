@@ -20,6 +20,7 @@
 
 #include "libtmux/server.hpp"
 #include "libtmux/target.hpp"
+#include "libtmux_consumers/layout.hpp"
 
 namespace libtmux::workspace {
 
@@ -117,6 +118,38 @@ struct BuildError {
 // uses the builder's owned-session rollback and borrowed-session preservation.
 using BeforeBuild = std::function<std::optional<std::string>(const libtmux::Session&)>;
 
+// Check all layouts before sessions, settings, or before-build callbacks change.
+inline std::optional<BuildError> validate_layouts(const Server& server,
+                                                  const Workspace& description) {
+  std::optional<bool> mirrored;
+  for (std::size_t index = 0; index < description.windows.size(); ++index) {
+    const auto& window = description.windows[index];
+    if (auto error = detail::layout_error(window.layout, window.panes.size()))
+      return BuildError{index, std::move(*error)};
+    if (!detail::layout_needs_version(window.layout))
+      continue;
+    if (!mirrored.has_value()) {
+      // An existing daemon can differ from the client found on PATH. A cold
+      // endpoint has no format context, so use the client that will start it.
+      const auto running = server.run({"display-message", "-p", "#{version}"});
+      if (running) {
+        const auto version = parse_version("tmux " + *running);
+        if (!version)
+          return BuildError{index, "cannot determine tmux daemon version for layout"};
+        mirrored = *version >= Version{.major = 3, .minor = 5};
+      } else {
+        const auto version = server.tmux_version();
+        if (!version)
+          return BuildError{index, version.error().diagnostic};
+        mirrored = *version >= Version{.major = 3, .minor = 5};
+      }
+    }
+    if (auto error = detail::layout_error(window.layout, window.panes.size(), mirrored))
+      return BuildError{index, std::move(*error)};
+  }
+  return std::nullopt;
+}
+
 namespace detail {
 [[nodiscard]] inline libtmux::expected<libtmux::Session, BuildError>
 build_windows(const Server& server, const Workspace& description,
@@ -135,6 +168,8 @@ build_windows(const Server& server, const Workspace& description,
       return libtmux::unexpected(BuildError{index, "a window needs at least one pane"});
     }
   }
+  if (auto error = validate_layouts(server, description))
+    return libtmux::unexpected(std::move(*error));
   const auto directory = [&description](const Window& window, const Pane& pane) {
     if (!pane.start_directory.empty()) {
       return pane.start_directory;

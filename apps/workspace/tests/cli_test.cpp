@@ -119,6 +119,70 @@ TEST(WorkspaceCli, OrdinaryLoadRequiresTerminalBeforeDocumentResolution) {
   }
 }
 
+TEST(WorkspaceCliTmux, MalformedLayoutsPrecedeEveryInputAndBeforeScript) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-layout")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto directory = fixture->socket_path().parent_path();
+  const auto first = directory / "first.yaml";
+  const auto second = directory / "second.yaml";
+  const auto marker = directory / "script-ran";
+  std::ofstream{first} << "session_name: first\nbefore_script: touch '"
+                       << marker.string() << "'\nwindows: [{}]\n";
+  std::ofstream{second}
+      << "session_name: second\nwindows: [{layout: invalid-layout}]\n";
+  const auto result = invoke({"load", first.string(), second.string(), "-d", "-S",
+                              fixture->socket_path().string(), "--json"});
+  EXPECT_EQ(result.code, 1);
+  EXPECT_FALSE(std::filesystem::exists(marker));
+  const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value());
+  EXPECT_FALSE(server->session("first").has_value());
+  EXPECT_FALSE(server->session("second").has_value());
+  EXPECT_TRUE(server->session("libtmux_test").has_value());
+}
+
+TEST(WorkspaceCliTmux, LayoutCorpusPreservesTmuxCompatibilityAndTheExistingSession) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("layouts")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value());
+  const auto reply = server->run({"display-message", "-p", "#{version}"});
+  ASSERT_TRUE(reply.has_value());
+  const auto version = libtmux::parse_version("tmux " + *reply);
+  ASSERT_TRUE(version.has_value());
+  const auto column =
+      *version >= libtmux::Version{.major = 3, .minor = 5} ? "3.7c" : "3.2a";
+  std::ifstream input{std::filesystem::path{__FILE__}.parent_path() / "fixtures" /
+                      "layouts.json"};
+  ASSERT_TRUE(input.is_open());
+  const auto cases = Json::parse(input);
+  const auto config = fixture->socket_path().parent_path() / "layout.json";
+  for (const auto& item : cases) {
+    SCOPED_TRACE(item.at("id").get<std::string>());
+    Json panes = Json::array();
+    for (std::size_t index = 0; index < item.at("pane_count").get<std::size_t>();
+         ++index)
+      panes.push_back("");
+    std::ofstream{config} << Json{{"session_name", "layout-corpus"},
+                                  {"windows",
+                                   Json::array({{{"window_name", "main"},
+                                                 {"layout", item.at("layout")},
+                                                 {"panes", panes}}})}}
+                                 .dump();
+    const auto result = invoke({"load", config.string(), "-d", "-S",
+                                fixture->socket_path().string(), "--json"});
+    const bool valid = item.at("expected_valid").at(column).get<bool>();
+    EXPECT_EQ(result.code, valid ? 0 : 1) << result.out << result.err;
+    const auto session = server->session("layout-corpus");
+    EXPECT_EQ(session.has_value(), valid);
+    if (session)
+      ASSERT_TRUE(session->kill().has_value());
+    ASSERT_TRUE(server->session("libtmux_test").has_value());
+  }
+}
+
 TEST(WorkspaceCliTmux, BeforeScriptsValidateEveryInputBeforeMutation) {
   Files files;
   auto fixture = libtmux::test::ScopedTmuxServer::start(
