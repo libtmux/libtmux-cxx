@@ -39,12 +39,23 @@ std::string readable(std::string_view text) {
 } // namespace
 
 int main() {
-  const example::ScratchServer scratch = example::ScratchServer::open();
+  const example::ScratchServer scratch =
+      example::ScratchServer::open_or_borrow_arena("cpp-streaming");
   const libtmux::Server& server = scratch.get();
 
-  const auto panes = server.panes();
-  if (!panes.has_value()) {
-    std::fprintf(stderr, "%s\n", panes.error().diagnostic.c_str());
+  // Its own session, by name: on a borrowed server, `server.panes()->at(0)`
+  // would be whichever pane the supervisor made, and this must not type into
+  // a terminal it does not own.
+  const auto session = server.new_session({.name = "streaming"});
+  if (!session.has_value()) {
+    std::fprintf(stderr, "%s\n", session.error().diagnostic.c_str());
+    return 1;
+  }
+  const auto panes = session->panes();
+  if (!panes.has_value() || panes->empty()) {
+    std::fprintf(stderr, "%s\n",
+                 panes.has_value() ? "the new session has no panes"
+                                   : panes.error().diagnostic.c_str());
     return 1;
   }
   const std::string pane{panes->at(0).id()};
@@ -53,7 +64,7 @@ int main() {
   // decides it here: a control client that starts without output cannot be
   // asked for it afterwards. `docs/design/pane-output-streaming.md` measures
   // that, and what tmux does to a reader who falls behind.
-  auto connected = server.control_with_options("example", {.pane_output = true});
+  auto connected = server.control_with_options("streaming", {.pane_output = true});
   if (!connected.has_value()) {
     std::fprintf(stderr, "%s\n", connected.error().message.c_str());
     return 1;
@@ -143,6 +154,9 @@ int main() {
       !closed.has_value()) {
     std::fprintf(stderr, "%s\n", closed.error().message.c_str());
     return 1;
+  }
+  if (scratch.borrows_server()) {
+    return scratch.print_arena_evidence("cpp-streaming");
   }
   return 0;
 }

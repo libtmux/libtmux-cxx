@@ -25,9 +25,18 @@ if(NOT TARGET GTest::gtest_main)
   libtmux_resolve_googletest()
 endif()
 
+if(NOT TARGET nlohmann_json::nlohmann_json)
+  include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NlohmannJson.cmake")
+  libtmux_resolve_nlohmann_json()
+endif()
+
 add_executable(libtmux_example_test example_test.cpp)
 target_link_libraries(
-  libtmux_example_test PRIVATE GTest::gtest_main libtmux::testing)
+  libtmux_example_test
+  PRIVATE
+    GTest::gtest_main
+    libtmux::testing
+    nlohmann_json::nlohmann_json)
 
 # Same sanitizer flags as the fixture it links; see `src/CMakeLists.txt`.
 if(TARGET libtmux_build_options)

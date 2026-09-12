@@ -6,7 +6,8 @@
 // disagree. A code sample that no longer compiles is a bug that greets every
 // new reader, and this is the cheapest way to never ship one.
 //
-// It runs against a tmux server of its own, like every other example here.
+// It runs against a tmux server of its own, like every other example here —
+// or, under the documentation arena, a server this example borrows.
 
 #include <algorithm>
 #include <chrono>
@@ -28,7 +29,8 @@
 #include "scratch_server.hpp"
 
 int main() {
-  const example::ScratchServer scratch = example::ScratchServer::open();
+  const example::ScratchServer scratch =
+      example::ScratchServer::open_or_borrow_arena("cpp-readme");
   const libtmux::Server& server = scratch.get();
 
   // #region connect
@@ -46,7 +48,14 @@ int main() {
   }
   // #endregion connect
 
-  const libtmux::Session& session = sessions->at(0);
+  // Its own session, by name: on a borrowed server, `sessions->at(0)` would be
+  // whichever session the supervisor made, not this example's to build in.
+  const auto own_session = server.new_session({.name = "readme"});
+  if (!own_session.has_value()) {
+    std::fprintf(stderr, "%s\n", own_session.error().diagnostic.c_str());
+    return 1;
+  }
+  const libtmux::Session& session = *own_session;
 
   // #region build
   // Build an arrangement without composing a single tmux argument.
@@ -381,5 +390,8 @@ int main() {
   std::filesystem::remove_all(std::filesystem::temp_directory_path() /
                                   ("libtmux-cxx-editor-" + std::to_string(::getpid())),
                               cleanup);
+  if (scratch.borrows_server()) {
+    return scratch.print_arena_evidence("cpp-readme");
+  }
   return 0;
 }

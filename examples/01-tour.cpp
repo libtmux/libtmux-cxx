@@ -3,13 +3,15 @@
 #include <cstdio>
 #include <filesystem>
 #include <string>
+#include <system_error>
 
 #include <libtmux/libtmux.hpp>
 
 #include "scratch_server.hpp"
 
 int main() {
-  const example::ScratchServer scratch = example::ScratchServer::open();
+  const example::ScratchServer scratch =
+      example::ScratchServer::open_or_borrow_arena("cpp-tour");
   const libtmux::Server& server = scratch.get();
 
   // Which tmux is on the other end. Nothing throws; every call reports failure
@@ -211,6 +213,9 @@ int main() {
       !replaced.has_value()) {
     std::fprintf(stderr, "%s\n", replaced.error().diagnostic.c_str());
     return 1;
+  }
+  if (scratch.borrows_server()) {
+    return scratch.print_arena_evidence("cpp-tour");
   }
   return 0;
 }
