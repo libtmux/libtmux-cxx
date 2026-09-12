@@ -454,4 +454,44 @@ TEST(Tmuxp, RefusesMultipleDocumentsAndUnrepresentablePauses) {
   }
 }
 
+TEST(Tmuxp, CommandsPreserveStateAcrossNullsAndHonourHistoryOverrides) {
+  const auto parsed = parse_tmuxp(R"(
+session_name: state
+windows:
+  - panes:
+      - shell_command:
+          - {cmd: first, enter: false, sleep_after: 0.25, suppress_history: false}
+          - null
+          - second
+)");
+  ASSERT_TRUE(parsed.has_value()) << parsed.error().reason;
+  const auto& commands = parsed->windows[0].panes[0].shell_commands;
+  ASSERT_EQ(commands.size(), 3U);
+  for (const auto& command : commands) {
+    EXPECT_FALSE(command.enter);
+    EXPECT_FALSE(command.suppress_history);
+    EXPECT_EQ(command.pause_after, std::chrono::milliseconds{250});
+  }
+}
+
+TEST(Tmuxp, MalformedCommandAndBooleanFieldsAreRefused) {
+  for (const auto* command :
+       {"{cmd: [oops]}", "{enter: true}", "{cmd: x, enter: typo}",
+        "{cmd: x, enter: {}}", "{cmd: x, suppress_history: nope}"}) {
+    EXPECT_FALSE(parse_tmuxp("session_name: a\nwindows:\n  - panes:\n"
+                             "      - shell_command: [" +
+                             std::string{command} + "]\n")
+                     .has_value())
+        << command;
+  }
+  for (const auto* field : {"focus", "suppress_history"}) {
+    EXPECT_FALSE(
+        parse_tmuxp("session_name: a\nwindows:\n  - " + std::string{field} + ": typo\n")
+            .has_value());
+    EXPECT_FALSE(parse_tmuxp("session_name: a\nwindows:\n  - panes:\n      - " +
+                             std::string{field} + ": {}\n")
+                     .has_value());
+  }
+}
+
 } // namespace
