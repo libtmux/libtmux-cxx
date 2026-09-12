@@ -199,6 +199,34 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
       request.ndjson = true;
   }
   Model model;
+  Execution execution;
+  Json retained_state;
+  const auto fail = [&](int status, const std::string& code,
+                        const std::string& message) {
+    try {
+      if (request.command == "load" && execution.value.is_object()) {
+        const auto primary = execution.value.at("exit_code").get<int>();
+        if (primary != 0)
+          status = primary;
+      }
+      if (retained_state.is_null() && request.command == "load" &&
+          execution.value.is_object())
+        retained_state = execution.value;
+      if (request.machine()) {
+        Json diagnostic{{"code", code}, {"message", message}};
+        if (!retained_state.is_null())
+          diagnostic["retained_state"] = retained_state;
+        errors << encoded(diagnostic) << '\n';
+      } else {
+        errors << "Error: " << message << '\n';
+        if (!retained_state.is_null())
+          errors << "Retained state: " << encoded(retained_state) << '\n';
+      }
+    } catch (const std::exception&) {
+      // A failed diagnostic sink does not replace the operation's status.
+    }
+    return status;
+  };
   try {
     std::reverse(arguments.begin(), arguments.end());
     model.root.parse(arguments);
@@ -230,7 +258,8 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
       if (!output)
         throw Failure{1, "OUTPUT_CLOSED", "output stream closed"};
     };
-    const auto result = execute(request, emit);
+    execution = execute(request, emit);
+    const auto& result = execution.value;
     if (request.command == "freeze" && request.json && !request.ndjson &&
         !result.contains("destination")) {
       errors << encoded({{"code", "CAPTURE_LOSSY"},
@@ -276,6 +305,14 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
       output << encoded(result, 2) << '\n';
     else
       output << human_result(request, result, colour_enabled(request, output));
+    if (request.command == "load") {
+      output.flush();
+      errors.flush();
+      if (!output || !errors)
+        throw Failure{1, "OUTPUT_CLOSED", "load output stream closed"};
+      if (execution.handoff)
+        execution.handoff();
+    }
     if ((request.command == "edit" || request.command == "load") && output)
       return result.at("exit_code").get<int>();
     return output && !failed ? 0 : 1;
@@ -288,18 +325,11 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
       model.root.exit(error, output, errors);
     return 2;
   } catch (const Failure& error) {
-    if (request.machine())
-      errors << encoded({{"code", error.code}, {"message", error.what()}}) << '\n';
-    else
-      errors << "Error: " << error.what() << '\n';
-    return error.exit_code;
+    if (!error.retained_state.is_null())
+      retained_state = error.retained_state;
+    return fail(error.exit_code, error.code, error.what());
   } catch (const std::exception& error) {
-    if (request.machine())
-      errors << encoded({{"code", "OPERATION_FAILED"}, {"message", error.what()}})
-             << '\n';
-    else
-      errors << "Error: " << error.what() << '\n';
-    return 1;
+    return fail(1, "OPERATION_FAILED", error.what());
   }
 }
 } // namespace libtmux::workspace::cli

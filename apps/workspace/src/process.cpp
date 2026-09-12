@@ -5,6 +5,7 @@
 #include <csignal>
 #include <cstring>
 #include <fcntl.h>
+#include <limits.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -60,22 +61,43 @@ class Terminal {
   }
 
 public:
-  explicit Terminal(bool allowed) {
+  explicit Terminal(bool allowed, bool concrete = false) {
     if (!allowed)
       return;
     descriptor_ = ::open("/dev/tty", O_RDWR | O_CLOEXEC);
     if (descriptor_ < 0)
       return;
+    if (concrete) {
+      const auto session = ::tcgetsid(descriptor_);
+      int terminal{-1};
+      for (int source = 0; session >= 0 && source < 3; ++source) {
+        std::array<char, PATH_MAX> path{};
+        if (::tcgetsid(source) != session ||
+            ::ttyname_r(source, path.data(), path.size()) != 0 ||
+            std::strcmp(path.data(), "/dev/tty") == 0)
+          continue;
+        terminal = ::open(path.data(), O_RDWR | O_CLOEXEC | O_NOCTTY);
+        if (terminal >= 0 && ::tcgetsid(terminal) == session)
+          break;
+        if (terminal >= 0)
+          ::close(terminal);
+        terminal = -1;
+      }
+      ::close(descriptor_);
+      descriptor_ = terminal;
+      if (descriptor_ < 0)
+        return;
+    }
     previous_ = ::tcgetpgrp(descriptor_);
     if (previous_ != ::getpgrp()) {
       ::close(descriptor_);
       descriptor_ = -1;
-      throw Failure{1, "TERMINAL_BACKGROUND", "editor requires a foreground terminal"};
+      throw Failure{1, "TERMINAL_BACKGROUND", "command requires a foreground terminal"};
     }
     if (::tcgetattr(descriptor_, &settings_) != 0) {
       ::close(descriptor_);
       descriptor_ = -1;
-      throw Failure{1, "TERMINAL_SETTINGS", "cannot read editor terminal settings"};
+      throw Failure{1, "TERMINAL_SETTINGS", "cannot read terminal settings"};
     }
   }
   ~Terminal() {
@@ -160,11 +182,19 @@ std::vector<std::string> split_command(const std::string& value) {
     throw Failure{2, "USAGE", "command needs an executable"};
   return result;
 }
+void require_terminal() {
+  const Terminal display{true, true};
+  if (display.descriptor() < 0)
+    throw Failure{2, "USAGE",
+                  "load requires a foreground controlling terminal; use -d"};
+}
 ChildOutput run_child(const std::vector<std::string>& arguments, ChildOptions options) {
   if (arguments.empty())
     throw Failure{2, "USAGE", "child command is empty"};
   SignalGuard signals;
-  Terminal display{options.terminal};
+  Terminal display{options.terminal, options.terminal_required};
+  if (options.terminal_required && display.descriptor() < 0)
+    throw Failure{1, "TERMINAL_UNAVAILABLE", "controlling terminal is unavailable"};
   libtmux::detail::ProcessRequest request;
   request.executable = arguments.front();
   request.timeout = options.timeout;
