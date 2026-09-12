@@ -1646,21 +1646,59 @@ expected<void, CommandFailure> Client::refresh() const {
 
 // --- Printing and hashing --------------------------------------------------
 
+// One renderer per entity, so the streamed and the returned text cannot drift.
+std::string to_string(const Session& session) {
+  std::string text{"Session("};
+  text += session.id();
+  text += ' ';
+  text += session.name();
+  text += ')';
+  return text;
+}
+
+std::string to_string(const Window& window) {
+  std::string text{"Window("};
+  text += window.id();
+  text += ' ';
+  text += std::to_string(window.index());
+  text += ':';
+  text += window.name();
+  text += ')';
+  return text;
+}
+
+std::string to_string(const Pane& pane) {
+  std::string text{"Pane("};
+  text += pane.id();
+  text += ' ';
+  text += pane.command();
+  text += ')';
+  return text;
+}
+
+std::string to_string(const Client& client) {
+  std::string text{"Client("};
+  text += client.name();
+  text += ' ';
+  text += client.session_name();
+  text += ')';
+  return text;
+}
+
 std::ostream& operator<<(std::ostream& stream, const Session& session) {
-  return stream << "Session(" << session.id() << ' ' << session.name() << ')';
+  return stream << to_string(session);
 }
 
 std::ostream& operator<<(std::ostream& stream, const Window& window) {
-  return stream << "Window(" << window.id() << ' ' << window.index() << ':'
-                << window.name() << ')';
+  return stream << to_string(window);
 }
 
 std::ostream& operator<<(std::ostream& stream, const Pane& pane) {
-  return stream << "Pane(" << pane.id() << ' ' << pane.command() << ')';
+  return stream << to_string(pane);
 }
 
 std::ostream& operator<<(std::ostream& stream, const Client& client) {
-  return stream << "Client(" << client.name() << ' ' << client.session_name() << ')';
+  return stream << to_string(client);
 }
 
 LIBTMUX_NAMESPACE_END

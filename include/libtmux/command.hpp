@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <functional>
 #include <initializer_list>
 #include <optional>
@@ -84,6 +85,25 @@ struct CommandFailure {
   int exit_code{};
   std::string diagnostic;
 };
+
+// One line naming what happened, what tmux said, and — through the delivery
+// status — whether the call is safe to repeat.
+[[nodiscard]] inline std::string to_string(const CommandFailure& failure) {
+  std::string text{to_string(failure.kind)};
+  if (!failure.diagnostic.empty()) {
+    text += ": ";
+    text += failure.diagnostic;
+  }
+  text += " (";
+  if (failure.exit_code != 0) {
+    text += "exit ";
+    text += std::to_string(failure.exit_code);
+    text += ", ";
+  }
+  text += to_string(failure.delivery);
+  text += ')';
+  return text;
+}
 
 enum class ArgumentSensitivity : std::uint8_t { public_value, secret };
 
@@ -204,3 +224,19 @@ struct ExecutionPolicy {
 };
 
 LIBTMUX_NAMESPACE_END
+
+// Formatting a failure is how it reaches a log line, so the type every call
+// can return knows how to write itself.
+//
+// Inheriting the string formatter keeps fill, alignment and width working, so
+// `{:>40}` pads a failure exactly as it pads its text. `__cpp_lib_format` is
+// deliberately not tested here: libc++ 18 leaves it undefined while
+// `std::format` works, so guarding on it would drop this from the clang lane
+// and keep it on the GCC one.
+template <>
+struct std::formatter<libtmux::CommandFailure> : std::formatter<std::string> {
+  template <typename Context>
+  auto format(const libtmux::CommandFailure& failure, Context& context) const {
+    return std::formatter<std::string>::format(libtmux::to_string(failure), context);
+  }
+};

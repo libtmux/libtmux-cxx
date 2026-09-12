@@ -1282,11 +1282,23 @@ The tmux object hierarchy.  A Session, Window, Pane or Client is one row of a sn
   - [`std::hash<libtmux::Pane>::operator()`](#libtmux-entities-hpp-std-hash-libtmux-pane-operator)
 - [`std::hash<libtmux::Client>`](#libtmux-entities-hpp-std-hash-libtmux-client)
   - [`std::hash<libtmux::Client>::operator()`](#libtmux-entities-hpp-std-hash-libtmux-client-operator)
+- [`std::formatter<libtmux::Session>`](#libtmux-entities-hpp-std-formatter-libtmux-session)
+  - [`std::formatter<libtmux::Session>::format`](#libtmux-entities-hpp-std-formatter-libtmux-session-format)
+- [`std::formatter<libtmux::Window>`](#libtmux-entities-hpp-std-formatter-libtmux-window)
+  - [`std::formatter<libtmux::Window>::format`](#libtmux-entities-hpp-std-formatter-libtmux-window-format)
+- [`std::formatter<libtmux::Pane>`](#libtmux-entities-hpp-std-formatter-libtmux-pane)
+  - [`std::formatter<libtmux::Pane>::format`](#libtmux-entities-hpp-std-formatter-libtmux-pane-format)
+- [`std::formatter<libtmux::Client>`](#libtmux-entities-hpp-std-formatter-libtmux-client)
+  - [`std::formatter<libtmux::Client>::format`](#libtmux-entities-hpp-std-formatter-libtmux-client-format)
 - [`Free symbols`](#libtmux-entities-hpp-free-symbols)
   - [`operator<<`](#libtmux-entities-hpp-free-symbols-operator)
   - [`operator<<`](#libtmux-entities-hpp-free-symbols-operator-2)
   - [`operator<<`](#libtmux-entities-hpp-free-symbols-operator-3)
   - [`operator<<`](#libtmux-entities-hpp-free-symbols-operator-4)
+  - [`to_string`](#libtmux-entities-hpp-free-symbols-to-string)
+  - [`to_string`](#libtmux-entities-hpp-free-symbols-to-string-2)
+  - [`to_string`](#libtmux-entities-hpp-free-symbols-to-string-3)
+  - [`to_string`](#libtmux-entities-hpp-free-symbols-to-string-4)
   - [`session::id`](#libtmux-entities-hpp-free-symbols-session-id)
   - [`session::name`](#libtmux-entities-hpp-free-symbols-session-name)
   - [`session::attached`](#libtmux-entities-hpp-free-symbols-session-attached)
@@ -3101,6 +3113,64 @@ template <> struct std::hash<libtmux::Client>;
 [[nodiscard]] std::size_t operator()(const libtmux::Client& value) const noexcept;
 ```
 
+<a id="libtmux-entities-hpp-std-formatter-libtmux-session"></a>
+### `std::formatter<libtmux::Session>`
+
+An entity formats as it prints.  Inheriting the string formatter keeps fill, alignment and width working, so `{:>24}` pads a pane exactly as it pads its text. `__cpp_lib_format` is deliberately not tested: libc++ 18 leaves it undefined while `std::format` works, so guarding on it would drop these from the clang lane and keep them on the GCC one.
+
+```cpp
+template <> struct std::formatter<libtmux::Session>;
+```
+
+<a id="libtmux-entities-hpp-std-formatter-libtmux-session-format"></a>
+#### `std::formatter<libtmux::Session>::format`
+
+```cpp
+template <typename Context> auto format(const libtmux::Session& value, Context& context) const;
+```
+
+<a id="libtmux-entities-hpp-std-formatter-libtmux-window"></a>
+### `std::formatter<libtmux::Window>`
+
+```cpp
+template <> struct std::formatter<libtmux::Window>;
+```
+
+<a id="libtmux-entities-hpp-std-formatter-libtmux-window-format"></a>
+#### `std::formatter<libtmux::Window>::format`
+
+```cpp
+template <typename Context> auto format(const libtmux::Window& value, Context& context) const;
+```
+
+<a id="libtmux-entities-hpp-std-formatter-libtmux-pane"></a>
+### `std::formatter<libtmux::Pane>`
+
+```cpp
+template <> struct std::formatter<libtmux::Pane>;
+```
+
+<a id="libtmux-entities-hpp-std-formatter-libtmux-pane-format"></a>
+#### `std::formatter<libtmux::Pane>::format`
+
+```cpp
+template <typename Context> auto format(const libtmux::Pane& value, Context& context) const;
+```
+
+<a id="libtmux-entities-hpp-std-formatter-libtmux-client"></a>
+### `std::formatter<libtmux::Client>`
+
+```cpp
+template <> struct std::formatter<libtmux::Client>;
+```
+
+<a id="libtmux-entities-hpp-std-formatter-libtmux-client-format"></a>
+#### `std::formatter<libtmux::Client>::format`
+
+```cpp
+template <typename Context> auto format(const libtmux::Client& value, Context& context) const;
+```
+
 <a id="libtmux-entities-hpp-free-symbols"></a>
 ### `Free symbols`
 
@@ -3131,6 +3201,35 @@ std::ostream& operator<<(std::ostream& stream, const Pane& pane);
 
 ```cpp
 std::ostream& operator<<(std::ostream& stream, const Client& client);
+```
+
+<a id="libtmux-entities-hpp-free-symbols-to-string"></a>
+#### `to_string`
+
+```cpp
+[[nodiscard]] std::string to_string(const Session& session);
+```
+The same text as a value, for a caller building a message rather than writing to a stream. `std::format` reaches these through the formatters at the end of this header.
+
+<a id="libtmux-entities-hpp-free-symbols-to-string-2"></a>
+#### `to_string`
+
+```cpp
+[[nodiscard]] std::string to_string(const Window& window);
+```
+
+<a id="libtmux-entities-hpp-free-symbols-to-string-3"></a>
+#### `to_string`
+
+```cpp
+[[nodiscard]] std::string to_string(const Pane& pane);
+```
+
+<a id="libtmux-entities-hpp-free-symbols-to-string-4"></a>
+#### `to_string`
+
+```cpp
+[[nodiscard]] std::string to_string(const Client& client);
 ```
 
 <a id="libtmux-entities-hpp-free-symbols-session-id"></a>
@@ -4581,8 +4680,11 @@ Why a tmux command produced no answer.  `refused` means tmux ran and said no; `m
 - [`ExecutionPolicy`](#libtmux-command-hpp-executionpolicy)
   - [`ExecutionPolicy::timeout`](#libtmux-command-hpp-executionpolicy-timeout)
   - [`ExecutionPolicy::output_limit`](#libtmux-command-hpp-executionpolicy-output-limit)
+- [`std::formatter<libtmux::CommandFailure>`](#libtmux-command-hpp-std-formatter-libtmux-commandfailure)
+  - [`std::formatter<libtmux::CommandFailure>::format`](#libtmux-command-hpp-std-formatter-libtmux-commandfailure-format)
 - [`Free symbols`](#libtmux-command-hpp-free-symbols)
   - [`to_string`](#libtmux-command-hpp-free-symbols-to-string)
+  - [`to_string`](#libtmux-command-hpp-free-symbols-to-string-2)
   - [`CommandObserver`](#libtmux-command-hpp-free-symbols-commandobserver)
 
 <a id="libtmux-command-hpp-failurekind"></a>
@@ -4862,6 +4964,22 @@ std::optional<std::size_t> output_limit{};
 ```
 Absent leaves the transport's own bound, which is one megabyte.
 
+<a id="libtmux-command-hpp-std-formatter-libtmux-commandfailure"></a>
+### `std::formatter<libtmux::CommandFailure>`
+
+Formatting a failure is how it reaches a log line, so the type every call can return knows how to write itself.  Inheriting the string formatter keeps fill, alignment and width working, so `{:>40}` pads a failure exactly as it pads its text. `__cpp_lib_format` is deliberately not tested here: libc++ 18 leaves it undefined while `std::format` works, so guarding on it would drop this from the clang lane and keep it on the GCC one.
+
+```cpp
+template <> struct std::formatter<libtmux::CommandFailure>;
+```
+
+<a id="libtmux-command-hpp-std-formatter-libtmux-commandfailure-format"></a>
+#### `std::formatter<libtmux::CommandFailure>::format`
+
+```cpp
+template <typename Context> auto format(const libtmux::CommandFailure& failure, Context& context) const;
+```
+
 <a id="libtmux-command-hpp-free-symbols"></a>
 ### `Free symbols`
 
@@ -4871,6 +4989,14 @@ Absent leaves the transport's own bound, which is one megabyte.
 ```cpp
 [[nodiscard]] constexpr std::string_view to_string(FailureKind kind) noexcept;
 ```
+
+<a id="libtmux-command-hpp-free-symbols-to-string-2"></a>
+#### `to_string`
+
+```cpp
+[[nodiscard]] inline std::string to_string(const CommandFailure& failure);
+```
+One line naming what happened, what tmux said, and — through the delivery status — whether the call is safe to repeat.
 
 <a id="libtmux-command-hpp-free-symbols-commandobserver"></a>
 #### `CommandObserver`

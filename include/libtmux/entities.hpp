@@ -29,6 +29,7 @@
 #include <charconv>
 #include <chrono>
 #include <cstddef>
+#include <format>
 #include <functional>
 #include <iosfwd>
 #include <memory>
@@ -880,6 +881,14 @@ std::ostream& operator<<(std::ostream& stream, const Window& window);
 std::ostream& operator<<(std::ostream& stream, const Pane& pane);
 std::ostream& operator<<(std::ostream& stream, const Client& client);
 
+// The same text as a value, for a caller building a message rather than
+// writing to a stream. `std::format` reaches these through the formatters at
+// the end of this header.
+[[nodiscard]] std::string to_string(const Session& session);
+[[nodiscard]] std::string to_string(const Window& window);
+[[nodiscard]] std::string to_string(const Pane& pane);
+[[nodiscard]] std::string to_string(const Client& client);
+
 namespace session {
 
 inline constexpr StringFieldHandle<Session> id{
@@ -1003,4 +1012,36 @@ template <> struct std::hash<libtmux::Pane> {
 };
 template <> struct std::hash<libtmux::Client> {
   [[nodiscard]] std::size_t operator()(const libtmux::Client& value) const noexcept;
+};
+
+// An entity formats as it prints.
+//
+// Inheriting the string formatter keeps fill, alignment and width working, so
+// `{:>24}` pads a pane exactly as it pads its text. `__cpp_lib_format` is
+// deliberately not tested: libc++ 18 leaves it undefined while `std::format`
+// works, so guarding on it would drop these from the clang lane and keep them
+// on the GCC one.
+template <> struct std::formatter<libtmux::Session> : std::formatter<std::string> {
+  template <typename Context>
+  auto format(const libtmux::Session& value, Context& context) const {
+    return std::formatter<std::string>::format(libtmux::to_string(value), context);
+  }
+};
+template <> struct std::formatter<libtmux::Window> : std::formatter<std::string> {
+  template <typename Context>
+  auto format(const libtmux::Window& value, Context& context) const {
+    return std::formatter<std::string>::format(libtmux::to_string(value), context);
+  }
+};
+template <> struct std::formatter<libtmux::Pane> : std::formatter<std::string> {
+  template <typename Context>
+  auto format(const libtmux::Pane& value, Context& context) const {
+    return std::formatter<std::string>::format(libtmux::to_string(value), context);
+  }
+};
+template <> struct std::formatter<libtmux::Client> : std::formatter<std::string> {
+  template <typename Context>
+  auto format(const libtmux::Client& value, Context& context) const {
+    return std::formatter<std::string>::format(libtmux::to_string(value), context);
+  }
 };

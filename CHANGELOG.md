@@ -9,6 +9,19 @@ was recorded as it landed.
 
 ## Unreleased
 
+### Entities
+
+- `Session`, `Window`, `Pane` and `Client` format with `std::format`, through
+  the renderer `operator<<` already used. `libtmux::to_string(entity)` returns
+  that text, and a format spec works: `std::format("{:>24}", pane)`.
+
+### Errors
+
+- `CommandFailure` formats with `std::format`, naming what happened, what tmux
+  said, the exit code when there is one, and how far the command got:
+  `tmux refused the command: can't find session: nope (exit 1, replied)`.
+  `libtmux::to_string(failure)` returns the same line.
+
 ## 0.1.0-alpha.7 (2026-09-06)
 
 This alpha is wire-breaking for MCP clients and source-compatible for the

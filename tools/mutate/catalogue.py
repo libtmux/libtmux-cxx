@@ -643,4 +643,24 @@ CATALOGUE: t.Final = (
         guards="a truncation diagnostic names the bound the caller passed, not "
         "the one that was never in force",
     ),
+    Mutation(
+        mutation_id="entity-render-single-source",
+        path="src/entities.cpp",
+        find="  text += pane.command();",
+        replace="  static_cast<void>(pane.command());",
+        target="libtmux_value_semantics_test",
+        test_regex=r"^libtmux[.]value_semantics[.]",
+        guards="an entity streams and formats through one renderer, so the two "
+        "spellings cannot show a caller different panes",
+    ),
+    Mutation(
+        mutation_id="failure-text-delivery",
+        path="include/libtmux/command.hpp",
+        find="  text += to_string(failure.delivery);",
+        replace="  static_cast<void>(failure.delivery);",
+        target="libtmux_value_semantics_test",
+        test_regex=r"^libtmux[.]value_semantics[.]",
+        guards="a formatted failure names how far the command got, which is "
+        "what says whether repeating it is safe",
+    ),
 )
