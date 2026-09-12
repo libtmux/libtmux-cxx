@@ -1,16 +1,22 @@
+#include "../src/progress.hpp"
 #include "../src/services.hpp"
 #include "workspace_cli.hpp"
 
 #include <cerrno>
 #include <csignal>
 #include <cstdlib>
+#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iostream>
 #include <map>
 #include <optional>
+#include <poll.h>
 #include <sstream>
+#include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -1061,4 +1067,364 @@ TEST(WorkspaceCliTmux, FlushesBeforeCreationAndStopsWhenOutputCloses) {
   EXPECT_EQ(libtmux::workspace::cli::run(arguments, input, output, errors), 1);
   EXPECT_FALSE(server->session("streamed").has_value());
 }
+
+TEST(WorkspaceCli, ProgressPreservesRedirectedBytesAndExpandsNativeCounters) {
+  using namespace libtmux::workspace::cli;
+  Request request{
+      .command = "load",
+      .importer = {},
+      .values = {{"progress-format",
+                  {"{session}|{window}|{session_pane_progress}|{{literal}}|{unknown}"}},
+                 {"progress-lines", {"2"}}}};
+  std::ostringstream out, err;
+  std::pair geometry{100, 10};
+  Progress progress{request, out, err, {.geometry = [&] { return geometry; }}};
+  progress.event("workspace-started", {{"input", "fixture.yaml"},
+                                       {"session_name", "native"},
+                                       {"window_total", 1},
+                                       {"session_pane_total", 2}});
+  progress.event("script-output", {{"stream", "stdout"}, {"text", "raw-output\n"}});
+  progress.event("script-output",
+                 {{"stream", "stderr"}, {"text", "older\r\nmiddle\r\nlast\r\n"}});
+  err.str("");
+  progress.event("build-progress", {{"phase", "pane-completed"},
+                                    {"window_name", "work"},
+                                    {"window_index", 1},
+                                    {"pane_index", 1},
+                                    {"pane_total", 2}});
+  EXPECT_EQ(out.str(), "raw-output\n");
+  EXPECT_NE(err.str().find("native|work|1/2|{literal}|{unknown}"), std::string::npos);
+  EXPECT_NE(err.str().find("last"), std::string::npos);
+  EXPECT_EQ(err.str().find("older"), std::string::npos);
+  geometry = {40, 6};
+  err.str("");
+  progress.event("script-output", {{"stream", "stderr"}, {"text", "resized-raw\n"}});
+  EXPECT_EQ(err.str(), "\r\033[Jresized-raw\n");
+  progress.finish();
+}
+
+class ProgressChild {
+  int terminal_{-1}, output_{-1};
+  pid_t process_{-1};
+
+public:
+  std::string out, err;
+  explicit ProgressChild(const std::vector<std::string>& arguments,
+                         bool stdout_terminal = false) {
+    terminal_ = ::posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC);
+    if (terminal_ < 0 || ::grantpt(terminal_) != 0 || ::unlockpt(terminal_) != 0)
+      throw std::runtime_error{"cannot open progress PTY"};
+    const auto slave = ::open(::ptsname(terminal_), O_RDWR | O_NOCTTY | O_CLOEXEC);
+    int pipe[2];
+    if (slave < 0 || ::pipe(pipe) != 0)
+      throw std::runtime_error{"cannot open progress output"};
+    winsize size{12, 100, 0, 0};
+    (void)::ioctl(terminal_, TIOCSWINSZ, &size);
+    process_ = ::fork();
+    if (process_ == 0) {
+      (void)::setsid();
+      (void)::ioctl(slave, TIOCSCTTY, 0);
+      (void)::dup2(slave, STDIN_FILENO);
+      (void)::dup2(stdout_terminal ? slave : pipe[1], STDOUT_FILENO);
+      (void)::dup2(slave, STDERR_FILENO);
+      ::close(slave);
+      ::close(pipe[0]);
+      ::close(pipe[1]);
+      ::close(terminal_);
+      ::setenv("TERM", "xterm-256color", 1);
+      ::unsetenv("TMUXP_PROGRESS");
+      ::unsetenv("TMUXP_PROGRESS_LINES");
+      ::unsetenv("TMUXP_PROGRESS_FORMAT");
+      const auto code =
+          libtmux::workspace::cli::run(arguments, std::cin, std::cout, std::cerr);
+      std::cout.flush();
+      std::cerr.flush();
+      ::_exit(code);
+    }
+    ::close(slave);
+    ::close(pipe[1]);
+    output_ = pipe[0];
+    if (process_ < 0)
+      throw std::runtime_error{"cannot fork progress CLI"};
+    (void)::fcntl(output_, F_SETFL, O_NONBLOCK);
+    (void)::fcntl(terminal_, F_SETFL, O_NONBLOCK);
+  }
+  ~ProgressChild() {
+    if (process_ > 0) {
+      ::kill(process_, SIGKILL);
+      while (::waitpid(process_, nullptr, 0) < 0 && errno == EINTR) {
+      }
+    }
+    if (terminal_ >= 0)
+      ::close(terminal_);
+    if (output_ >= 0)
+      ::close(output_);
+  }
+  ProgressChild(const ProgressChild&) = delete;
+  ProgressChild& operator=(const ProgressChild&) = delete;
+  void interrupt() { (void)::kill(process_, SIGINT); }
+  void resize() {
+    winsize size{6, 40, 0, 0};
+    (void)::ioctl(terminal_, TIOCSWINSZ, &size);
+  }
+  int wait(const std::function<void(ProgressChild&)>& observe = {}) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+    const auto drain = [&] {
+      char bytes[8192];
+      for (const auto& [fd, text] :
+           {std::pair{output_, &out}, std::pair{terminal_, &err}}) {
+        for (;;) {
+          const auto count = ::read(fd, bytes, sizeof(bytes));
+          if (count <= 0)
+            break;
+          text->append(bytes, static_cast<std::size_t>(count));
+        }
+      }
+    };
+    for (;;) {
+      drain();
+      int status{};
+      if (::waitpid(process_, &status, WNOHANG) == process_) {
+        process_ = -1;
+        drain();
+        return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+      }
+      if (observe)
+        observe(*this);
+      if (std::chrono::steady_clock::now() >= deadline)
+        throw std::runtime_error{"progress CLI exceeded test deadline"};
+      pollfd descriptors[]{{output_, POLLIN, 0}, {terminal_, POLLIN, 0}};
+      (void)::poll(descriptors, 2, 10);
+    }
+  }
+};
+
+TEST(WorkspaceCliTmux, ProgressUsesStderrAndNeverReplaysRedirectedScriptOutput) {
+  Files files;
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-pg")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  std::ofstream{"before.sh"} << "printf 'RAW-STDOUT\\n'\nprintf 'RAW-STDERR\\n' >&2\n";
+  for (const bool disabled : {false, true}) {
+    const auto name = disabled ? "plain" : "progress";
+    std::ofstream{"config.yaml"}
+        << "session_name: " << name
+        << "\nbefore_script: sh before.sh\nwindows:\n- window_name: work\n  panes: "
+           "[{shell_command: [{cmd: 'true', sleep_after: 0.1}]}, {}]\n";
+    std::vector<std::string> args{"--color",
+                                  "never",
+                                  "load",
+                                  "config.yaml",
+                                  "-d",
+                                  "-S",
+                                  fixture->socket_path().string(),
+                                  "--progress-format",
+                                  "FRAME {session} {session_pane_progress}",
+                                  "--progress-lines",
+                                  "2"};
+    if (disabled)
+      args.push_back("--no-progress");
+    ProgressChild child{args};
+    ASSERT_EQ(child.wait(), 0) << child.out << child.err;
+    const auto first = child.out.find("RAW-STDOUT\n");
+    ASSERT_NE(first, std::string::npos);
+    EXPECT_EQ(child.out.find("RAW-STDOUT\n", first + 1), std::string::npos);
+    EXPECT_EQ(child.out.find("FRAME"), std::string::npos);
+    EXPECT_NE(child.err.find("RAW-STDERR"), std::string::npos);
+    if (disabled) {
+      EXPECT_EQ(child.err, "RAW-STDERR\r\n");
+    } else {
+      EXPECT_NE(child.err.find("FRAME progress 2/2"), std::string::npos);
+      EXPECT_EQ(child.err.find("\033[36m"), std::string::npos);
+      EXPECT_TRUE(child.err.ends_with("\r\033[J"));
+    }
+  }
+}
+
+TEST(WorkspaceCliTmux, InterruptedPaneDelayClearsProgressAndRollsBackOnlyOwnedSession) {
+  Files files;
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-pg")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value());
+  std::ofstream{"config.yaml"} << "session_name: interrupted\nwindows:\n- panes:\n  - "
+                                  "shell_command:\n    - cmd: 'touch "
+                               << (files.directory / "ready").string()
+                               << "'\n      sleep_after: 30\n";
+  ProgressChild child{{"--color", "never", "load", "config.yaml", "-d", "-S",
+                       fixture->socket_path().string()}};
+  bool sent{};
+  const auto code = child.wait([&](auto& running) {
+    if (!sent && std::filesystem::exists("ready")) {
+      sent = true;
+      running.interrupt();
+    }
+  });
+  ASSERT_TRUE(sent);
+  EXPECT_EQ(code, 130) << child.err;
+  EXPECT_NE(child.err.find("\r\033[JError: workspace load interrupted"),
+            std::string::npos)
+      << child.err;
+  EXPECT_FALSE(server->session("interrupted"));
+  EXPECT_TRUE(server->session(fixture->session_name()));
+}
+
+TEST(WorkspaceCliTmux, ProgressSinkFailureReportsBorrowedWindowsAndOriginalStatus) {
+  Files files;
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-pg")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value());
+  const auto borrowed = server->session(fixture->session_name());
+  ASSERT_TRUE(borrowed.has_value());
+  const auto pane = borrowed->active_pane();
+  ASSERT_TRUE(pane.has_value());
+  const auto daemon = pane->expand("#{pid}");
+  ASSERT_TRUE(daemon.has_value());
+  libtmux::test::EnvironmentGuard tmux{"TMUX", fixture->socket_path().string() + "," +
+                                                   *daemon + ",0"};
+  libtmux::test::EnvironmentGuard current_pane{"TMUX_PANE", pane->id()};
+  for (const bool append : {false, true}) {
+    const auto previous = borrowed->windows();
+    ASSERT_TRUE(previous.has_value());
+    std::ofstream{"config.yaml"} << "session_name: observed\nwindows: [{window_name: "
+                                    "observed, panes: [{}, {}]}]\n";
+    libtmux::workspace::cli::Request request{
+        .command = "load",
+        .importer = {},
+        .values = {{"workspace-file", {"config.yaml"}},
+                   {"S", {fixture->socket_path().string()}},
+                   {append ? "append" : "d", {"true"}}},
+        .ndjson = true};
+    bool refused{};
+    const auto result =
+        libtmux::workspace::cli::execute(request, [&](const auto& event,
+                                                      const auto& data) {
+          if (event == "build-progress" && data.at("phase") == "pane-completed") {
+            refused = true;
+            throw libtmux::workspace::cli::Failure{77, "TEST_SINK_CLOSED",
+                                                   "progress consumer closed"};
+          }
+        }).value;
+    ASSERT_TRUE(refused);
+    ASSERT_EQ(result.at("errors").size(), 1U);
+    EXPECT_EQ(result.at("exit_code"), 77);
+    EXPECT_EQ(result.at("errors")[0].at("code"), "TEST_SINK_CLOSED");
+    EXPECT_FALSE(server->session("=observed:"));
+    const auto after = borrowed->windows();
+    ASSERT_TRUE(after.has_value());
+    if (append) {
+      EXPECT_EQ(result.at("status"), "partial");
+      const auto& retained = result.at("errors")[0].at("retained_state");
+      EXPECT_EQ(retained.at("session_id"), borrowed->id());
+      ASSERT_EQ(retained.at("window_ids").size(), 1U);
+      EXPECT_EQ(after->size(), previous->size() + 1);
+      const auto id = retained.at("window_ids")[0].template get<std::string>();
+      EXPECT_TRUE(std::any_of(after->begin(), after->end(),
+                              [&](const auto& window) { return window.id() == id; }));
+    } else {
+      EXPECT_EQ(result.at("status"), "error");
+      EXPECT_EQ(after->size(), previous->size());
+    }
+  }
+}
+
+TEST(WorkspaceCliTmux, ProgressMachineStreamsStayStructuredAndResizeRestoresRawStderr) {
+  Files files;
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-pg")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  for (const bool machine : {false, true}) {
+    const auto name = machine ? "machine" : "resized";
+    std::ofstream{"before.sh"}
+        << "printf 'READY\\n'\nsleep 0.1\nprintf 'AFTER-RESIZE\\n' >&2\n";
+    std::ofstream{"config.yaml"} << "session_name: " << name
+                                 << "\nbefore_script: sh before.sh\nwindows: [{}]\n";
+    std::vector<std::string> args{"--color",
+                                  "always",
+                                  "load",
+                                  "config.yaml",
+                                  "-d",
+                                  "-S",
+                                  fixture->socket_path().string()};
+    if (machine)
+      args.push_back("--ndjson");
+    ProgressChild child{args};
+    bool resized{};
+    ASSERT_EQ(child.wait([&](auto& process) {
+      if (!machine && !resized && process.out.find("READY") != std::string::npos) {
+        resized = true;
+        process.resize();
+      }
+    }),
+              0)
+        << child.out << child.err;
+    if (machine) {
+      EXPECT_TRUE(child.err.empty());
+      EXPECT_EQ(child.out.find('\033'), std::string::npos);
+      std::istringstream records{child.out};
+      std::string line;
+      Json last;
+      while (std::getline(records, line))
+        last = Json::parse(line);
+      EXPECT_EQ(last.at("event"), "completed");
+      EXPECT_EQ(last.at("results")[0].at("script_output").at("stdout"), "READY\n");
+      EXPECT_EQ(last.at("results")[0].at("script_output").at("stderr"),
+                "AFTER-RESIZE\n");
+    } else {
+      EXPECT_TRUE(resized);
+      EXPECT_TRUE(child.err.ends_with("\r\033[JAFTER-RESIZE\r\n")) << child.err;
+    }
+  }
+}
+
+TEST(WorkspaceCli, ProgressUsesUtf8CellsAndNativeEnvironmentValidation) {
+  using namespace libtmux::workspace::cli;
+  Request request{
+      .command = "load",
+      .importer = {},
+      .values = {{"progress-format", {"{session}"}}, {"progress-lines", {"0"}}}};
+  std::ostringstream out, err;
+  Progress progress{request, out, err, {.geometry = [] { return std::pair{5, 4}; }}};
+  progress.event("workspace-started", {{"input", "fixture"},
+                                       {"session_name", "中中a"},
+                                       {"window_total", 1},
+                                       {"session_pane_total", 1}});
+  EXPECT_EQ(err.str(), "中中\n\033[1A");
+  progress.finish();
+  libtmux::test::EnvironmentGuard lines{"TMUXP_PROGRESS_LINES", "-2"};
+  const auto invalid = invoke({"load", "missing.yaml", "-d", "--json"});
+  EXPECT_EQ(invalid.code, 2);
+  EXPECT_EQ(Json::parse(invalid.err).at("code"), "USAGE");
+  const auto explicit_lines =
+      invoke({"load", "missing.yaml", "-d", "--json", "--progress-lines", "0"});
+  EXPECT_NE(explicit_lines.code, 2);
+}
+
+TEST(WorkspaceCliTmux, FailedTerminalLoadRetainsOnlyBoundedScriptContext) {
+  Files files;
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-pg")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  std::ofstream{"before.sh"}
+      << "printf 'old\\nmiddle\\nFAILURE-CONTEXT\\n' >&2\nexit 7\n";
+  std::ofstream{"config.yaml"}
+      << "session_name: failed\nbefore_script: sh before.sh\nwindows: [{}]\n";
+  ProgressChild child{{"--color", "never", "load", "config.yaml", "-d", "-S",
+                       fixture->socket_path().string(), "--progress-lines", "1"},
+                      true};
+  EXPECT_EQ(child.wait(), 1) << child.out << child.err;
+  EXPECT_TRUE(child.out.empty());
+  const auto cleared = child.err.rfind("\r\033[J");
+  ASSERT_NE(cleared, std::string::npos) << child.err;
+  EXPECT_EQ(child.err.substr(cleared),
+            "\r\033[JFAILURE-CONTEXT\r\nError: before_script exited with status 7\r\n");
+  const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value());
+  EXPECT_FALSE(server->session("=failed:"));
+  EXPECT_TRUE(server->session(fixture->session_name()));
+}
+
 } // namespace
