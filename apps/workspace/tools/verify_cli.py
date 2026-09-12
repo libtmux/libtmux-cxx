@@ -126,6 +126,20 @@ def main():
         report["tmux"] = version.stdout.decode().strip()
         run([*prefix, "new-session", "-d", "-s", "keeper"], env, root)
         try:
+            context, _ = run(
+                [
+                    *prefix,
+                    "display-message",
+                    "-p",
+                    "-t",
+                    "keeper",
+                    "#{pid},#{session_id},#{pane_id}",
+                ],
+                env,
+                root,
+            )
+            pid, session, pane = context.stdout.decode().strip().split(",")
+            append_env = dict(env, TMUX=f"{socket},{pid},{session[1:]}", TMUX_PANE=pane)
             workspace = configs / "bench.yaml"
             workspace.write_text(
                 "session_name: bench\nwindows:\n"
@@ -144,6 +158,7 @@ def main():
                         "search",
                         "load_capture",
                         "cold_load_capture",
+                        "append",
                     )
                 }
             for _ in range(args.iterations):
@@ -163,6 +178,31 @@ def main():
                     elapsed = load_capture(program, workspace, socket, saved, env, root)
                     report["timings"][name]["load_capture"].append(elapsed)
                     run([*prefix, "kill-session", "-t", "=bench"], env, root)
+                    _, elapsed = run(
+                        [program, "load", str(workspace), "--append", "-S", socket],
+                        append_env,
+                        root,
+                    )
+                    report["timings"][name]["append"].append(elapsed)
+                    windows, _ = run(
+                        [
+                            *prefix,
+                            "list-windows",
+                            "-t",
+                            "keeper",
+                            "-F",
+                            "#{window_id}:#{window_panes}:#{window_name}",
+                        ],
+                        env,
+                        root,
+                    )
+                    rows = windows.stdout.decode().splitlines()
+                    assert len(rows) == 2, rows
+                    appended = [
+                        row.split(":") for row in rows if row.endswith(":editor")
+                    ]
+                    assert len(appended) == 1 and appended[0][1] == "2", rows
+                    run([*prefix, "kill-window", "-t", appended[0][0]], env, root)
                     elapsed = load_capture(
                         program, workspace, cold_sockets[name], saved, env, root
                     )
@@ -170,6 +210,7 @@ def main():
                     run(["tmux", "-S", cold_sockets[name], "kill-server"], env, root)
             report["checks"]["matched_boundaries_and_capture_topology"] = "PASS"
             report["checks"]["cold_startup_and_capture_topology"] = "PASS"
+            report["checks"]["append_preserves_borrowed_session_and_topology"] = "PASS"
             stream_config = configs / "stream.yaml"
             stream_config.write_text(
                 "session_name: stream\nwindows:\n  - panes:\n"

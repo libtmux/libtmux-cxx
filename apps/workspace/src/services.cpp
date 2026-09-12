@@ -302,6 +302,31 @@ Server endpoint(const Request& request) {
     throw Failure{1, "INVALID_ENDPOINT", server.error().diagnostic};
   return *server;
 }
+Session append_target(const Server& server) {
+  const auto inherited = Server::from_env();
+  if (!inherited)
+    throw Failure{1, "APPEND_CONTEXT", inherited.error().diagnostic};
+  const auto pane = inherited->pane(environment("TMUX_PANE"));
+  if (!pane)
+    throw Failure{1, "APPEND_CONTEXT", pane.error().diagnostic};
+  const auto context = environment("TMUX");
+  const auto last = context.find_last_of(',');
+  const auto previous = last == std::string::npos || last == 0
+                            ? std::string::npos
+                            : context.find_last_of(',', last - 1);
+  const auto pid = pane->expand("#{pid}");
+  if (previous == std::string::npos || !pid ||
+      *pid != context.substr(previous + 1, last - previous - 1))
+    throw Failure{1, "APPEND_CONTEXT", "TMUX identifies a different server process"};
+  const auto selected = server.pane(environment("TMUX_PANE"));
+  if (!selected || selected->connection_identity() != pane->connection_identity())
+    throw Failure{1, "APPEND_CONTEXT",
+                  "selected server differs from the current pane's server"};
+  const auto session = selected->session();
+  if (!session)
+    throw Failure{1, "APPEND_CONTEXT", session.error().diagnostic};
+  return *session;
+}
 struct Bootstrap {
   std::optional<Session> session;
   ~Bootstrap() {
@@ -649,12 +674,16 @@ void validate(const Request& request) {
       throw Failure{2, "USAGE", "search requires at least one pattern"};
     (void)patterns(request);
   }
-  if (request.command == "load" && !request.flag("d"))
-    throw Failure{2, "USAGE", "this build requires load -d"};
+  if (request.command == "load" && !request.flag("d")) {
+    if (!request.flag("append"))
+      throw Failure{2, "USAGE", "this build requires load -d or --append inside tmux"};
+    const auto pane = environment("TMUX_PANE");
+    if (environment("TMUX").empty() || pane.size() < 2 || pane.front() != '%' ||
+        pane.find_first_not_of("0123456789", 1) != std::string::npos)
+      throw Failure{2, "USAGE", "append requires TMUX and the current TMUX_PANE"};
+  }
   if (request.command == "freeze" && request.value("session").empty())
     throw Failure{2, "USAGE", "freeze requires a session name or ID"};
-  if (request.command == "load" && request.flag("append"))
-    throw Failure{1, "FEATURE_UNAVAILABLE", "append is not implemented in this build"};
   if (request.command == "shell" || request.command == "edit")
     throw Failure{1, "FEATURE_UNAVAILABLE",
                   "process services are not implemented in this build"};
@@ -729,11 +758,16 @@ Json execute(const Request& request, const EventSink& event) {
     Json results = Json::array(), errors = Json::array();
     event("started", {{"inputs", plans.size()}});
     Bootstrap bootstrap;
+    const bool appending = request.flag("append") && !request.flag("d");
+    bool retained_changes{};
     std::string stage{"startup"};
     std::size_t active_input{};
     try {
       auto server = endpoint(request);
-      if (!server.is_alive())
+      std::optional<Session> borrowed;
+      if (appending)
+        borrowed = append_target(server);
+      else if (!server.is_alive())
         server = start_endpoint(request, bootstrap);
       stage = "load";
       for (std::size_t index = 0; index < plans.size(); ++index) {
@@ -741,21 +775,35 @@ Json execute(const Request& request, const EventSink& event) {
         const auto& plan = plans[index];
         event("workspace-started",
               {{"input_index", index}, {"input", private_path(plan.path)}});
-        const auto existing = server.session("=" + plan.workspace.session_name + ":");
-        auto built = existing ? libtmux::expected<Session, BuildError>{*existing}
-                              : build(server, plan.workspace);
+        const auto existing =
+            borrowed ? libtmux::expected<Session, CommandFailure>{*borrowed}
+                     : server.session("=" + plan.workspace.session_name + ":");
+        auto built = borrowed   ? append(*borrowed, plan.workspace)
+                     : existing ? libtmux::expected<Session, BuildError>{*existing}
+                                : build(server, plan.workspace);
         if (!built) {
-          errors.push_back({{"code", "BUILD_FAILED"},
-                            {"message", built.error().reason},
-                            {"input_index", index},
-                            {"failed_stage", "load"}});
+          Json problem{{"code", "BUILD_FAILED"},
+                       {"message", built.error().reason},
+                       {"input_index", index},
+                       {"failed_stage", "load"}};
+          if (borrowed) {
+            retained_changes = true;
+            problem["retained_state"] = {{"session_id", borrowed->id()},
+                                         {"session_name", borrowed->name()},
+                                         {"ownership", "borrowed"},
+                                         {"window_ids", built.error().retained_windows},
+                                         {"settings_may_have_changed", true}};
+          }
+          errors.push_back(std::move(problem));
           break;
         }
         Json result{{"input", private_path(plan.path)},
                     {"input_index", index},
                     {"session_id", built->id()},
                     {"session_name", built->name()},
-                    {"action", existing ? "reused" : "created"}};
+                    {"action", borrowed   ? "appended"
+                               : existing ? "reused"
+                                          : "created"}};
         results.push_back(result);
         if (!existing)
           event("session-created", result);
@@ -785,7 +833,9 @@ Json execute(const Request& request, const EventSink& event) {
                           {"message", cleaned.error().diagnostic},
                           {"failed_stage", "cleanup"}});
     }
-    const auto status = errors.empty() ? "ok" : results.empty() ? "error" : "partial";
+    const auto status = errors.empty()                         ? "ok"
+                        : results.empty() && !retained_changes ? "error"
+                                                               : "partial";
     Json summary{{"schema_version", 1},
                  {"command", "load"},
                  {"status", status},
