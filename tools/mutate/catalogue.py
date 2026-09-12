@@ -644,6 +644,15 @@ CATALOGUE: t.Final = (
         "the one that was never in force",
     ),
     Mutation(
+        mutation_id="send-line-submits",
+        path="src/entities.cpp",
+        find='  static_cast<void>(batch.add({"send-keys", "-t", target, "Enter"}));',
+        replace="  static_cast<void>(target);",
+        target="libtmux_entity_test",
+        test_regex=r"^libtmux[.]entity[.]",
+        guards="a line sent to a pane is submitted, not left typed",
+    ),
+    Mutation(
         mutation_id="entity-render-single-source",
         path="src/entities.cpp",
         find="  text += pane.command();",

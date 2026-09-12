@@ -221,6 +221,22 @@ TEST(Entity, APaneRunsWhatItIsSentAndCapturesTheResult) {
     std::this_thread::sleep_for(std::chrono::milliseconds{25});
   }
   EXPECT_NE(captured.find("libtmux-marker"), std::string::npos);
+
+  // The same two acts as one invocation. The quotes do the same work here:
+  // only a line that was submitted can produce the text.
+  ASSERT_TRUE(pane.send_line("echo libtmux''-line").has_value());
+  for (int attempt = 0; attempt < 200; ++attempt) {
+    captured = captured_now();
+    if (captured.find("libtmux-line") != std::string::npos) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds{25});
+  }
+  EXPECT_NE(captured.find("libtmux-line"), std::string::npos);
+
+  // Empty text is Enter alone rather than a refusal, which is what submitting
+  // a blank line means.
+  EXPECT_TRUE(pane.send_line("").has_value());
 }
 
 TEST(Entity, AnAnswerThatDoesNotFitIsReportedNotCut) {

@@ -1204,6 +1204,7 @@ The tmux object hierarchy.  A Session, Window, Pane or Client is one row of a sn
   - [`Pane::session`](#libtmux-entities-hpp-pane-session)
   - [`Pane::send_text`](#libtmux-entities-hpp-pane-send-text)
   - [`Pane::send_key`](#libtmux-entities-hpp-pane-send-key)
+  - [`Pane::send_line`](#libtmux-entities-hpp-pane-send-line)
   - [`Pane::split`](#libtmux-entities-hpp-pane-split)
   - [`Pane::capture`](#libtmux-entities-hpp-pane-capture)
   - [`Pane::capture`](#libtmux-entities-hpp-pane-capture-2)
@@ -2536,6 +2537,14 @@ Literal text, never interpreted as key names or formats, and never followed by a
 ```cpp
 [[nodiscard]] expected<void, CommandFailure> send_key(std::string_view key) const;
 ```
+
+<a id="libtmux-entities-hpp-pane-send-line"></a>
+#### `Pane::send_line`
+
+```cpp
+[[nodiscard]] expected<void, CommandFailure> send_line(std::string_view text) const;
+```
+The text and then Enter, as one tmux invocation.  Running a command in a pane is two commands to tmux, and sending them separately costs two round trips and leaves a window where the line is typed and not submitted. This sends both in one batch, which tmux runs fail-fast, so a refused line is not followed by an Enter.  Empty text sends Enter alone, which is what submitting a blank line means. `send_text` refuses it instead: there, nothing would be sent.
 
 <a id="libtmux-entities-hpp-pane-split"></a>
 #### `Pane::split`

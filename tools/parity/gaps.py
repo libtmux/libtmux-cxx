@@ -39,6 +39,7 @@ RENAMES: t.Final[t.Mapping[str, str]] = {
     "clear": "clear_history",
     "cmd": "run",
     "copy_mode": "enter_copy_mode",
+    "enter": "send_line",
     "attach": "attach_command",
     "attach_session": "attach_command",
     "delete_buffer": "remove",

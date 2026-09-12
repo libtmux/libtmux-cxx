@@ -14,6 +14,11 @@ was recorded as it landed.
 - `Session`, `Window`, `Pane` and `Client` format with `std::format`, through
   the renderer `operator<<` already used. `libtmux::to_string(entity)` returns
   that text, and a format spec works: `std::format("{:>24}", pane)`.
+- Add `Pane::send_line`, which sends literal text and then Enter as one tmux
+  invocation. Empty text sends Enter alone; `send_text` still refuses it.
+
+  Before: `pane.send_text("make"); pane.send_key("Enter");`
+  After:  `pane.send_line("make");`
 
 ### Queries
 

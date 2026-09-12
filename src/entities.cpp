@@ -1059,6 +1059,24 @@ expected<void, CommandFailure> Pane::send_text(std::string_view text) const {
   return effect(run(command));
 }
 
+expected<void, CommandFailure> Pane::send_line(std::string_view text) const {
+  if (auto refusal =
+          refused(ServerFeature::pane_io,
+                  "psmux can send text to the active pane for a stale target")) {
+    return unexpected(std::move(*refusal));
+  }
+  const std::string target = pane_target(*this);
+  CommandBatch batch;
+  if (!text.empty()) {
+    const auto arguments = literal_arguments(text);
+    std::vector<std::string> literal{"send-keys", "-t", target};
+    literal.insert(literal.end(), arguments->begin(), arguments->end());
+    static_cast<void>(batch.add(std::move(literal)));
+  }
+  static_cast<void>(batch.add({"send-keys", "-t", target, "Enter"}));
+  return effect(run(batch.request()));
+}
+
 expected<void, CommandFailure> Pane::send_key(std::string_view key) const {
   // tmux accepts an unknown key name silently, so a typo would arrive as
   // input that never happened. Reject it here, where the caller can be told.

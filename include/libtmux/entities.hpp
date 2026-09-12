@@ -630,6 +630,17 @@ public:
   [[nodiscard]] expected<void, CommandFailure> send_text(std::string_view text) const;
   [[nodiscard]] expected<void, CommandFailure> send_key(std::string_view key) const;
 
+  // The text and then Enter, as one tmux invocation.
+  //
+  // Running a command in a pane is two commands to tmux, and sending them
+  // separately costs two round trips and leaves a window where the line is
+  // typed and not submitted. This sends both in one batch, which tmux runs
+  // fail-fast, so a refused line is not followed by an Enter.
+  //
+  // Empty text sends Enter alone, which is what submitting a blank line
+  // means. `send_text` refuses it instead: there, nothing would be sent.
+  [[nodiscard]] expected<void, CommandFailure> send_line(std::string_view text) const;
+
   // Split this exact pane rather than whichever pane in its window happens to
   // be active.
   [[nodiscard]] expected<Pane, CommandFailure> split(SplitOptions options = {}) const;
