@@ -771,7 +771,7 @@ void validate(const Request& request) {
     throw Failure{1, "FEATURE_UNAVAILABLE",
                   "process services are not implemented in this build"};
 }
-Execution execute(const Request& request, const EventSink& event) {
+static Execution execute_impl(const Request& request, const EventSink& event) {
   if (request.command == "edit") {
     const auto path = resolve(request.value("workspace-file"));
     const auto visual = environment("VISUAL"), editor = environment("EDITOR");
@@ -925,8 +925,42 @@ Execution execute(const Request& request, const EventSink& event) {
       for (std::size_t index = 0; index < plans.size(); ++index) {
         active_input = index;
         const auto& plan = plans[index];
-        event("workspace-started",
-              {{"input_index", index}, {"input", private_path(plan.path)}});
+        check_interruption();
+        std::size_t total_panes{};
+        for (const auto& window : plan.workspace.windows)
+          total_panes += window.panes.size();
+        event("workspace-started", {{"input_index", index},
+                                    {"input", private_path(plan.path)},
+                                    {"session_name", plan.workspace.session_name},
+                                    {"window_total", plan.workspace.windows.size()},
+                                    {"session_pane_total", total_panes}});
+        std::optional<Failure> observer_error;
+        const BuildObserver observer =
+            [&](const BuildEvent& update) -> std::optional<std::string> {
+          try {
+            check_interruption();
+            if (update.phase == BuildPhase::waiting)
+              return std::nullopt;
+            const auto& window = plan.workspace.windows.at(update.window_index);
+            const auto phase =
+                update.phase == BuildPhase::window_started     ? "window-started"
+                : update.phase == BuildPhase::window_completed ? "window-completed"
+                : update.phase == BuildPhase::pane_started     ? "pane-started"
+                                                               : "pane-completed";
+            event("build-progress", {{"input_index", index},
+                                     {"phase", phase},
+                                     {"window_name", window.name},
+                                     {"window_index", update.window_index + 1},
+                                     {"pane_index", update.pane_index + 1},
+                                     {"pane_total", window.panes.size()}});
+            return std::nullopt;
+          } catch (const Failure& error) {
+            observer_error = error;
+          } catch (const std::exception& error) {
+            observer_error.emplace(1, "OPERATION_FAILED", error.what());
+          }
+          return observer_error->what();
+        };
         const auto existing =
             borrowed ? libtmux::expected<Session, CommandFailure>{*borrowed}
                      : server.session("=" + plan.workspace.session_name + ":");
@@ -969,10 +1003,12 @@ Execution execute(const Request& request, const EventSink& event) {
             return std::nullopt;
           };
         }
-        auto built = borrowed   ? append(*borrowed, plan.workspace, before)
+        auto built = borrowed   ? append(*borrowed, plan.workspace, before, observer)
                      : existing ? libtmux::expected<Session, BuildError>{*existing}
-                                : build(server, plan.workspace, before);
+                                : build(server, plan.workspace, before, observer);
         if (!built) {
+          if (!script_error && observer_error)
+            script_error = observer_error;
           if (script_error)
             failure_status = script_error->exit_code;
           Json problem{{"code", script_error ? script_error->code : "BUILD_FAILED"},
@@ -1051,6 +1087,12 @@ Execution execute(const Request& request, const EventSink& event) {
   }
   throw Failure{1, "FEATURE_UNAVAILABLE", "command is not implemented"};
 }
+Execution execute(const Request& request, const EventSink& event) {
+  if (request.command == "load")
+    return with_interrupts([&] { return execute_impl(request, event); });
+  return execute_impl(request, event);
+}
+
 std::string human_result(const Request& request, const Json& result, bool colour) {
   const auto role = [colour](const std::string& code, const std::string& value) {
     return colour ? "\033[" + code + "m" + value + "\033[0m" : value;

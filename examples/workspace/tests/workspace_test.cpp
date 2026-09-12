@@ -529,4 +529,47 @@ TEST(WorkspaceBuilder, EveryPaneReceivesItsLauncherAndEnvironment) {
   }
 }
 
+TEST(WorkspaceBuilder, ObserverRefusalStopsCreationAndFinalFocusWithOwnedRollback) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto server = connect(*fixture);
+  const workspace::Workspace description{
+      .session_name = "observed",
+      .windows = {{.name = "first", .focus = true, .panes = {{}, {}, {}}},
+                  {.name = "second", .panes = {{}}}}};
+  for (const bool final_focus : {false, true}) {
+    bool completed{}, refused{};
+    const workspace::BuildObserver observer =
+        [&](const workspace::BuildEvent& event) -> std::optional<std::string> {
+      if (event.phase == workspace::BuildPhase::window_completed &&
+          event.window_index == 1)
+        completed = true;
+      if (event.phase != workspace::BuildPhase::waiting)
+        return std::nullopt;
+      bool refuse = final_focus && completed;
+      if (!final_focus) {
+        const auto session = server.session("=observed:");
+        if (session) {
+          const auto windows = session->windows();
+          if (windows && windows->size() == 1 && windows->front().name() == "first") {
+            const auto panes = windows->front().panes();
+            refuse = panes && panes->size() == 2;
+          }
+        }
+      }
+      if (refuse) {
+        refused = true;
+        return "observer refused";
+      }
+      return std::nullopt;
+    };
+    const auto result = workspace::build(server, description, {}, observer);
+    EXPECT_TRUE(refused);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().reason, "observer refused");
+    EXPECT_FALSE(server.session("=observed:"));
+    EXPECT_TRUE(server.session(fixture->session_name()));
+  }
+}
+
 } // namespace
