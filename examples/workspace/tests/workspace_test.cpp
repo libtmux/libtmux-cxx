@@ -453,8 +453,9 @@ TEST(WorkspaceBuilder, NamedLayoutsFollowTheRunningDaemonVersion) {
                          });
     EXPECT_EQ(built.has_value(), valid);
     EXPECT_EQ(called, valid);
-    if (built)
+    if (built) {
       ASSERT_TRUE(built->kill().has_value());
+    }
     EXPECT_TRUE(server.session("libtmux_test").has_value());
   }
 }
