@@ -192,7 +192,7 @@ TEST(TourOutput, NamesTheSessionItCreated) {
 
 TEST(TourArena, AliasesWithoutDescriptorUseAPrivateServer) {
   auto arena = ScopedTmuxServer::start(
-      {.socket_namespace = SocketNamespace::consumer("tour-arena-alias")});
+      {.socket_namespace = SocketNamespace::consumer("arn-als")});
   ASSERT_TRUE(arena.has_value()) << arena.error();
   const libtmux::Server server = connect(*arena);
 
@@ -234,7 +234,7 @@ TEST(TourArena, RejectsIncompleteOrMismatchedContracts) {
 
 TEST(TourArena, RejectsAClientBinaryOutsidePathBeforeContactingTheServer) {
   auto arena = ScopedTmuxServer::start(
-      {.socket_namespace = SocketNamespace::consumer("tour-arena-client")});
+      {.socket_namespace = SocketNamespace::consumer("arn-cli")});
   ASSERT_TRUE(arena.has_value()) << arena.error();
 
   const auto run =
@@ -251,7 +251,7 @@ TEST(TourArena, RejectsAClientBinaryOutsidePathBeforeContactingTheServer) {
 
 TEST(TourArena, RejectsADirectoryNamedTmuxBeforeTheClientOnPath) {
   auto arena = ScopedTmuxServer::start(
-      {.socket_namespace = SocketNamespace::consumer("tour-arena-directory")});
+      {.socket_namespace = SocketNamespace::consumer("arn-dir")});
   ASSERT_TRUE(arena.has_value()) << arena.error();
   const libtmux::Server server = connect(*arena);
   ASSERT_TRUE(
@@ -285,7 +285,7 @@ TEST(TourArena, RejectsADirectoryNamedTmuxBeforeTheClientOnPath) {
 
 TEST(TourArena, RunsAgainstABorrowedServerAndEmitsEvidence) {
   auto arena = ScopedTmuxServer::start(
-      {.socket_namespace = SocketNamespace::consumer("tour-arena-run")});
+      {.socket_namespace = SocketNamespace::consumer("arn-run")});
   ASSERT_TRUE(arena.has_value()) << arena.error();
   const libtmux::Server server = connect(*arena);
   const std::string challenge{"quote \" slash \\\x80"};
