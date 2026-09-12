@@ -10,11 +10,17 @@
 #include <cassert>
 #include <cerrno>
 #include <map>
+#include <memory>
+#include <new>
 #include <span>
 #include <utility>
 
 #include <fcntl.h>
 #include <spawn.h>
+#if defined(__APPLE__)
+#include <sys/proc.h>
+#include <sys/sysctl.h>
+#endif
 #if defined(__linux__) && !defined(LIBTMUX_FORCE_PORTABLE_SYSCALLS)
 #include <sys/syscall.h>
 #endif
@@ -26,6 +32,32 @@ extern char** environ;
 LIBTMUX_NAMESPACE_BEGIN
 namespace detail {
 namespace {
+
+#if defined(__APPLE__)
+// Darwin skips zombies when signalling a group and can report EPERM for one
+// with no live members. Keep real permission errors and incomplete snapshots.
+[[nodiscard]] bool group_contains_only_zombies(pid_t leader) noexcept {
+  int query[]{CTL_KERN, KERN_PROC, KERN_PROC_PGRP, leader};
+  std::size_t size{};
+  if (::sysctl(query, 4U, nullptr, &size, nullptr, 0U) != 0 || size == 0U)
+    return false;
+  const auto capacity = size / sizeof(kinfo_proc) + 1U;
+  std::unique_ptr<kinfo_proc[]> members{new (std::nothrow) kinfo_proc[capacity]};
+  if (!members)
+    return false;
+  size = capacity * sizeof(kinfo_proc);
+  if (::sysctl(query, 4U, members.get(), &size, nullptr, 0U) != 0 ||
+      size % sizeof(kinfo_proc) != 0U)
+    return false;
+  bool retained_leader{};
+  for (std::size_t index = 0U; index < size / sizeof(kinfo_proc); ++index) {
+    if (members[index].kp_proc.p_stat != SZOMB)
+      return false;
+    retained_leader = retained_leader || members[index].kp_proc.p_pid == leader;
+  }
+  return retained_leader;
+}
+#endif
 
 class OwnedFd final {
 public:
@@ -557,8 +589,13 @@ std::optional<ProcessError> PosixChild::signal_group(int signal_number,
     if (errno == EINTR) {
       continue;
     }
+    const auto error_number = errno;
+#if defined(__APPLE__)
+    if (error_number == EPERM && group_contains_only_zombies(pid_))
+      return std::nullopt;
+#endif
     return process_error(ProcessError::Kind::pipe, delivery, "kill", rendered_request_,
-                         generic_error(errno));
+                         generic_error(error_number));
   }
 }
 
