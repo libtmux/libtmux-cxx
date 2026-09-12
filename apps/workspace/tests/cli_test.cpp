@@ -535,8 +535,9 @@ TEST(WorkspaceCliTmux, AppendKeepsItsBorrowedSessionAndReportsRetainedWindows) {
   ASSERT_TRUE(environment.has_value());
   EXPECT_EQ(*environment, "WS_APPEND=yes\n");
 
-  std::ofstream{file}
-      << "session_name: ignored-name\nwindows: [{layout: invalid-layout}]\n";
+  // Invalid layouts crash tmux 3.3a; an unknown option returns a command error.
+  std::ofstream{file} << "session_name: ignored-name\n"
+                         "windows: [{options: {not-a-window-option: 'on'}}]\n";
   const auto failed = invoke({"load", file.string(), "--append", "--json"});
   ASSERT_EQ(failed.code, 1) << failed.err << failed.out;
   const auto partial = Json::parse(failed.out);
@@ -615,7 +616,7 @@ TEST(WorkspaceCliTmux, ColdLoadRetainsTheWorkspaceAndRemovesItsBootstrap) {
   ASSERT_TRUE(server->kill().has_value());
 
   std::ofstream{file} << "session_name: cold-failed\n"
-                         "windows: [{layout: invalid-layout}]\n";
+                         "windows: [{options: {not-a-window-option: 'on'}}]\n";
   const auto failed =
       invoke({"load", file.string(), "-d", "-S", socket.string(), "--json"});
   EXPECT_EQ(failed.code, 1);
@@ -925,8 +926,8 @@ TEST(WorkspaceCliTmux, PartialLoadReportsFailureAndPreservesCompletedSession) {
   const auto first = directory / "first.yaml";
   const auto second = directory / "second.yaml";
   std::ofstream{first} << "session_name: completed\nwindows: [{}]\n";
-  std::ofstream{second}
-      << "session_name: failed\nwindows: [{layout: invalid-layout}]\n";
+  std::ofstream{second} << "session_name: failed\n"
+                           "windows: [{options: {not-a-window-option: 'on'}}]\n";
   const auto result = invoke({"load", first.string(), second.string(), "-s", "renamed",
                               "-d", "-S", fixture->socket_path().string(), "--ndjson"});
   ASSERT_EQ(result.code, 1);
