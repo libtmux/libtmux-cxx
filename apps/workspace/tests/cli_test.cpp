@@ -43,7 +43,7 @@ struct Files {
     const char* created = ::mkdtemp(pattern.data());
     if (created == nullptr)
       throw std::runtime_error{"mkdtemp failed"};
-    directory = created;
+    directory = std::filesystem::canonical(created);
     for (const auto* key : {"HOME", "XDG_CONFIG_HOME", "TMUXP_CONFIGDIR"}) {
       const char* value = std::getenv(key);
       environment[key] =
@@ -483,9 +483,7 @@ TEST(WorkspaceCli, EditorKeepsQuotedArgumentsAndChildStatus) {
   const auto document = Json::parse(result.out);
   EXPECT_EQ(document.at("exit_code"), 7);
   EXPECT_EQ(document.at("stdout"),
-            "a\\q$`xy\n" +
-                std::filesystem::canonical(files.directory / "dev.yaml").string() +
-                "\n");
+            "a\\q$`xy\n" + (files.directory / "dev.yaml").string() + "\n");
   EXPECT_EQ(document.at("stderr"), "child error");
   EXPECT_TRUE(result.err.empty());
   libtmux::test::EnvironmentGuard malformed{"EDITOR", "/bin/sh 'unfinished"};
