@@ -15,6 +15,13 @@ was recorded as it landed.
   the renderer `operator<<` already used. `libtmux::to_string(entity)` returns
   that text, and a format spec works: `std::format("{:>24}", pane)`.
 
+### Queries
+
+- A field handle is now a ranges projection, and a flag handle a predicate, so
+  the names that build filters also drive the standard algorithms:
+  `std::ranges::sort(windows, {}, libtmux::window::index)` and
+  `std::ranges::count_if(panes, libtmux::pane::active)`.
+
 ### Errors
 
 - `CommandFailure` formats with `std::format`, naming what happened, what tmux

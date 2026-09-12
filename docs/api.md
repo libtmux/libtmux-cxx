@@ -3789,23 +3789,26 @@ Value-semantic filter expressions over explicit snapshots.  An expression owns e
   - [`FilterExpr::RelationTest::child`](#libtmux-filter-expr-hpp-filterexpr-relationtest-child)
 - [`StringFieldHandle`](#libtmux-filter-expr-hpp-stringfieldhandle)
   - [`StringFieldHandle::field`](#libtmux-filter-expr-hpp-stringfieldhandle-field)
-  - [`StringFieldHandle::operator==`](#libtmux-filter-expr-hpp-stringfieldhandle-operator)
+  - [`StringFieldHandle::operator()`](#libtmux-filter-expr-hpp-stringfieldhandle-operator)
+  - [`StringFieldHandle::operator==`](#libtmux-filter-expr-hpp-stringfieldhandle-operator-2)
   - [`StringFieldHandle::iequals`](#libtmux-filter-expr-hpp-stringfieldhandle-iequals)
   - [`StringFieldHandle::contains`](#libtmux-filter-expr-hpp-stringfieldhandle-contains)
   - [`StringFieldHandle::starts_with`](#libtmux-filter-expr-hpp-stringfieldhandle-starts-with)
   - [`StringFieldHandle::ends_with`](#libtmux-filter-expr-hpp-stringfieldhandle-ends-with)
 - [`NumberFieldHandle`](#libtmux-filter-expr-hpp-numberfieldhandle)
   - [`NumberFieldHandle::field`](#libtmux-filter-expr-hpp-numberfieldhandle-field)
-  - [`NumberFieldHandle::operator==`](#libtmux-filter-expr-hpp-numberfieldhandle-operator)
-  - [`NumberFieldHandle::operator!=`](#libtmux-filter-expr-hpp-numberfieldhandle-operator-2)
-  - [`NumberFieldHandle::operator<`](#libtmux-filter-expr-hpp-numberfieldhandle-operator-3)
-  - [`NumberFieldHandle::operator<=`](#libtmux-filter-expr-hpp-numberfieldhandle-operator-4)
-  - [`NumberFieldHandle::operator>`](#libtmux-filter-expr-hpp-numberfieldhandle-operator-5)
-  - [`NumberFieldHandle::operator>=`](#libtmux-filter-expr-hpp-numberfieldhandle-operator-6)
+  - [`NumberFieldHandle::operator()`](#libtmux-filter-expr-hpp-numberfieldhandle-operator)
+  - [`NumberFieldHandle::operator==`](#libtmux-filter-expr-hpp-numberfieldhandle-operator-2)
+  - [`NumberFieldHandle::operator!=`](#libtmux-filter-expr-hpp-numberfieldhandle-operator-3)
+  - [`NumberFieldHandle::operator<`](#libtmux-filter-expr-hpp-numberfieldhandle-operator-4)
+  - [`NumberFieldHandle::operator<=`](#libtmux-filter-expr-hpp-numberfieldhandle-operator-5)
+  - [`NumberFieldHandle::operator>`](#libtmux-filter-expr-hpp-numberfieldhandle-operator-6)
+  - [`NumberFieldHandle::operator>=`](#libtmux-filter-expr-hpp-numberfieldhandle-operator-7)
 - [`BoolFieldHandle`](#libtmux-filter-expr-hpp-boolfieldhandle)
   - [`BoolFieldHandle::field`](#libtmux-filter-expr-hpp-boolfieldhandle-field)
+  - [`BoolFieldHandle::operator()`](#libtmux-filter-expr-hpp-boolfieldhandle-operator)
   - [`BoolFieldHandle::operatorFilterExpr<Entity>`](#libtmux-filter-expr-hpp-boolfieldhandle-operatorfilterexpr-entity)
-  - [`BoolFieldHandle::operator==`](#libtmux-filter-expr-hpp-boolfieldhandle-operator)
+  - [`BoolFieldHandle::operator==`](#libtmux-filter-expr-hpp-boolfieldhandle-operator-2)
 - [`Free symbols`](#libtmux-filter-expr-hpp-free-symbols)
   - [`operator&&`](#libtmux-filter-expr-hpp-free-symbols-operator)
   - [`operator||`](#libtmux-filter-expr-hpp-free-symbols-operator-2)
@@ -4169,7 +4172,7 @@ The child compares another entity, so it cannot live in this variant. Its lowere
 <a id="libtmux-filter-expr-hpp-stringfieldhandle"></a>
 ### `StringFieldHandle`
 
-A typed field handle. Only the operations a field's type actually supports are declared, so `pane::active.starts_with(...)` is a compile error rather than a runtime surprise.
+A typed field handle. Only the operations a field's type actually supports are declared, so `pane::active.starts_with(...)` is a compile error rather than a runtime surprise.  A handle also reads a row, so the same name serves as a ranges projection — and a flag handle as a predicate — rather than a lambda that spells the accessor a second time. `sort(panes, {}, pane::index)` then orders by the number tmux rendered, where projecting the text puts `%10` before `%9`.
 
 ```cpp
 template <typename Entity> struct StringFieldHandle;
@@ -4183,6 +4186,13 @@ StringField<Entity> field;
 ```
 
 <a id="libtmux-filter-expr-hpp-stringfieldhandle-operator"></a>
+#### `StringFieldHandle::operator()`
+
+```cpp
+[[nodiscard]] std::string_view operator()(const Entity& row) const;
+```
+
+<a id="libtmux-filter-expr-hpp-stringfieldhandle-operator-2"></a>
 #### `StringFieldHandle::operator==`
 
 ```cpp
@@ -4232,41 +4242,48 @@ NumberField<Entity> field;
 ```
 
 <a id="libtmux-filter-expr-hpp-numberfieldhandle-operator"></a>
+#### `NumberFieldHandle::operator()`
+
+```cpp
+[[nodiscard]] long long operator()(const Entity& row) const;
+```
+
+<a id="libtmux-filter-expr-hpp-numberfieldhandle-operator-2"></a>
 #### `NumberFieldHandle::operator==`
 
 ```cpp
 [[nodiscard]] FilterExpr<Entity> operator==(long long operand) const;
 ```
 
-<a id="libtmux-filter-expr-hpp-numberfieldhandle-operator-2"></a>
+<a id="libtmux-filter-expr-hpp-numberfieldhandle-operator-3"></a>
 #### `NumberFieldHandle::operator!=`
 
 ```cpp
 [[nodiscard]] FilterExpr<Entity> operator!=(long long operand) const;
 ```
 
-<a id="libtmux-filter-expr-hpp-numberfieldhandle-operator-3"></a>
+<a id="libtmux-filter-expr-hpp-numberfieldhandle-operator-4"></a>
 #### `NumberFieldHandle::operator<`
 
 ```cpp
 [[nodiscard]] FilterExpr<Entity> operator<(long long operand) const;
 ```
 
-<a id="libtmux-filter-expr-hpp-numberfieldhandle-operator-4"></a>
+<a id="libtmux-filter-expr-hpp-numberfieldhandle-operator-5"></a>
 #### `NumberFieldHandle::operator<=`
 
 ```cpp
 [[nodiscard]] FilterExpr<Entity> operator<=(long long operand) const;
 ```
 
-<a id="libtmux-filter-expr-hpp-numberfieldhandle-operator-5"></a>
+<a id="libtmux-filter-expr-hpp-numberfieldhandle-operator-6"></a>
 #### `NumberFieldHandle::operator>`
 
 ```cpp
 [[nodiscard]] FilterExpr<Entity> operator>(long long operand) const;
 ```
 
-<a id="libtmux-filter-expr-hpp-numberfieldhandle-operator-6"></a>
+<a id="libtmux-filter-expr-hpp-numberfieldhandle-operator-7"></a>
 #### `NumberFieldHandle::operator>=`
 
 ```cpp
@@ -4287,6 +4304,13 @@ template <typename Entity> struct BoolFieldHandle;
 BoolField<Entity> field;
 ```
 
+<a id="libtmux-filter-expr-hpp-boolfieldhandle-operator"></a>
+#### `BoolFieldHandle::operator()`
+
+```cpp
+[[nodiscard]] bool operator()(const Entity& row) const;
+```
+
 <a id="libtmux-filter-expr-hpp-boolfieldhandle-operatorfilterexpr-entity"></a>
 #### `BoolFieldHandle::operatorFilterExpr<Entity>`
 
@@ -4294,7 +4318,7 @@ BoolField<Entity> field;
 [[nodiscard]] operator FilterExpr<Entity>() const;
 ```
 
-<a id="libtmux-filter-expr-hpp-boolfieldhandle-operator"></a>
+<a id="libtmux-filter-expr-hpp-boolfieldhandle-operator-2"></a>
 #### `BoolFieldHandle::operator==`
 
 ```cpp

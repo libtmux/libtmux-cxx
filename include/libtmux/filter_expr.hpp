@@ -212,8 +212,17 @@ private:
 // A typed field handle. Only the operations a field's type actually supports
 // are declared, so `pane::active.starts_with(...)` is a compile error rather
 // than a runtime surprise.
+//
+// A handle also reads a row, so the same name serves as a ranges projection —
+// and a flag handle as a predicate — rather than a lambda that spells the
+// accessor a second time. `sort(panes, {}, pane::index)` then orders by the
+// number tmux rendered, where projecting the text puts `%10` before `%9`.
 template <typename Entity> struct StringFieldHandle {
   StringField<Entity> field;
+
+  [[nodiscard]] std::string_view operator()(const Entity& row) const {
+    return field.read(row);
+  }
 
   [[nodiscard]] FilterExpr<Entity> operator==(std::string_view operand) const {
     return make(StringOp::equals, operand);
@@ -240,6 +249,10 @@ private:
 
 template <typename Entity> struct NumberFieldHandle {
   NumberField<Entity> field;
+
+  [[nodiscard]] long long operator()(const Entity& row) const {
+    return field.read(row);
+  }
 
   [[nodiscard]] FilterExpr<Entity> operator==(long long operand) const {
     return make(NumberOp::equals, operand);
@@ -269,6 +282,8 @@ private:
 
 template <typename Entity> struct BoolFieldHandle {
   BoolField<Entity> field;
+
+  [[nodiscard]] bool operator()(const Entity& row) const { return field.read(row); }
 
   [[nodiscard]] operator FilterExpr<Entity>() const { // NOLINT(*-explicit-*)
     return FilterExpr<Entity>{typename FilterExpr<Entity>::BoolTest{field, true}};

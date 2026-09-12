@@ -1,7 +1,10 @@
 // The positive control. Everything the compile-fail probes reject has a legal
 // form, and this is it: if this stops compiling, those probes prove nothing.
 
+#include <algorithm>
 #include <chrono>
+#include <format>
+#include <ranges>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -62,6 +65,22 @@ void uses() {
   // A numeric field offers comparisons.
   (void)(libtmux::window::width > 80);
   (void)(libtmux::window::index <= 9);
+
+  // Every handle is also a ranges projection, and a flag handle a predicate,
+  // so the standard algorithms take the same names the filters take.
+  std::vector<libtmux::Window> owned = listed();
+  std::ranges::sort(owned, {}, libtmux::window::index);
+  (void)std::ranges::count_if(owned, libtmux::window::active);
+  (void)std::ranges::max_element(owned, {}, libtmux::window::width);
+  (void)(owned | std::views::filter(libtmux::window::active));
+  (void)(owned | std::views::transform(libtmux::window::name));
+  // A filter expression is a predicate on its own, so an algorithm needs no
+  // lambda to ask a typed question.
+  (void)std::ranges::count_if(owned, libtmux::window::width > 40);
+
+  // Anything this library returns writes itself, through a stream or a format.
+  (void)libtmux::to_string(owned.front());
+  (void)std::format("{} {}", owned.front(), libtmux::CommandFailure{});
 }
 
 // Going back to the pane selected before this one.
