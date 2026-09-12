@@ -220,6 +220,7 @@ libtmux::expected<Pane, ParseError> read_pane(const YAML::Node& node,
       return libtmux::unexpected(variables.error());
     }
     pane.environment = *std::move(variables);
+    pane.environment_overrides = static_cast<bool>(node["environment"]);
     if (const YAML::Node shell = node["shell"]; shell && shell.IsScalar()) {
       pane.shell = shell.as<std::string>();
     }

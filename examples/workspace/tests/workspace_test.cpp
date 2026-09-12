@@ -332,4 +332,122 @@ TEST(WorkspaceBuilder, RefusesAnEmptyDescription) {
   EXPECT_FALSE(workspace::build(server, {}).has_value());
 }
 
+TEST(WorkspaceBuilder, CreatedIdentitiesSurviveDuplicateNamesAndIndexes) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("ws")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const workspace::Workspace description{
+      .session_name = "identity",
+      .windows = {
+          {.name = "same",
+           .index = 6,
+           .panes = {{.shell_commands = {{.text = "FIRST", .enter = false}}}}},
+          {.name = "same",
+           .index = 2,
+           .panes = {{.shell_commands = {{.text = "SECOND", .enter = false}}}}}}};
+  const auto built = workspace::build(server, description);
+  ASSERT_TRUE(built.has_value()) << built.error().reason;
+  const auto windows = built->windows();
+  ASSERT_TRUE(windows.has_value());
+  ASSERT_EQ(windows->size(), 2U);
+  for (const auto& [index, marker] :
+       {std::pair{2LL, "SECOND"}, std::pair{6LL, "FIRST"}}) {
+    const auto found = std::ranges::find_if(
+        *windows, [index](const auto& item) { return item.index() == index; });
+    ASSERT_NE(found, windows->end());
+    const auto pane = found->active_pane();
+    ASSERT_TRUE(pane.has_value());
+    const auto captured = pane->capture();
+    ASSERT_TRUE(captured.has_value());
+    EXPECT_NE(captured->find(marker), std::string::npos) << *captured;
+  }
+}
+
+TEST(WorkspaceBuilder, FailureRemovesOnlyTheSessionItCreated) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("ws")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const workspace::Workspace description{
+      .session_name = "failure",
+      .windows = {{.name = "bad", .layout = "not-a-layout"}}};
+  EXPECT_FALSE(workspace::build(server, description).has_value());
+  EXPECT_FALSE(server.session("failure").has_value());
+  EXPECT_TRUE(server.session("libtmux_test").has_value());
+  auto borrowed = description;
+  borrowed.session_name = "libtmux_test";
+  EXPECT_FALSE(workspace::build(server, borrowed).has_value());
+  EXPECT_TRUE(server.session("libtmux_test").has_value());
+}
+
+TEST(WorkspaceBuilder, DeferredOptionsDoNotBroadcastStartupCommands) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("ws")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const workspace::Workspace description{
+      .session_name = "deferred",
+      .windows = {{.name = "work",
+                   .options_after = {{"synchronize-panes", "on"}},
+                   .panes = {{.shell_commands = {{.text = "ALPHA", .enter = false}}},
+                             {.shell_commands = {{.text = "BETA", .enter = false}}}}}}};
+  const auto built = workspace::build(server, description);
+  ASSERT_TRUE(built.has_value()) << built.error().reason;
+  const auto windows = built->windows();
+  ASSERT_TRUE(windows.has_value());
+  const auto panes = windows->front().panes();
+  ASSERT_TRUE(panes.has_value());
+  ASSERT_EQ(panes->size(), 2U);
+  const auto first = panes->front().capture();
+  const auto second = panes->back().capture();
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(second.has_value());
+  EXPECT_NE(first->find("ALPHA"), std::string::npos);
+  EXPECT_EQ(first->find("BETA"), std::string::npos);
+  EXPECT_NE(second->find("BETA"), std::string::npos);
+  EXPECT_EQ(second->find("ALPHA"), std::string::npos);
+}
+
+TEST(WorkspaceBuilder, EveryPaneReceivesItsLauncherAndEnvironment) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("ws")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const workspace::Command command{
+      .text =
+          "printf '%s:%s:%s\\n' \"$WS_SESSION\" \"${WS_WINDOW-unset}\" \"$WS_LAUNCH\""};
+  const workspace::Workspace description{
+      .session_name = "environment",
+      .environment = {{"WS_SESSION", "session"}},
+      .windows = {
+          {.name = "work",
+           .shell = "/bin/sh -c 'export WS_LAUNCH=launcher; exec /bin/sh'",
+           .environment = {{"WS_WINDOW", "window"}},
+           .panes = {{.shell_commands = {command}},
+                     {.shell_commands = {command}, .environment_overrides = true}}}}};
+  const auto built = workspace::build(server, description);
+  ASSERT_TRUE(built.has_value()) << built.error().reason;
+  const auto windows = built->windows();
+  ASSERT_TRUE(windows.has_value());
+  const auto panes = windows->front().panes();
+  ASSERT_TRUE(panes.has_value());
+  ASSERT_EQ(panes->size(), 2U);
+  for (const auto& [pane, marker] :
+       {std::pair{&panes->front(), "session:window:launcher"},
+        std::pair{&panes->back(), "session:unset:launcher"}}) {
+    std::string captured;
+    for (int attempt = 0; attempt < 20; ++attempt) {
+      const auto output = pane->capture();
+      ASSERT_TRUE(output.has_value());
+      captured = *output;
+      if (captured.find(marker) != std::string::npos) {
+        break;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds{10});
+    }
+    EXPECT_NE(captured.find(marker), std::string::npos) << captured;
+  }
+}
+
 } // namespace
