@@ -29,6 +29,9 @@ was recorded as it landed.
 
 ### Errors
 
+- Add `libtmux::bad_expected_access<Error>`, the exception `value()` throws,
+  aliased to the underlying type so a caller can catch it in the C++20 build
+  as well as the C++23 one.
 - `CommandFailure` formats with `std::format`, naming what happened, what tmux
   said, the exit code when there is one, and how far the command got:
   `tmux refused the command: can't find session: nope (exit 1, replied)`.

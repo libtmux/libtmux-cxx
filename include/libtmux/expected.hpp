@@ -38,6 +38,14 @@ template <typename Error> using unexpected_t = tl::unexpected<Error>;
 template <typename Error> using unexpected_t = std::unexpected<Error>;
 #endif
 
+// What `value()` throws when there is none. Named here so a caller who wants an
+// exception at a boundary can catch it in either standard's build.
+#if defined(LIBTMUX_USE_TL_EXPECTED)
+template <typename Error> using bad_expected_access = tl::bad_expected_access<Error>;
+#else
+template <typename Error> using bad_expected_access = std::bad_expected_access<Error>;
+#endif
+
 // A factory rather than an alias: an alias template cannot deduce its argument,
 // so `unexpected(error)` would stop compiling at every call site.
 template <typename Error> [[nodiscard]] constexpr auto unexpected(Error&& error) {

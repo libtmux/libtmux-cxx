@@ -7047,6 +7047,8 @@ The one C++23 library facility this package's public surface needs.  Recoverable
   - [`expected`](#libtmux-expected-hpp-free-symbols-expected-2)
   - [`unexpected_t`](#libtmux-expected-hpp-free-symbols-unexpected-t)
   - [`unexpected_t`](#libtmux-expected-hpp-free-symbols-unexpected-t-2)
+  - [`bad_expected_access`](#libtmux-expected-hpp-free-symbols-bad-expected-access)
+  - [`bad_expected_access`](#libtmux-expected-hpp-free-symbols-bad-expected-access-2)
   - [`unexpected`](#libtmux-expected-hpp-free-symbols-unexpected)
 
 <a id="libtmux-expected-hpp-free-symbols"></a>
@@ -7081,6 +7083,22 @@ Available when `defined(LIBTMUX_USE_TL_EXPECTED)`.
 
 ```cpp
 template <typename Error> using unexpected_t = std::unexpected<Error>;
+```
+Available when `!(defined(LIBTMUX_USE_TL_EXPECTED))`.
+
+<a id="libtmux-expected-hpp-free-symbols-bad-expected-access"></a>
+#### `bad_expected_access`
+
+```cpp
+template <typename Error> using bad_expected_access = tl::bad_expected_access<Error>;
+```
+Available when `defined(LIBTMUX_USE_TL_EXPECTED)`.
+
+<a id="libtmux-expected-hpp-free-symbols-bad-expected-access-2"></a>
+#### `bad_expected_access`
+
+```cpp
+template <typename Error> using bad_expected_access = std::bad_expected_access<Error>;
 ```
 Available when `!(defined(LIBTMUX_USE_TL_EXPECTED))`.
 

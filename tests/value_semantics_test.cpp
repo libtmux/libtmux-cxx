@@ -170,6 +170,11 @@ TEST(ValueSemantics, AFailureComposesAndCanBeNamed) {
                                        .diagnostic = {}}),
       "the request was rejected before tmux ran (not_started)");
 
+  // Nothing here throws on its own, and a caller who wants an exception at a
+  // boundary asks for one by name — the same name in either build.
+  EXPECT_THROW(static_cast<void>(Server::at_socket_path("").value()),
+               libtmux::bad_expected_access<CommandFailure>);
+
   // Every failure a caller can be handed says what it is.
   for (const FailureKind kind :
        {FailureKind::validation, FailureKind::spawn, FailureKind::pre_exec,
