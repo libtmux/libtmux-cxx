@@ -302,13 +302,13 @@ Server endpoint(const Request& request) {
     throw Failure{1, "INVALID_ENDPOINT", server.error().diagnostic};
   return *server;
 }
-Session append_target(const Server& server) {
+libtmux::Pane current_pane(const Server& server, const std::string& code) {
   const auto inherited = Server::from_env();
   if (!inherited)
-    throw Failure{1, "APPEND_CONTEXT", inherited.error().diagnostic};
+    throw Failure{1, code, inherited.error().diagnostic};
   const auto pane = inherited->pane(environment("TMUX_PANE"));
   if (!pane)
-    throw Failure{1, "APPEND_CONTEXT", pane.error().diagnostic};
+    throw Failure{1, code, pane.error().diagnostic};
   const auto context = environment("TMUX");
   const auto last = context.find_last_of(',');
   const auto previous = last == std::string::npos || last == 0
@@ -317,15 +317,71 @@ Session append_target(const Server& server) {
   const auto pid = pane->expand("#{pid}");
   if (previous == std::string::npos || !pid ||
       *pid != context.substr(previous + 1, last - previous - 1))
-    throw Failure{1, "APPEND_CONTEXT", "TMUX identifies a different server process"};
+    throw Failure{1, code, "TMUX identifies a different server process"};
   const auto selected = server.pane(environment("TMUX_PANE"));
   if (!selected || selected->connection_identity() != pane->connection_identity())
-    throw Failure{1, "APPEND_CONTEXT",
-                  "selected server differs from the current pane's server"};
-  const auto session = selected->session();
+    throw Failure{1, code, "selected server differs from the current pane's server"};
+  return *selected;
+}
+Session append_target(const Server& server) {
+  const auto session = current_pane(server, "APPEND_CONTEXT").session();
   if (!session)
     throw Failure{1, "APPEND_CONTEXT", session.error().diagnostic};
   return *session;
+}
+Client current_client(const Server& server, std::string_view pane) {
+  const auto clients = server.clients();
+  if (!clients)
+    throw Failure{1, "CLIENT_CONTEXT", clients.error().diagnostic};
+  std::optional<Client> selected;
+  for (const auto& client : *clients) {
+    if (client.control_mode() || client.tty().empty() ||
+        client.active_pane_id() != pane)
+      continue;
+    if (selected)
+      throw Failure{2, "CLIENT_CONTEXT",
+                    "multiple clients view this pane; use load -d"};
+    selected = client;
+  }
+  if (!selected || selected->pid() <= 0 || selected->name().empty())
+    throw Failure{2, "CLIENT_CONTEXT",
+                  "no terminal client views this pane; use load -d"};
+  return *selected;
+}
+std::function<void()> load_handoff(Session session, std::optional<Client> caller) {
+  std::optional<AttachCommand> command;
+  if (!caller) {
+    const auto prepared = session.attach_command();
+    if (!prepared)
+      throw Failure{1, "ATTACH_FAILED", prepared.error().diagnostic};
+    command = *prepared;
+  }
+  return [session = std::move(session), caller = std::move(caller),
+          command = std::move(command)] {
+    if (caller) {
+      const auto server = caller->server();
+      if (!server)
+        throw Failure{1, "CLIENT_CONTEXT", server.error().diagnostic};
+      const auto current = current_client(*server, caller->active_pane_id());
+      if (current.connection_identity() != caller->connection_identity() ||
+          current.name() != caller->name() || current.pid() != caller->pid() ||
+          current.created() != caller->created() || current.tty() != caller->tty())
+        throw Failure{1, "CLIENT_CHANGED",
+                      "the invoking client changed; loaded sessions remain"};
+      // tmux targets a client name; it cannot atomically check this incarnation.
+      const auto switched = current.switch_to(session);
+      if (!switched)
+        throw Failure{1, "SWITCH_FAILED", switched.error().diagnostic};
+    } else {
+      const auto child = run_child(
+          command->argv(),
+          {.terminal = true, .terminal_required = true, .timeout = std::nullopt});
+      if (child.code != 0)
+        throw Failure{child.code, "ATTACH_FAILED",
+                      "attachment exited with status " + std::to_string(child.code) +
+                          "; loaded sessions remain"};
+    }
+  };
 }
 struct Bootstrap {
   std::optional<Session> session;
@@ -675,12 +731,29 @@ void validate(const Request& request) {
     (void)patterns(request);
   }
   if (request.command == "load" && !request.flag("d")) {
-    if (!request.flag("append"))
-      throw Failure{2, "USAGE", "this build requires load -d or --append inside tmux"};
-    const auto pane = environment("TMUX_PANE");
-    if (environment("TMUX").empty() || pane.size() < 2 || pane.front() != '%' ||
-        pane.find_first_not_of("0123456789", 1) != std::string::npos)
-      throw Failure{2, "USAGE", "append requires TMUX and the current TMUX_PANE"};
+    if (!request.flag("append")) {
+      if (request.machine())
+        throw Failure{2, "USAGE", "machine output requires load -d or --append"};
+      if (!request.terminal_allowed)
+        throw Failure{2, "USAGE",
+                      "load requires a foreground controlling terminal; use -d"};
+      require_terminal();
+    }
+    if (request.flag("append") || !environment("TMUX").empty()) {
+      const auto pane = environment("TMUX_PANE");
+      const auto context = environment("TMUX");
+      const auto last = context.find_last_of(',');
+      const auto previous = last == std::string::npos || last == 0
+                                ? std::string::npos
+                                : context.find_last_of(',', last - 1);
+      if (previous == std::string::npos || previous == 0 || last == previous + 1 ||
+          last + 1 == context.size() ||
+          context.find_first_not_of("0123456789", previous + 1) != last ||
+          context.find_first_not_of("0123456789", last + 1) != std::string::npos ||
+          pane.size() < 2 || pane.front() != '%' ||
+          pane.find_first_not_of("0123456789", 1) != std::string::npos)
+        throw Failure{2, "USAGE", "load requires valid TMUX and TMUX_PANE context"};
+    }
   }
   if (request.command == "freeze" && request.value("session").empty())
     throw Failure{2, "USAGE", "freeze requires a session name or ID"};
@@ -688,7 +761,7 @@ void validate(const Request& request) {
     throw Failure{1, "FEATURE_UNAVAILABLE",
                   "process services are not implemented in this build"};
 }
-Json execute(const Request& request, const EventSink& event) {
+Execution execute(const Request& request, const EventSink& event) {
   if (request.command == "edit") {
     const auto path = resolve(request.value("workspace-file"));
     const auto visual = environment("VISUAL"), editor = environment("EDITOR");
@@ -700,13 +773,13 @@ Json execute(const Request& request, const EventSink& event) {
     try {
       const auto child = run_child(
           arguments, {.terminal = request.terminal_allowed, .timeout = std::nullopt});
-      return {{"schema_version", 1},
-              {"command", "edit"},
-              {"path", private_path(path)},
-              {"exit_code", child.code},
-              {"stdout", child.out},
-              {"stderr", child.err},
-              {"status", child.code == 0 ? "ok" : "error"}};
+      return {.value = {{"schema_version", 1},
+                        {"command", "edit"},
+                        {"path", private_path(path)},
+                        {"exit_code", child.code},
+                        {"stdout", child.out},
+                        {"stderr", child.err},
+                        {"status", child.code == 0 ? "ok" : "error"}}};
     } catch (const Failure& error) {
       event("failed",
             {{"status", "error"},
@@ -724,17 +797,17 @@ Json execute(const Request& request, const EventSink& event) {
     for (const auto& directory : global_directories())
       dirs.push_back(
           {{"path", private_path(directory)}, {"exists", fs::is_directory(directory)}});
-    return {{"workspaces", workspaces}, {"global_workspace_dirs", dirs}};
+    return {.value = {{"workspaces", workspaces}, {"global_workspace_dirs", dirs}}};
   }
   if (request.command == "search")
-    return search(request);
+    return {.value = search(request)};
   if (request.command == "debug-info") {
-    return {{"port", "cxx"},
-            {"version", LIBTMUX_WORKSPACE_VERSION},
-            {"compiler", __VERSION__},
-            {"cwd", private_path(fs::current_path())},
-            {"home", "~"},
-            {"regex", "ECMAScript"}};
+    return {.value = {{"port", "cxx"},
+                      {"version", LIBTMUX_WORKSPACE_VERSION},
+                      {"compiler", __VERSION__},
+                      {"cwd", private_path(fs::current_path())},
+                      {"home", "~"},
+                      {"regex", "ECMAScript"}}};
   }
   if (request.command == "convert" || request.command == "import") {
     const auto path = resolve(request.value("workspace-file"), request.importer);
@@ -743,14 +816,14 @@ Json execute(const Request& request, const EventSink& event) {
       document = imported(document, request.importer);
     const auto format = path.extension() == ".json" ? "yaml" : "json";
     if (!request.machine() && !request.flag("yes") && !request.flag("save-to")) {
-      return {{"preview", true},
-              {"format", request.value("workspace-format", format)},
-              {"workspace", document}};
+      return {.value = {{"preview", true},
+                        {"format", request.value("workspace-format", format)},
+                        {"workspace", document}}};
     }
     auto destination = path;
     destination.replace_extension(format == std::string{"json"} ? ".json" : ".yaml");
-    return save_or_return(request, document, format,
-                          request.machine() ? "" : destination.string());
+    return {.value = save_or_return(request, document, format,
+                                    request.machine() ? "" : destination.string())};
   }
   if (request.command == "freeze") {
     const auto document = capture(request);
@@ -759,7 +832,7 @@ Json execute(const Request& request, const EventSink& event) {
       result["warnings"] =
           Json::array({"Capture cannot recover original command arguments, history, "
                        "plugins or before scripts."});
-    return result;
+    return {.value = std::move(result)};
   }
   if (request.command == "load") {
     struct Planned {
@@ -818,6 +891,9 @@ Json execute(const Request& request, const EventSink& event) {
     const bool appending = request.flag("append") && !request.flag("d");
     bool retained_changes{};
     int failure_status{1};
+    const bool interactive = !request.flag("d") && !appending;
+    std::optional<Session> selected;
+    std::optional<Client> caller;
     std::string stage{"startup"};
     std::size_t active_input{};
     try {
@@ -825,7 +901,10 @@ Json execute(const Request& request, const EventSink& event) {
       std::optional<Session> borrowed;
       if (appending)
         borrowed = append_target(server);
-      else if (!server.is_alive())
+      else if (interactive && !environment("TMUX").empty()) {
+        const auto pane = current_pane(server, "CLIENT_CONTEXT");
+        caller = current_client(server, pane.id());
+      } else if (!server.is_alive())
         server = start_endpoint(request, bootstrap);
       stage = "load";
       for (std::size_t index = 0; index < plans.size(); ++index) {
@@ -908,6 +987,8 @@ Json execute(const Request& request, const EventSink& event) {
         if (!script_output.is_null())
           result["script_output"] = script_output;
         results.push_back(result);
+        if (index + 1 == plans.size())
+          selected = *built;
         if (!existing)
           event("session-created", result);
         event("workspace-completed", result);
@@ -915,6 +996,7 @@ Json execute(const Request& request, const EventSink& event) {
     } catch (const Failure& error) {
       if (error.code == "OUTPUT_CLOSED")
         throw;
+      failure_status = error.exit_code;
       Json problem{{"code", error.code},
                    {"message", error.what()},
                    {"input_index", active_input},
@@ -943,7 +1025,16 @@ Json execute(const Request& request, const EventSink& event) {
         {"schema_version", 1}, {"command", "load"},
         {"status", status},    {"exit_code", errors.empty() ? 0 : failure_status},
         {"results", results},  {"errors", errors}};
-    return summary;
+    Execution execution{.value = std::move(summary)};
+    if (interactive && errors.empty() && selected) {
+      try {
+        execution.handoff = load_handoff(*selected, std::move(caller));
+      } catch (Failure& error) {
+        error.retained_state = std::move(execution.value);
+        throw;
+      }
+    }
+    return execution;
   }
   throw Failure{1, "FEATURE_UNAVAILABLE", "command is not implemented"};
 }

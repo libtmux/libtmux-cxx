@@ -102,6 +102,20 @@ TEST(WorkspaceCli, LegacyColourFailsBeforeDocumentResolution) {
   }
 }
 
+TEST(WorkspaceCli, OrdinaryLoadRequiresTerminalBeforeDocumentResolution) {
+  Files files;
+  const auto result = invoke({"load", "missing.yaml"});
+  EXPECT_EQ(result.code, 2);
+  EXPECT_TRUE(result.out.empty());
+  EXPECT_NE(result.err.find("terminal"), std::string::npos) << result.err;
+  for (const auto* mode : {"--json", "--ndjson"}) {
+    const auto machine = invoke({"load", "missing.yaml", mode});
+    EXPECT_EQ(machine.code, 2);
+    EXPECT_TRUE(machine.out.empty());
+    EXPECT_EQ(Json::parse(machine.err).at("code"), "USAGE");
+  }
+}
+
 TEST(WorkspaceCliTmux, BeforeScriptsValidateEveryInputBeforeMutation) {
   Files files;
   auto fixture = libtmux::test::ScopedTmuxServer::start(
@@ -529,17 +543,96 @@ TEST(WorkspaceCliTmux, FailedEventDeliveryRetainsCompletedSessionAccounting) {
                  {"d", {"true"}},
                  {"S", {fixture->socket_path().string()}}},
       .ndjson = true};
-  const auto result = libtmux::workspace::cli::execute(
+  const auto execution = libtmux::workspace::cli::execute(
       request, [](const std::string& event, const libtmux::workspace::cli::Json&) {
         if (event == "session-created")
           throw std::runtime_error{"event sink failed"};
       });
+  const auto& result = execution.value;
   EXPECT_EQ(result.at("status"), "partial");
   ASSERT_EQ(result.at("results").size(), 1U);
   EXPECT_EQ(result.at("results")[0].at("session_name"), "retained");
   const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
   ASSERT_TRUE(server.has_value());
   EXPECT_TRUE(server->session("=retained:").has_value());
+}
+
+TEST(WorkspaceCliTmux, FailedPublicationRetainsSessionsAndPrimaryStatus) {
+  Files files;
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-output")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value());
+  struct FailedFlush : std::stringbuf {
+    int sync() override { return -1; }
+  };
+  for (const bool diagnostic_failure : {false, true}) {
+    const std::string name = diagnostic_failure ? "error-closed" : "output-closed";
+    std::ofstream{"output.yaml"} << "session_name: " << name << "\nwindows: [{}]\n";
+    FailedFlush buffer;
+    std::ostream broken{&buffer};
+    broken.exceptions(std::ios::badbit);
+    std::ostringstream working;
+    std::istringstream input;
+    EXPECT_EQ(libtmux::workspace::cli::run({"load", "output.yaml", "-d", "-S",
+                                            fixture->socket_path().string(), "--json"},
+                                           input, diagnostic_failure ? working : broken,
+                                           diagnostic_failure ? broken : working),
+              1);
+    ASSERT_TRUE(server->session("=" + name + ":").has_value());
+    const auto published = Json::parse(working.str());
+    if (diagnostic_failure)
+      EXPECT_EQ(published.at("results")[0].at("session_name"), name);
+    else
+      EXPECT_EQ(published.at("retained_state").at("results")[0].at("session_name"),
+                name);
+  }
+  const auto borrowed = server->session("=error-closed:");
+  ASSERT_TRUE(borrowed.has_value());
+  const auto pane = borrowed->active_pane();
+  ASSERT_TRUE(pane.has_value());
+  const auto pid = pane->expand("#{pid}");
+  ASSERT_TRUE(pid.has_value());
+  libtmux::test::EnvironmentGuard tmux{"TMUX", fixture->socket_path().string() + "," +
+                                                   *pid + ",0"};
+  libtmux::test::EnvironmentGuard current_pane{"TMUX_PANE", pane->id()};
+  std::ofstream{"output.yaml"}
+      << "session_name: append\nbefore_script: /bin/false\nwindows: [{}]\n";
+  FailedFlush buffer;
+  std::ostream broken{&buffer};
+  std::istringstream input;
+  std::ostringstream diagnostic;
+  EXPECT_EQ(libtmux::workspace::cli::run({"load", "output.yaml", "--append", "--json"},
+                                         input, broken, diagnostic),
+            1);
+  std::istringstream lines{diagnostic.str()};
+  std::string line;
+  Json last;
+  while (std::getline(lines, line))
+    last = Json::parse(line);
+  const auto state = last.at("retained_state");
+  EXPECT_EQ(state.at("status"), "partial");
+  EXPECT_TRUE(state.at("results").empty());
+  EXPECT_EQ(state.at("errors")[0].at("retained_state").at("session_id"),
+            borrowed->id());
+  EXPECT_TRUE(server->session(borrowed->id()).has_value());
+  std::ofstream{"output.yaml"}
+      << "session_name: interrupted\nbefore_script: /bin/sh -c 'kill -TERM $$'\n"
+         "windows: [{}]\n";
+  for (const bool throwing : {false, true}) {
+    FailedFlush interrupted_buffer;
+    std::ostream interrupted_output{&interrupted_buffer};
+    if (throwing)
+      interrupted_output.exceptions(std::ios::badbit);
+    std::ostringstream interrupted_error;
+    EXPECT_EQ(libtmux::workspace::cli::run({"load", "output.yaml", "-d", "-S",
+                                            fixture->socket_path().string(), "--json"},
+                                           input, interrupted_output,
+                                           interrupted_error),
+              143);
+    EXPECT_FALSE(server->session("=interrupted:").has_value());
+  }
 }
 
 TEST(WorkspaceCliTmux, PartialLoadReportsFailureAndPreservesCompletedSession) {

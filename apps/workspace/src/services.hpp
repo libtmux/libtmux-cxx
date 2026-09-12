@@ -41,6 +41,10 @@ struct Request {
   }
 };
 using EventSink = std::function<void(const std::string&, Json)>;
+struct Execution {
+  Json value;
+  std::function<void()> handoff{};
+};
 struct ChildOutput {
   int code;
   std::string out;
@@ -56,6 +60,7 @@ struct ChildOutput {
 struct ChildOptions {
   bool terminal{};
   bool terminate_descendants{};
+  bool terminal_required{};
   std::optional<std::chrono::milliseconds> timeout{std::chrono::seconds{5}};
   std::string directory{};
   std::function<void(std::string_view, std::string_view)> output{};
@@ -63,7 +68,8 @@ struct ChildOptions {
 std::vector<std::string> split_command(const std::string& value);
 ChildOutput run_child(const std::vector<std::string>& arguments,
                       ChildOptions options = {});
-Json execute(const Request& request, const EventSink& event);
+void require_terminal();
+Execution execute(const Request& request, const EventSink& event);
 std::string encoded(const Json& value, int indent = -1);
 std::string human_result(const Request& request, const Json& result, bool colour);
 void validate(const Request& request);

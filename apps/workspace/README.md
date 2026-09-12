@@ -32,7 +32,7 @@ $ build/cxx-dev/apps/workspace/tmux-workspace --command-tree
 ## Current commands
 
 `ls`, `search`, `edit`, `convert`, `import teamocil`, `import tmuxinator`, `debug-info`,
-`load -d`, `load --append` and `freeze` have native services. Ordinary search
+`load` and `freeze` have native services. Ordinary search
 uses C++ ECMAScript regular expressions without Python. Whole-word matching
 groups alternatives.
 Python-only expressions are not supported yet.
@@ -47,6 +47,19 @@ workspace windows. A startup identity error reports any unverified bootstrap
 that may remain. Startup uses a five-second process timeout.
 `-2` selects 256-colour mode. Legacy `-8` is rejected before reading a workspace
 or reaching tmux because supported tmux versions do not provide 88-colour mode.
+
+Ordinary human load attaches from a foreground terminal, or switches the unique
+terminal client viewing the invoking tmux pane. Multiple clients require `-d`.
+After all inputs succeed, the final input selects the session, including a reused
+session. Load publishes and flushes both output streams before handoff. Handoff
+failure leaves loaded changes intact; a later output failure preserves an
+existing nonzero load status and reports the completed summary when possible.
+
+Attachment requires a standard descriptor identifying the concrete controlling
+tty. If all three standard streams are redirected, use `-d`. JSON/NDJSON requires
+`-d` or `--append`. Terminal and caller checks precede mutation. The client is
+checked again before switching, but tmux's name-targeted switch leaves a race
+after that check.
 
 Inside tmux, `--append` adds windows to the current pane's session after
 verifying its server identity. `-d` takes precedence if both flags are given.
@@ -72,6 +85,7 @@ sessions and ends with one completed or failed result. Machine diagnostics use
 stderr. Captured control bytes stay inside escaped JSON strings. Saving uses
 an exclusively created temporary file; replacing an existing destination
 requires `--force`.
+Failed event delivery during building can still omit details of retained changes.
 
 ## Before scripts
 
@@ -109,9 +123,9 @@ Custom input streams supplied to the callable CLI use captured process I/O.
 
 ## Remaining work
 
-Terminal attachment, Python process services,
-progress/logging, shell completion, full configuration/import/capture coverage
-and supported-platform packaging remain incomplete. Editor suspend/resume job
+Python process services, progress/logging, shell completion, full
+configuration/import/capture coverage and supported-platform packaging remain
+incomplete. Terminal suspend/resume job
 control and non-Linux terminal behavior still need verification. The corresponding
 process commands and lifecycle flags return explicit unavailable errors. The parser
 includes their intended grammar so generated metadata can be reviewed; their
@@ -144,11 +158,13 @@ $ python3 apps/workspace/tools/verify_cli.py \
     --output /tmp/cxx-workspace-verification.json
 ```
 
-The editor verifier uses a real controlling terminal, redirected machine
-stdout, cancellation and an unbounded writer. It opens no tmux server.
+The process verifier uses a real controlling terminal, redirected machine
+stdout, cancellation and an unbounded writer. `--load` adds private tmux servers
+for attachment, client selection, retained changes and closed-output checks.
 
 ```console
 $ python3 apps/workspace/tools/verify_process.py \
     --binary /tmp/cxx-workspace-install/bin/tmux-workspace \
+    --load \
     --output /tmp/cxx-workspace-process.json
 ```

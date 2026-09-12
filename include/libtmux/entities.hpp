@@ -1028,7 +1028,8 @@ public:
       std::string_view{"client_readonly"}, std::string_view{"client_tty"},
       std::string_view{"client_width"},    std::string_view{"client_height"},
       std::string_view{"client_created"},  std::string_view{"client_activity"},
-      std::string_view{"client_termname"}, std::string_view{"client_control_mode"}};
+      std::string_view{"client_termname"}, std::string_view{"client_control_mode"},
+      std::string_view{"client_pid"},      std::string_view{"pane_id"}};
 
   Client(std::shared_ptr<const Snapshot> snapshot, std::size_t row) noexcept
       : Row{std::move(snapshot), row} {}
@@ -1055,6 +1056,8 @@ public:
   [[nodiscard]] std::string_view terminal() const noexcept { return value(8); }
   /// A control-mode client is a program driving tmux, not a terminal.
   [[nodiscard]] bool control_mode() const noexcept { return detail::to_flag(value(9)); }
+  [[nodiscard]] long long pid() const noexcept { return detail::to_number(value(10)); }
+  [[nodiscard]] std::string_view active_pane_id() const noexcept { return value(11); }
 
   /// Two values are the same client when they name the same terminal on the
   /// same connection.
@@ -1238,6 +1241,10 @@ inline constexpr NumberFieldHandle<Client> last_activity{
     {Client::kFields[7], [](const Client& row) {
        return static_cast<long long>(row.last_activity().time_since_epoch().count());
      }}};
+inline constexpr NumberFieldHandle<Client> pid{
+    {Client::kFields[10], [](const Client& row) { return row.pid(); }}};
+inline constexpr StringFieldHandle<Client> active_pane_id{
+    {Client::kFields[11], [](const Client& row) { return row.active_pane_id(); }}};
 
 } // namespace client
 
