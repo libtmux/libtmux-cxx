@@ -177,8 +177,9 @@ TEST(WorkspaceCliTmux, LayoutCorpusPreservesTmuxCompatibilityAndTheExistingSessi
     EXPECT_EQ(result.code, valid ? 0 : 1) << result.out << result.err;
     const auto session = server->session("layout-corpus");
     EXPECT_EQ(session.has_value(), valid);
-    if (session)
+    if (session) {
       ASSERT_TRUE(session->kill().has_value());
+    }
     ASSERT_TRUE(server->session("libtmux_test").has_value());
   }
 }
@@ -245,7 +246,7 @@ TEST(WorkspaceCliTmux, LogFilesFilterRecordsWithoutChangingResults) {
       const auto result =
           invoke({"--log-level", level, "load", "logged.json", "-d", "-S",
                   fixture->socket_path().string(), "--json", "--log-file", path});
-      EXPECT_EQ(result.code, failed ? 143 : 0) << result.err;
+      ASSERT_EQ(result.code, failed ? 143 : 0) << result.err;
       EXPECT_EQ(server->session("=" + name + ":").has_value(), !failed);
       const auto summary = Json::parse(result.out);
       const auto& item = summary.at(failed ? "errors" : "results")[0];
@@ -291,8 +292,9 @@ TEST(WorkspaceCliTmux, LogFilesFilterRecordsWithoutChangingResults) {
       }
       EXPECT_EQ(completed, std::string_view{level} != "critical");
       EXPECT_EQ(stdout_record && stderr_record, std::string_view{level} == "debug");
-      if (std::string_view{level} == "critical")
+      if (std::string_view{level} == "critical") {
         EXPECT_EQ(records, 0);
+      }
     }
   }
 }
@@ -319,8 +321,9 @@ TEST(WorkspaceCliTmux, LogFileRefusalPrecedesMutation) {
     EXPECT_NE(result.err.find("LOG_FILE_UNAVAILABLE"), std::string::npos);
     const auto created = server->session("=blocked:");
     EXPECT_FALSE(created.has_value());
-    if (created)
+    if (created) {
       ASSERT_TRUE(created->kill().has_value());
+    }
   }
   std::string retained;
   std::ifstream{"regular"} >> retained;
@@ -480,7 +483,9 @@ TEST(WorkspaceCli, EditorKeepsQuotedArgumentsAndChildStatus) {
   const auto document = Json::parse(result.out);
   EXPECT_EQ(document.at("exit_code"), 7);
   EXPECT_EQ(document.at("stdout"),
-            "a\\q$`xy\n" + (files.directory / "dev.yaml").string() + "\n");
+            "a\\q$`xy\n" +
+                std::filesystem::canonical(files.directory / "dev.yaml").string() +
+                "\n");
   EXPECT_EQ(document.at("stderr"), "child error");
   EXPECT_TRUE(result.err.empty());
   libtmux::test::EnvironmentGuard malformed{"EDITOR", "/bin/sh 'unfinished"};
@@ -837,8 +842,9 @@ TEST(WorkspaceCliTmux, FailedScriptEventsRetainEffectsAndKnownStatus) {
                          later_started = true;
                        if (event == rejected_event) {
                          rejected = true;
-                         if (event == "script-completed")
+                         if (event == "script-completed") {
                            EXPECT_EQ(value.at("script_output").at("exit_code"), 143);
+                         }
                          throw libtmux::workspace::cli::Failure{
                              1, "OUTPUT_CLOSED", "script event sink closed"};
                        }
