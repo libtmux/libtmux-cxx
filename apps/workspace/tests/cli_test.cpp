@@ -10,6 +10,7 @@
 #include <map>
 #include <optional>
 #include <sstream>
+#include <sys/stat.h>
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -152,6 +153,137 @@ TEST(WorkspaceCliTmux, BeforeScriptsValidateEveryInputBeforeMutation) {
     EXPECT_FALSE(server->session("=script-invalid:").has_value());
     EXPECT_FALSE(std::filesystem::exists("ran-script"));
   }
+}
+
+TEST(WorkspaceCliTmux, LogFilesFilterRecordsWithoutChangingResults) {
+  Files files;
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-log")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value());
+  for (const auto* level : {"info", "debug", "critical"}) {
+    for (const bool failed : {false, true}) {
+      const auto name = std::string{level} + (failed ? "-failed" : "-success");
+      SCOPED_TRACE(name);
+      std::ofstream{"logged.json"} << Json{
+          {"session_name", name},
+          {"before_script",
+           std::string{"/bin/sh -c 'printf captured-out; printf captured-err >&2; "} +
+               (failed ? "kill -TERM $$'" : "exit 0'")},
+          {"windows", Json::array({Json::object()})}};
+      const auto path = name + ".log";
+      const bool existing = std::string_view{level} == "info";
+      if (existing) {
+        std::ofstream{path} << "retained\n";
+        ASSERT_EQ(::chmod(path.c_str(), 0640), 0);
+      }
+      const auto result =
+          invoke({"--log-level", level, "load", "logged.json", "-d", "-S",
+                  fixture->socket_path().string(), "--json", "--log-file", path});
+      EXPECT_EQ(result.code, failed ? 143 : 0) << result.err;
+      EXPECT_EQ(server->session("=" + name + ":").has_value(), !failed);
+      const auto summary = Json::parse(result.out);
+      const auto& item = summary.at(failed ? "errors" : "results")[0];
+      EXPECT_EQ(item.at("script_output").at("stdout"), "captured-out");
+      EXPECT_EQ(item.at("script_output").at("stderr"), "captured-err");
+      if (failed)
+        EXPECT_EQ(Json::parse(result.err).at("code"), "BEFORE_SCRIPT_FAILED");
+      else
+        EXPECT_TRUE(result.err.empty());
+      std::ifstream file{path};
+      EXPECT_TRUE(file.is_open()) << "log file was not created";
+      if (!file)
+        continue;
+      struct stat metadata {};
+      ASSERT_EQ(::stat(path.c_str(), &metadata), 0);
+      EXPECT_EQ(metadata.st_mode & 0777, existing ? 0640 : 0600);
+      std::string line;
+      if (existing) {
+        ASSERT_TRUE(static_cast<bool>(std::getline(file, line)));
+        EXPECT_EQ(line, "retained");
+      }
+      bool completed{}, stdout_record{}, stderr_record{};
+      int records{};
+      while (std::getline(file, line)) {
+        ++records;
+        const auto record = Json::parse(line);
+        EXPECT_EQ(record.at("command"), "load");
+        const auto event = record.value("event", "");
+        completed |= event == (failed ? "failed" : "completed");
+        if (event == "script-completed") {
+          EXPECT_EQ(record.at("data").at("exit_code"), failed ? 143 : 0);
+          EXPECT_EQ(record.at("data").at("truncated"), false);
+        }
+        if (event == "script-output") {
+          EXPECT_EQ(record.at("severity"), "debug");
+          stdout_record |= record.at("data").at("stream") == "stdout";
+          stderr_record |= record.at("data").at("stream") == "stderr";
+        } else {
+          EXPECT_EQ(line.find("captured-out"), std::string::npos);
+          EXPECT_EQ(line.find("captured-err"), std::string::npos);
+          EXPECT_EQ(line.find("script_output"), std::string::npos);
+        }
+      }
+      EXPECT_EQ(completed, std::string_view{level} != "critical");
+      EXPECT_EQ(stdout_record && stderr_record, std::string_view{level} == "debug");
+      if (std::string_view{level} == "critical")
+        EXPECT_EQ(records, 0);
+    }
+  }
+}
+
+TEST(WorkspaceCliTmux, LogFileRefusalPrecedesMutation) {
+  Files files;
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-log")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value());
+  std::ofstream{"logged.yaml"} << "session_name: blocked\nwindows: [{}]\n";
+  std::ofstream{"regular"} << "untouched";
+  std::filesystem::create_directory("directory");
+  std::filesystem::create_symlink("regular", "link");
+  ASSERT_EQ(::mkfifo("fifo", 0600), 0);
+  for (const auto* path : {"missing/log", "directory", "link", "fifo", "/dev/null"}) {
+    SCOPED_TRACE(path);
+    const auto result =
+        invoke({"--log-level", "critical", "load", "logged.yaml", "-d", "-S",
+                fixture->socket_path().string(), "--json", "--log-file", path});
+    EXPECT_EQ(result.code, 1);
+    EXPECT_TRUE(result.out.empty());
+    EXPECT_NE(result.err.find("LOG_FILE_UNAVAILABLE"), std::string::npos);
+    const auto created = server->session("=blocked:");
+    EXPECT_FALSE(created.has_value());
+    if (created)
+      ASSERT_TRUE(created->kill().has_value());
+  }
+  std::string retained;
+  std::ifstream{"regular"} >> retained;
+  EXPECT_EQ(retained, "untouched");
+  EXPECT_EQ(invoke({"load", "--log-file", "missing/log", "--help"}).code, 0);
+  const auto invalid = invoke({"--log-level", "invalid", "load", "logged.yaml",
+                               "--log-file", "unexpected.log", "--json"});
+  EXPECT_EQ(invalid.code, 2);
+  EXPECT_FALSE(std::filesystem::exists("unexpected.log"));
+}
+
+TEST(WorkspaceCliTmux, LogLevelFiltersOnlyOptionalDiagnostics) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-log")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  for (const auto* level : {"warning", "critical"}) {
+    const auto result =
+        invoke({"--log-level", level, "freeze", std::string{fixture->session_name()},
+                "-S", fixture->socket_path().string(), "--json"});
+    EXPECT_EQ(result.code, 0);
+    EXPECT_FALSE(result.out.empty());
+    EXPECT_EQ(result.err.empty(), std::string_view{level} == "critical");
+  }
+  const auto failed = invoke({"--log-level", "critical", "freeze", "=absent:", "-S",
+                              fixture->socket_path().string(), "--json"});
+  EXPECT_EQ(failed.code, 1);
+  EXPECT_FALSE(failed.err.empty());
 }
 
 TEST(WorkspaceCliTmux, BeforeScriptsRetainOutputAndRespectSessionOwnership) {
@@ -712,11 +844,13 @@ TEST(WorkspaceCliTmux, FailedPublicationRetainsSessionsAndPrimaryStatus) {
     broken.exceptions(std::ios::badbit);
     std::ostringstream working;
     std::istringstream input;
-    EXPECT_EQ(libtmux::workspace::cli::run({"load", "output.yaml", "-d", "-S",
-                                            fixture->socket_path().string(), "--json"},
-                                           input, diagnostic_failure ? working : broken,
-                                           diagnostic_failure ? broken : working),
-              1);
+    EXPECT_EQ(
+        libtmux::workspace::cli::run({"--log-level", "info", "load", "--log-file",
+                                      "publication.log", "output.yaml", "-d", "-S",
+                                      fixture->socket_path().string(), "--json"},
+                                     input, diagnostic_failure ? working : broken,
+                                     diagnostic_failure ? broken : working),
+        1);
     ASSERT_TRUE(server->session("=" + name + ":").has_value());
     const auto published = Json::parse(working.str());
     if (diagnostic_failure)
@@ -740,7 +874,9 @@ TEST(WorkspaceCliTmux, FailedPublicationRetainsSessionsAndPrimaryStatus) {
   std::ostream broken{&buffer};
   std::istringstream input;
   std::ostringstream diagnostic;
-  EXPECT_EQ(libtmux::workspace::cli::run({"load", "output.yaml", "--append", "--json"},
+  EXPECT_EQ(libtmux::workspace::cli::run({"--log-level", "info", "load", "--log-file",
+                                          "publication.log", "output.yaml", "--append",
+                                          "--json"},
                                          input, broken, diagnostic),
             1);
   std::istringstream lines{diagnostic.str()};
@@ -763,13 +899,22 @@ TEST(WorkspaceCliTmux, FailedPublicationRetainsSessionsAndPrimaryStatus) {
     if (throwing)
       interrupted_output.exceptions(std::ios::badbit);
     std::ostringstream interrupted_error;
-    EXPECT_EQ(libtmux::workspace::cli::run({"load", "output.yaml", "-d", "-S",
-                                            fixture->socket_path().string(), "--json"},
-                                           input, interrupted_output,
-                                           interrupted_error),
-              143);
+    EXPECT_EQ(
+        libtmux::workspace::cli::run({"--log-level", "info", "load", "--log-file",
+                                      "publication.log", "output.yaml", "-d", "-S",
+                                      fixture->socket_path().string(), "--json"},
+                                     input, interrupted_output, interrupted_error),
+        143);
     EXPECT_FALSE(server->session("=interrupted:").has_value());
   }
+  std::ifstream log{"publication.log"};
+  ASSERT_TRUE(log.is_open());
+  bool publication_failure{};
+  while (std::getline(log, line)) {
+    const auto record = Json::parse(line);
+    publication_failure |= record.value("code", "") == "OUTPUT_CLOSED";
+  }
+  EXPECT_TRUE(publication_failure);
 }
 
 TEST(WorkspaceCliTmux, PartialLoadReportsFailureAndPreservesCompletedSession) {

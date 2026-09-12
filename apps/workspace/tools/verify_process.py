@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise workspace editor processes through a real controlling terminal."""
+"""Exercise workspace process ownership, terminal handoff and log failures."""
 
 import argparse
 import hashlib
@@ -11,6 +11,7 @@ import select
 import shlex
 import signal
 import subprocess
+import sys
 import tempfile
 import termios
 import time
@@ -180,7 +181,7 @@ def output_limit(binary, root, env):
             process.wait(timeout=1)
 
 
-def terminal_load(binary, root, env, mode="detach"):
+def terminal_load(binary, root, env, mode="detach", *, logging=False):
     """Publish loaded results before attaching, then retain the loaded session."""
     root.mkdir()
     socket = str(root / "tmux.sock")
@@ -193,6 +194,11 @@ def terminal_load(binary, root, env, mode="detach"):
         timeout=2,
     )
     (root / "load.yaml").write_text("session_name: loaded\nwindows: [{}]\n")
+    arguments = [binary, "load", "-S", socket, str(root / "load.yaml")]
+    if logging:
+        (root / "load.log").write_bytes(b"x" * 2047 + b"\n")
+        arguments[1:1] = ["--log-level", "info"]
+        arguments.extend(["--log-file", str(root / "load.log")])
     output_read, output_write = os.pipe()
     pid, terminal = pty.fork()
     if pid == 0:
@@ -206,7 +212,7 @@ def terminal_load(binary, root, env, mode="detach"):
             reader, closed = os.pipe()
             os.close(reader)
         process = subprocess.Popen(
-            [binary, "load", "-S", socket, str(root / "load.yaml")],
+            with_log_limit(arguments) if logging else arguments,
             env=env,
             stdin=subprocess.DEVNULL if mode == "unavailable" else None,
             stdout=closed,
@@ -310,6 +316,9 @@ def terminal_load(binary, root, env, mode="detach"):
         assert retained.returncode == (1 if mode == "unavailable" else 0)
         if mode == "closed":
             assert b"Retained state:" in output, output
+        if logging:
+            assert output.count(b"log file disabled") == 1, output
+            assert (root / "load.log").stat().st_size == 2048
         return {"status": "PASS", "exit_code": code, **state}
     finally:
         if not reaped:
@@ -561,12 +570,205 @@ def terminal_switch(binary, root, env, mode):
             os.close(descriptor)
 
 
+def with_log_limit(arguments):
+    """Set EFBIG behavior inside the owned process, then exec the actual CLI."""
+    return [
+        sys.executable,
+        "-c",
+        (
+            "import os, resource, signal, sys\n"
+            "signal.signal(signal.SIGXFSZ, signal.SIG_IGN)\n"
+            "resource.setrlimit(resource.RLIMIT_FSIZE, (2048, 2048))\n"
+            "os.execv(sys.argv[1], sys.argv[1:])\n"
+        ),
+        *arguments,
+    ]
+
+
+def failed_log_file(binary, root, env, mode):
+    """Keep process completion and workspace ownership after a real file error."""
+    root.mkdir()
+    command = ["tmux", "-S", str(root / "tmux.sock")]
+    env = dict(env, TMUX="", TMUX_PANE="")
+    subprocess.run(
+        [*command, "-f", "/dev/null", "new-session", "-d", "-s", "keeper"],
+        env=env,
+        check=True,
+        timeout=2,
+    )
+    borrowed = mode == "borrowed"
+    failed = mode in {"failed", "failed-stderr", "failed-stdout", "borrowed", "cancel"}
+    (root / "first.yaml").write_text("session_name: first\nwindows: [{}]\n")
+    (root / "script.sh").write_text(
+        "echo $$ >script.pid\n"
+        "head -c 8192 /dev/zero | tr '\\000' x\n"
+        "printf captured-err >&2\n"
+        + ("exec sleep 30\n" if mode == "cancel" else "printf done >finished\n")
+        + ("kill -TERM $$\n" if failed and mode != "cancel" else "")
+    )
+    (root / "second.json").write_text(
+        json.dumps(
+            {
+                "session_name": "second",
+                "before_script": "/bin/sh script.sh",
+                "windows": [{}],
+            }
+        )
+    )
+    if borrowed:
+        values = (
+            subprocess.run(
+                [
+                    *command,
+                    "display-message",
+                    "-p",
+                    "-t",
+                    "=keeper:",
+                    "#{pid},#{pane_id}",
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=1,
+            )
+            .stdout.strip()
+            .split(",")
+        )
+        env.update(TMUX=f"{command[2]},{values[0]},0", TMUX_PANE=values[1])
+    closed = None
+    if mode in {"stderr", "failed-stderr", "stdout", "failed-stdout"}:
+        reader, closed = os.pipe()
+        os.close(reader)
+    process = None
+    try:
+        process = subprocess.Popen(
+            with_log_limit(
+                [
+                    binary,
+                    "--log-level",
+                    "debug",
+                    "load",
+                    "first.yaml",
+                    "second.json",
+                    "--append" if borrowed else "-d",
+                    "-S",
+                    command[2],
+                    "--json",
+                    "--log-file",
+                    "operation.log",
+                ]
+            ),
+            cwd=root,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=closed if mode.endswith("stdout") else subprocess.PIPE,
+            stderr=closed if mode.endswith("stderr") else subprocess.PIPE,
+            start_new_session=True,
+        )
+        if mode == "cancel":
+            deadline = time.monotonic() + 2
+            while (
+                not (root / "operation.log").exists()
+                or (root / "operation.log").stat().st_size < 2048
+            ):
+                assert time.monotonic() < deadline, "log write did not reach its limit"
+                time.sleep(0.005)
+            process.send_signal(signal.SIGTERM)
+        output, diagnostic = process.communicate(timeout=3)
+        expected = 143 if failed else 1 if mode == "stdout" else 0
+        assert process.returncode == expected, (process.returncode, output, diagnostic)
+        if mode != "cancel":
+            assert (root / "finished").read_text() == "done"
+        child = int((root / "script.pid").read_text())
+        try:
+            os.kill(child, 0)
+        except ProcessLookupError:
+            pass
+        else:
+            message = "owned script remains alive"
+            raise AssertionError(message)
+        sessions = subprocess.run(
+            [*command, "list-sessions", "-F", "#{session_name}"],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=1,
+        ).stdout.splitlines()
+        assert set(sessions) == (
+            {"keeper"}
+            if borrowed
+            else {"keeper", "first"}
+            if failed
+            else {"keeper", "first", "second"}
+        ), sessions
+        windows = subprocess.run(
+            [*command, "list-windows", "-a", "-F", "#{window_id}"],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=1,
+        ).stdout.splitlines()
+        assert len(windows) == (2 if borrowed or failed else 3), windows
+        if output:
+            result = json.loads(output)
+            assert result["exit_code"] == (143 if failed else 0)
+            assert len(result["results"]) == (1 if failed else 2)
+            script = result["errors" if failed else "results"][-1]["script_output"]
+            if mode != "cancel":
+                assert script["stdout"] == "x" * 8192
+                assert script["stderr"] == "captured-err"
+        if diagnostic is not None:
+            records = [json.loads(line) for line in diagnostic.splitlines()]
+            assert (
+                sum(record["code"] == "LOG_FILE_WRITE_FAILED" for record in records)
+                == 1
+            ), records
+            if mode.endswith("stdout"):
+                retained = next(
+                    record["retained_state"]
+                    for record in records
+                    if "retained_state" in record
+                )
+                assert len(retained["results"]) == (1 if failed else 2)
+        log = (root / "operation.log").read_bytes()
+        assert (
+            len(log) == 2048 and json.loads(log.splitlines()[0])["event"] == "started"
+        )
+        return {
+            "status": "PASS",
+            "exit_code": process.returncode,
+            "log_bytes": len(log),
+        }
+    finally:
+        if closed is not None:
+            os.close(closed)
+        if process is not None and process.poll() is None:
+            marker = root / "script.pid"
+            if marker.exists():
+                with suppress(ProcessLookupError):
+                    os.killpg(int(marker.read_text()), signal.SIGKILL)
+            with suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+            process.communicate(timeout=1)
+        subprocess.run(
+            [*command, "kill-server"],
+            env=env,
+            capture_output=True,
+            check=False,
+            timeout=1,
+        )
+
+
 def main():
     """Verify process behavior, optionally using an owned tmux server for load."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=pathlib.Path, required=True)
     parser.add_argument("--output", type=pathlib.Path)
     parser.add_argument("--load", action="store_true")
+    parser.add_argument("--logging", action="store_true")
     args = parser.parse_args()
     binary = str(args.binary.resolve(strict=True))
     started = time.monotonic()
@@ -581,14 +783,34 @@ def main():
             "IFS= read -r answer\nprintf '%s' \"$answer\" >answer\nexit 7\n"
         )
         env = dict(os.environ, EDITOR=f"/bin/sh {script}", VISUAL="")
-        report = {
-            "terminal_editor": terminal_edit(binary, root, env),
-            "terminal_editor_cancellation": terminal_edit(
-                binary, root, env, cancelled=True
-            ),
-            "owned_child_cancellation": cancellation(binary, root, env),
-            "captured_output_limit": output_limit(binary, root, env),
-        }
+        report = (
+            {}
+            if args.logging
+            else {
+                "terminal_editor": terminal_edit(binary, root, env),
+                "terminal_editor_cancellation": terminal_edit(
+                    binary, root, env, cancelled=True
+                ),
+                "owned_child_cancellation": cancellation(binary, root, env),
+                "captured_output_limit": output_limit(binary, root, env),
+            }
+        )
+        if args.logging:
+            for mode in (
+                "success",
+                "failed",
+                "stderr",
+                "failed-stderr",
+                "stdout",
+                "failed-stdout",
+                "borrowed",
+                "cancel",
+            ):
+                report["log_" + mode] = failed_log_file(binary, root / mode, env, mode)
+            for mode in ("detach", "cancel"):
+                report["log_terminal_" + mode] = terminal_load(
+                    binary, root / ("terminal-" + mode), env, mode, logging=True
+                )
         if args.load:
             for mode in ("detach", "cancel", "unavailable", "closed"):
                 report["terminal_load_" + mode] = terminal_load(
