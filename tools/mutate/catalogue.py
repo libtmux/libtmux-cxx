@@ -663,6 +663,17 @@ CATALOGUE: t.Final = (
         "spellings cannot show a caller different panes",
     ),
     Mutation(
+        mutation_id="failure-text-exit-status",
+        path="include/libtmux/command.hpp",
+        find="  if (failure.delivery == DeliveryStatus::replied && "
+        "failure.exit_code != 0 &&\n      failure.exit_code != -1) {",
+        replace="  if (failure.exit_code != 0) {",
+        target="libtmux_value_semantics_test",
+        test_regex=r"^libtmux[.]value_semantics[.]",
+        guards="a failure that never reached tmux prints no exit status, rather "
+        "than reporting the backend's -1 as a code tmux returned",
+    ),
+    Mutation(
         mutation_id="failure-text-delivery",
         path="include/libtmux/command.hpp",
         find="  text += to_string(failure.delivery);",

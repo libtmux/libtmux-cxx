@@ -95,7 +95,13 @@ struct CommandFailure {
     text += failure.diagnostic;
   }
   text += " (";
-  if (failure.exit_code != 0) {
+  // Only a command tmux answered has an exit status, and even then a child
+  // that died from a signal has none: the transport writes -1 for the absence
+  // of a status in both cases. The sign cannot stand in for that test, because
+  // a Windows child reports its status through an int32_t and a crash is
+  // legitimately negative.
+  if (failure.delivery == DeliveryStatus::replied && failure.exit_code != 0 &&
+      failure.exit_code != -1) {
     text += "exit ";
     text += std::to_string(failure.exit_code);
     text += ", ";
