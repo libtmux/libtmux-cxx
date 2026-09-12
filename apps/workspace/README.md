@@ -1,0 +1,95 @@
+# tmux-workspace
+
+This optional C++ application manages tmux workspaces using CLI11, yaml-cpp
+and nlohmann JSON. The implementation is partial. Core libtmux remains free of
+these dependencies.
+
+Build the application with the pinned development toolchain:
+
+```console
+$ cmake --preset cxx-dev \
+    -DLIBTMUX_BUILD_WORKSPACE_CLI=ON
+```
+
+```console
+$ cmake --build --preset cxx-dev \
+    --target tmux-workspace \
+    --parallel 2
+```
+
+Inspect the command reference without starting tmux:
+
+```console
+$ build/cxx-dev/apps/workspace/tmux-workspace --help
+```
+
+```console
+$ build/cxx-dev/apps/workspace/tmux-workspace --command-tree
+```
+
+## Current commands
+
+`ls`, `search`, `convert`, `import teamocil`, `import tmuxinator`, `debug-info`,
+`load -d` and `freeze` have native services. Ordinary search uses C++ ECMAScript
+regular expressions without Python. Whole-word matching groups alternatives.
+Python-only expressions are not supported yet.
+
+Load currently requires an existing tmux server. It creates sessions or reuses
+exact existing names. A session-name override
+applies to the final input. New sessions retain explicit window indexes,
+created object identities, command settings, environments and layouts. Failed
+builds remove their own session and preserve earlier successful inputs.
+Directories resolve against the configuration and parent directories. Scripts,
+plugins and custom builders remain unsupported and are rejected.
+
+Conversion preserves unknown document fields. Human conversion previews by
+default; `--yes` saves beside the source, and `--save-to` names a destination.
+Import currently covers names, directories, panes, pre-commands and layouts;
+additional importer fields still
+need implementation. Capture records current pane commands, directories,
+window names, indexes, focus and layouts. It warns that original arguments,
+history, scripts and plugins cannot be recovered. This build omits environment
+and options from captured documents.
+
+Each command accepts `--json` and `--ndjson` before or after its name. NDJSON
+wins when both are present. Load flushes operation events before creating
+sessions and ends with one completed or failed result. Machine diagnostics use
+stderr. Captured control bytes stay inside escaped JSON strings. Saving uses
+an exclusively created temporary file; replacing an existing destination
+requires `--force`.
+
+## Remaining work
+
+Cold-server startup, append, terminal attachment, tmux startup flags,
+editor/Python process services,
+progress/logging, shell completion, full configuration/import/capture coverage
+and supported-platform packaging remain incomplete. The corresponding process
+commands and lifecycle flags return explicit unavailable errors. The parser
+includes their intended grammar so generated metadata can be reviewed; their
+presence in help does not mean those services are finished.
+
+The application currently requires POSIX tmux. Run tests only with private
+sockets. The workspace fixture never reaches the default server.
+
+## Verification
+
+Run the native CLI unit and isolated lifecycle checks:
+
+```console
+$ ctest --preset cxx-dev \
+    -R '^consumer.workspace.cli' \
+    --output-on-failure \
+    --no-tests=error
+```
+
+The retained verifier checks an installed binary, uses a private socket and
+records raw repeated timings. Pass an installed tmuxp executable to compare
+matching startup, discovery, search and load/capture boundaries.
+
+```console
+$ python3 apps/workspace/tools/verify_cli.py \
+    --binary /tmp/cxx-workspace-install/bin/tmux-workspace \
+    --reference tmuxp \
+    --iterations 5 \
+    --output /tmp/cxx-workspace-verification.json
+```
