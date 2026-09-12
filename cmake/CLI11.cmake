@@ -14,7 +14,9 @@ function(libtmux_resolve_cli11)
     cli11
     URL https://github.com/CLIUtils/CLI11/archive/refs/tags/v2.7.2.tar.gz
     URL_HASH SHA256=46eef3101da70852ec7af026e09d485ccee81813331c8c6052d39344443b83da)
+  set(CLI11_PRECOMPILED ON CACHE INTERNAL "")
   set(CLI11_BUILD_TESTS OFF CACHE INTERNAL "")
   set(CLI11_BUILD_EXAMPLES OFF CACHE INTERNAL "")
   FetchContent_MakeAvailable(cli11)
+  target_compile_features(CLI11 PRIVATE cxx_std_${LIBTMUX_CXX_STANDARD})
 endfunction()
