@@ -1,8 +1,10 @@
 #pragma once
 
+#include <chrono>
 #include <functional>
 #include <iosfwd>
 #include <map>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -23,7 +25,7 @@ struct Request {
   std::string command;
   std::string importer;
   std::map<std::string, std::vector<std::string>> values;
-  bool json{}, ndjson{};
+  bool json{}, ndjson{}, terminal_allowed{};
   bool machine() const { return json || ndjson; }
   bool flag(const std::string& key) const { return values.contains(key); }
   std::string value(const std::string& key, std::string fallback = {}) const {
@@ -42,7 +44,10 @@ struct ChildOutput {
   std::string out;
   std::string err;
 };
-ChildOutput run_child(const std::vector<std::string>& arguments);
+std::vector<std::string> split_command(const std::string& value);
+ChildOutput
+run_child(const std::vector<std::string>& arguments, bool terminal = false,
+          std::optional<std::chrono::milliseconds> timeout = std::chrono::seconds{5});
 Json execute(const Request& request, const EventSink& event);
 std::string encoded(const Json& value, int indent = -1);
 std::string human_result(const Request& request, const Json& result, bool colour);

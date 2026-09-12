@@ -187,8 +187,9 @@ bool colour_enabled(const Request& request, std::ostream& output) {
 } // namespace
 int run(std::vector<std::string> arguments, std::istream& input, std::ostream& output,
         std::ostream& errors) {
-  (void)input;
   Request request;
+  // A supplied input stream does not authorize borrowing the process terminal.
+  request.terminal_allowed = &input == &std::cin;
   for (const auto& arg : arguments) {
     if (arg == "--")
       break;
@@ -238,8 +239,11 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
                                      "arguments, history, plugins or before scripts."}})
              << '\n';
     }
-    const bool failed = request.command == "load" && result.at("status") != "ok";
-    if (failed) {
+    const bool failed = (request.command == "load" || request.command == "edit") &&
+                        result.at("status") != "ok";
+    if (request.command == "edit" && !request.machine())
+      errors << result.at("stderr").get<std::string>();
+    if (failed && request.command == "load") {
       for (const auto& error : result.at("errors")) {
         if (request.machine())
           errors << encoded(error) << '\n';
@@ -248,7 +252,7 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
       }
     }
     if (request.ndjson) {
-      if (request.command == "load")
+      if (request.command == "load" || request.command == "edit")
         emit(failed ? "failed" : "completed", result);
       else if (request.command == "ls") {
         for (const auto& item : result.at("workspaces"))
@@ -262,6 +266,8 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
       output << encoded(result, 2) << '\n';
     else
       output << human_result(request, result, colour_enabled(request, output));
+    if (request.command == "edit" && output)
+      return result.at("exit_code").get<int>();
     return output && !failed ? 0 : 1;
   } catch (const CLI::ParseError& error) {
     if (error.get_exit_code() == 0)
