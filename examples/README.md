@@ -51,6 +51,7 @@ include paths and warning flags leaking into it.
 | [`04-errors.cpp`](04-errors.cpp) | What failure looks like | Every way a call can fail and what each one tells you. Nothing throws. |
 | [`05-readme.cpp`](05-readme.cpp) | The README, compiled | Every C++ sample in the top-level README lives here, so none of them can stop working. |
 | [`06-streaming.cpp`](06-streaming.cpp) | Watching instead of asking | A control connection held open, tmux's events read as they happen, and pane output as it is printed. Then the same stream from a program that owns its event loop, through the descriptor that goes readable when a take would return something. |
+| [`08-modes.cpp`](08-modes.cpp) | What a round trip costs | The same twelve windows built one command at a time and folded into a single chain, timed side by side, then checked to have built the same thing. |
 | [`07-windows-psmux.cpp`](07-windows-psmux.cpp) | The Windows preview | Connect to an existing session and make exact, read-only entity queries. Its [native runner](windows/README.md) also wraps the MCP server in an isolated fixture. |
 
 If you read one, read [`04-errors.cpp`](04-errors.cpp) second. The error model

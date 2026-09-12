@@ -38,7 +38,8 @@ if(TARGET libtmux_build_options)
   target_link_libraries(libtmux_example_support INTERFACE libtmux_build_options)
 endif()
 
-foreach(example 01-tour 02-workspace 03-filter 04-errors 05-readme 06-streaming)
+foreach(example 01-tour 02-workspace 03-filter 04-errors 05-readme 06-streaming
+                08-modes)
   string(REPLACE "-" "_" target "libtmux_example_${example}")
   add_executable(${target} "${example}.cpp")
   target_link_libraries(${target} PRIVATE libtmux_example_support)
