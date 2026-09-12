@@ -354,7 +354,7 @@ if (windows.has_value() && !windows->empty()) {
   std::ranges::sort(ordered, {}, libtmux::window::index);
 
   const auto active = std::ranges::count_if(ordered, libtmux::window::active);
-  const libtmux::Window& widest =
+  const libtmux::Window widest =
       std::ranges::max(ordered, {}, libtmux::window::width);
   std::cout << std::format("{} of {} active, widest {}\n", active, ordered.size(),
                            widest);
@@ -495,6 +495,24 @@ if (!gone.has_value()) {
 | `written` | the complete request reached the transport, but no terminal reply did |
 | `replied` | tmux produced a terminal reply |
 | `indeterminate` | the transport cannot prove whether tmux saw or completed it |
+
+One failure type covers the whole surface, so calls compose rather than nest:
+
+```cpp
+// One failure type covers the whole surface, so calls compose rather than
+// nest: each step runs only when the last one answered, and the first
+// failure is what comes out.
+const auto columns =
+    server.session(session.name())
+        .and_then([](const libtmux::Session& found) { return found.active_pane(); })
+        .transform([](const libtmux::Pane& active) { return active.width(); });
+std::cout << std::format("the active pane is {} columns wide\n",
+                         columns.value_or(-1));
+```
+
+A caller who wants an exception at a boundary asks for one: `.value()` throws
+`libtmux::bad_expected_access<CommandFailure>`, which names the same type in
+both builds. Nothing in the library throws it for them.
 
 ### Bounded asynchronous commands
 

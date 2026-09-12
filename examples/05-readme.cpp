@@ -160,7 +160,7 @@ int main() {
     std::ranges::sort(ordered, {}, libtmux::window::index);
 
     const auto active = std::ranges::count_if(ordered, libtmux::window::active);
-    const libtmux::Window& widest =
+    const libtmux::Window widest =
         std::ranges::max(ordered, {}, libtmux::window::width);
     std::cout << std::format("{} of {} active, widest {}\n", active, ordered.size(),
                              widest);
@@ -246,6 +246,18 @@ int main() {
     }
   }
   // #endregion errors
+
+  // #region compose
+  // One failure type covers the whole surface, so calls compose rather than
+  // nest: each step runs only when the last one answered, and the first
+  // failure is what comes out.
+  const auto columns =
+      server.session(session.name())
+          .and_then([](const libtmux::Session& found) { return found.active_pane(); })
+          .transform([](const libtmux::Pane& active) { return active.width(); });
+  std::cout << std::format("the active pane is {} columns wide\n",
+                           columns.value_or(-1));
+  // #endregion compose
 
   // #region async
   std::size_t observed = 0U;
