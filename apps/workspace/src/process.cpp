@@ -24,7 +24,7 @@ public:
   SignalGuard() {
     struct sigaction action {};
     action.sa_handler = interrupted;
-    ::sigemptyset(&action.sa_mask);
+    sigemptyset(&action.sa_mask);
     interrupted_signal = 0;
     if (::sigaction(SIGINT, &action, &interrupt_) != 0)
       throw Failure{1, "SIGNAL_HANDLER", "cannot install child interruption handler"};
@@ -49,8 +49,8 @@ class Terminal {
 
   bool foreground(pid_t group, bool restore_settings = false) const noexcept {
     sigset_t blocked, previous;
-    ::sigemptyset(&blocked);
-    ::sigaddset(&blocked, SIGTTOU);
+    sigemptyset(&blocked);
+    sigaddset(&blocked, SIGTTOU);
     if (::sigprocmask(SIG_BLOCK, &blocked, &previous) != 0)
       return false;
     const bool changed = ::tcsetpgrp(descriptor_, group) == 0;
