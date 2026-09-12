@@ -5,6 +5,7 @@
 #include <csignal>
 #include <cstring>
 #include <fcntl.h>
+#include <termios.h>
 #include <unistd.h>
 
 #include "process.hpp"
@@ -43,14 +44,17 @@ class Terminal {
   int descriptor_{-1};
   pid_t previous_{-1};
   pid_t child_{-1};
+  termios settings_{};
 
-  bool foreground(pid_t group) const noexcept {
+  bool foreground(pid_t group, bool restore_settings = false) const noexcept {
     sigset_t blocked, previous;
     ::sigemptyset(&blocked);
     ::sigaddset(&blocked, SIGTTOU);
     if (::sigprocmask(SIG_BLOCK, &blocked, &previous) != 0)
       return false;
     const bool changed = ::tcsetpgrp(descriptor_, group) == 0;
+    if (changed && restore_settings)
+      (void)::tcsetattr(descriptor_, TCSANOW, &settings_);
     (void)::sigprocmask(SIG_SETMASK, &previous, nullptr);
     return changed;
   }
@@ -68,11 +72,16 @@ public:
       descriptor_ = -1;
       throw Failure{1, "TERMINAL_BACKGROUND", "editor requires a foreground terminal"};
     }
+    if (::tcgetattr(descriptor_, &settings_) != 0) {
+      ::close(descriptor_);
+      descriptor_ = -1;
+      throw Failure{1, "TERMINAL_SETTINGS", "cannot read editor terminal settings"};
+    }
   }
   ~Terminal() {
     if (descriptor_ >= 0) {
       if (child_ > 0 && ::tcgetpgrp(descriptor_) == child_)
-        (void)foreground(previous_);
+        (void)foreground(previous_, true);
       ::close(descriptor_);
     }
   }

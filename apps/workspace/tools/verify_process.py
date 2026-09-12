@@ -11,11 +11,12 @@ import select
 import signal
 import subprocess
 import tempfile
+import termios
 import time
 from contextlib import suppress
 
 
-def terminal_edit(binary, root, env):
+def terminal_edit(binary, root, env, *, cancelled=False):
     """Keep machine stdout separate while the editor exchanges terminal input."""
     output_read, output_write = os.pipe()
     pid, terminal = pty.fork()
@@ -25,11 +26,27 @@ def terminal_edit(binary, root, env):
         os.dup2(output_write, 2)
         os.close(output_write)
         os.chdir(root)
-        result = subprocess.run(
-            [binary, "edit", "dev.yaml", "--json"], env=env, check=False
+        settings = termios.tcgetattr(0)
+        process = subprocess.Popen(
+            [binary, "edit", "dev.yaml", "--json"],
+            env=dict(env, TERMINAL_CANCEL="1" if cancelled else "0"),
+        )
+        (root / "cli.pid").write_text(str(process.pid))
+        code = process.wait()
+        restored = termios.tcgetattr(0)
+        queued = os.read(0, 128) if select.select([0], [], [], 0.1)[0] else b""
+        (root / "terminal-state.json").write_text(
+            json.dumps(
+                {
+                    "restored": restored == settings,
+                    "before_flags": settings[3],
+                    "after_flags": restored[3],
+                    "queued": queued.decode(),
+                }
+            )
         )
         assert os.tcgetpgrp(0) == os.getpgrp(), "terminal foreground was not restored"
-        os._exit(result.returncode)
+        os._exit(code)
     os.close(output_write)
     captured = bytearray()
     machine = bytearray()
@@ -46,7 +63,17 @@ def terminal_edit(binary, root, env):
                     chunk = b""
                 (captured if fd == terminal else machine).extend(chunk)
             if b"EDITOR_READY" in captured and not sent:
-                os.write(terminal, b"terminal answer\n")
+                assert not termios.tcgetattr(terminal)[3] & (
+                    termios.ECHO | termios.ICANON
+                )
+                os.write(
+                    terminal,
+                    b"queued answer\n"
+                    if cancelled
+                    else b"terminal answer\nqueued answer\n",
+                )
+                if cancelled:
+                    os.kill(int((root / "cli.pid").read_text()), signal.SIGTERM)
                 sent = True
             ended, status = os.waitpid(pid, os.WNOHANG)
             if ended:
@@ -55,12 +82,17 @@ def terminal_edit(binary, root, env):
         else:
             message = "editor did not finish its terminal exchange"
             raise AssertionError(message)
-        assert os.waitstatus_to_exitcode(status) == 7, (captured, machine)
+        expected = 143 if cancelled else 7
+        assert os.waitstatus_to_exitcode(status) == expected, (captured, machine)
         result = json.loads(machine)
-        assert result["exit_code"] == 7 and result["stdout"] == ""
+        assert result["exit_code"] == expected and result["stdout"] == ""
         assert b"EDITOR_READY" not in machine
-        assert (root / "answer").read_text() == "terminal answer"
-        return {"status": "PASS", "exit_code": result["exit_code"]}
+        if not cancelled:
+            assert (root / "answer").read_text() == "terminal answer"
+        state = json.loads((root / "terminal-state.json").read_text())
+        assert state["restored"], state
+        assert state["queued"] == "queued answer\n", state
+        return {"status": "PASS", "exit_code": result["exit_code"], **state}
     finally:
         child_pid = root / "editor.pid"
         if child_pid.exists():
@@ -160,12 +192,17 @@ def main():
         (root / "dev.yaml").write_text("session_name: editor\nwindows: [{}]\n")
         script = root / "editor.sh"
         script.write_text(
-            "echo $$ >editor.pid\nprintf EDITOR_READY\n"
+            "echo $$ >editor.pid\nstty -echo -icanon min 1 time 0\n"
+            "printf EDITOR_READY\n"
+            'if test "$TERMINAL_CANCEL" = 1; then sleep 30; fi\n'
             "IFS= read -r answer\nprintf '%s' \"$answer\" >answer\nexit 7\n"
         )
         env = dict(os.environ, EDITOR=f"/bin/sh {script}", VISUAL="")
         report = {
             "terminal_editor": terminal_edit(binary, root, env),
+            "terminal_editor_cancellation": terminal_edit(
+                binary, root, env, cancelled=True
+            ),
             "owned_child_cancellation": cancellation(binary, root, env),
             "captured_output_limit": output_limit(binary, root, env),
         }
