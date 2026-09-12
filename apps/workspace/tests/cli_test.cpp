@@ -1,6 +1,8 @@
 #include "../src/services.hpp"
 #include "workspace_cli.hpp"
 
+#include <cerrno>
+#include <csignal>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -534,27 +536,162 @@ TEST(WorkspaceCliTmux, FailedEventDeliveryRetainsCompletedSessionAccounting) {
   auto fixture = libtmux::test::ScopedTmuxServer::start(
       {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-events")});
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
-  const auto file = fixture->socket_path().parent_path() / "events.yaml";
-  std::ofstream{file} << "session_name: retained\nwindows: [{}]\n";
-  const libtmux::workspace::cli::Request request{
-      .command = "load",
-      .importer = {},
-      .values = {{"workspace-file", {file.string()}},
-                 {"d", {"true"}},
-                 {"S", {fixture->socket_path().string()}}},
-      .ndjson = true};
-  const auto execution = libtmux::workspace::cli::execute(
-      request, [](const std::string& event, const libtmux::workspace::cli::Json&) {
-        if (event == "session-created")
-          throw std::runtime_error{"event sink failed"};
-      });
-  const auto& result = execution.value;
-  EXPECT_EQ(result.at("status"), "partial");
-  ASSERT_EQ(result.at("results").size(), 1U);
-  EXPECT_EQ(result.at("results")[0].at("session_name"), "retained");
   const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
   ASSERT_TRUE(server.has_value());
-  EXPECT_TRUE(server->session("=retained:").has_value());
+  for (const bool closed : {false, true}) {
+    const std::string name = closed ? "retained-closed" : "retained-runtime";
+    const auto previous = server->sessions();
+    ASSERT_TRUE(previous.has_value());
+    const auto file = fixture->socket_path().parent_path() / "events.yaml";
+    std::ofstream{file} << "session_name: " << name << "\nwindows: [{}]\n";
+    const libtmux::workspace::cli::Request request{
+        .command = "load",
+        .importer = {},
+        .values = {{"workspace-file", {file.string()}},
+                   {"d", {"true"}},
+                   {"S", {fixture->socket_path().string()}}},
+        .ndjson = true};
+    Json result;
+    bool rejected{};
+    try {
+      result = libtmux::workspace::cli::execute(
+                   request,
+                   [&](const std::string& event, const libtmux::workspace::cli::Json&) {
+                     if (event == "session-created") {
+                       rejected = true;
+                       if (closed)
+                         throw libtmux::workspace::cli::Failure{1, "OUTPUT_CLOSED",
+                                                                "event sink closed"};
+                       throw std::runtime_error{"event sink failed"};
+                     }
+                   })
+                   .value;
+    } catch (const libtmux::workspace::cli::Failure& error) {
+      EXPECT_EQ(error.exit_code, 1);
+      result = error.retained_state;
+    }
+    EXPECT_TRUE(rejected);
+    const auto retained = server->session("=" + name + ":");
+    ASSERT_TRUE(retained.has_value());
+    const auto sessions = server->sessions();
+    ASSERT_TRUE(sessions.has_value());
+    EXPECT_EQ(sessions->size(), previous->size() + 1);
+    ASSERT_TRUE(result.is_object()) << "completed-session accounting was lost";
+    EXPECT_EQ(result.at("status"), "partial");
+    EXPECT_EQ(result.at("exit_code"), 1);
+    ASSERT_EQ(result.at("results").size(), 1U);
+    EXPECT_EQ(result.at("results")[0].at("session_id"), retained->id());
+    EXPECT_EQ(result.at("errors")[0].at("code"),
+              closed ? "OUTPUT_CLOSED" : "OPERATION_FAILED");
+  }
+}
+
+TEST(WorkspaceCliTmux, FailedScriptEventsRetainEffectsAndKnownStatus) {
+  for (const bool appending : {false, true}) {
+    for (const std::string rejected_event : {"script-output", "script-completed"}) {
+      SCOPED_TRACE(rejected_event + (appending ? " append" : " create"));
+      Files files;
+      auto fixture = libtmux::test::ScopedTmuxServer::start(
+          {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-events")});
+      ASSERT_TRUE(fixture.has_value()) << fixture.error();
+      const auto server =
+          libtmux::Server::at_socket_path(fixture->socket_path().string());
+      ASSERT_TRUE(server.has_value());
+      const auto borrowed = server->session(fixture->session_name());
+      ASSERT_TRUE(borrowed.has_value());
+      const auto pane = borrowed->active_pane();
+      ASSERT_TRUE(pane.has_value());
+      const auto daemon = pane->expand("#{pid}");
+      ASSERT_TRUE(daemon.has_value());
+      libtmux::test::EnvironmentGuard tmux{"TMUX", fixture->socket_path().string() +
+                                                       "," + *daemon + ",0"};
+      libtmux::test::EnvironmentGuard current_pane{"TMUX_PANE", pane->id()};
+      std::ofstream{"first.yaml"} << "session_name: completed\nwindows: [{}]\n";
+      std::ofstream{"last.yaml"} << "session_name: later\nwindows: [{}]\n";
+      std::ofstream{"before.sh"}
+          << "echo $$ >script.pid\n"
+             "tmux -S \"$1\" new-window -d -P -F '#{window_id}' -t \"$2\" "
+             "-n from-script >script.window || exit 9\n"
+             "printf ready\n"
+          << (rejected_event == "script-completed" ? "kill -TERM $$\n"
+                                                   : "exec sleep 30\n");
+      std::ofstream{"second.json"}
+          << Json{{"session_name", "failing"},
+                  {"windows", Json::array({Json::object()})},
+                  {"before_script",
+                   "/bin/sh before.sh '" + fixture->socket_path().string() + "' '" +
+                       (appending ? std::string{borrowed->id()} : "=failing:") + "'"}};
+      libtmux::workspace::cli::Request request{
+          .command = "load",
+          .importer = {},
+          .values = {{"workspace-file", {"first.yaml", "second.json", "last.yaml"}},
+                     {appending ? "append" : "d", {"true"}},
+                     {"S", {fixture->socket_path().string()}}},
+          .ndjson = true};
+      bool rejected{}, later_started{};
+      Json result;
+      try {
+        result = libtmux::workspace::cli::execute(
+                     request,
+                     [&](const std::string& event,
+                         const libtmux::workspace::cli::Json& value) {
+                       if (event == "workspace-started" && value.at("input_index") == 2)
+                         later_started = true;
+                       if (event == rejected_event) {
+                         rejected = true;
+                         if (event == "script-completed")
+                           EXPECT_EQ(value.at("script_output").at("exit_code"), 143);
+                         throw libtmux::workspace::cli::Failure{
+                             1, "OUTPUT_CLOSED", "script event sink closed"};
+                       }
+                     })
+                     .value;
+      } catch (const libtmux::workspace::cli::Failure& error) {
+        result = error.retained_state;
+      }
+      EXPECT_TRUE(rejected);
+      EXPECT_FALSE(later_started);
+      const auto retained = server->session(appending ? borrowed->id() : "=completed:");
+      ASSERT_TRUE(retained.has_value());
+      EXPECT_FALSE(server->session("=failing:").has_value());
+      EXPECT_FALSE(server->session("=later:").has_value());
+      const auto sessions = server->sessions();
+      ASSERT_TRUE(sessions.has_value());
+      EXPECT_EQ(sessions->size(), appending ? 1U : 2U);
+      std::string script_window;
+      std::ifstream{"script.window"} >> script_window;
+      ASSERT_FALSE(script_window.empty());
+      EXPECT_EQ(server->window(script_window).has_value(), appending);
+      const auto windows = borrowed->windows();
+      ASSERT_TRUE(windows.has_value());
+      EXPECT_EQ(windows->size(), appending ? 3U : 1U);
+      int child{};
+      std::ifstream{"script.pid"} >> child;
+      ASSERT_GT(child, 0);
+      errno = 0;
+      EXPECT_EQ(::kill(child, 0), -1);
+      EXPECT_EQ(errno, ESRCH);
+      EXPECT_TRUE(result.is_object()) << "script-event accounting was lost";
+      if (!result.is_object())
+        continue;
+      EXPECT_EQ(result.at("status"), "partial");
+      EXPECT_EQ(result.at("exit_code"), rejected_event == "script-completed" ? 143 : 1);
+      ASSERT_EQ(result.at("results").size(), 1U);
+      EXPECT_EQ(result.at("results")[0].at("session_id"), retained->id());
+      const auto& problem = result.at("errors")[0];
+      if (rejected_event == "script-completed") {
+        EXPECT_TRUE(problem.contains("script_output"));
+        if (problem.contains("script_output")) {
+          EXPECT_EQ(problem.at("script_output").at("exit_code"), 143);
+          EXPECT_EQ(problem.at("script_output").at("stdout"), "ready");
+        }
+      }
+      if (appending) {
+        EXPECT_EQ(problem.at("retained_state").at("session_id"), borrowed->id());
+        EXPECT_TRUE(problem.at("retained_state").at("window_ids").empty());
+      }
+    }
+  }
 }
 
 TEST(WorkspaceCliTmux, FailedPublicationRetainsSessionsAndPrimaryStatus) {

@@ -85,7 +85,9 @@ sessions and ends with one completed or failed result. Machine diagnostics use
 stderr. Captured control bytes stay inside escaped JSON strings. Saving uses
 an exclusively created temporary file; replacing an existing destination
 requires `--force`.
-Failed event delivery during building can still omit details of retained changes.
+Closed event output keeps completed input results and borrowed-session effects
+in the failure summary. A known script failure keeps its status and captured
+output if the final script event cannot be delivered.
 
 ## Before scripts
 
