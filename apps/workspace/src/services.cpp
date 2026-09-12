@@ -908,6 +908,11 @@ Execution execute(const Request& request, const EventSink& event) {
     std::size_t active_input{};
     try {
       auto server = endpoint(request);
+      for (const auto& plan : plans)
+        if (auto error = validate_layouts(server, plan.workspace))
+          throw Failure{1, "INVALID_CONFIG",
+                        "windows[" + std::to_string(error->window_index) +
+                            "].layout: " + error->reason};
       std::optional<Session> borrowed;
       if (appending)
         borrowed = append_target(server);
