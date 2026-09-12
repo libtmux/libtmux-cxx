@@ -59,7 +59,9 @@ Attachment requires a standard descriptor identifying the concrete controlling
 tty. If all three standard streams are redirected, use `-d`. JSON/NDJSON requires
 `-d` or `--append`. Terminal and caller checks precede mutation. The client is
 checked again before switching, but tmux's name-targeted switch leaves a race
-after that check.
+after that check. Independent `active-pane` client focus on the invoking
+physical window prevents a verified switch; use `-d` or `--append`. Clients on
+other physical windows do not prevent switching.
 
 Inside tmux, `--append` adds windows to the current pane's session after
 verifying its server identity. `-d` takes precedence if both flags are given.

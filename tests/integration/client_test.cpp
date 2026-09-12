@@ -109,11 +109,13 @@ TEST(Client, AClientIsPointedAtAnotherSessionAndThenSentAway) {
   ASSERT_EQ(clients.size(), 1U);
 
   EXPECT_GT(clients.front().pid(), 0);
+  EXPECT_FALSE(clients.front().flags().empty());
   const auto initial = server.session(fixture->session_name());
   ASSERT_TRUE(initial.has_value());
   const auto initial_pane = initial->active_pane();
   ASSERT_TRUE(initial_pane.has_value());
   EXPECT_EQ(clients.front().active_pane_id(), initial_pane->id());
+  EXPECT_EQ(clients.front().window_id(), initial_pane->window_id());
   ASSERT_TRUE(clients.front().switch_to(*elsewhere).has_value());
   const auto moved = server.clients();
   ASSERT_TRUE(moved.has_value()) << moved.error().diagnostic;
@@ -124,6 +126,7 @@ TEST(Client, AClientIsPointedAtAnotherSessionAndThenSentAway) {
   const auto moved_pane = elsewhere->active_pane();
   ASSERT_TRUE(moved_pane.has_value());
   EXPECT_EQ(moved->front().active_pane_id(), moved_pane->id());
+  EXPECT_EQ(moved->front().window_id(), moved_pane->window_id());
 
   ASSERT_TRUE(moved->front().detach().has_value());
   for (int attempt = 0; attempt < 200; ++attempt) {

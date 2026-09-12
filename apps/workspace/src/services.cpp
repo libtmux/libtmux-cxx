@@ -12,6 +12,7 @@
 #include <fstream>
 #include <iomanip>
 #include <random>
+#include <ranges>
 #include <regex>
 #include <set>
 #include <sstream>
@@ -329,14 +330,22 @@ Session append_target(const Server& server) {
     throw Failure{1, "APPEND_CONTEXT", session.error().diagnostic};
   return *session;
 }
-Client current_client(const Server& server, std::string_view pane) {
+Client current_client(const Server& server, std::string_view pane,
+                      std::string_view window) {
   const auto clients = server.clients();
   if (!clients)
     throw Failure{1, "CLIENT_CONTEXT", clients.error().diagnostic};
   std::optional<Client> selected;
   for (const auto& client : *clients) {
-    if (client.control_mode() || client.tty().empty() ||
-        client.active_pane_id() != pane)
+    if (client.control_mode() || client.tty().empty() || client.window_id() != window)
+      continue;
+    if (std::ranges::any_of(client.flags() | std::views::split(','), [](auto flag) {
+          return std::ranges::equal(flag, std::string_view{"active-pane"});
+        }))
+      throw Failure{
+          2, "CLIENT_CONTEXT",
+          "independent active-pane client focus is unverifiable; use load -d"};
+    if (client.active_pane_id() != pane)
       continue;
     if (selected)
       throw Failure{2, "CLIENT_CONTEXT",
@@ -362,7 +371,8 @@ std::function<void()> load_handoff(Session session, std::optional<Client> caller
       const auto server = caller->server();
       if (!server)
         throw Failure{1, "CLIENT_CONTEXT", server.error().diagnostic};
-      const auto current = current_client(*server, caller->active_pane_id());
+      const auto current =
+          current_client(*server, caller->active_pane_id(), caller->window_id());
       if (current.connection_identity() != caller->connection_identity() ||
           current.name() != caller->name() || current.pid() != caller->pid() ||
           current.created() != caller->created() || current.tty() != caller->tty())
@@ -903,7 +913,7 @@ Execution execute(const Request& request, const EventSink& event) {
         borrowed = append_target(server);
       else if (interactive && !environment("TMUX").empty()) {
         const auto pane = current_pane(server, "CLIENT_CONTEXT");
-        caller = current_client(server, pane.id());
+        caller = current_client(server, pane.id(), pane.window_id());
       } else if (!server.is_alive())
         server = start_endpoint(request, bootstrap);
       stage = "load";
