@@ -662,7 +662,8 @@ TEST(WorkspaceCliTmux, ColdLoadRetainsTheWorkspaceAndRemovesItsBootstrap) {
   const auto retained = uncertain->sessions();
   ASSERT_TRUE(retained.has_value());
   ASSERT_EQ(retained->size(), 1U);
-  EXPECT_EQ(retained->front().name(), problem.at("retained_state").at("session_name"));
+  EXPECT_EQ(retained->front().name(),
+            problem.at("retained_state").at("session_name").get<std::string>());
 }
 
 TEST(WorkspaceCliTmux, FailedEventDeliveryRetainsCompletedSessionAccounting) {
