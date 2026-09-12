@@ -935,18 +935,20 @@ Execution execute(const Request& request, const EventSink& event) {
                          {{"input_index", index}, {"stream", stream}, {"text", bytes}});
                    }});
               script_output = child.value();
-              event("script-completed",
-                    {{"input_index", index}, {"script_output", script_output}});
-              if (child.code != 0) {
+              if (child.code != 0)
                 script_error.emplace(
                     child.code >= 128 ? child.code : 1, "BEFORE_SCRIPT_FAILED",
                     "before_script exited with status " + std::to_string(child.code));
+              event("script-completed",
+                    {{"input_index", index}, {"script_output", script_output}});
+              if (script_error)
                 return script_error->what();
-              }
             } catch (const Failure& error) {
-              script_error = error;
-              script_output = error.child_output;
-              return error.what();
+              if (!script_error)
+                script_error = error;
+              if (script_output.is_null())
+                script_output = error.child_output;
+              return script_error->what();
             }
             stage = "load";
             return std::nullopt;
@@ -956,8 +958,6 @@ Execution execute(const Request& request, const EventSink& event) {
                      : existing ? libtmux::expected<Session, BuildError>{*existing}
                                 : build(server, plan.workspace, before);
         if (!built) {
-          if (script_error && script_error->code == "OUTPUT_CLOSED")
-            throw *script_error;
           if (script_error)
             failure_status = script_error->exit_code;
           Json problem{{"code", script_error ? script_error->code : "BUILD_FAILED"},
@@ -994,8 +994,6 @@ Execution execute(const Request& request, const EventSink& event) {
         event("workspace-completed", result);
       }
     } catch (const Failure& error) {
-      if (error.code == "OUTPUT_CLOSED")
-        throw;
       failure_status = error.exit_code;
       Json problem{{"code", error.code},
                    {"message", error.what()},
