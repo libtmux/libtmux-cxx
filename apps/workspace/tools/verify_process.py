@@ -345,7 +345,31 @@ def terminal_switch(binary, root, env, mode):
     root.mkdir()
     command = ["tmux", "-S", str(root / "tmux.sock")]
     env = dict(env, TMUX="", TMUX_PANE="", TERM="xterm-256color")
+
+    def query(*arguments):
+        return subprocess.run(
+            [*command, *arguments],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=1,
+        ).stdout.strip()
+
+    independent = mode in {
+        "independent",
+        "independent-detached",
+        "independent-append",
+        "independent-linked",
+    }
+    focus_case = independent or mode in {
+        "gained-independent",
+        "independent-other-window",
+    }
     before = "touch ran"
+    if mode == "gained-independent":
+        before += "; " + shlex.join([*command, "refresh-client"])
+        before += ' -t "$(cat client-name)" -f active-pane'
     if mode in {"changed", "replaced"}:
         before += "; " + shlex.join([*command, "detach-client", "-s", "origin"])
     if mode == "replaced":
@@ -362,6 +386,10 @@ def terminal_switch(binary, root, env, mode):
     (root / "last.yaml").write_text("session_name: destination\nwindows: [{}]\n")
     runner = root / "run.sh"
     arguments = [binary, "load", "first.json", "last.yaml", "-S", command[2]]
+    if mode == "independent-detached":
+        arguments.append("-d")
+    if mode == "independent-append":
+        arguments.append("--append")
     foreign = ["tmux", "-S", str(root / "foreign.sock")]
     if mode == "foreign":
         arguments[-1] = foreign[2]
@@ -405,7 +433,28 @@ def terminal_switch(binary, root, env, mode):
             check=True,
             timeout=1,
         )
-        count = 2 if mode == "ambiguous" else 1
+        if focus_case:
+            first_pane = query("display-message", "-p", "-t", "=origin:", "#{pane_id}")
+            first_window = query(
+                "display-message", "-p", "-t", first_pane, "#{window_id}"
+            )
+        if independent:
+            second_pane = query(
+                "split-window",
+                "-d",
+                "-t",
+                first_pane,
+                "-P",
+                "-F",
+                "#{pane_id}",
+                "/bin/sh",
+            )
+        if mode in {"independent-linked", "independent-other-window"}:
+            query("new-session", "-d", "-s", "other", "/bin/sh")
+        if mode == "independent-linked":
+            query("link-window", "-s", "=origin:", "-t", "=other:1")
+            query("select-window", "-t", "=other:1")
+        count = 2 if mode in {"ambiguous", "independent-other-window"} else 1
         if mode == "control":
             control = subprocess.Popen(
                 [*command, "-C", "attach-session", "-t", "origin"],
@@ -415,7 +464,16 @@ def terminal_switch(binary, root, env, mode):
                 stderr=subprocess.PIPE,
             )
         else:
-            for _ in range(count):
+            for index in range(count):
+                target = (
+                    "other"
+                    if mode == "independent-linked"
+                    or (mode == "independent-other-window" and index == 1)
+                    else "origin"
+                )
+                attach = [*command, "attach-session", "-t", target]
+                if independent or (mode == "independent-other-window" and index == 1):
+                    attach += ["-f", "active-pane"]
                 child, descriptor = pty.fork()
                 if child == 0:
                     if mode == "replaced":
@@ -429,9 +487,7 @@ def terminal_switch(binary, root, env, mode):
                         )
                         (root / "replacement.pid").write_text(str(replacement.pid))
                         os._exit(replacement.wait())
-                    os.execvpe(
-                        "tmux", [*command, "attach-session", "-t", "origin"], env
-                    )
+                    os.execvpe("tmux", attach, env)
                 attached.append((child, descriptor))
         boundary = time.monotonic() + 3
         while True:
@@ -461,6 +517,49 @@ def terminal_switch(binary, root, env, mode):
             .stdout.decode()
             .strip()
         )
+        if mode == "gained-independent":
+            (root / "client-name").write_text(original.split("|", 1)[0])
+        focus = {}
+        if independent:
+            marker = root / "input-pane"
+            keyboard = "printf '%s' \"$TMUX_PANE\" > " + shlex.quote(str(marker)) + "\n"
+            os.write(attached[0][1], b"\x02o" + keyboard.encode())
+            while not marker.exists() or marker.read_text() != second_pane:
+                if select.select([attached[0][1]], [], [], 0.01)[0]:
+                    with suppress(OSError):
+                        os.read(attached[0][1], 65536)
+                assert time.monotonic() < boundary, "independent input marker absent"
+            projected = query(
+                "list-clients", "-F", "#{pane_id}|#{window_id}|#{client_flags}"
+            ).split("|")
+            focus = {
+                "input_pane": marker.read_text(),
+                "projected_pane": projected[0],
+                "window": projected[1],
+                "flags": projected[2],
+            }
+            assert projected[0] == first_pane and projected[1] == first_window, focus
+            assert "active-pane" in projected[2].split(","), focus
+        elif mode == "independent-other-window":
+            rows = [
+                row.split("|")
+                for row in query(
+                    "list-clients", "-F", "#{window_id}|#{client_flags}"
+                ).splitlines()
+            ]
+            assert len(rows) == 2 and any(
+                window != first_window and "active-pane" in flags.split(",")
+                for window, flags in rows
+            ), rows
+        if focus_case:
+            initial_sessions = set(
+                query("list-sessions", "-F", "#{session_name}").splitlines()
+            )
+            initial_windows = set(
+                query(
+                    "list-windows", "-a", "-F", "#{session_id}|#{window_id}"
+                ).splitlines()
+            )
         (root / "start").touch()
         while not (root / "exit").exists():
             for descriptor in select.select([fd for _, fd in attached], [], [], 0.01)[
@@ -492,6 +591,62 @@ def terminal_switch(binary, root, env, mode):
             assert time.monotonic() < boundary, "load did not finish its switch"
         code = int((root / "exit").read_text())
         output, error = (root / "load.out").read_text(), (root / "load.err").read_text()
+        if focus_case:
+            sessions = set(query("list-sessions", "-F", "#{session_name}").splitlines())
+            windows = set(
+                query(
+                    "list-windows", "-a", "-F", "#{session_id}|#{window_id}"
+                ).splitlines()
+            )
+            client_rows = query(
+                "list-clients", "-F", "#{session_name}|#{client_flags}"
+            ).splitlines()
+            ran = (root / "ran").exists()
+            observed = {
+                "exit_code": code,
+                "stdout": output,
+                "stderr": error,
+                "sessions": sorted(sessions),
+                "windows": sorted(windows),
+                "clients": client_rows,
+                "script_ran": ran,
+                "focus": focus,
+            }
+            refused = mode in {"independent", "independent-linked"}
+            failed = refused or mode == "gained-independent"
+            assert code == (2 if failed else 0), observed
+            assert ran != refused, observed
+            assert sessions == (
+                initial_sessions
+                if refused or mode == "independent-append"
+                else initial_sessions | {"loaded"}
+            ), observed
+            assert len(windows) == len(initial_windows) + (
+                0 if refused else 2 if mode == "independent-append" else 1
+            ), observed
+            expected_clients = (
+                ["other"]
+                if mode == "independent-linked"
+                else ["destination", "other"]
+                if mode == "independent-other-window"
+                else ["origin"]
+            )
+            assert (
+                sorted(row.split("|")[0] for row in client_rows) == expected_clients
+            ), observed
+            if failed:
+                assert "active-pane" in error and "-d" in error, observed
+                if refused:
+                    assert not output and windows == initial_windows, observed
+                else:
+                    assert (
+                        "Retained state:" in error and "created loaded $" in output
+                    ), observed
+            if mode == "gained-independent":
+                assert any(
+                    "active-pane" in row.split("|")[1].split(",") for row in client_rows
+                ), observed
+            return {"status": "PASS", "mode": mode, **observed}
         refused = mode in {"ambiguous", "control", "foreign", "stale"}
         expected = 2 if mode in {"ambiguous", "control", "changed"} else 0
         if mode in {"foreign", "stale", "replaced"}:
@@ -824,6 +979,12 @@ def main():
                 "replaced",
                 "foreign",
                 "stale",
+                "independent",
+                "independent-detached",
+                "independent-append",
+                "independent-linked",
+                "independent-other-window",
+                "gained-independent",
             ):
                 report["terminal_switch_" + mode] = terminal_switch(
                     binary, root / ("switch-" + mode), env, mode

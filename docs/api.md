@@ -1272,6 +1272,8 @@ The tmux object hierarchy.  A Session, Window, Pane or Client is one row of a sn
   - [`Client::control_mode`](#libtmux-entities-hpp-client-control-mode)
   - [`Client::pid`](#libtmux-entities-hpp-client-pid)
   - [`Client::active_pane_id`](#libtmux-entities-hpp-client-active-pane-id)
+  - [`Client::flags`](#libtmux-entities-hpp-client-flags)
+  - [`Client::window_id`](#libtmux-entities-hpp-client-window-id)
   - [`Client::operator==`](#libtmux-entities-hpp-client-operator)
   - [`Client::session`](#libtmux-entities-hpp-client-session)
   - [`Client::switch_to`](#libtmux-entities-hpp-client-switch-to)
@@ -1348,6 +1350,8 @@ The tmux object hierarchy.  A Session, Window, Pane or Client is one row of a sn
   - [`client::height`](#libtmux-entities-hpp-free-symbols-client-height)
   - [`client::pid`](#libtmux-entities-hpp-free-symbols-client-pid)
   - [`client::active_pane_id`](#libtmux-entities-hpp-free-symbols-client-active-pane-id)
+  - [`client::flags`](#libtmux-entities-hpp-free-symbols-client-flags)
+  - [`client::window_id`](#libtmux-entities-hpp-free-symbols-client-window-id)
 
 <a id="libtmux-entities-hpp-splitoptions"></a>
 ### `SplitOptions`
@@ -2934,7 +2938,7 @@ static constexpr std::string_view kNoun{"client"};
 #### `Client::kFields`
 
 ```cpp
-static constexpr std::array kFields{ std::string_view{"client_name"}, std::string_view{"client_session"}, std::string_view{"client_readonly"}, std::string_view{"client_tty"}, std::string_view{"client_width"}, std::string_view{"client_height"}, std::string_view{"client_created"}, std::string_view{"client_activity"}, std::string_view{"client_termname"}, std::string_view{"client_control_mode"}, std::string_view{"client_pid"}, std::string_view{"pane_id"}};
+static constexpr std::array kFields{ std::string_view{"client_name"}, std::string_view{"client_session"}, std::string_view{"client_readonly"}, std::string_view{"client_tty"}, std::string_view{"client_width"}, std::string_view{"client_height"}, std::string_view{"client_created"}, std::string_view{"client_activity"}, std::string_view{"client_termname"}, std::string_view{"client_control_mode"}, std::string_view{"client_pid"}, std::string_view{"pane_id"}, std::string_view{"client_flags"}, std::string_view{"window_id"}};
 ```
 
 <a id="libtmux-entities-hpp-client-client"></a>
@@ -3042,6 +3046,21 @@ A control-mode client is a program driving tmux, not a terminal.
 
 ```cpp
 [[nodiscard]] std::string_view active_pane_id() const noexcept;
+```
+The session window's active pane, not independent client-local focus.
+
+<a id="libtmux-entities-hpp-client-flags"></a>
+#### `Client::flags`
+
+```cpp
+[[nodiscard]] std::string_view flags() const noexcept;
+```
+
+<a id="libtmux-entities-hpp-client-window-id"></a>
+#### `Client::window_id`
+
+```cpp
+[[nodiscard]] std::string_view window_id() const noexcept;
 ```
 
 <a id="libtmux-entities-hpp-client-operator"></a>
@@ -3579,6 +3598,20 @@ inline constexpr NumberFieldHandle<Client> pid{ {Client::kFields[10], [](const C
 
 ```cpp
 inline constexpr StringFieldHandle<Client> active_pane_id{ {Client::kFields[11], [](const Client& row) { /* implementation omitted */ }}};
+```
+
+<a id="libtmux-entities-hpp-free-symbols-client-flags"></a>
+#### `client::flags`
+
+```cpp
+inline constexpr StringFieldHandle<Client> flags{ {Client::kFields[12], [](const Client& row) { /* implementation omitted */ }}};
+```
+
+<a id="libtmux-entities-hpp-free-symbols-client-window-id"></a>
+#### `client::window_id`
+
+```cpp
+inline constexpr StringFieldHandle<Client> window_id{ {Client::kFields[13], [](const Client& row) { /* implementation omitted */ }}};
 ```
 
 <a id="libtmux-snapshot-hpp"></a>
