@@ -14,6 +14,7 @@ using Json = nlohmann::ordered_json;
 struct Failure : std::runtime_error {
   int exit_code;
   std::string code;
+  Json retained_state;
   Failure(int status, std::string category, std::string message)
       : std::runtime_error{std::move(message)}, exit_code{status},
         code{std::move(category)} {}
@@ -36,6 +37,12 @@ struct Request {
   }
 };
 using EventSink = std::function<void(const std::string&, Json)>;
+struct ChildOutput {
+  int code;
+  std::string out;
+  std::string err;
+};
+ChildOutput run_child(const std::vector<std::string>& arguments);
 Json execute(const Request& request, const EventSink& event);
 std::string encoded(const Json& value, int indent = -1);
 std::string human_result(const Request& request, const Json& result, bool colour);

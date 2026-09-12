@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <random>
 #include <regex>
 #include <set>
 #include <sstream>
@@ -301,6 +302,70 @@ Server endpoint(const Request& request) {
     throw Failure{1, "INVALID_ENDPOINT", server.error().diagnostic};
   return *server;
 }
+struct Bootstrap {
+  std::optional<Session> session;
+  ~Bootstrap() {
+    if (session)
+      (void)session->kill();
+  }
+};
+Server start_endpoint(const Request& request, Bootstrap& bootstrap) {
+  std::vector<std::string> command{"tmux", "-u"};
+  if (!request.value("S").empty())
+    command.insert(command.end(), {"-S", expand(request.value("S"))});
+  else if (!request.value("L").empty())
+    command.insert(command.end(), {"-L", request.value("L")});
+  else if (const auto inherited = environment("TMUX"); !inherited.empty()) {
+    const auto last = inherited.find_last_of(',');
+    const auto pid =
+        last == std::string::npos ? last : inherited.find_last_of(',', last - 1);
+    command.insert(command.end(), {"-S", inherited.substr(0, pid)});
+  }
+  if (!request.value("f").empty())
+    command.insert(command.end(), {"-f", expand(request.value("f"))});
+  if (request.flag("2"))
+    command.emplace_back("-2");
+  if (request.flag("8"))
+    command.emplace_back("-8");
+  std::random_device random;
+  std::ostringstream unique;
+  unique << "tmux-workspace-bootstrap-" << std::hex;
+  for (int index = 0; index < 4; ++index)
+    unique << std::setw(8) << std::setfill('0') << random();
+  const auto name = unique.str();
+  command.insert(command.end(),
+                 {"new-session", "-d", "-P", "-F", "#{session_id} #{pid}", "-s", name,
+                  "--", "sleep 2147483647"});
+  try {
+    const auto reply = run_child(command);
+    if (reply.code != 0)
+      throw Failure{1, "STARTUP_FAILED", reply.err};
+    std::string identity, pid, extra;
+    std::istringstream response{reply.out};
+    if (!(response >> identity >> pid) || (response >> extra) || identity.size() < 2 ||
+        identity.front() != '$' ||
+        identity.find_first_not_of("0123456789", 1) != std::string::npos ||
+        pid.empty() || pid.find_first_not_of("0123456789") != std::string::npos)
+      throw Failure{1, "STARTUP_IDENTITY", "tmux returned an invalid startup identity"};
+    const auto server = endpoint(request);
+    const auto current_pid = server.run({"display-message", "-p", "#{pid}"});
+    if (!current_pid || *current_pid != pid + "\n")
+      throw Failure{1, "STARTUP_IDENTITY", "tmux server changed during startup"};
+    const auto owned = server.session(identity);
+    if (!owned || owned->name() != name)
+      throw Failure{1, "STARTUP_IDENTITY",
+                    "tmux bootstrap session changed during startup"};
+    bootstrap.session = *owned;
+    return server;
+  } catch (Failure& error) {
+    error.retained_state = {{"kind", "bootstrap-session"},
+                            {"session_name", name},
+                            {"ownership", "unverified"},
+                            {"may_exist", true},
+                            {"cleanup", "not_attempted"}};
+    throw;
+  }
+}
 Json capture(const Request& request) {
   const auto server = endpoint(request);
   const auto name = request.value("session");
@@ -588,10 +653,8 @@ void validate(const Request& request) {
     throw Failure{2, "USAGE", "this build requires load -d"};
   if (request.command == "freeze" && request.value("session").empty())
     throw Failure{2, "USAGE", "freeze requires a session name or ID"};
-  if (request.command == "load" && (request.flag("append") || request.flag("f") ||
-                                    request.flag("2") || request.flag("8")))
-    throw Failure{1, "FEATURE_UNAVAILABLE",
-                  "append and tmux startup flags are not implemented in this build"};
+  if (request.command == "load" && request.flag("append"))
+    throw Failure{1, "FEATURE_UNAVAILABLE", "append is not implemented in this build"};
   if (request.command == "shell" || request.command == "edit")
     throw Failure{1, "FEATURE_UNAVAILABLE",
                   "process services are not implemented in this build"};
@@ -659,34 +722,68 @@ Json execute(const Request& request, const EventSink& event) {
       if (!workspace)
         throw Failure{1, "INVALID_CONFIG",
                       workspace.error().where + ": " + workspace.error().reason};
+      if (!libtmux::session_target(workspace->session_name))
+        throw Failure{1, "INVALID_CONFIG", "session name cannot address itself"};
       plans.push_back({path, *workspace});
     }
-    const auto server = endpoint(request);
     Json results = Json::array(), errors = Json::array();
     event("started", {{"inputs", plans.size()}});
-    for (std::size_t index = 0; index < plans.size(); ++index) {
-      const auto& plan = plans[index];
-      event("workspace-started",
-            {{"input_index", index}, {"input", private_path(plan.path)}});
-      const auto existing = server.session("=" + plan.workspace.session_name + ":");
-      auto built = existing ? libtmux::expected<Session, BuildError>{*existing}
-                            : build(server, plan.workspace);
-      if (!built) {
-        errors.push_back({{"code", "BUILD_FAILED"},
-                          {"message", built.error().reason},
-                          {"input_index", index},
-                          {"failed_stage", "load"}});
-        break;
+    Bootstrap bootstrap;
+    std::string stage{"startup"};
+    std::size_t active_input{};
+    try {
+      auto server = endpoint(request);
+      if (!server.is_alive())
+        server = start_endpoint(request, bootstrap);
+      stage = "load";
+      for (std::size_t index = 0; index < plans.size(); ++index) {
+        active_input = index;
+        const auto& plan = plans[index];
+        event("workspace-started",
+              {{"input_index", index}, {"input", private_path(plan.path)}});
+        const auto existing = server.session("=" + plan.workspace.session_name + ":");
+        auto built = existing ? libtmux::expected<Session, BuildError>{*existing}
+                              : build(server, plan.workspace);
+        if (!built) {
+          errors.push_back({{"code", "BUILD_FAILED"},
+                            {"message", built.error().reason},
+                            {"input_index", index},
+                            {"failed_stage", "load"}});
+          break;
+        }
+        Json result{{"input", private_path(plan.path)},
+                    {"input_index", index},
+                    {"session_id", built->id()},
+                    {"session_name", built->name()},
+                    {"action", existing ? "reused" : "created"}};
+        results.push_back(result);
+        if (!existing)
+          event("session-created", result);
+        event("workspace-completed", result);
       }
-      Json result{{"input", private_path(plan.path)},
-                  {"input_index", index},
-                  {"session_id", built->id()},
-                  {"session_name", built->name()},
-                  {"action", existing ? "reused" : "created"}};
-      if (!existing)
-        event("session-created", result);
-      event("workspace-completed", result);
-      results.push_back(result);
+    } catch (const Failure& error) {
+      if (error.code == "OUTPUT_CLOSED")
+        throw;
+      Json problem{{"code", error.code},
+                   {"message", error.what()},
+                   {"input_index", active_input},
+                   {"failed_stage", stage}};
+      if (!error.retained_state.is_null())
+        problem["retained_state"] = error.retained_state;
+      errors.push_back(std::move(problem));
+    } catch (const std::exception& error) {
+      errors.push_back({{"code", "OPERATION_FAILED"},
+                        {"message", error.what()},
+                        {"input_index", active_input},
+                        {"failed_stage", stage}});
+    }
+    if (bootstrap.session) {
+      const auto cleaned = bootstrap.session->kill();
+      bootstrap.session.reset();
+      if (!cleaned)
+        errors.push_back({{"code", "BOOTSTRAP_CLEANUP_FAILED"},
+                          {"message", cleaned.error().diagnostic},
+                          {"failed_stage", "cleanup"}});
     }
     const auto status = errors.empty() ? "ok" : results.empty() ? "error" : "partial";
     Json summary{{"schema_version", 1},

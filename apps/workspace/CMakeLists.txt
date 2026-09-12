@@ -3,8 +3,9 @@ include("${PROJECT_SOURCE_DIR}/cmake/NlohmannJson.cmake")
 libtmux_resolve_cli11()
 libtmux_resolve_nlohmann_json()
 
-add_library(workspace_cli STATIC src/cli.cpp src/services.cpp)
+add_library(workspace_cli STATIC src/cli.cpp src/services.cpp src/process.cpp)
 target_include_directories(workspace_cli PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_include_directories(workspace_cli PRIVATE "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(workspace_cli PRIVATE libtmux_build_options workspace_builder
   CLI11::CLI11 nlohmann_json::nlohmann_json yaml-cpp::yaml-cpp)
 target_compile_definitions(workspace_cli PRIVATE

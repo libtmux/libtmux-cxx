@@ -47,6 +47,36 @@ def _limit_output_file():
     resource.setrlimit(resource.RLIMIT_FSIZE, (256, 256))
 
 
+def load_capture(program, workspace, socket, destination, env, cwd):
+    """Measure matching load/capture commands and verify the saved topology."""
+    destination.unlink(missing_ok=True)
+    started = time.perf_counter_ns()
+    run([program, "load", str(workspace), "-d", "-S", socket], env, cwd)
+    run(
+        [
+            program,
+            "freeze",
+            "bench",
+            "-S",
+            socket,
+            "-f",
+            "json",
+            "-o",
+            str(destination),
+            "-y",
+            "-q",
+        ],
+        env,
+        cwd,
+    )
+    elapsed = (time.perf_counter_ns() - started) / 1_000_000
+    captured = json.loads(destination.read_text())
+    assert captured["session_name"] == "bench"
+    assert len(captured["windows"]) == 1
+    assert len(captured["windows"][0]["panes"]) == 2
+    return elapsed
+
+
 def main():
     """Verify the installed program and write machine-readable evidence."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -87,6 +117,11 @@ def main():
         )
         socket = str(root / "tmux.sock")
         prefix = ["tmux", "-S", socket, "-f", "/dev/null"]
+        cleanup_prefixes = [prefix]
+        cold_sockets = {name: str(root / (name + "-cold.sock")) for name in binaries}
+        cleanup_prefixes.extend(
+            ["tmux", "-S", value, "-f", "/dev/null"] for value in cold_sockets.values()
+        )
         version, _ = run([*prefix, "-V"], env, root)
         report["tmux"] = version.stdout.decode().strip()
         run([*prefix, "new-session", "-d", "-s", "keeper"], env, root)
@@ -103,7 +138,13 @@ def main():
                 )
                 report["timings"][name] = {
                     key: []
-                    for key in ("startup", "discovery", "search", "load_capture")
+                    for key in (
+                        "startup",
+                        "discovery",
+                        "search",
+                        "load_capture",
+                        "cold_load_capture",
+                    )
                 }
             for _ in range(args.iterations):
                 for name, program in binaries.items():
@@ -119,36 +160,16 @@ def main():
                             assert len(json.loads(result.stdout)) == 1
                         report["timings"][name][key].append(elapsed)
                     saved = root / f"{name}.json"
-                    saved.unlink(missing_ok=True)
-                    started = time.perf_counter_ns()
-                    run(
-                        [program, "load", str(workspace), "-d", "-S", socket], env, root
-                    )
-                    run(
-                        [
-                            program,
-                            "freeze",
-                            "bench",
-                            "-S",
-                            socket,
-                            "-f",
-                            "json",
-                            "-o",
-                            str(saved),
-                            "-y",
-                            "-q",
-                        ],
-                        env,
-                        root,
-                    )
-                    elapsed = (time.perf_counter_ns() - started) / 1_000_000
-                    captured = json.loads(saved.read_text())
-                    assert captured["session_name"] == "bench"
-                    assert len(captured["windows"]) == 1
-                    assert len(captured["windows"][0]["panes"]) == 2
+                    elapsed = load_capture(program, workspace, socket, saved, env, root)
                     report["timings"][name]["load_capture"].append(elapsed)
                     run([*prefix, "kill-session", "-t", "=bench"], env, root)
+                    elapsed = load_capture(
+                        program, workspace, cold_sockets[name], saved, env, root
+                    )
+                    report["timings"][name]["cold_load_capture"].append(elapsed)
+                    run(["tmux", "-S", cold_sockets[name], "kill-server"], env, root)
             report["checks"]["matched_boundaries_and_capture_topology"] = "PASS"
+            report["checks"]["cold_startup_and_capture_topology"] = "PASS"
             stream_config = configs / "stream.yaml"
             stream_config.write_text(
                 "session_name: stream\nwindows:\n  - panes:\n"
@@ -223,14 +244,15 @@ def main():
             )
 
         finally:
-            subprocess.run(
-                [*prefix, "kill-server"],
-                env=env,
-                cwd=root,
-                capture_output=True,
-                timeout=5,
-                check=False,
-            )
+            for cleanup in cleanup_prefixes:
+                subprocess.run(
+                    [*cleanup, "kill-server"],
+                    env=env,
+                    cwd=root,
+                    capture_output=True,
+                    timeout=5,
+                    check=False,
+                )
     for groups in report["timings"].values():
         for key, values in groups.items():
             groups[key] = spread(values)
