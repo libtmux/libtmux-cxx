@@ -70,6 +70,8 @@ ChildOutput run_child(const std::vector<std::string>& arguments,
                       ChildOptions options = {});
 void require_terminal();
 Execution execute(const Request& request, const EventSink& event);
+Execution with_interrupts(const std::function<Execution()>& operation);
+void check_interruption();
 std::string encoded(const Json& value, int indent = -1);
 std::string human_result(const Request& request, const Json& result, bool colour);
 void validate(const Request& request);

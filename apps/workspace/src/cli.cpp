@@ -1,3 +1,4 @@
+#include "progress.hpp"
 #include "services.hpp"
 #include "workspace_cli.hpp"
 
@@ -203,9 +204,19 @@ public:
     load->add_option(
         "--log-file",
         "Append JSON diagnostics; info logs lifecycle, debug adds script output");
-    load->add_option("--progress-format", "Progress preset or template");
+    load->add_option("--progress-format", "Progress preset or template")
+        ->envname("TMUXP_PROGRESS_FORMAT");
     load->add_option("--progress-lines", "Script panel lines; -1 uses terminal height")
-        ->check(CLI::TypeValidator<int>())
+        ->check(CLI::Validator{
+            [](std::string& value) {
+              const auto error = CLI::Range(-1, std::numeric_limits<int>::max())(value);
+              if (!error.empty())
+                // CLI11 discards invalid environment defaults after ValidationError.
+                throw CLI::ConversionError{"--progress-lines: " + error};
+              return std::string{};
+            },
+            "INT>=-1"})
+        ->envname("TMUXP_PROGRESS_LINES")
         ->default_str("3");
     load->add_flag("--no-progress", "Disable terminal progress");
     auto* freeze = root.add_subcommand("freeze", "Capture a running session");
@@ -363,9 +374,12 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
   Model model;
   DiagnosticLog diagnostics{request, errors};
   Execution execution;
+  std::unique_ptr<Progress> progress;
   Json retained_state;
   const auto fail = [&](int status, const std::string& code,
                         const std::string& message) {
+    if (progress)
+      progress->finish();
     diagnostics.diagnostic(code, message);
     try {
       if (request.command == "load" && execution.value.is_object()) {
@@ -411,9 +425,12 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
       request.importer = parsed.front()->get_subcommands().front()->get_name();
     validate(request);
     diagnostics.configure();
+    progress = std::make_unique<Progress>(request, output, errors,
+                                          progress_terminal(request, output, errors));
     std::size_t sequence{};
     const auto emit = [&](const std::string& name, Json data) {
       diagnostics.event(name, data, ++sequence);
+      progress->event(name, data);
       if (!request.ndjson)
         return;
       data["schema_version"] = 1;
@@ -424,7 +441,18 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
       if (!output)
         throw Failure{1, "OUTPUT_CLOSED", "output stream closed"};
     };
-    execution = execute(request, emit);
+    const auto operation = [&] {
+      try {
+        auto result = execute(request, emit);
+        progress->finish(result.value.is_object() && result.value.contains("status") &&
+                         result.value.at("status") != "ok");
+        return result;
+      } catch (...) {
+        progress->finish(true);
+        throw;
+      }
+    };
+    execution = request.command == "load" ? with_interrupts(operation) : operation();
     const auto& result = execution.value;
     if (request.command == "freeze" && request.json && !request.ndjson &&
         !result.contains("destination") && diagnostics.enabled("warning")) {
@@ -438,14 +466,6 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
                         result.at("status") != "ok";
     if (request.command == "edit" && !request.machine())
       errors << result.at("stderr").get<std::string>();
-    if (request.command == "load" && !request.machine()) {
-      for (const auto* field : {"results", "errors"})
-        for (const auto& item : result.at(field))
-          if (item.contains("script_output")) {
-            output << item.at("script_output").at("stdout").get<std::string>();
-            errors << item.at("script_output").at("stderr").get<std::string>();
-          }
-    }
     if (failed && request.command == "load") {
       for (const auto& error : result.at("errors")) {
         diagnostics.diagnostic(error.at("code").get<std::string>(),

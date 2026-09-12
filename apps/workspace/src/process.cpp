@@ -22,16 +22,32 @@ class SignalGuard {
 
 public:
   SignalGuard() {
+    sigset_t blocked;
+    sigemptyset(&blocked);
+    sigaddset(&blocked, SIGINT);
+    sigaddset(&blocked, SIGTERM);
+    struct RestoreMask {
+      sigset_t previous{};
+      bool active{};
+      ~RestoreMask() {
+        if (active)
+          (void)::sigprocmask(SIG_SETMASK, &previous, nullptr);
+      }
+    } mask;
+    if (::sigprocmask(SIG_BLOCK, &blocked, &mask.previous) != 0)
+      throw Failure{1, "SIGNAL_HANDLER", "cannot block load interruption signals"};
+    mask.active = true;
     struct sigaction action {};
     action.sa_handler = interrupted;
     sigemptyset(&action.sa_mask);
-    interrupted_signal = 0;
     if (::sigaction(SIGINT, &action, &interrupt_) != 0)
       throw Failure{1, "SIGNAL_HANDLER", "cannot install child interruption handler"};
     if (::sigaction(SIGTERM, &action, &terminate_) != 0) {
       (void)::sigaction(SIGINT, &interrupt_, nullptr);
       throw Failure{1, "SIGNAL_HANDLER", "cannot install child termination handler"};
     }
+    if (interrupt_.sa_handler != interrupted)
+      interrupted_signal = 0;
   }
   ~SignalGuard() {
     (void)::sigaction(SIGTERM, &terminate_, nullptr);
@@ -187,6 +203,15 @@ void require_terminal() {
   if (display.descriptor() < 0)
     throw Failure{2, "USAGE",
                   "load requires a foreground controlling terminal; use -d"};
+}
+Execution with_interrupts(const std::function<Execution()>& operation) {
+  SignalGuard signals;
+  return operation();
+}
+void check_interruption() {
+  if (interrupted_signal != 0)
+    throw Failure{128 + interrupted_signal, "INTERRUPTED",
+                  "workspace load interrupted"};
 }
 ChildOutput run_child(const std::vector<std::string>& arguments, ChildOptions options) {
   if (arguments.empty())
