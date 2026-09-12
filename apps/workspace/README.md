@@ -123,6 +123,43 @@ SIGTERM stop and join the child group and return 130 or 143. When a script exits
 remaining processes in its owned group are terminated before load continues.
 Scripts have no fixed process deadline.
 
+## Load progress
+
+Human loads show progress when stderr is a terminal with usable dimensions.
+`--progress-format` accepts `default`, `minimal`, `window`, `pane`, `verbose`,
+or a template. Counters report delivered pane commands and configured delays;
+they do not wait for programs running inside panes to exit.
+
+Templates accept `{session}`, `{window}`, `{workspace_path}`, `{progress}`,
+`{summary}`, `{status_icon}`, `{bar}`, `{window_bar}` and `{pane_bar}`. Window
+fields include `{window_index}`, `{window_total}`, `{window_progress}`,
+`{windows_done}`, `{windows_remaining}` and `{window_progress_rel}`. Pane fields
+include `{pane_index}`, `{pane_total}`, `{pane_progress}`, `{pane_done}`,
+`{pane_remaining}`, `{pane_progress_rel}`, `{session_pane_total}`,
+`{session_panes_done}`, `{session_panes_remaining}`, `{session_pane_progress}`
+and `{overall_percent}`. Unknown fields remain literal; `{{` and `}}` print braces.
+
+`--progress-lines` sets the script panel's height: the default is three lines,
+zero hides script text, and `-1` uses the available height. The panel retains at
+most 256 lines of 4096 bytes, clips wide text to terminal cells and renders
+control characters as printable placeholders. Failed loads retain the final
+bounded script tail before their error message.
+
+`TMUXP_PROGRESS_FORMAT` and `TMUXP_PROGRESS_LINES` supply defaults; explicit flags
+win. `--no-progress`, `TMUXP_PROGRESS=0`, `TERM=dumb`, redirected stderr and
+machine output disable the panel. `--color never` and `NO_COLOR` disable its
+colours. Resize clears the frame and returns subsequent script text to its
+original streams. Progress does not hide the cursor or change terminal modes.
+
+While the panel is active, terminal script output appears there. Redirected
+stdout receives its complete script output once. Without the panel, both script
+streams flush to their original destinations as they arrive. JSON and NDJSON
+retain their structured capture and event records.
+
+SIGINT and SIGTERM interrupt pane-command delays and are checked between
+creation, command, option and focus operations. Failure removes a newly owned
+session; append retains its borrowed session and reports created window IDs.
+
 ## Editor processes
 
 `edit` uses `VISUAL`, then `EDITOR`, then `vi`. It splits quoted arguments and
@@ -141,7 +178,7 @@ Custom input streams supplied to the callable CLI use captured process I/O.
 
 ## Remaining work
 
-Python process services, progress, shell completion, full
+Python process services, shell completion, full
 configuration/import/capture coverage and supported-platform packaging remain
 incomplete. Terminal suspend/resume job
 control and non-Linux terminal behavior still need verification. The corresponding
