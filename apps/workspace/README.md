@@ -89,6 +89,16 @@ Closed event output keeps completed input results and borrowed-session effects
 in the failure summary. A known script failure keeps its status and captured
 output if the final script event cannot be delivered.
 
+`load --log-file PATH` appends JSON diagnostic records to a regular file.
+`--log-level` defaults to `warning`; `info` includes lifecycle records and
+`debug` adds script-output chunks. Other records omit captured script bodies.
+Required errors and machine results remain visible at every level. New log
+files have owner-only permissions; existing contents and permissions remain.
+Invalid destinations fail before backend mutation. A later write failure
+disables that file and emits one optional warning after primary output checks.
+It preserves child status, cleanup and terminal handoff. A failed write can
+leave an incomplete final log record.
+
 ## Before scripts
 
 `before_script` accepts a command string with quoted arguments. It invokes the
@@ -125,7 +135,7 @@ Custom input streams supplied to the callable CLI use captured process I/O.
 
 ## Remaining work
 
-Python process services, progress/logging, shell completion, full
+Python process services, progress, shell completion, full
 configuration/import/capture coverage and supported-platform packaging remain
 incomplete. Terminal suspend/resume job
 control and non-Linux terminal behavior still need verification. The corresponding

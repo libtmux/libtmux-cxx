@@ -2,18 +2,176 @@
 #include "workspace_cli.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <sstream>
 #include <string_view>
 
 #include <CLI/CLI.hpp>
 #ifndef _WIN32
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
 namespace libtmux::workspace::cli {
 namespace {
+class DiagnosticLog {
+  const Request& request_;
+  std::ostream& errors_;
+  int descriptor_{-1}, level_{2}, failure_{};
+  bool reported_{};
+
+  static int rank(std::string_view level) {
+    if (level == "debug")
+      return 0;
+    if (level == "info")
+      return 1;
+    if (level == "error")
+      return 3;
+    return level == "critical" ? 4 : 2;
+  }
+  static void omit_capture(Json& data) {
+    if (data.is_object())
+      data.erase("script_output");
+    if (data.is_structured())
+      for (auto& child : data)
+        omit_capture(child);
+  }
+  void close() noexcept {
+#ifndef _WIN32
+    if (descriptor_ >= 0 && ::close(descriptor_) != 0 && failure_ == 0)
+      failure_ = errno;
+#endif
+    descriptor_ = -1;
+  }
+  void write(const Json& record) {
+#ifndef _WIN32
+    const auto bytes = encoded(record) + '\n';
+    std::size_t offset{};
+    while (offset < bytes.size()) {
+      const auto count =
+          ::write(descriptor_, bytes.data() + offset, bytes.size() - offset);
+      if (count < 0 && errno == EINTR)
+        continue;
+      if (count <= 0) {
+        failure_ = count == 0 ? EIO : errno;
+        close();
+        return;
+      }
+      offset += static_cast<std::size_t>(count);
+    }
+#else
+    (void)record;
+#endif
+  }
+
+public:
+  DiagnosticLog(const Request& request, std::ostream& errors)
+      : request_{request}, errors_{errors} {}
+  DiagnosticLog(const DiagnosticLog&) = delete;
+  DiagnosticLog& operator=(const DiagnosticLog&) = delete;
+  ~DiagnosticLog() {
+    close();
+    report_failure();
+  }
+  bool enabled(std::string_view severity) const { return rank(severity) >= level_; }
+  void configure() {
+    level_ = rank(request_.value("log-level", "warning"));
+    if (!request_.flag("log-file"))
+      return;
+#ifndef _WIN32
+    const auto path = request_.value("log-file");
+    if (path.find('\0') != std::string::npos)
+      throw Failure{1, "LOG_FILE_UNAVAILABLE", "log path contains a null byte"};
+    struct stat status {};
+    const int inspected = ::lstat(path.c_str(), &status);
+    if (inspected == 0 && !S_ISREG(status.st_mode))
+      throw Failure{1, "LOG_FILE_UNAVAILABLE",
+                    "log destination must be a regular file"};
+    if (inspected != 0 && errno != ENOENT)
+      throw Failure{1, "LOG_FILE_UNAVAILABLE", std::strerror(errno)};
+    const int file = ::open(path.c_str(),
+                            O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW | O_NONBLOCK |
+                                O_CLOEXEC | O_NOCTTY,
+                            0600);
+    if (file < 0)
+      throw Failure{1, "LOG_FILE_UNAVAILABLE", std::strerror(errno)};
+    const int verified = ::fstat(file, &status);
+    const int cause = errno;
+    if (verified != 0 || !S_ISREG(status.st_mode)) {
+      (void)::close(file);
+      throw Failure{1, "LOG_FILE_UNAVAILABLE",
+                    verified != 0 ? std::strerror(cause)
+                                  : "opened log destination is not a regular file"};
+    }
+    descriptor_ = file;
+#else
+    throw Failure{1, "LOG_FILE_UNAVAILABLE",
+                  "log files require POSIX file descriptors"};
+#endif
+  }
+  void event(const std::string& name, const Json& data, std::size_t sequence) noexcept {
+    const std::string_view severity = name == "script-output" ? "debug"
+                                      : name == "failed"      ? "error"
+                                                              : "info";
+    if (descriptor_ < 0 || !enabled(severity))
+      return;
+    try {
+      auto fields = data;
+      if (name == "script-completed" && fields.contains("script_output")) {
+        fields["exit_code"] = fields.at("script_output").at("exit_code");
+        fields["truncated"] = fields.at("script_output").at("truncated");
+      }
+      if (name != "script-output")
+        omit_capture(fields);
+      write({{"schema_version", 1},
+             {"command", request_.command},
+             {"event", name},
+             {"sequence", sequence},
+             {"severity", severity},
+             {"data", fields}});
+    } catch (...) {
+      failure_ = EIO;
+      close();
+    }
+  }
+  void diagnostic(const std::string& code, const std::string& message) noexcept {
+    if (descriptor_ < 0 || !enabled("error"))
+      return;
+    try {
+      write({{"schema_version", 1},
+             {"command", request_.command},
+             {"severity", "error"},
+             {"code", code},
+             {"message", message}});
+    } catch (...) {
+      failure_ = EIO;
+      close();
+    }
+  }
+  void report_failure() noexcept {
+    if (failure_ == 0 || reported_ || !enabled("warning"))
+      return;
+    reported_ = true;
+    try {
+      const auto message = std::string{"log file disabled: "} + std::strerror(failure_);
+      if (request_.machine())
+        errors_ << encoded({{"code", "LOG_FILE_WRITE_FAILED"},
+                            {"level", "warning"},
+                            {"message", message}})
+                << '\n';
+      else
+        errors_ << "Warning: " << message << '\n';
+      errors_.flush();
+    } catch (...) {
+      // An optional diagnostic cannot replace the operation's status.
+    }
+  }
+};
+
 class Model {
 public:
   CLI::App root{"Manage tmux workspaces from YAML or JSON", "tmux-workspace"};
@@ -23,7 +181,9 @@ public:
     root.add_option("--color", "Colour policy: auto, always or never")
         ->check(CLI::IsMember({"auto", "always", "never"}))
         ->default_str("auto");
-    root.add_option("--log-level", "Diagnostic level")
+    root.add_option(
+            "--log-level",
+            "Optional diagnostic level (default warning); errors remain visible")
         ->check(CLI::IsMember({"debug", "info", "warning", "error", "critical"}))
         ->default_str("warning");
     root.add_flag("--command-tree", "Print command metadata as JSON");
@@ -40,7 +200,9 @@ public:
     load->add_flag("-a,--append", "Append windows to the current session");
     auto* two = load->add_flag("-2", "Use 256-colour tmux mode");
     load->add_flag("-8", "Unsupported legacy 88-colour mode; use -2")->excludes(two);
-    load->add_option("--log-file", "Write diagnostic records to a file");
+    load->add_option(
+        "--log-file",
+        "Append JSON diagnostics; info logs lifecycle, debug adds script output");
     load->add_option("--progress-format", "Progress preset or template");
     load->add_option("--progress-lines", "Script panel lines; -1 uses terminal height")
         ->check(CLI::TypeValidator<int>())
@@ -199,10 +361,12 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
       request.ndjson = true;
   }
   Model model;
+  DiagnosticLog diagnostics{request, errors};
   Execution execution;
   Json retained_state;
   const auto fail = [&](int status, const std::string& code,
                         const std::string& message) {
+    diagnostics.diagnostic(code, message);
     try {
       if (request.command == "load" && execution.value.is_object()) {
         const auto primary = execution.value.at("exit_code").get<int>();
@@ -246,14 +410,16 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
     if (request.command == "import")
       request.importer = parsed.front()->get_subcommands().front()->get_name();
     validate(request);
+    diagnostics.configure();
     std::size_t sequence{};
     const auto emit = [&](const std::string& name, Json data) {
+      diagnostics.event(name, data, ++sequence);
       if (!request.ndjson)
         return;
       data["schema_version"] = 1;
       data["command"] = request.command;
       data["event"] = name;
-      data["sequence"] = ++sequence;
+      data["sequence"] = sequence;
       output << encoded(data) << '\n' << std::flush;
       if (!output)
         throw Failure{1, "OUTPUT_CLOSED", "output stream closed"};
@@ -261,7 +427,7 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
     execution = execute(request, emit);
     const auto& result = execution.value;
     if (request.command == "freeze" && request.json && !request.ndjson &&
-        !result.contains("destination")) {
+        !result.contains("destination") && diagnostics.enabled("warning")) {
       errors << encoded({{"code", "CAPTURE_LOSSY"},
                          {"level", "warning"},
                          {"message", "Capture cannot recover original command "
@@ -282,6 +448,8 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
     }
     if (failed && request.command == "load") {
       for (const auto& error : result.at("errors")) {
+        diagnostics.diagnostic(error.at("code").get<std::string>(),
+                               error.at("message").get<std::string>());
         if (request.machine()) {
           auto diagnostic = error;
           diagnostic.erase("script_output");
@@ -290,6 +458,8 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
           errors << "Error: " << error.at("message").get<std::string>() << '\n';
       }
     }
+    if (!request.ndjson && (request.command == "load" || request.command == "edit"))
+      diagnostics.event(failed ? "failed" : "completed", result, ++sequence);
     if (request.ndjson) {
       if (request.command == "load" || request.command == "edit")
         emit(failed ? "failed" : "completed", result);
@@ -310,6 +480,7 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
       errors.flush();
       if (!output || !errors)
         throw Failure{1, "OUTPUT_CLOSED", "load output stream closed"};
+      diagnostics.report_failure();
       if (execution.handoff)
         execution.handoff();
     }
