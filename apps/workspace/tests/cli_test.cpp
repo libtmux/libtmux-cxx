@@ -1,3 +1,4 @@
+#include "../src/services.hpp"
 #include "workspace_cli.hpp"
 
 #include <cstdlib>
@@ -12,6 +13,7 @@
 #include <nlohmann/json.hpp>
 
 #include "libtmux/server.hpp"
+#include "libtmux/testing/environment_guard.hpp"
 #include "libtmux/testing/scoped_server.hpp"
 
 namespace {
@@ -188,6 +190,121 @@ TEST(WorkspaceCliTmux, NativeLoadCaptureAndConversionRoundTrip) {
   }
   EXPECT_EQ(completed, 1);
   EXPECT_GT(sequence, 2U);
+}
+
+TEST(WorkspaceCliTmux, ColdLoadRetainsTheWorkspaceAndRemovesItsBootstrap) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-cold")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto socket = fixture->socket_path().parent_path() / "cold.sock";
+  struct Cleanup {
+    std::filesystem::path socket;
+    ~Cleanup() {
+      const auto server = libtmux::Server::at_socket_path(socket.string());
+      if (server)
+        (void)server->kill();
+    }
+  } cleanup{socket};
+  const auto file = socket.parent_path() / "cold.yaml";
+  std::ofstream{file} << "session_name: invalid:name\nwindows: [{}]\n";
+  const auto invalid =
+      invoke({"load", file.string(), "-d", "-S", socket.string(), "--json"});
+  EXPECT_EQ(invalid.code, 1);
+  EXPECT_TRUE(invalid.out.empty());
+  EXPECT_FALSE(std::filesystem::exists(socket));
+  const auto configuration = socket.parent_path() / "tmux.conf";
+  std::ofstream{configuration} << "set-option -g base-index 7\n";
+  std::ofstream{file} << "session_name: cold\nwindows: [{}]\n";
+  const auto loaded = invoke({"load", file.string(), "-d", "-S", socket.string(), "-f",
+                              configuration.string(), "-2", "--ndjson"});
+  ASSERT_EQ(loaded.code, 0) << loaded.err;
+  const auto server = libtmux::Server::at_socket_path(socket.string());
+  ASSERT_TRUE(server.has_value());
+  const auto sessions = server->sessions();
+  ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
+  ASSERT_EQ(sessions->size(), 1U);
+  EXPECT_EQ(sessions->front().name(), "cold");
+  const auto windows = sessions->front().windows();
+  ASSERT_TRUE(windows.has_value());
+  ASSERT_EQ(windows->size(), 1U);
+  EXPECT_EQ(windows->front().index(), 7);
+  EXPECT_TRUE(fixture->is_alive());
+  ASSERT_TRUE(server->kill().has_value());
+
+  std::ofstream{file} << "session_name: cold-failed\n"
+                         "windows: [{layout: invalid-layout}]\n";
+  const auto failed =
+      invoke({"load", file.string(), "-d", "-S", socket.string(), "--json"});
+  EXPECT_EQ(failed.code, 1);
+  const auto reopened = libtmux::Server::at_socket_path(socket.string());
+  ASSERT_TRUE(reopened.has_value());
+  const auto after = reopened->sessions();
+  EXPECT_TRUE(!after || after->empty());
+  EXPECT_TRUE(fixture->is_alive());
+  const auto missing = socket.parent_path() / "missing-parent" / "socket";
+  const auto startup_failure =
+      invoke({"load", file.string(), "-d", "-S", missing.string(), "--ndjson"});
+  EXPECT_EQ(startup_failure.code, 1);
+  std::istringstream events{startup_failure.out};
+  std::string line;
+  Json terminal;
+  while (std::getline(events, line))
+    terminal = Json::parse(line);
+  EXPECT_EQ(terminal.at("event"), "failed");
+
+  const auto shim = socket.parent_path() / "shim";
+  std::filesystem::create_directory(shim);
+  const auto executable = shim / "tmux";
+  std::ofstream{executable}
+      << "#!/bin/sh\nexport PATH=\"$CXX_ORIGINAL_PATH\"\n"
+         "for argument do\nif [ \"$argument\" = new-session ]; then\n"
+         "tmux \"$@\" >/dev/null\ncode=$?\nprintf 'invalid identity\\n'\n"
+         "exit \"$code\"\nfi\ndone\nexec tmux \"$@\"\n";
+  std::filesystem::permissions(executable, std::filesystem::perms::owner_all);
+  Result malformed;
+  {
+    const std::string previous_path = std::getenv("PATH");
+    const libtmux::test::EnvironmentGuard original{"CXX_ORIGINAL_PATH", previous_path};
+    const libtmux::test::EnvironmentGuard path{"PATH",
+                                               shim.string() + ":" + previous_path};
+    malformed = invoke({"load", file.string(), "-d", "-S", socket.string(), "--json"});
+  }
+  EXPECT_EQ(malformed.code, 1);
+  const auto problem = Json::parse(malformed.out).at("errors")[0];
+  ASSERT_TRUE(problem.contains("retained_state"));
+  EXPECT_EQ(problem.at("retained_state").at("ownership"), "unverified");
+  const auto uncertain = libtmux::Server::at_socket_path(socket.string());
+  ASSERT_TRUE(uncertain.has_value());
+  const auto retained = uncertain->sessions();
+  ASSERT_TRUE(retained.has_value());
+  ASSERT_EQ(retained->size(), 1U);
+  EXPECT_EQ(retained->front().name(), problem.at("retained_state").at("session_name"));
+}
+
+TEST(WorkspaceCliTmux, FailedEventDeliveryRetainsCompletedSessionAccounting) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-events")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto file = fixture->socket_path().parent_path() / "events.yaml";
+  std::ofstream{file} << "session_name: retained\nwindows: [{}]\n";
+  const libtmux::workspace::cli::Request request{
+      .command = "load",
+      .importer = {},
+      .values = {{"workspace-file", {file.string()}},
+                 {"d", {"true"}},
+                 {"S", {fixture->socket_path().string()}}},
+      .ndjson = true};
+  const auto result = libtmux::workspace::cli::execute(
+      request, [](const std::string& event, const libtmux::workspace::cli::Json&) {
+        if (event == "session-created")
+          throw std::runtime_error{"event sink failed"};
+      });
+  EXPECT_EQ(result.at("status"), "partial");
+  ASSERT_EQ(result.at("results").size(), 1U);
+  EXPECT_EQ(result.at("results")[0].at("session_name"), "retained");
+  const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value());
+  EXPECT_TRUE(server->session("=retained:").has_value());
 }
 
 TEST(WorkspaceCliTmux, PartialLoadReportsFailureAndPreservesCompletedSession) {

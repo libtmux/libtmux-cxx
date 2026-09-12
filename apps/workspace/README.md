@@ -34,11 +34,14 @@ $ build/cxx-dev/apps/workspace/tmux-workspace --command-tree
 regular expressions without Python. Whole-word matching groups alternatives.
 Python-only expressions are not supported yet.
 
-Load currently requires an existing tmux server. It creates sessions or reuses
-exact existing names. A session-name override
+Load starts tmux when needed, creates sessions or reuses exact existing names.
+A session-name override
 applies to the final input. New sessions retain explicit window indexes,
 created object identities, command settings, environments and layouts. Failed
 builds remove their own session and preserve earlier successful inputs.
+Cold startup verifies the new server and bootstrap session before creating
+workspace windows. A startup identity error reports any unverified bootstrap
+that may remain. Startup uses a five-second process timeout.
 Directories resolve against the configuration and parent directories. Scripts,
 plugins and custom builders remain unsupported and are rejected.
 
@@ -60,8 +63,7 @@ requires `--force`.
 
 ## Remaining work
 
-Cold-server startup, append, terminal attachment, tmux startup flags,
-editor/Python process services,
+Append, terminal attachment, editor/Python process services,
 progress/logging, shell completion, full configuration/import/capture coverage
 and supported-platform packaging remain incomplete. The corresponding process
 commands and lifecycle flags return explicit unavailable errors. The parser
