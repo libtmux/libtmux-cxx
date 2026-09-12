@@ -9,6 +9,18 @@ was recorded as it landed.
 
 ## Unreleased
 
+## 0.1.0-alpha.8 (2026-09-12)
+
+This alpha reaches the standard library from the typed surface. An entity and a
+`CommandFailure` format with `std::format` through the renderer `operator<<`
+already used, a field handle is a ranges projection and — for a flag — a
+predicate, so the names that build filters also drive the standard algorithms,
+and `Pane::send_line` submits a line in one tmux invocation.
+
+`libtmux::bad_expected_access` names what `value()` throws in either standard's
+build. The README's C++ is quoted from an example that compiles, and it now
+shows what the library returns rather than how to convert it.
+
 ### Entities
 
 - `Session`, `Window`, `Pane` and `Client` format with `std::format`, through

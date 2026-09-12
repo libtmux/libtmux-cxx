@@ -103,7 +103,7 @@ include(FetchContent)
 FetchContent_Declare(
   libtmux
   GIT_REPOSITORY https://github.com/libtmux/libtmux-cxx.git
-  GIT_TAG        v0.1.0-alpha.7  # or a commit; never a moving branch
+  GIT_TAG        v0.1.0-alpha.8  # or a commit; never a moving branch
 )
 FetchContent_MakeAvailable(libtmux)
 target_link_libraries(your_target PRIVATE libtmux::libtmux)
@@ -112,9 +112,9 @@ target_link_libraries(your_target PRIVATE libtmux::libtmux)
 Embedded this way the library builds alone: its tests, examples and the MCP
 server all default off when it is not the top-level project.
 
-`v0.1.0-alpha.7` carries the frozen MCP capability registry and its guarded
-pane input, alongside the experimental x64 desktop Windows preview for Visual
-Studio 2022 and the audited psmux build in its source. Whether a release's vcpkg port carries
+`v0.1.0-alpha.8` carries the formatting, projection and `send_line` additions to
+the typed surface, alongside the experimental x64 desktop Windows preview for
+Visual Studio 2022 and the audited psmux build in its source. Whether a release's vcpkg port carries
 Windows is a separate transition its tagged gates must clear, so check the
 `supports` field of the version you pin.
 
