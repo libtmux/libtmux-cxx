@@ -659,8 +659,8 @@ CATALOGUE: t.Final = (
         replace="  static_cast<void>(pane.command());",
         target="libtmux_value_semantics_test",
         test_regex=r"^libtmux[.]value_semantics[.]",
-        guards="an entity streams and formats through one renderer, so the two "
-        "spellings cannot show a caller different panes",
+        guards="a pane renders with the id and the running command, which is "
+        "the text the value-semantics suite pins for stream and format alike",
     ),
     Mutation(
         mutation_id="failure-text-exit-status",

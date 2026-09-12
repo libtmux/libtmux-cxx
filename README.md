@@ -361,8 +361,8 @@ if (windows.has_value() && !windows->empty()) {
 }
 ```
 
-A `FilterExpr` is itself a predicate, so `std::ranges::count_if(windows,
-window::width > 40)` asks a typed question of any standard algorithm.
+A `FilterExpr` is itself a predicate, so `std::ranges::count_if(*windows,
+libtmux::window::width > 40)` asks a typed question of any standard algorithm.
 
 Fields are typed, so the compiler rejects a question the field cannot answer.
 Each of these is a build error, and a test in
