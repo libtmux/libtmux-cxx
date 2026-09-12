@@ -11,8 +11,9 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
-#include <cstdio>
 #include <filesystem>
+#include <format>
+#include <iostream>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -35,13 +36,13 @@ int main() {
   // the result or the reason there isn't one.
   const auto sessions = server.sessions();
   if (!sessions.has_value()) {
-    std::fprintf(stderr, "%s\n", sessions.error().diagnostic.c_str());
+    std::cerr << std::format("{}\n", sessions.error());
     return 1;
   }
 
   for (const libtmux::Session& session : *sessions) {
-    std::printf("%s has %lld window(s)\n", std::string{session.name()}.c_str(),
-                session.window_count());
+    std::cout << std::format("{} has {} window(s)\n", session.name(),
+                             session.window_count());
   }
   // #endregion connect
 
@@ -51,18 +52,20 @@ int main() {
   // Build an arrangement without composing a single tmux argument.
   const auto editor = session.new_window({.name = "editor"});
   if (!editor.has_value()) {
-    std::fprintf(stderr, "%s\n", editor.error().diagnostic.c_str());
+    std::cerr << std::format("{}\n", editor.error());
     return 1;
   }
 
   const auto logs = editor->split({.horizontal = true, .percentage = 30});
   if (!logs.has_value()) {
-    std::fprintf(stderr, "%s\n", logs.error().diagnostic.c_str());
+    std::cerr << std::format("{}\n", logs.error());
     return 1;
   }
 
-  (void)logs->send_text("journalctl -f");
-  (void)logs->send_key("Enter");
+  // Text and Enter in one invocation, which is what running a command in a
+  // pane means. `send_text` and `send_key` stay available for the times the
+  // two halves are separate acts.
+  (void)logs->send_line("journalctl -f");
   // #endregion build
 
   // Something for the filter below to actually find, so the snippet the README
@@ -88,7 +91,7 @@ int main() {
     const auto editing_window =
         session.new_window({.name = "editing", .shell_command = editor_command});
     if (!editing_window.has_value()) {
-      std::fprintf(stderr, "%s\n", editing_window.error().diagnostic.c_str());
+      std::cerr << std::format("{}\n", editing_window.error());
       return 1;
     }
     // tmux names the pane after whatever is running in it, and for a moment
@@ -109,7 +112,7 @@ int main() {
   // Every call answers with a value: the result, or the reason there is none.
   const auto panes = server.panes();
   if (!panes.has_value()) {
-    std::fprintf(stderr, "%s\n", panes.error().diagnostic.c_str());
+    std::cerr << std::format("{}\n", panes.error());
     return 1;
   }
 
@@ -130,8 +133,8 @@ int main() {
       !libtmux::pane::dead;
 
   for (const libtmux::Pane& shell : *panes | libtmux::matching(interesting)) {
-    std::printf("%s is a live shell, %lld columns wide\n",
-                std::string{shell.id()}.c_str(), shell.width());
+    std::cout << std::format("{} is a live shell, {} columns wide\n", shell.id(),
+                             shell.width());
   }
 
   // An expression owns what it compares against, so this one still works
@@ -144,9 +147,25 @@ int main() {
   const auto windows = server.windows();
   if (windows.has_value()) {
     const auto found = std::ranges::distance(*windows | libtmux::matching(by_name));
-    std::printf("%td window(s) called editor\n", found);
+    std::cout << std::format("{} window(s) called editor\n", found);
   }
   // #endregion query
+
+  // #region project
+  // A handle reads a row, so the name that filters also projects, and a flag
+  // handle is a predicate on its own. The standard algorithms take them as
+  // they are, with no lambda naming the accessor a second time.
+  if (windows.has_value() && !windows->empty()) {
+    std::vector<libtmux::Window> ordered = *windows;
+    std::ranges::sort(ordered, {}, libtmux::window::index);
+
+    const auto active = std::ranges::count_if(ordered, libtmux::window::active);
+    const libtmux::Window& widest =
+        std::ranges::max(ordered, {}, libtmux::window::width);
+    std::cout << std::format("{} of {} active, widest {}\n", active, ordered.size(),
+                             widest);
+  }
+  // #endregion project
 
   // #region cardinality
   // "Exactly one, or say why not" is a question the library answers directly,
@@ -154,14 +173,14 @@ int main() {
   auto addressed = *panes | libtmux::matching(libtmux::pane::id == panes->at(0).id());
 
   if (const auto one = libtmux::exactly_one(addressed); one.has_value()) {
-    std::printf("exactly one: %s\n", std::string{one->get().id()}.c_str());
+    std::cout << std::format("exactly one: {}\n", one->get());
   }
 
   // And when it is not one, the answer says which way it went wrong.
   auto absent = *panes | libtmux::matching(libtmux::pane::command == "no-such-command");
 
   if (const auto none = libtmux::exactly_one(absent); !none.has_value()) {
-    std::printf("not one: %s\n", std::string{libtmux::to_string(none.error())}.c_str());
+    std::cout << std::format("not one: {}\n", libtmux::to_string(none.error()));
   }
   // #endregion cardinality
 
@@ -171,12 +190,12 @@ int main() {
 
   const auto visible = pane.capture();
   if (visible.has_value()) {
-    std::printf("%zu bytes on screen\n", visible->size());
+    std::cout << std::format("{} bytes on screen\n", visible->size());
   }
 
   const auto history = pane.capture({.whole_history = true});
   if (history.has_value()) {
-    std::printf("%zu bytes of scrollback\n", history->size());
+    std::cout << std::format("{} bytes of scrollback\n", history->size());
   }
   // #endregion capture
 
@@ -186,9 +205,7 @@ int main() {
   const auto window = pane.window();
   const auto owner = pane.session();
   if (window.has_value() && owner.has_value()) {
-    std::printf("%s is in %s, in %s\n", std::string{pane.id()}.c_str(),
-                std::string{window->name()}.c_str(),
-                std::string{owner->name()}.c_str());
+    std::cout << std::format("{} is in {}, in {}\n", pane, *window, *owner);
   }
   // #endregion traverse
 
@@ -197,11 +214,11 @@ int main() {
   // live handle. Ask again for the present.
   (void)editor->rename("renamed");
 
-  std::printf("held: %s\n", std::string{editor->name()}.c_str()); // still "editor"
+  std::cout << std::format("held: {}\n", editor->name()); // still "editor"
 
   const auto now = editor->refresh();
   if (now.has_value()) {
-    std::printf("now: %s\n", std::string{now->name()}.c_str()); // "renamed"
+    std::cout << std::format("now: {}\n", now->name()); // "renamed"
   }
   // #endregion snapshot
 
@@ -212,19 +229,19 @@ int main() {
   if (!gone.has_value()) {
     switch (gone.error().kind) {
     case libtmux::FailureKind::validation:
-      std::printf("the request was malformed before it was sent\n");
+      std::cout << "the request was malformed before it was sent\n";
       break;
     case libtmux::FailureKind::unsupported:
-      std::printf("this backend cannot provide the operation safely\n");
+      std::cout << "this backend cannot provide the operation safely\n";
       break;
     case libtmux::FailureKind::refused:
-      std::printf("tmux refused it: %s\n", gone.error().diagnostic.c_str());
+      std::cout << std::format("tmux refused it: {}\n", gone.error().diagnostic);
       break;
     case libtmux::FailureKind::timeout:
-      std::printf("tmux did not answer in time\n");
+      std::cout << "tmux did not answer in time\n";
       break;
     default:
-      std::printf("%s\n", gone.error().diagnostic.c_str());
+      std::cout << std::format("{}\n", gone.error());
       break;
     }
   }
@@ -236,14 +253,14 @@ int main() {
       scratch.socket_path().string(),
       [&observed](std::string_view, const libtmux::CommandFailure*) { ++observed; });
   if (!async_server.has_value()) {
-    std::fprintf(stderr, "%s\n", async_server.error().diagnostic.c_str());
+    std::cerr << std::format("{}\n", async_server.error());
     return 1;
   }
 
   auto started_runtime =
       libtmux::CommandRuntime::start(libtmux::CommandRuntimeConfig{.capacity = 1U});
   if (!started_runtime.has_value()) {
-    std::fprintf(stderr, "%s\n", started_runtime.error().diagnostic.c_str());
+    std::cerr << std::format("{}\n", started_runtime.error());
     return 1;
   }
   auto runtime = *std::move(started_runtime);
@@ -259,12 +276,12 @@ int main() {
   auto submitted =
       async_server->try_submit(runtime, {"display-message", "-p", "async result"});
   if (!submitted.has_value()) { // Refused before admission.
-    std::fprintf(stderr, "%s\n", submitted.error().diagnostic.c_str());
+    std::cerr << std::format("{}\n", submitted.error());
     return 1;
   }
   auto result = std::move(*submitted).wait();
   if (!result.has_value()) { // Failed after admission.
-    std::fprintf(stderr, "%s\n", result.error().diagnostic.c_str());
+    std::cerr << std::format("{}\n", result.error());
     return 1;
   }
   if (!wait_for_completion(1U)) {
@@ -272,30 +289,30 @@ int main() {
   }
 
   const auto held = runtime.snapshot();
-  std::printf("%zu/%zu slot(s), %zu observation(s) pending\n", held.in_flight,
-              held.capacity, held.pending_observers);
-  std::printf("dispatched %zu observation(s)\n", runtime.dispatch_ready());
+  std::cout << std::format("{}/{} slot(s), {} observation(s) pending\n", held.in_flight,
+                           held.capacity, held.pending_observers);
+  std::cout << std::format("dispatched {} observation(s)\n", runtime.dispatch_ready());
 
   auto detached =
       async_server->try_submit(runtime, {"display-message", "-p", "detached"});
   if (!detached.has_value()) {
-    std::fprintf(stderr, "%s\n", detached.error().diagnostic.c_str());
+    std::cerr << std::format("{}\n", detached.error());
     return 1;
   }
   std::move(*detached).detach(); // Keep no result; the observation remains.
   if (!wait_for_completion(2U)) {
     return 1;
   }
-  std::printf("discarded %zu observation(s)\n", runtime.discard_ready());
+  std::cout << std::format("discarded {} observation(s)\n", runtime.discard_ready());
 
   const auto shutdown = runtime.close();
   if (shutdown.failure.has_value()) {
-    std::fprintf(stderr, "%s\n", shutdown.failure->diagnostic.c_str());
+    std::cerr << std::format("{}\n", *shutdown.failure);
     return 1;
   }
-  std::printf("runtime stopped: %s; safe to unload: %s; observed: %zu\n",
-              shutdown.transports_stopped ? "yes" : "no",
-              shutdown.safe_to_unload ? "yes" : "no", observed);
+  std::cout << std::format("runtime stopped: {}; safe to unload: {}; observed: {}\n",
+                           shutdown.transports_stopped, shutdown.safe_to_unload,
+                           observed);
   if (!shutdown.transports_stopped || !shutdown.safe_to_unload || observed != 1U) {
     return 1;
   }
@@ -306,13 +323,13 @@ int main() {
   // with a format string expanded against a pane.
   const auto running = pane.expand("#{pane_current_command}");
   if (running.has_value()) {
-    std::printf("running %s\n", running->c_str());
+    std::cout << std::format("running {}\n", *running);
   }
 
   // Or run a command and read its output.
   const auto answer = server.run({"display-message", "-p", "#{version}"});
   if (answer.has_value()) {
-    std::printf("tmux %s", answer->c_str()); // tmux's answer ends in a newline
+    std::cout << std::format("tmux {}", *answer); // tmux's answer ends in a newline
   }
   // #endregion escape
 
@@ -322,7 +339,7 @@ int main() {
 
   const auto project = session.option("@project");
   if (project.has_value()) {
-    std::printf("@project is %s\n", project->value.c_str());
+    std::cout << std::format("@project is {}\n", project->value);
   }
   // #endregion options
 
@@ -331,7 +348,7 @@ int main() {
   // so a malformed batch costs nothing.
   libtmux::Chain chain;
   chain.new_window("a:b", "unreachable");
-  std::printf("chain valid: %s\n", chain.valid() ? "yes" : "no"); // no
+  std::cout << std::format("chain valid: {}\n", chain.valid()); // false
   // #endregion chain
 
   // #region fixture
@@ -339,12 +356,12 @@ int main() {
   auto fixture = libtmux::test::ScopedTmuxServer::start(
       {.socket_namespace = libtmux::test::SocketNamespace::consumer("my-suite")});
   if (!fixture.has_value()) {
-    std::fprintf(stderr, "%s\n", fixture.error().c_str());
+    std::cerr << std::format("{}\n", fixture.error());
     return 1;
   }
   const auto under_test =
       libtmux::Server::at_socket_path(fixture->socket_path().string());
-  std::printf("sessions on it: %zu\n", under_test->sessions()->size());
+  std::cout << std::format("sessions on it: {}\n", under_test->sessions()->size());
   // #endregion fixture
 
   // The stand-in editor's directory, which the scratch server does not own.
