@@ -1,7 +1,7 @@
 {
   "default": {
     "libtmux": {
-      "baseline": "0.1.0-alpha.7",
+      "baseline": "0.1.0-alpha.8",
       "port-version": 0
     }
   }
