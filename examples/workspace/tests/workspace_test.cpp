@@ -369,9 +369,10 @@ TEST(WorkspaceBuilder, FailureRemovesOnlyTheSessionItCreated) {
       {.socket_namespace = libtmux::test::SocketNamespace::consumer("ws")});
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
+  // A malformed layout crashes tmux 3.3a instead of returning a command error.
   const workspace::Workspace description{
       .session_name = "failure",
-      .windows = {{.name = "bad", .layout = "not-a-layout"}}};
+      .windows = {{.name = "bad", .options = {{"not-a-window-option", "on"}}}}};
   EXPECT_FALSE(workspace::build(server, description).has_value());
   EXPECT_FALSE(server.session("failure").has_value());
   EXPECT_TRUE(server.session("libtmux_test").has_value());
