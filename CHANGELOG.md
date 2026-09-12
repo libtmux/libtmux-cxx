@@ -9,6 +9,14 @@ was recorded as it landed.
 
 ## Unreleased
 
+### Workspace CLI
+
+- Add the optional `tmux-workspace` executable for workspace discovery, loading,
+  capture, conversion and imports, with JSON and NDJSON output.
+- Validate layout names, checksums, tree syntax and pane counts before startup
+  scripts or tmux changes. Version-sensitive abbreviations follow the running
+  daemon; tmux retains responsibility for sizing and pruning saved layouts.
+
 ## 0.1.0-alpha.8 (2026-09-12)
 
 This alpha reaches the standard library from the typed surface. An entity and a
