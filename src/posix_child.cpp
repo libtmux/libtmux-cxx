@@ -181,7 +181,8 @@ struct Pipe final {
   // honoured, not a failure of the spawn.
   return process_request_is_valid(request) &&
          (request.stdio != StdioPolicy::inherit_terminal ||
-          (::isatty(STDIN_FILENO) != 0 && ::isatty(STDOUT_FILENO) != 0));
+          (::isatty(request.terminal_descriptors[0]) != 0 &&
+           ::isatty(request.terminal_descriptors[1]) != 0));
 }
 
 [[nodiscard]] ProcessError::Kind spawn_error_kind(int error_number) {
@@ -277,6 +278,14 @@ expected<PosixChild, ProcessError> PosixChild::launch(const ProcessRequest& requ
     }
     if (result != 0) {
       return action_failure(result);
+    }
+  } else {
+    for (int descriptor = 0; descriptor < 3; ++descriptor) {
+      result = ::posix_spawn_file_actions_adddup2(
+          &actions, request.terminal_descriptors[static_cast<std::size_t>(descriptor)],
+          descriptor);
+      if (result != 0)
+        return action_failure(result);
     }
   }
 

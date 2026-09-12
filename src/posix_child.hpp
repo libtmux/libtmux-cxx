@@ -96,6 +96,7 @@ public:
   void close_stream(ChildStream stream) noexcept;
   void close_output() noexcept;
 
+  [[nodiscard]] bool output_truncated() const noexcept { return capture_.truncated; }
   [[nodiscard]] Capture take_capture() noexcept;
   [[nodiscard]] Termination termination() const noexcept;
 

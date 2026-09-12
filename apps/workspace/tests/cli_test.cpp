@@ -143,6 +143,47 @@ TEST(WorkspaceCli, FileServicesKeepTypesAndUseNativeWholeWordMatching) {
   EXPECT_EQ(Json::parse(debug.out).at("port"), "cxx");
 }
 
+TEST(WorkspaceCli, EditorKeepsQuotedArgumentsAndChildStatus) {
+  Files files;
+  std::ofstream{"dev.yaml"} << "session_name: editor\nwindows: [{}]\n";
+  std::ofstream{"editor script.sh"}
+      << "printf '%s\\n' \"$1\" \"$2\"\nprintf 'child error' >&2\nexit 7\n";
+  libtmux::test::EnvironmentGuard visual{"VISUAL", ""};
+  libtmux::test::EnvironmentGuard editor{
+      "EDITOR", "/bin/\\\nsh 'editor script.sh' \"a\\q\\$\\`x\\\ny\""};
+  const auto result = invoke({"edit", "dev.yaml", "--json"});
+  ASSERT_EQ(result.code, 7) << result.out << result.err;
+  const auto document = Json::parse(result.out);
+  EXPECT_EQ(document.at("exit_code"), 7);
+  EXPECT_EQ(document.at("stdout"),
+            "a\\q$`xy\n" + (files.directory / "dev.yaml").string() + "\n");
+  EXPECT_EQ(document.at("stderr"), "child error");
+  EXPECT_TRUE(result.err.empty());
+  libtmux::test::EnvironmentGuard malformed{"EDITOR", "/bin/sh 'unfinished"};
+  const auto refused = invoke({"edit", "dev.yaml", "--json"});
+  EXPECT_EQ(refused.code, 2);
+  EXPECT_TRUE(refused.out.empty());
+}
+
+TEST(WorkspaceCli, EditorLaunchFailureEndsItsNdjsonOperation) {
+  Files files;
+  std::ofstream{"dev.yaml"} << "session_name: editor\nwindows: [{}]\n";
+  libtmux::test::EnvironmentGuard visual{"VISUAL", ""};
+  libtmux::test::EnvironmentGuard editor{"EDITOR", "/missing-workspace-editor"};
+  const auto result = invoke({"edit", "dev.yaml", "--ndjson"});
+  ASSERT_EQ(result.code, 1);
+  std::istringstream lines{result.out};
+  std::string line;
+  ASSERT_TRUE(static_cast<bool>(std::getline(lines, line)));
+  EXPECT_EQ(Json::parse(line).at("event"), "started");
+  ASSERT_TRUE(static_cast<bool>(std::getline(lines, line)));
+  const auto failed = Json::parse(line);
+  EXPECT_EQ(failed.at("event"), "failed");
+  EXPECT_EQ(failed.at("sequence"), 2);
+  EXPECT_FALSE(static_cast<bool>(std::getline(lines, line)));
+  EXPECT_EQ(Json::parse(result.err).at("code"), "PROCESS_FAILED");
+}
+
 TEST(WorkspaceCliTmux, NativeLoadCaptureAndConversionRoundTrip) {
   auto fixture = libtmux::test::ScopedTmuxServer::start(
       {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli")});

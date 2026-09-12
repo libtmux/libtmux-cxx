@@ -684,11 +684,38 @@ void validate(const Request& request) {
   }
   if (request.command == "freeze" && request.value("session").empty())
     throw Failure{2, "USAGE", "freeze requires a session name or ID"};
-  if (request.command == "shell" || request.command == "edit")
+  if (request.command == "shell")
     throw Failure{1, "FEATURE_UNAVAILABLE",
                   "process services are not implemented in this build"};
 }
 Json execute(const Request& request, const EventSink& event) {
+  if (request.command == "edit") {
+    const auto path = resolve(request.value("workspace-file"));
+    const auto visual = environment("VISUAL"), editor = environment("EDITOR");
+    auto arguments = split_command(!visual.empty()   ? visual
+                                   : !editor.empty() ? editor
+                                                     : "vi");
+    arguments.push_back(path.string());
+    event("started", {{"path", private_path(path)}});
+    try {
+      const auto child = run_child(arguments, request.terminal_allowed, std::nullopt);
+      return {{"schema_version", 1},
+              {"command", "edit"},
+              {"path", private_path(path)},
+              {"exit_code", child.code},
+              {"stdout", child.out},
+              {"stderr", child.err},
+              {"status", child.code == 0 ? "ok" : "error"}};
+    } catch (const Failure& error) {
+      event("failed",
+            {{"status", "error"},
+             {"exit_code", error.exit_code},
+             {"errors",
+              Json::array({{{"code", error.code}, {"message", error.what()}}})}});
+      throw;
+    }
+  }
+
   if (request.command == "ls") {
     Json workspaces = Json::array(), dirs = Json::array();
     for (const auto& file : discover())
@@ -854,6 +881,8 @@ std::string human_result(const Request& request, const Json& result, bool colour
     return result.at("format") == "json" ? encoded(result.at("workspace"), 2) + "\n"
                                          : yaml(result.at("workspace"));
   }
+  if (request.command == "edit")
+    return result.at("stdout").get<std::string>();
   if (request.command == "ls" || request.command == "search") {
     const auto& rows = request.command == "ls" ? result.at("workspaces") : result;
     for (const auto& row : rows)

@@ -4,6 +4,7 @@
 
 #include "libtmux/delivery.hpp"
 #include "libtmux/expected.hpp"
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
@@ -30,6 +31,12 @@ struct ProcessRequest {
   std::optional<std::chrono::milliseconds> timeout;
   std::size_t capture_limit{default_capture_limit};
   StdioPolicy stdio{StdioPolicy::capture};
+#if !defined(_WIN32)
+  bool fail_on_capture_limit{false};
+  std::array<int, 3> terminal_descriptors{0, 1, 2};
+  std::function<std::optional<std::string>(int)> on_started;
+  std::function<bool()> cancelled;
+#endif
 };
 
 struct ProcessReply {
@@ -40,7 +47,15 @@ struct ProcessReply {
 };
 
 struct ProcessError {
-  enum class Kind { validation, spawn, pre_exec, pipe, timeout, cancelled } kind;
+  enum class Kind {
+    validation,
+    spawn,
+    pre_exec,
+    pipe,
+    timeout,
+    cancelled,
+    output_limit
+  } kind;
   DeliveryStatus delivery;
   std::string diagnostic;
   std::vector<std::byte> stdout_bytes;

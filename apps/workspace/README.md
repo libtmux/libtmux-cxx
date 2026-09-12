@@ -29,9 +29,10 @@ $ build/cxx-dev/apps/workspace/tmux-workspace --command-tree
 
 ## Current commands
 
-`ls`, `search`, `convert`, `import teamocil`, `import tmuxinator`, `debug-info`,
+`ls`, `search`, `edit`, `convert`, `import teamocil`, `import tmuxinator`, `debug-info`,
 `load -d`, `load --append` and `freeze` have native services. Ordinary search
-uses C++ ECMAScript regular expressions without Python. Whole-word matching groups alternatives.
+uses C++ ECMAScript regular expressions without Python. Whole-word matching
+groups alternatives.
 Python-only expressions are not supported yet.
 
 Load starts tmux when needed, creates sessions or reuses exact existing names.
@@ -68,12 +69,29 @@ stderr. Captured control bytes stay inside escaped JSON strings. Saving uses
 an exclusively created temporary file; replacing an existing destination
 requires `--force`.
 
+## Editor processes
+
+`edit` uses `VISUAL`, then `EDITOR`, then `vi`. It splits quoted arguments and
+passes the resolved workspace path directly without invoking a shell. Inside
+double quotes, backslashes escape quotes, backslashes, dollars and backticks;
+other backslashes remain literal. Escaped newlines join command lines.
+
+The executable gives an available controlling terminal to the editor and
+restores foreground ownership afterward. Machine stdout remains separate from
+the editor's terminal. Without a controlling terminal, stdin is closed and
+stdout/stderr are captured in the result, up to 1 MiB per stream. Exceeding
+either limit stops the child group and returns `OUTPUT_LIMIT`. The command returns the
+editor's exit status. SIGINT/SIGTERM cancel the owned child group, including
+descendants that retain its pipes. Editing has no fixed process deadline.
+Custom input streams supplied to the callable CLI use captured process I/O.
+
 ## Remaining work
 
-Terminal attachment, editor/Python process services,
+Terminal attachment, Python process services,
 progress/logging, shell completion, full configuration/import/capture coverage
-and supported-platform packaging remain incomplete. The corresponding process
-commands and lifecycle flags return explicit unavailable errors. The parser
+and supported-platform packaging remain incomplete. Editor suspend/resume job
+control and non-Linux terminal behavior still need verification. The corresponding
+process commands and lifecycle flags return explicit unavailable errors. The parser
 includes their intended grammar so generated metadata can be reviewed; their
 presence in help does not mean those services are finished.
 
@@ -101,4 +119,13 @@ $ python3 apps/workspace/tools/verify_cli.py \
     --reference tmuxp \
     --iterations 5 \
     --output /tmp/cxx-workspace-verification.json
+```
+
+The editor verifier uses a real controlling terminal, redirected machine
+stdout, cancellation and an unbounded writer. It opens no tmux server.
+
+```console
+$ python3 apps/workspace/tools/verify_process.py \
+    --binary /tmp/cxx-workspace-install/bin/tmux-workspace \
+    --output /tmp/cxx-workspace-process.json
 ```

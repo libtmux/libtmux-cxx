@@ -141,6 +141,11 @@ poll_and_drain(PosixChild& child, Clock::time_point boundary, DeliveryStatus del
 } // namespace
 
 expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) {
+  if (request.cancelled && request.cancelled()) {
+    return unexpected(process_error(
+        ProcessError::Kind::cancelled, DeliveryStatus::not_started, "cancelled",
+        render_request(request), std::make_error_code(std::errc::operation_canceled)));
+  }
   if (request.timeout.has_value() &&
       *request.timeout <= std::chrono::milliseconds::zero()) {
     return unexpected(process_error(
@@ -172,6 +177,18 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
     return unexpected(std::move(error));
   };
 
+  if (request.on_started) {
+    if (const auto failed = request.on_started(child.pid())) {
+      return abandon(ProcessError{.kind = ProcessError::Kind::pre_exec,
+                                  .delivery = DeliveryStatus::indeterminate,
+                                  .diagnostic = *failed,
+                                  .stdout_bytes = {},
+                                  .stderr_bytes = {},
+                                  .output_truncated = false},
+                     true);
+    }
+  }
+
   if (deadline.has_value() && Clock::now() >= *deadline) {
     return abandon(timed_out(child, DeliveryStatus::indeterminate), true);
   }
@@ -185,6 +202,20 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
 
   auto exit_drain_deadline = Clock::time_point::max();
   for (;;) {
+    if (request.cancelled && request.cancelled()) {
+      return abandon(process_error(ProcessError::Kind::cancelled,
+                                   DeliveryStatus::indeterminate, "cancelled",
+                                   child.rendered_request(),
+                                   std::make_error_code(std::errc::operation_canceled)),
+                     true);
+    }
+    if (request.fail_on_capture_limit && child.output_truncated()) {
+      return abandon(process_error(ProcessError::Kind::output_limit,
+                                   DeliveryStatus::indeterminate, "output limit",
+                                   child.rendered_request(),
+                                   std::make_error_code(std::errc::file_too_large)),
+                     true);
+    }
     if (auto failure = child.update_status(DeliveryStatus::indeterminate)) {
       return abandon(std::move(*failure), false);
     }
