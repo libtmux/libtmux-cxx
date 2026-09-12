@@ -32,6 +32,7 @@ struct ProcessRequest {
   std::size_t capture_limit{default_capture_limit};
   StdioPolicy stdio{StdioPolicy::capture};
 #if !defined(_WIN32)
+  std::filesystem::path working_directory{};
   bool fail_on_capture_limit{false};
   std::array<int, 3> terminal_descriptors{0, 1, 2};
   std::function<std::optional<std::string>(int)> on_started;
@@ -84,6 +85,11 @@ struct ProcessTransportEntry final {
   if (executable.empty() || contains_nul(executable)) {
     return false;
   }
+#if !defined(_WIN32)
+  if (contains_nul(request.working_directory.native())) {
+    return false;
+  }
+#endif
   for (const auto& argument : request.arguments) {
     if (contains_nul(argument.value)) {
       return false;
@@ -100,6 +106,17 @@ struct ProcessTransportEntry final {
 
 [[nodiscard]] expected<ProcessReply, ProcessError>
 run_process(const ProcessRequest& request);
+
+#if !defined(_WIN32)
+using ProcessOutputObserver =
+    std::function<void(std::string_view stream, std::string_view bytes)>;
+enum class DescendantPolicy { leave_running, terminate };
+
+// An observer runs on the caller's thread; throwing stops and reaps the child.
+[[nodiscard]] expected<ProcessReply, ProcessError>
+run_process(const ProcessRequest& request, const ProcessOutputObserver& output,
+            DescendantPolicy descendants = DescendantPolicy::leave_running);
+#endif
 
 #if defined(_WIN32)
 using CancellationProbe = std::function<bool()>;

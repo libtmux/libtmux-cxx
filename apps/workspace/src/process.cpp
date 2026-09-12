@@ -1,5 +1,6 @@
 #include "services.hpp"
 
+#include <array>
 #include <cerrno>
 #include <csignal>
 #include <cstring>
@@ -93,6 +94,19 @@ std::string text(const std::vector<std::byte>& bytes) {
     return {};
   return {reinterpret_cast<const char*>(bytes.data()), bytes.size()};
 }
+std::size_t complete_prefix(std::string_view bytes) {
+  if (bytes.empty())
+    return 0;
+  auto first = bytes.size() - 1;
+  while (first > 0 && (static_cast<unsigned char>(bytes[first]) & 0xc0U) == 0x80U)
+    --first;
+  const auto lead = static_cast<unsigned char>(bytes[first]);
+  const std::size_t width = lead >= 0xc2U && lead <= 0xdfU   ? 2
+                            : lead >= 0xe0U && lead <= 0xefU ? 3
+                            : lead >= 0xf0U && lead <= 0xf4U ? 4
+                                                             : 1;
+  return bytes.size() - first < width ? first : bytes.size();
+}
 } // namespace
 std::vector<std::string> split_command(const std::string& value) {
   std::vector<std::string> result;
@@ -103,7 +117,7 @@ std::vector<std::string> split_command(const std::string& value) {
     const char character = value[index];
     if (character == '\\' && quote != '\'') {
       if (++index == value.size())
-        throw Failure{2, "USAGE", "incomplete escape in editor command"};
+        throw Failure{2, "USAGE", "incomplete escape in command"};
       if (value[index] == '\n')
         continue;
       if (quote == '"' && value[index] != '"' && value[index] != '\\' &&
@@ -130,22 +144,22 @@ std::vector<std::string> split_command(const std::string& value) {
     }
   }
   if (quote)
-    throw Failure{2, "USAGE", "unterminated quote in editor command"};
+    throw Failure{2, "USAGE", "unterminated quote in command"};
   if (active)
     result.push_back(std::move(word));
   if (result.empty() || result.front().empty())
-    throw Failure{2, "USAGE", "editor command needs an executable"};
+    throw Failure{2, "USAGE", "command needs an executable"};
   return result;
 }
-ChildOutput run_child(const std::vector<std::string>& arguments, bool terminal,
-                      std::optional<std::chrono::milliseconds> timeout) {
+ChildOutput run_child(const std::vector<std::string>& arguments, ChildOptions options) {
   if (arguments.empty())
     throw Failure{2, "USAGE", "child command is empty"};
   SignalGuard signals;
-  Terminal display{terminal};
+  Terminal display{options.terminal};
   libtmux::detail::ProcessRequest request;
   request.executable = arguments.front();
-  request.timeout = timeout;
+  request.timeout = options.timeout;
+  request.working_directory = options.directory;
   request.fail_on_capture_limit = true;
   request.cancelled = [] { return interrupted_signal != 0; };
   if (display.descriptor() >= 0) {
@@ -155,17 +169,47 @@ ChildOutput run_child(const std::vector<std::string>& arguments, bool terminal,
   }
   for (auto argument = arguments.begin() + 1; argument != arguments.end(); ++argument)
     request.arguments.push_back({*argument});
-  const auto reply = libtmux::detail::run_process(request);
+  std::array<std::string, 2> pending;
+  const auto output = [&](std::string_view stream, std::string_view bytes) {
+    if (!options.output)
+      return;
+    auto& buffer = pending[stream == "stdout" ? 0 : 1];
+    buffer += bytes;
+    const auto size = complete_prefix(buffer);
+    if (size != 0) {
+      options.output(stream, std::string_view{buffer}.substr(0, size));
+      buffer.erase(0, size);
+    }
+  };
+  const auto reply = libtmux::detail::run_process(
+      request, output,
+      options.terminate_descendants ? libtmux::detail::DescendantPolicy::terminate
+                                    : libtmux::detail::DescendantPolicy::leave_running);
+  for (std::size_t index = 0; index < pending.size(); ++index)
+    if (!pending[index].empty())
+      options.output(index == 0 ? "stdout" : "stderr", pending[index]);
   if (!reply) {
     if (reply.error().kind == libtmux::detail::ProcessError::Kind::cancelled)
       return {128 + interrupted_signal, text(reply.error().stdout_bytes),
-              text(reply.error().stderr_bytes)};
-    if (reply.error().kind == libtmux::detail::ProcessError::Kind::output_limit)
-      throw Failure{1, "OUTPUT_LIMIT", "child output exceeds 1 MiB per stream"};
-    throw Failure{1, "PROCESS_FAILED", reply.error().diagnostic};
+              text(reply.error().stderr_bytes), reply.error().output_truncated};
+    const bool limited =
+        reply.error().kind == libtmux::detail::ProcessError::Kind::output_limit;
+    Failure failure{1, limited ? "OUTPUT_LIMIT" : "PROCESS_FAILED",
+                    limited ? "child output exceeds 1 MiB per stream"
+                            : reply.error().diagnostic};
+    failure.child_output =
+        ChildOutput{1, text(reply.error().stdout_bytes),
+                    text(reply.error().stderr_bytes), reply.error().output_truncated}
+            .value();
+    throw failure;
   }
-  if (reply->output_truncated)
-    throw Failure{1, "OUTPUT_LIMIT", "child output exceeds 1 MiB"};
+  if (reply->output_truncated) {
+    Failure failure{1, "OUTPUT_LIMIT", "child output exceeds 1 MiB"};
+    failure.child_output =
+        ChildOutput{1, text(reply->stdout_bytes), text(reply->stderr_bytes), true}
+            .value();
+    throw failure;
+  }
   const int status =
       std::holds_alternative<libtmux::detail::Exited>(reply->termination)
           ? std::get<libtmux::detail::Exited>(reply->termination).code

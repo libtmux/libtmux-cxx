@@ -54,8 +54,8 @@ Append preserves existing windows. Failure retains the borrowed session,
 applied settings and new windows; machine output identifies retained window
 IDs. An explicit first-window index must name a free slot in that session.
 
-Directories resolve against the configuration and parent directories. Scripts,
-plugins and custom builders remain unsupported and are rejected.
+Directories resolve against the configuration and parent directories. Plugins
+and custom builders remain unsupported and are rejected.
 
 Conversion preserves unknown document fields. Human conversion previews by
 default; `--yes` saves beside the source, and `--save-to` names a destination.
@@ -72,6 +72,24 @@ sessions and ends with one completed or failed result. Machine diagnostics use
 stderr. Captured control bytes stay inside escaped JSON strings. Saving uses
 an exclusively created temporary file; replacing an existing destination
 requires `--force`.
+
+## Before scripts
+
+`before_script` accepts a command string with quoted arguments. It invokes the
+executable directly, so shell operators require an explicit shell command.
+Load validates every input's script arguments, working directory and environment
+names before creating a session. Scripts run after a new session is created or an append
+session is selected, before workspace settings and windows. Reusing an existing
+session skips the script. The working directory is the session's configured
+`start_directory`, or the invoking directory when that field is absent.
+
+Script stdin is closed. Stdout and stderr retain up to 1 MiB each in
+`script_output`; NDJSON also flushes `script-output` records while the child
+runs. An output limit or script failure removes only the newly owned session.
+Append preserves its borrowed session and reports partial effects. SIGINT and
+SIGTERM stop and join the child group and return 130 or 143. When a script exits,
+remaining processes in its owned group are terminated before load continues.
+Scripts have no fixed process deadline.
 
 ## Editor processes
 
@@ -114,7 +132,8 @@ $ ctest --preset cxx-dev \
 ```
 
 The retained verifier checks an installed binary, uses a private socket and
-records raw repeated timings. Pass an installed tmuxp executable to compare
+verifies script streaming, cancellation, output limits and closed output.
+It records raw repeated timings. Pass an installed tmuxp executable to compare
 matching startup, discovery, search and load/capture boundaries.
 
 ```console

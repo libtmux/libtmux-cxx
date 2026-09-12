@@ -8,6 +8,7 @@ import os
 import pathlib
 import resource
 import select
+import shlex
 import shutil
 import signal
 import site
@@ -15,6 +16,7 @@ import statistics
 import subprocess
 import tempfile
 import time
+from contextlib import suppress
 
 
 def run(command, env, cwd):
@@ -75,6 +77,195 @@ def load_capture(program, workspace, socket, destination, env, cwd):
     assert len(captured["windows"]) == 1
     assert len(captured["windows"][0]["panes"]) == 2
     return elapsed
+
+
+def before_scripts(binary, root, env, prefix, append_env):
+    """Verify live script records and cleanup through the executable boundary."""
+    directory = root / "scripts"
+    directory.mkdir()
+    baseline, _ = run([*prefix, "list-panes", "-a", "-F", "#{pane_id}"], env, root)
+    results = {}
+
+    def wait_for(predicate):
+        deadline = time.monotonic() + 2
+        while not predicate():
+            assert time.monotonic() < deadline, "script did not reach its checkpoint"
+            time.sleep(0.005)
+
+    for case, append, mode in [
+        ("stream", False, "--ndjson"),
+        ("interrupt", False, "--json"),
+        ("leader-exit", False, "--json"),
+        ("terminate", True, "--ndjson"),
+        ("limit", False, "--json"),
+        ("closed", False, "--ndjson"),
+    ]:
+        script = directory / f"{case}.sh"
+        marker = directory / f"{case}.pids"
+        release = directory / f"{case}.release"
+        if case == "stream":
+            body = (
+                "printf '\\377\\351'\nsleep 0.02\n"
+                "printf '\\233\\252\\t\\033[31m'\nprintf warning >&2\n"
+            )
+        elif case in ("interrupt", "terminate"):
+            body = (
+                'sh -c \'trap "" TERM; printf ready > "$1"; exec sleep 30\' sh "$2" &\n'
+                'while ! test -f "$2"; do sleep 0.005; done\n'
+                "printf '%s:%s' $$ $! > \"$1\"\n"
+                "printf begin\nwait\n"
+            )
+        elif case == "leader-exit":
+            body = "sleep 30 &\nprintf '%s:%s' $$ $! > \"$1\"\nprintf failed\nexit 7\n"
+        elif case == "limit":
+            body = "printf '%s' $$ > \"$1\"\nexec yes\n"
+        else:
+            body = "printf '%s' $$ > \"$1\"\n"
+        if case in ("stream", "closed"):
+            body += (
+                'i=0\nwhile ! test -f "$2"; do i=$((i+1)); '
+                'test "$i" -lt 200 || exit 9; sleep 0.01; done\n'
+            )
+            if case == "closed":
+                body += "printf closed\nsleep 30\n"
+        script.write_text(body)
+        if case == "stream":
+            script.write_text('printf "%s" $$ > "$1"\n' + body)
+        workspace = directory / f"{case}.json"
+        workspace.write_text(
+            json.dumps(
+                {
+                    "session_name": "script-process",
+                    "before_script": shlex.join(
+                        ["/bin/sh", str(script), str(marker), str(release)]
+                    ),
+                    "windows": [{}],
+                }
+            )
+        )
+        process = subprocess.Popen(
+            [
+                binary,
+                "load",
+                str(workspace),
+                "-S",
+                prefix[2],
+                mode,
+                "--append" if append else "-d",
+            ],
+            cwd=directory,
+            env=append_env if append else env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        observed = bytearray()
+        owned = []
+        try:
+            if case == "stream":
+
+                def streamed(process=process, observed=observed):
+                    ready, _, _ = select.select([process.stdout], [], [], 0.02)
+                    if ready:
+                        observed.extend(os.read(process.stdout.fileno(), 65536))
+                    return any(
+                        json.loads(line).get("event") == "script-output"
+                        and "雪" in json.loads(line).get("text", "")
+                        for line in observed.split(b"\n")[:-1]
+                    )
+
+                wait_for(streamed)
+                release.touch()
+            else:
+                wait_for(
+                    lambda marker=marker: marker.exists() and bool(marker.read_text())
+                )
+                owned = [int(value) for value in marker.read_text().split(":")]
+                if case in ("interrupt", "terminate"):
+                    process.send_signal(
+                        signal.SIGINT if case == "interrupt" else signal.SIGTERM
+                    )
+                elif case == "closed":
+                    process.stdout.close()
+                    process.stdout = None
+                    release.touch()
+            output, error = process.communicate(timeout=2)
+            observed.extend(output or b"")
+            for pid in owned:
+                state = subprocess.run(
+                    ["ps", "-p", str(pid), "-o", "stat="],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                ).stdout.strip()
+                assert not state or state.startswith("Z"), (case, pid, state)
+            if case == "closed":
+                assert process.returncode == 1, error
+                assert json.loads(error)["code"] == "OUTPUT_CLOSED", error
+            else:
+                records = (
+                    [json.loads(line) for line in observed.splitlines()]
+                    if mode == "--ndjson"
+                    else []
+                )
+                summary = records[-1] if mode == "--ndjson" else json.loads(observed)
+                if case == "stream":
+                    assert process.returncode == 0 and not error, (observed, error)
+                    text = "".join(
+                        item.get("text", "")
+                        for item in records
+                        if item.get("event") == "script-output"
+                        and item["stream"] == "stdout"
+                    )
+                    assert text == "\ufffd雪\t\x1b[31m", text
+                    assert (
+                        sum(
+                            item["event"] in ("completed", "failed") for item in records
+                        )
+                        == 1
+                    )
+                    run([*prefix, "kill-session", "-t", "=script-process:"], env, root)
+                else:
+                    problem = summary["errors"][0]
+                    assert summary["status"] == ("partial" if append else "error"), (
+                        summary
+                    )
+                    if case == "limit":
+                        assert (
+                            process.returncode == 1
+                            and problem["code"] == "OUTPUT_LIMIT"
+                        ), problem
+                        assert problem["script_output"]["truncated"]
+                        assert len(problem["script_output"]["stdout"]) <= 1024 * 1024
+                    elif case == "leader-exit":
+                        assert process.returncode == 1, (summary, error)
+                        assert problem["code"] == "BEFORE_SCRIPT_FAILED", problem
+                        assert problem["script_output"]["exit_code"] == 7, problem
+                        assert problem["script_output"]["stdout"] == "failed", problem
+                    else:
+                        expected = 130 if case == "interrupt" else 143
+                        assert process.returncode == expected, (summary, error)
+                        assert problem["script_output"]["stdout"] == "begin", problem
+            after, _ = run([*prefix, "list-panes", "-a", "-F", "#{pane_id}"], env, root)
+            assert after.stdout == baseline.stdout, (case, after.stdout)
+            results[case] = {"status": "PASS", "exit_code": process.returncode}
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=2)
+            if not owned and marker.exists():
+                owned = [int(value) for value in marker.read_text().split(":") if value]
+            for pid in owned:
+                with suppress(ProcessLookupError):
+                    os.kill(pid, signal.SIGKILL)
+            subprocess.run(
+                [*prefix, "kill-session", "-t", "=script-process:"],
+                env=env,
+                cwd=root,
+                capture_output=True,
+                check=False,
+            )
+    return results
 
 
 def main():
@@ -140,6 +331,9 @@ def main():
             )
             pid, session, pane = context.stdout.decode().strip().split(",")
             append_env = dict(env, TMUX=f"{socket},{pid},{session[1:]}", TMUX_PANE=pane)
+            report["checks"]["before_script"] = before_scripts(
+                str(binary), root, env, prefix, append_env
+            )
             workspace = configs / "bench.yaml"
             workspace.write_text(
                 "session_name: bench\nwindows:\n"

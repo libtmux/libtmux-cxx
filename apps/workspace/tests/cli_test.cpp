@@ -102,6 +102,105 @@ TEST(WorkspaceCli, LegacyColourFailsBeforeDocumentResolution) {
   }
 }
 
+TEST(WorkspaceCliTmux, BeforeScriptsValidateEveryInputBeforeMutation) {
+  Files files;
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-script")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value());
+  std::ofstream{"first.json"} << Json{{"session_name", "script-first"},
+                                      {"windows", Json::array({Json::object()})}};
+  const Json valid{{"session_name", "script-invalid"},
+                   {"before_script", "/bin/sh -c 'printf ran > ran-script'"},
+                   {"windows", Json::array({Json::object()})}};
+  for (const auto& invalid : std::vector<Json>{
+           {{"before_script", Json::object()}},
+           {{"before_script", "'/bin/true"}},
+           {{"before_script", std::string{"/bin/true\0hidden", 16}}},
+           {{"start_directory", "missing-directory"}},
+           {{"environment", {{"", "invalid"}}}},
+           {{"environment", {{"A=B", "invalid"}}}},
+           {{"windows", Json::array({{{"environment", {{"A=B", "invalid"}}}}})}},
+           {{"windows",
+             Json::array({{{"panes", Json::array({{{"environment",
+                                                    {{"", "invalid"}}}}})}}})}}}) {
+    auto document = valid;
+    document.update(invalid);
+    std::ofstream{"second.json"} << document;
+    const auto result = invoke({"load", "first.json", "second.json", "-d", "-S",
+                                fixture->socket_path().string(), "--json"});
+    EXPECT_EQ(result.code, 1) << result.out << result.err;
+    EXPECT_TRUE(result.out.empty());
+    EXPECT_FALSE(server->session("=script-first:").has_value());
+    EXPECT_FALSE(server->session("=script-invalid:").has_value());
+    EXPECT_FALSE(std::filesystem::exists("ran-script"));
+  }
+}
+
+TEST(WorkspaceCliTmux, BeforeScriptsRetainOutputAndRespectSessionOwnership) {
+  Files files;
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-script")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value());
+  std::filesystem::create_directory("work");
+  std::ofstream{"work/before.sh"}
+      << "tmux -S \"$2\" has-session -t '=script-success:' || exit 9\n"
+         "tmux -S \"$2\" show-environment -t '=script-success:' SCRIPT_AFTER "
+         ">/dev/null 2>&1 && exit 8\n"
+         "printf '%s|%s' \"$PWD\" \"$1\"\nprintf warning >&2\n";
+  Json document{
+      {"session_name", "script-success"},
+      {"start_directory", "work"},
+      {"before_script", "/bin/sh before.sh 'literal $VALUE; touch unwanted' '" +
+                            fixture->socket_path().string() + "'"},
+      {"environment", {{"SCRIPT_AFTER", "later"}}},
+      {"windows", Json::array({Json::object()})}};
+  std::ofstream{"script.json"} << document;
+  const auto loaded = invoke(
+      {"load", "script.json", "-d", "-S", fixture->socket_path().string(), "--json"});
+  ASSERT_EQ(loaded.code, 0) << loaded.err << loaded.out;
+  const auto summary = Json::parse(loaded.out);
+  ASSERT_TRUE(summary.at("results")[0].contains("script_output"));
+  EXPECT_EQ(summary.at("results")[0].at("script_output").at("stdout"),
+            (files.directory / "work").string() + "|literal $VALUE; touch unwanted");
+  EXPECT_EQ(summary.at("results")[0].at("script_output").at("stderr"), "warning");
+  EXPECT_FALSE(std::filesystem::exists("work/unwanted"));
+  const auto session = server->session("=script-success:");
+  ASSERT_TRUE(session.has_value());
+  const auto pane = session->active_pane();
+  ASSERT_TRUE(pane.has_value());
+  const auto pid = pane->expand("#{pid}");
+  ASSERT_TRUE(pid.has_value());
+  std::ofstream{"work/fail.sh"} << "printf failed\nprintf detail >&2\nexit 7\n";
+  document["session_name"] = "script-failed";
+  document["before_script"] = "/bin/sh fail.sh";
+  std::ofstream{"script.json"} << document;
+  const auto failed = invoke(
+      {"load", "script.json", "-d", "-S", fixture->socket_path().string(), "--json"});
+  ASSERT_EQ(failed.code, 1) << failed.err << failed.out;
+  const auto problem = Json::parse(failed.out).at("errors")[0];
+  EXPECT_EQ(problem.at("failed_stage"), "before-script");
+  EXPECT_EQ(problem.at("script_output").at("exit_code"), 7);
+  EXPECT_EQ(problem.at("script_output").at("stdout"), "failed");
+  EXPECT_FALSE(server->session("=script-failed:").has_value());
+  libtmux::test::EnvironmentGuard tmux{"TMUX", fixture->socket_path().string() + "," +
+                                                   *pid + ",0"};
+  libtmux::test::EnvironmentGuard current_pane{"TMUX_PANE", pane->id()};
+  const auto appended = invoke({"load", "script.json", "--append", "--json"});
+  ASSERT_EQ(appended.code, 1) << appended.err << appended.out;
+  const auto partial = Json::parse(appended.out);
+  EXPECT_EQ(partial.at("status"), "partial");
+  EXPECT_EQ(partial.at("errors")[0].at("retained_state").at("session_id"),
+            session->id());
+  EXPECT_EQ(partial.at("errors")[0].at("script_output").at("stderr"), "detail");
+  ASSERT_TRUE(session->windows().has_value());
+  EXPECT_EQ(session->windows()->size(), 1U);
+  EXPECT_TRUE(pane->expand("#{pane_id}").has_value());
+}
+
 TEST(WorkspaceCli, FileServicesKeepTypesAndUseNativeWholeWordMatching) {
   Files files;
   std::ofstream{"dev.yaml"}

@@ -265,6 +265,12 @@ expected<PosixChild, ProcessError> PosixChild::launch(const ProcessRequest& requ
     static_cast<void>(::posix_spawn_file_actions_destroy(&actions));
     return fail(ProcessError::Kind::pipe, "pipe", error_number);
   };
+  if (!request.working_directory.empty()) {
+    result = ::posix_spawn_file_actions_addchdir_np(&actions,
+                                                    request.working_directory.c_str());
+    if (result != 0)
+      return action_failure(result);
+  }
   if (capturing) {
     result = ::posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null",
                                                 O_RDONLY, 0);
@@ -553,6 +559,27 @@ std::optional<ProcessError> PosixChild::signal_group(int signal_number,
     }
     return process_error(ProcessError::Kind::pipe, delivery, "kill", rendered_request_,
                          generic_error(errno));
+  }
+}
+
+expected<bool, ProcessError>
+PosixChild::exit_pending(DeliveryStatus delivery) noexcept {
+  siginfo_t information{};
+  for (;;) {
+    if (::waitid(P_PID, static_cast<id_t>(pid_), &information,
+                 WEXITED | WNOHANG | WNOWAIT) == 0) {
+      return information.si_pid == pid_;
+    }
+    if (errno == EINTR) {
+      continue;
+    }
+    const auto error_number = errno;
+    if (error_number == ECHILD) {
+      status_ = ChildStatus::unknowable;
+      close_exit_descriptor();
+    }
+    return unexpected(process_error(ProcessError::Kind::pipe, delivery, "waitid pipe",
+                                    rendered_request_, generic_error(error_number)));
   }
 }
 

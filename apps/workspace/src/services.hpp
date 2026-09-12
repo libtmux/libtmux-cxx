@@ -7,6 +7,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -17,6 +18,7 @@ struct Failure : std::runtime_error {
   int exit_code;
   std::string code;
   Json retained_state;
+  Json child_output;
   Failure(int status, std::string category, std::string message)
       : std::runtime_error{std::move(message)}, exit_code{status},
         code{std::move(category)} {}
@@ -43,11 +45,24 @@ struct ChildOutput {
   int code;
   std::string out;
   std::string err;
+  bool truncated{};
+  Json value() const {
+    return {{"exit_code", code},
+            {"stdout", out},
+            {"stderr", err},
+            {"truncated", truncated}};
+  }
+};
+struct ChildOptions {
+  bool terminal{};
+  bool terminate_descendants{};
+  std::optional<std::chrono::milliseconds> timeout{std::chrono::seconds{5}};
+  std::string directory{};
+  std::function<void(std::string_view, std::string_view)> output{};
 };
 std::vector<std::string> split_command(const std::string& value);
-ChildOutput
-run_child(const std::vector<std::string>& arguments, bool terminal = false,
-          std::optional<std::chrono::milliseconds> timeout = std::chrono::seconds{5});
+ChildOutput run_child(const std::vector<std::string>& arguments,
+                      ChildOptions options = {});
 Json execute(const Request& request, const EventSink& event);
 std::string encoded(const Json& value, int indent = -1);
 std::string human_result(const Request& request, const Json& result, bool colour);

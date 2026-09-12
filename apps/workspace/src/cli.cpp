@@ -243,11 +243,21 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
                         result.at("status") != "ok";
     if (request.command == "edit" && !request.machine())
       errors << result.at("stderr").get<std::string>();
+    if (request.command == "load" && !request.machine()) {
+      for (const auto* field : {"results", "errors"})
+        for (const auto& item : result.at(field))
+          if (item.contains("script_output")) {
+            output << item.at("script_output").at("stdout").get<std::string>();
+            errors << item.at("script_output").at("stderr").get<std::string>();
+          }
+    }
     if (failed && request.command == "load") {
       for (const auto& error : result.at("errors")) {
-        if (request.machine())
-          errors << encoded(error) << '\n';
-        else
+        if (request.machine()) {
+          auto diagnostic = error;
+          diagnostic.erase("script_output");
+          errors << encoded(diagnostic) << '\n';
+        } else
           errors << "Error: " << error.at("message").get<std::string>() << '\n';
       }
     }
@@ -266,7 +276,7 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
       output << encoded(result, 2) << '\n';
     else
       output << human_result(request, result, colour_enabled(request, output));
-    if (request.command == "edit" && output)
+    if ((request.command == "edit" || request.command == "load") && output)
       return result.at("exit_code").get<int>();
     return output && !failed ? 0 : 1;
   } catch (const CLI::ParseError& error) {
