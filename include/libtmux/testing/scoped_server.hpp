@@ -118,3 +118,7 @@ private:
 };
 
 } // namespace libtmux::test
+
+namespace libtmux {
+namespace testing = test;
+}

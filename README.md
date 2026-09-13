@@ -809,10 +809,13 @@ find_package(libtmux REQUIRED COMPONENTS testing)
 target_link_libraries(your_tests PRIVATE libtmux::testing)
 ```
 
+The C++ namespace alias `libtmux::testing` names the same types and functions
+as `libtmux::test`.
+
 ```cpp
 // A private tmux for a suite of your own, gone when the scope ends.
-auto fixture = libtmux::test::ScopedTmuxServer::start(
-    {.socket_namespace = libtmux::test::SocketNamespace::consumer("my-suite")});
+auto fixture = libtmux::testing::ScopedTmuxServer::start(
+    {.socket_namespace = libtmux::testing::SocketNamespace::consumer("my-suite")});
 if (!fixture.has_value()) {
   std::cerr << std::format("{}\n", fixture.error());
   return 1;
