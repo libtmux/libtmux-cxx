@@ -79,7 +79,7 @@ parse_version(std::string_view output) {
   output.remove_prefix(prefix.size());
 
   Version version;
-  if (output == "master") {
+  if (output == "master" || output.ends_with("-master")) {
     version.unbounded = true;
     return version;
   }
@@ -123,6 +123,15 @@ parse_version(std::string_view output) {
   const std::string_view suffix = rest.substr(end);
   if (suffix.empty()) {
     return version;
+  }
+  // A release candidate ranks as the release it names: `-rc`, or `-rc2` for
+  // a later candidate of the same release.
+  if (suffix.starts_with("-rc")) {
+    std::uint32_t candidate = 0;
+    if (suffix.size() == 3 || digits(suffix.substr(3), candidate)) {
+      return version;
+    }
+    return unexpected(VersionError::malformed);
   }
   if (suffix.starts_with('.')) {
     if (!digits(suffix.substr(1), version.revision)) {
