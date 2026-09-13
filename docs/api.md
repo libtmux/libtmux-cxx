@@ -5307,6 +5307,8 @@ Decode tmux's control protocol.  A control-mode stream interleaves command reply
   - [`Connection::wait_for_notifications`](#libtmux-control-hpp-connection-wait-for-notifications)
   - [`Connection::notification_fd`](#libtmux-control-hpp-connection-notification-fd)
   - [`Connection::set_pane_output`](#libtmux-control-hpp-connection-set-pane-output)
+  - [`Connection::mute_pane_output`](#libtmux-control-hpp-connection-mute-pane-output)
+  - [`Connection::resume_pane_output`](#libtmux-control-hpp-connection-resume-pane-output)
   - [`Connection::events`](#libtmux-control-hpp-connection-events)
   - [`Connection::dropped_notifications`](#libtmux-control-hpp-connection-dropped-notifications)
   - [`Connection::native_child_pid`](#libtmux-control-hpp-connection-native-child-pid)
@@ -5770,7 +5772,22 @@ A descriptor that is readable exactly when a take would return something.  For a
 ```cpp
 expected<void, ProtocolError> set_pane_output(std::string_view pane, bool deliver, std::chrono::steady_clock::time_point deadline);
 ```
-Stop or resume `%output` for one pane, on a connection that asked for it.  The direction is not symmetrical, because tmux is not: a connection that started without `pane_output` cannot be made to listen to anything, and muting is the only per-pane control it offers. So this narrows what a listening connection receives; it cannot widen a silent one.  `resume` on a pane that tmux paused also clears the pause, and tmux moves that pane's offset to the current end — so whatever was produced while it was paused or muted is not delivered afterwards.
+Stop or resume `%output` for one pane, on a connection that asked for it.  The direction is not symmetrical, because tmux is not: a connection that started without `pane_output` cannot be made to listen to anything, and muting is the only per-pane control it offers. So this narrows what a listening connection receives; it cannot widen a silent one.  Resuming clears both mute and pause, starting at tmux's current output offset. Output already discarded by tmux is not replayed.
+
+<a id="libtmux-control-hpp-connection-mute-pane-output"></a>
+#### `Connection::mute_pane_output`
+
+```cpp
+[[nodiscard]] expected<void, ProtocolError> mute_pane_output(std::string_view pane, std::chrono::steady_clock::time_point deadline);
+```
+Named forms of set_pane_output; the same connection policy applies.
+
+<a id="libtmux-control-hpp-connection-resume-pane-output"></a>
+#### `Connection::resume_pane_output`
+
+```cpp
+[[nodiscard]] expected<void, ProtocolError> resume_pane_output(std::string_view pane, std::chrono::steady_clock::time_point deadline);
+```
 
 <a id="libtmux-control-hpp-connection-events"></a>
 #### `Connection::events`

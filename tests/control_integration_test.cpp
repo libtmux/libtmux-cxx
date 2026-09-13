@@ -1000,7 +1000,7 @@ TEST(ControlModeConnection, MutesOnePaneAndRefusesToWidenASilentConnection) {
         << (silent.has_value() ? "" : silent.error().message);
     auto connection = std::move(*silent);
     const auto refused =
-        connection.set_pane_output("%0", true, std::chrono::steady_clock::now() + 2s);
+        connection.resume_pane_output("%0", std::chrono::steady_clock::now() + 2s);
     ASSERT_FALSE(refused.has_value());
     EXPECT_NE(refused.error().message.find("did not ask for pane output"),
               std::string::npos)
@@ -1030,7 +1030,7 @@ TEST(ControlModeConnection, MutesOnePaneAndRefusesToWidenASilentConnection) {
   ASSERT_FALSE(pane.empty());
 
   const auto muted =
-      connection.set_pane_output(pane, false, std::chrono::steady_clock::now() + 2s);
+      connection.mute_pane_output(pane, std::chrono::steady_clock::now() + 2s);
   ASSERT_TRUE(muted.has_value()) << muted.error().message;
 
   static_cast<void>(connection.take_notifications());
@@ -1053,6 +1053,30 @@ TEST(ControlModeConnection, MutesOnePaneAndRefusesToWidenASilentConnection) {
     }
   }
   EXPECT_EQ(outputs, 0) << "a muted pane still delivered output";
+
+  const auto paused =
+      connection.execute(group({{"refresh-client", "-A", pane + ":pause"}}),
+                         std::chrono::steady_clock::now() + 2s);
+  ASSERT_FALSE(paused.connection_error.has_value());
+  ASSERT_TRUE(connection.resume_pane_output(pane, std::chrono::steady_clock::now() + 2s)
+                  .has_value());
+  const auto resumed = connection.execute(
+      group({{"send-keys", "-t", pane, "echo resumed-pane-marker", "Enter"}}),
+      std::chrono::steady_clock::now() + 2s);
+  ASSERT_FALSE(resumed.connection_error.has_value());
+  std::string received;
+  const auto resumed_deadline = std::chrono::steady_clock::now() + 2s;
+  while (std::chrono::steady_clock::now() < resumed_deadline &&
+         received.find("resumed-pane-marker") == std::string::npos) {
+    for (const auto& notification :
+         connection.wait_for_notifications(resumed_deadline)) {
+      if (libtmux::parse(notification).kind == libtmux::NotificationKind::output) {
+        received += text(notification.body);
+      }
+    }
+  }
+  EXPECT_NE(received.find("resumed-pane-marker"), std::string::npos)
+      << "a resumed pane did not deliver new output";
 
   EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
 }
