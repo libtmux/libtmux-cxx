@@ -108,9 +108,11 @@ Conversion preserves unknown document fields. Human conversion previews by
 default; `--yes` saves beside the source, and `--save-to` names a destination.
 Import translates supported Teamocil and tmuxinator settings and refuses
 unsupported behaviour before saving. Capture records current pane commands,
-directories, window names, indexes, focus and layouts. It warns that arguments,
-history, scripts and plugins cannot be recovered. This build omits environment
-and options from captured documents.
+directories, window names, indexes, focus, layouts and local session/window
+options. Indexed options and escaped values survive capture and reload;
+`synchronize-panes` is restored after creating panes. Inherited/global options
+and environment are omitted. It warns that arguments, history, scripts and
+plugins cannot be recovered.
 
 Each command accepts `--json` and `--ndjson` before or after its name. NDJSON
 wins when both are present. Load flushes operation events before creating
