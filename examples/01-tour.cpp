@@ -153,7 +153,7 @@ int main() {
   }
 
   // A buffer can come from, and go back to, a file the server can reach.
-  const auto buffer_file = std::filesystem::temp_directory_path() / "libtmux-tour.txt";
+  const auto buffer_file = scratch.socket_path().parent_path() / "libtmux-tour.txt";
   if (const auto saved = server.save_buffer("tour", buffer_file); saved.has_value()) {
     std::printf("saved the buffer to %s\n", buffer_file.c_str());
     // And back again, into a buffer of its own.

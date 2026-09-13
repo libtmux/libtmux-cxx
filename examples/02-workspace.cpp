@@ -127,7 +127,7 @@ int main() {
   // A workspace can carry tmux configuration of its own. Checking it first
   // is what keeps a broken line from being half-applied: nothing in the file
   // runs until tmux says it parses.
-  const auto config = std::filesystem::temp_directory_path() / "libtmux-workspace.conf";
+  const auto config = scratch.socket_path().parent_path() / "libtmux-workspace.conf";
   {
     std::ofstream writing{config};
     writing << "set-option -g @workspace built\n";
