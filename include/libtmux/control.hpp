@@ -270,12 +270,23 @@ public:
   // muting is the only per-pane control it offers. So this narrows what a
   // listening connection receives; it cannot widen a silent one.
   //
-  // `resume` on a pane that tmux paused also clears the pause, and tmux moves
-  // that pane's offset to the current end — so whatever was produced while it
-  // was paused or muted is not delivered afterwards.
+  // Resuming clears both mute and pause, starting at tmux's current output
+  // offset. Output already discarded by tmux is not replayed.
   expected<void, ProtocolError>
   set_pane_output(std::string_view pane, bool deliver,
                   std::chrono::steady_clock::time_point deadline);
+
+  // Named forms of set_pane_output; the same connection policy applies.
+  [[nodiscard]] expected<void, ProtocolError>
+  mute_pane_output(std::string_view pane,
+                   std::chrono::steady_clock::time_point deadline) {
+    return set_pane_output(pane, false, deadline);
+  }
+  [[nodiscard]] expected<void, ProtocolError>
+  resume_pane_output(std::string_view pane,
+                     std::chrono::steady_clock::time_point deadline) {
+    return set_pane_output(pane, true, deadline);
+  }
 
   // Everything tmux says until the deadline, as one loop rather than two.
   //
