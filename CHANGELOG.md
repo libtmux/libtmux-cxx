@@ -23,12 +23,19 @@ was recorded as it landed.
 - Interrupt pane-command delays and check cancellation between workspace changes.
   Failed appends report retained window IDs; owned builds roll back their session.
   (#17)
-- Preserve daemon-version query failures during layout validation. Only missing
-  or exited daemons use the selected client version. (#17)
+- Preserve daemon-version query failures during layout validation. Only native
+  handles opened on absent sockets use the selected client version. (#17)
 - Add Bash, Zsh and Fish completion for commands, flags, enumerated values and
   file paths. Generate scripts with `--generate-completion`. (#17)
 - Preserve native Teamocil and tmuxinator command grouping, directories, focus
   and options during import. Refuse unsupported behaviour before saving. (#17)
+
+### Layouts
+
+- Add `validate_layout` for pure syntax checks and `Server::validate_layouts`
+  for indexed batch checks against the selected daemon. `Window::select_layout`
+  and MCP validate saved trees before dispatch; MCP rejects malformed layouts
+  before target lookup. (#17)
 
 ## 0.1.0-alpha.8 (2026-09-12)
 

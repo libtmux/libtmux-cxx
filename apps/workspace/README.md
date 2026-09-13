@@ -70,10 +70,10 @@ created object identities, command settings, environments and layouts. Failed
 builds remove their own session and preserve earlier successful inputs.
 Layout names, checksums, tree syntax and pane counts are validated before any
 input runs a startup script or changes tmux. Named abbreviations follow the
-running daemon's version. If the daemon is absent or has exited, validation
-uses the selected client's version; other daemon-query failures stop loading. Saved trees accept
-at most 256 nested levels; tmux handles geometry, resizing and removal of
-unused cells.
+running daemon's version. A handle opened on an absent socket may use the
+selected client's version. Previously bound endpoints, orphan sockets and
+other daemon-query failures stop loading. Saved trees accept at most 256
+nested levels; tmux handles geometry, resizing and removal of unused cells.
 Cold startup verifies the new server and bootstrap session before creating
 workspace windows. A startup identity error reports any unverified bootstrap
 that may remain. Startup uses a five-second process timeout.
@@ -249,7 +249,7 @@ Custom input streams supplied to the callable CLI use captured process I/O.
 
 ## Remaining work
 
-Python process services, shell completion, full
+Python process services, dynamic session/configuration-name completion, full
 configuration/import/capture coverage and supported-platform packaging remain
 incomplete. Terminal suspend/resume job
 control and non-Linux terminal behavior still need verification. The corresponding
