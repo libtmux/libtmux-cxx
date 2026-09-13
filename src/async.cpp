@@ -1104,8 +1104,9 @@ std::function<void()> CommandOperation::cancellation_callback() const {
 expected<bool, CommandFailure>
 CommandOperation::wait_until(std::chrono::steady_clock::time_point deadline) const {
   if (!state_) {
-    return unexpected(immediate_failure(FailureKind::validation,
-                                        "this operation has been waited on"));
+    return unexpected(
+        immediate_failure(FailureKind::validation,
+                          "this operation was consumed, detached, or moved from"));
   }
   return state_->result.wait_until(deadline);
 }
