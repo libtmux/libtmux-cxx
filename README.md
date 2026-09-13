@@ -533,27 +533,23 @@ if (!started_runtime.has_value()) {
   return 1;
 }
 auto runtime = *std::move(started_runtime);
-const auto wait_for_completion = [&runtime](std::uint64_t wanted) {
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
-  while (runtime.snapshot().completed < wanted &&
-         std::chrono::steady_clock::now() < deadline) {
-    std::this_thread::sleep_for(std::chrono::milliseconds{10});
-  }
-  return runtime.snapshot().completed >= wanted;
-};
-
 auto submitted =
     async_server->try_submit(runtime, {"display-message", "-p", "async result"});
 if (!submitted.has_value()) { // Refused before admission.
   std::cerr << std::format("{}\n", submitted.error());
   return 1;
 }
+const auto ready = submitted->wait_for(std::chrono::seconds{5});
+if (!ready.has_value() || !*ready) {
+  // A wait timeout keeps the command alive. Cancellation is a separate choice.
+  static_cast<void>(submitted->request_cancel());
+}
 auto result = std::move(*submitted).wait();
 if (!result.has_value()) { // Failed after admission.
   std::cerr << std::format("{}\n", result.error());
   return 1;
 }
-if (!wait_for_completion(1U)) {
+if (runtime.wait_ready_for(std::chrono::seconds{5}) != libtmux::ReadyStatus::ready) {
   return 1;
 }
 
@@ -569,7 +565,7 @@ if (!detached.has_value()) {
   return 1;
 }
 std::move(*detached).detach(); // Keep no result; the observation remains.
-if (!wait_for_completion(2U)) {
+if (runtime.wait_ready_for(std::chrono::seconds{5}) != libtmux::ReadyStatus::ready) {
   return 1;
 }
 std::cout << std::format("discarded {} observation(s)\n", runtime.discard_ready());
@@ -621,6 +617,26 @@ no observer starts with that leg complete. Admission is serialised, and
 accepted commands enter the transport in admission order; completion order is
 not fixed, and callers racing from different threads have no priority
 guarantee.
+
+`CommandOperation::wait_for` and `wait_until` observe readiness without consuming
+the handle. Their `false` result means the wait expired: the command keeps running
+and retains its runtime slot. The timeout passed to `try_submit` instead bounds
+the command itself, whose eventual result reports `FailureKind::timeout`.
+`request_cancel` separately asks the transport to withdraw the command; its
+eventual `DeliveryStatus` still says whether tmux may have acted.
+
+When the standard library defines `__cpp_lib_jthread`, the operation's `wait`,
+`wait_for` and `wait_until` also accept `std::stop_token`. A stop request invokes
+the same transport cancellation while that wait is active. A completed result
+still wins over a later stop request. libc++ 18 requires an experimental library
+mode for stop tokens; the ordinary pinned build keeps `request_cancel` available
+and does not enable that mode implicitly.
+
+`wait_ready` and `wait_ready_for` block until an observer is ready, their deadline
+expires, or `close` finishes with no ready observations left. They return
+`ReadyStatus::ready`, `timeout` or `closed` and never run callbacks. A ready
+observation takes precedence over an expired deadline or closure; callers still
+choose `dispatch_ready` or `discard_ready`.
 
 `snapshot` is one lock-consistent instant; it does not wait for command
 completion or runtime work to finish. `accepted`, `refused`, and `completed`

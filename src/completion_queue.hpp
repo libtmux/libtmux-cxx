@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -8,6 +9,7 @@
 #include "move_only_function.hpp"
 
 LIBTMUX_NAMESPACE_BEGIN
+enum class ReadyStatus : std::uint8_t;
 namespace detail {
 
 class CompletionQueueCore;
@@ -46,6 +48,8 @@ public:
   [[nodiscard]] bool run_one();
   [[nodiscard]] std::size_t run_ready();
   [[nodiscard]] std::size_t discard_ready();
+  [[nodiscard]] ReadyStatus wait_ready(std::chrono::steady_clock::time_point deadline);
+  void finish();
   void detach(CompletionToken token);
   void close();
 

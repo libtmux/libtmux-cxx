@@ -31,6 +31,20 @@ LIBTMUX_NAMESPACE_BEGIN
 
 namespace {
 
+[[nodiscard]] std::chrono::steady_clock::time_point
+deadline_after(std::chrono::milliseconds timeout) {
+  using Clock = std::chrono::steady_clock;
+  const auto now = Clock::now();
+  if (timeout <= std::chrono::milliseconds::zero()) {
+    return now;
+  }
+  if (timeout >= std::chrono::duration_cast<std::chrono::milliseconds>(
+                     Clock::time_point::max() - now)) {
+    return Clock::time_point::max();
+  }
+  return now + timeout;
+}
+
 [[nodiscard]] CommandFailure immediate_failure(FailureKind kind,
                                                std::string diagnostic) {
   return CommandFailure{.kind = kind,
@@ -696,6 +710,7 @@ struct CommandRuntime::State final {
         completion_thread_.join();
       }
 
+      observers_.finish();
       const auto final_snapshot = ledger_->snapshot();
       CommandRuntimeShutdown report{
           .pending_results = final_snapshot.pending_results,
@@ -726,6 +741,11 @@ struct CommandRuntime::State final {
 
   [[nodiscard]] CommandRuntimeSnapshot snapshot() const noexcept {
     return ledger_->snapshot();
+  }
+
+  [[nodiscard]] ReadyStatus wait_ready(std::chrono::steady_clock::time_point deadline) {
+    const ActiveObserverDisposition active{active_observer_dispositions_};
+    return observers_.wait_ready(deadline);
   }
 
   [[nodiscard]] std::size_t dispatch_ready() {
@@ -976,6 +996,14 @@ CommandRuntimeSnapshot CommandRuntime::snapshot() const noexcept {
   return state_->snapshot();
 }
 
+ReadyStatus CommandRuntime::wait_ready(std::chrono::steady_clock::time_point deadline) {
+  return state_ ? state_->wait_ready(deadline) : ReadyStatus::closed;
+}
+
+ReadyStatus CommandRuntime::wait_ready_for(std::chrono::milliseconds timeout) {
+  return wait_ready(deadline_after(timeout));
+}
+
 std::size_t CommandRuntime::dispatch_ready() {
   return state_ ? state_->dispatch_ready() : 0U;
 }
@@ -998,6 +1026,26 @@ expected<std::string, CommandFailure> CommandOperation::wait() && {
   }
   auto state = std::move(state_);
   return detail::sync_wait(std::move(state->result));
+}
+
+std::function<void()> CommandOperation::cancellation_callback() const {
+  auto relay =
+      state_ ? state_->cancellation : detail::OperationCancellation<RuntimeRawReply>{};
+  return [relay = std::move(relay)] { static_cast<void>(relay.request_cancel()); };
+}
+
+expected<bool, CommandFailure>
+CommandOperation::wait_until(std::chrono::steady_clock::time_point deadline) const {
+  if (!state_) {
+    return unexpected(immediate_failure(FailureKind::validation,
+                                        "this operation has been waited on"));
+  }
+  return state_->result.wait_until(deadline);
+}
+
+expected<bool, CommandFailure>
+CommandOperation::wait_for(std::chrono::milliseconds timeout) const {
+  return wait_until(deadline_after(timeout));
 }
 
 void CommandOperation::detach() && noexcept { state_.reset(); }

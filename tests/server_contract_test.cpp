@@ -166,6 +166,194 @@ TEST(ServerContract, FilesystemSocketFactoriesPreserveSelectionAndValidation) {
   EXPECT_FALSE(Server::at_socket_path(std::filesystem::path{}).has_value());
 }
 
+TEST(ServerContract, TimedWaitKeepsTheOperationAndItsAdmissionSlot) {
+  using namespace std::chrono_literals;
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  auto runtime = start_runtime({.capacity = 1U});
+  auto operation = server.try_submit(runtime, {"wait-for", "timed-wait"}, 5s);
+  ASSERT_TRUE(operation.has_value());
+
+  const auto waiting = operation->wait_for(10ms);
+  ASSERT_TRUE(waiting.has_value());
+  EXPECT_FALSE(*waiting);
+  EXPECT_EQ(runtime.snapshot().pending_results, 1U);
+  auto refused = server.try_submit(runtime, {"display-message", "-p", "still held"});
+  ASSERT_FALSE(refused.has_value());
+  EXPECT_EQ(refused.error().kind, libtmux::FailureKind::overloaded);
+
+  ASSERT_TRUE(server.run({"wait-for", "-S", "timed-wait"}).has_value());
+  const auto ready = operation->wait_until(std::chrono::steady_clock::now() + 5s);
+  ASSERT_TRUE(ready.has_value());
+  ASSERT_TRUE(*ready);
+  EXPECT_EQ(runtime.snapshot().pending_results, 1U);
+  EXPECT_TRUE(*operation->wait_for(std::chrono::milliseconds::max()));
+  EXPECT_TRUE(std::move(*operation).wait().has_value());
+  const auto consumed = operation->wait_for(0ms);
+  ASSERT_FALSE(consumed.has_value());
+  EXPECT_EQ(consumed.error().kind, libtmux::FailureKind::validation);
+}
+
+TEST(ServerContract, CommandDeadlineMakesAFailedResultReady) {
+  using namespace std::chrono_literals;
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  auto runtime = start_runtime();
+  auto operation = server.try_submit(runtime, {"wait-for", "command-deadline"}, 50ms);
+  ASSERT_TRUE(operation.has_value());
+  const auto ready = operation->wait_for(5s);
+  ASSERT_TRUE(ready.has_value());
+  EXPECT_TRUE(*ready);
+  const auto answer = std::move(*operation).wait();
+  ASSERT_FALSE(answer.has_value());
+  EXPECT_EQ(answer.error().kind, libtmux::FailureKind::timeout);
+  EXPECT_NE(answer.error().delivery, DeliveryStatus::replied);
+}
+
+TEST(ServerContract, RuntimeReadinessWaitNeverDispatchesAnObserver) {
+  using namespace std::chrono_literals;
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto caller = std::this_thread::get_id();
+  std::optional<std::thread::id> observed;
+  auto server = Server::at_socket_path(
+      fixture->socket_path(), [&](std::string_view, const libtmux::CommandFailure*) {
+        observed = std::this_thread::get_id();
+      });
+  ASSERT_TRUE(server.has_value());
+  auto runtime = start_runtime();
+  auto operation = server->try_submit(runtime, {"wait-for", "readiness"}, 5s);
+  ASSERT_TRUE(operation.has_value());
+  EXPECT_EQ(runtime.wait_ready_for(10ms), libtmux::ReadyStatus::timeout);
+
+  // This connection has no observer, so releasing the command is not dispatch.
+  const Server release = connect(*fixture);
+  ASSERT_TRUE(release.run({"wait-for", "-S", "readiness"}).has_value());
+  EXPECT_EQ(runtime.wait_ready(), libtmux::ReadyStatus::ready);
+  EXPECT_FALSE(observed.has_value());
+  EXPECT_EQ(runtime.dispatch_ready(), 1U);
+  ASSERT_TRUE(observed.has_value());
+  EXPECT_EQ(*observed, caller);
+  EXPECT_EQ(runtime.wait_ready_for(0ms), libtmux::ReadyStatus::timeout);
+  EXPECT_TRUE(std::move(*operation).wait().has_value());
+  EXPECT_TRUE(runtime.close().safe_to_unload);
+  EXPECT_EQ(runtime.wait_ready(), libtmux::ReadyStatus::closed);
+}
+
+TEST(ServerContract, RuntimeReadinessWaitEndsWhenTheRuntimeCloses) {
+  auto runtime = start_runtime();
+  auto closing_waiter =
+      std::async(std::launch::async, [&] { return runtime.wait_ready(); });
+  EXPECT_TRUE(runtime.close().transports_stopped);
+  EXPECT_EQ(closing_waiter.get(), libtmux::ReadyStatus::closed);
+  EXPECT_EQ(runtime.wait_ready_for(std::chrono::milliseconds::max()),
+            libtmux::ReadyStatus::closed);
+}
+
+TEST(ServerContract, RuntimeReadinessWakesEveryWaitingCaller) {
+  using namespace std::chrono_literals;
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  auto server = Server::at_socket_path(
+      fixture->socket_path(), [](std::string_view, const libtmux::CommandFailure*) {});
+  ASSERT_TRUE(server.has_value());
+  auto runtime = start_runtime();
+  auto operation = server->try_submit(runtime, {"wait-for", "all-waiters"}, 5s);
+  ASSERT_TRUE(operation.has_value());
+  auto waiting = [&] { return runtime.wait_ready_for(5s); };
+  auto first = std::async(std::launch::async, waiting);
+  auto second = std::async(std::launch::async, waiting);
+  EXPECT_EQ(first.wait_for(20ms), std::future_status::timeout);
+  EXPECT_EQ(second.wait_for(20ms), std::future_status::timeout);
+  ASSERT_TRUE(connect(*fixture).run({"wait-for", "-S", "all-waiters"}).has_value());
+  EXPECT_EQ(first.wait_for(1s), std::future_status::ready);
+  EXPECT_EQ(second.wait_for(1s), std::future_status::ready);
+  EXPECT_TRUE(runtime.close().transports_stopped);
+  EXPECT_EQ(first.get(), libtmux::ReadyStatus::ready);
+  EXPECT_EQ(second.get(), libtmux::ReadyStatus::ready);
+  EXPECT_EQ(runtime.wait_ready_for(0ms), libtmux::ReadyStatus::ready);
+  EXPECT_EQ(runtime.discard_ready(), 1U);
+  EXPECT_EQ(runtime.wait_ready(), libtmux::ReadyStatus::closed);
+  EXPECT_TRUE(std::move(*operation).wait().has_value());
+}
+
+#if defined(__cpp_lib_jthread) && __cpp_lib_jthread >= 201911L
+TEST(ServerContract, StopTokenCancelsThroughAMovedOperationWithoutDispatch) {
+  using namespace std::chrono_literals;
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  std::optional<libtmux::CommandFailure> observed;
+  auto server = Server::at_socket_path(
+      fixture->socket_path(),
+      [&](std::string_view, const libtmux::CommandFailure* failure) {
+        if (failure) {
+          observed = *failure;
+        }
+      });
+  ASSERT_TRUE(server.has_value());
+  auto runtime = start_runtime();
+  auto operation = server->try_submit(runtime, {"wait-for", "stop-token"}, 5s);
+  ASSERT_TRUE(operation.has_value());
+  std::stop_source stop;
+  auto waiting = std::async(std::launch::async, [held = std::move(*operation),
+                                                 token = stop.get_token()]() mutable {
+    return std::move(held).wait(token);
+  });
+  stop.request_stop();
+  const auto answer = waiting.get();
+  ASSERT_FALSE(answer.has_value());
+  EXPECT_EQ(answer.error().kind, libtmux::FailureKind::cancelled);
+  EXPECT_FALSE(observed.has_value());
+  EXPECT_EQ(runtime.wait_ready_for(5s), libtmux::ReadyStatus::ready);
+  EXPECT_EQ(runtime.dispatch_ready(), 1U);
+  ASSERT_TRUE(observed.has_value());
+  EXPECT_EQ(observed->kind, answer.error().kind);
+  EXPECT_EQ(observed->delivery, answer.error().delivery);
+}
+
+TEST(ServerContract, TimedWaitCanRequestCancellationWithoutConsumingTheResult) {
+  using namespace std::chrono_literals;
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  auto runtime = start_runtime();
+  auto operation = server.try_submit(runtime, {"wait-for", "timed-stop"}, 5s);
+  ASSERT_TRUE(operation.has_value());
+  std::stop_source stop;
+  stop.request_stop();
+  const auto ready = operation->wait_for(5s, stop.get_token());
+  ASSERT_TRUE(ready.has_value());
+  ASSERT_TRUE(*ready);
+  EXPECT_EQ(runtime.snapshot().pending_results, 1U);
+  const auto answer = std::move(*operation).wait();
+  ASSERT_FALSE(answer.has_value());
+  EXPECT_EQ(answer.error().kind, libtmux::FailureKind::cancelled);
+}
+
+TEST(ServerContract, StopRegistrationEndsWhenATimedWaitReturns) {
+  using namespace std::chrono_literals;
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  auto runtime = start_runtime();
+  auto operation = server.try_submit(runtime, {"wait-for", "expired-stop"}, 5s);
+  ASSERT_TRUE(operation.has_value());
+  std::stop_source stop;
+  const auto timed = operation->wait_for(0ms, stop.get_token());
+  ASSERT_TRUE(timed.has_value());
+  EXPECT_FALSE(*timed);
+  stop.request_stop();
+  ASSERT_TRUE(server.run({"wait-for", "-S", "expired-stop"}).has_value());
+  const auto ready = operation->wait_until(std::chrono::steady_clock::now() + 5s);
+  ASSERT_TRUE(ready.has_value());
+  ASSERT_TRUE(*ready);
+  // A stop requested after publication must not replace the completed answer.
+  EXPECT_TRUE(std::move(*operation).wait(stop.get_token()).has_value());
+}
+#endif
+
 // Several admitted commands may complete in parallel. Each answer must still
 // belong to the question that caller asked.
 TEST(ServerContract, SubmittedCommandsAreCollectedLater) {

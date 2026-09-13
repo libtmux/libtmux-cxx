@@ -7,15 +7,25 @@
 
 #include "libtmux/command.hpp"
 #include "libtmux/expected.hpp"
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
+#include <version>
+
+#if defined(__cpp_lib_jthread) && __cpp_lib_jthread >= 201911L
+#include <stop_token>
+#endif
 
 LIBTMUX_NAMESPACE_BEGIN
 
 class Server;
+
+enum class ReadyStatus : std::uint8_t { ready, timeout, closed };
 
 // The maximum number of accepted commands retaining any lifecycle leg.
 // `start` rejects zero with `DeliveryStatus::not_started`.
@@ -53,7 +63,8 @@ struct CommandRuntimeShutdown final {
   // Whether every owned child and transport thread retired.
   bool transports_stopped{};
   // True only when transports and pending work ended and no caller-side
-  // dispatch or discard, including callback-target teardown, remains active.
+  // readiness wait, dispatch or discard, including callback-target teardown,
+  // remains active.
   // Callers must prevent concurrent or later runtime entry before unloading.
   bool safe_to_unload{};
   // The first runtime lifecycle failure; an operation may also carry it.
@@ -84,6 +95,13 @@ public:
   [[nodiscard]] CommandRuntimeShutdown close();
   // Reads one lock-consistent instant without waiting for work.
   [[nodiscard]] CommandRuntimeSnapshot snapshot() const noexcept;
+  // Waits for a ready observer without invoking it. `closed` means close has
+  // joined the transports and no ready observers remain, or this owner was moved.
+  // Ready records take precedence over closure and deadline expiry.
+  [[nodiscard]] ReadyStatus
+  wait_ready(std::chrono::steady_clock::time_point deadline =
+                 std::chrono::steady_clock::time_point::max());
+  [[nodiscard]] ReadyStatus wait_ready_for(std::chrono::milliseconds timeout);
   // Runs one snapshot of ready observers on this thread and returns its count.
   // A callback exception releases that record, propagates, and leaves later
   // records.
@@ -115,6 +133,35 @@ public:
   // Waiting never dispatches the Server's global observer.
   [[nodiscard]] expected<std::string, CommandFailure> wait() &&;
 
+  // True means the result can be taken; false means only this wait expired.
+  // Neither outcome consumes the handle or changes the command's deadline.
+  // A consumed or moved-from handle reports FailureKind::validation.
+  [[nodiscard]] expected<bool, CommandFailure>
+  wait_until(std::chrono::steady_clock::time_point deadline) const;
+  [[nodiscard]] expected<bool, CommandFailure>
+  wait_for(std::chrono::milliseconds timeout) const;
+
+#if defined(__cpp_lib_jthread) && __cpp_lib_jthread >= 201911L
+  // Available when the standard library supplies stop_token. The token requests
+  // transport cancellation only during this wait; it cannot undo tmux work.
+  // The eventual result retains its command failure and delivery status.
+  [[nodiscard]] expected<std::string, CommandFailure> wait(std::stop_token stop) && {
+    const std::stop_callback cancellation{stop, cancellation_callback()};
+    return std::move(*this).wait();
+  }
+  [[nodiscard]] expected<bool, CommandFailure>
+  wait_until(std::chrono::steady_clock::time_point deadline,
+             std::stop_token stop) const {
+    const std::stop_callback cancellation{stop, cancellation_callback()};
+    return wait_until(deadline);
+  }
+  [[nodiscard]] expected<bool, CommandFailure>
+  wait_for(std::chrono::milliseconds timeout, std::stop_token stop) const {
+    const std::stop_callback cancellation{stop, cancellation_callback()};
+    return wait_for(timeout);
+  }
+#endif
+
   // Releases the result obligation without cancelling the command.
   // The Server's global observer remains a runtime obligation.
   void detach() && noexcept;
@@ -126,6 +173,7 @@ public:
 private:
   struct State;
   explicit CommandOperation(std::unique_ptr<State> state) noexcept;
+  [[nodiscard]] std::function<void()> cancellation_callback() const;
   friend class CommandRuntime;
   friend class Server;
 
