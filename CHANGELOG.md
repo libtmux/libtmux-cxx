@@ -9,6 +9,45 @@ was recorded as it landed.
 
 ## Unreleased
 
+### Asynchronous commands
+
+- `CommandRuntime::wait_ready` and `wait_ready_for` now replace observer polling
+  with blocking waits. Ready, timeout and closed outcomes remain distinct, and
+  callbacks run only when the caller dispatches them. (#18)
+- `CommandOperation::wait_for` and `wait_until` now bound a wait without
+  consuming the operation. A wait timeout leaves the command running and its own
+  deadline unchanged. (#18)
+- `CommandOperation` waits now accept `std::stop_token` where the standard
+  library supports it. Stop requests use transport cancellation while preserving
+  command failure and delivery diagnostics. (#18)
+
+### Queries
+
+- `first_owned` and `exactly_one_owned` now retain selected values from
+  temporary or single-pass ranges. They copy referenced elements and move from
+  iterators that yield ownership; existing borrowed helpers remain available.
+  (#18)
+
+### Server
+
+- `Server` socket-path factories now accept `std::filesystem::path` directly.
+  Existing strings and literals remain unambiguous, and socket byte-length
+  validation still applies. (#18)
+
+### Control mode
+
+- `Connection::mute_pane_output` and `resume_pane_output` now offer named
+  alternatives to the boolean `set_pane_output` call. (#18)
+- `Connection::set_pane_output` now restores new output after a pane was muted.
+  Previously, requesting delivery left the pane silent; output discarded by tmux
+  is not replayed. (#18)
+
+### Testing
+
+- `libtmux::testing` now exposes the fixture namespace under the same name as
+  its CMake target. Existing `libtmux::test` types keep their identity.
+  (#18)
+
 ## 0.1.0-alpha.8 (2026-09-12)
 
 This alpha reaches the standard library from the typed surface. An entity and a
