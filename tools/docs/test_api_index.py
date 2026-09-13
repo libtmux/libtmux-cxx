@@ -42,6 +42,12 @@ class ApiIndexTest(unittest.TestCase):
         constructor = next(entry for entry in box.entries if entry.symbol == "Box")
         self.assertEqual("explicit Box(T value)", constructor.signature)
 
+    def test_default_argument_calls_are_not_method_names(self) -> None:
+        """Keep a method's public name when its default calls another function."""
+        _, sections = api_index.read_header(FIXTURE)
+        waiter = next(section for section in sections if section.name == "Waiter")
+        self.assertEqual(["wait_ready"], [entry.symbol for entry in waiter.entries])
+
     def test_enum_members_are_anchored_entries_with_comments(self) -> None:
         """Expose compact and documented enumerators as caller-facing symbols."""
         _, sections = api_index.read_header(FIXTURE)

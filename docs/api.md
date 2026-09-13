@@ -550,7 +550,7 @@ Explicit bounded ownership for asynchronous Server commands. Results and global 
   - [`CommandRuntime::request_stop`](#libtmux-async-hpp-commandruntime-request-stop)
   - [`CommandRuntime::close`](#libtmux-async-hpp-commandruntime-close)
   - [`CommandRuntime::snapshot`](#libtmux-async-hpp-commandruntime-snapshot)
-  - [`CommandRuntime::max`](#libtmux-async-hpp-commandruntime-max)
+  - [`CommandRuntime::wait_ready`](#libtmux-async-hpp-commandruntime-wait-ready)
   - [`CommandRuntime::wait_ready_for`](#libtmux-async-hpp-commandruntime-wait-ready-for)
   - [`CommandRuntime::dispatch_ready`](#libtmux-async-hpp-commandruntime-dispatch-ready)
   - [`CommandRuntime::discard_ready`](#libtmux-async-hpp-commandruntime-discard-ready)
@@ -799,8 +799,8 @@ Joins every owned thread without invoking or discarding observers. The first suc
 ```
 Reads one lock-consistent instant without waiting for work.
 
-<a id="libtmux-async-hpp-commandruntime-max"></a>
-#### `CommandRuntime::max`
+<a id="libtmux-async-hpp-commandruntime-wait-ready"></a>
+#### `CommandRuntime::wait_ready`
 
 ```cpp
 [[nodiscard]] ReadyStatus wait_ready(std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::time_point::max());
