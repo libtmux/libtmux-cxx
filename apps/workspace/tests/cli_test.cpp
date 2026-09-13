@@ -169,6 +169,127 @@ struct Files {
   }
 };
 
+TEST(WorkspaceCli, ShellPreservesArgumentsStreamsAndChildStatus) {
+  Files files;
+  const auto runtime = files.directory / "tmuxp runtime";
+  std::ofstream{runtime}
+      << "#!/bin/sh\n"
+         "if [ \"$3\" = --version ]; then\n"
+         "  printf 'tmuxp 1.74.0, libtmux fixture\\n'; exit 0\n"
+         "fi\n"
+         "printf '%s\\0' \"$@\" > arguments\n"
+         "printf 'shell output'; printf 'shell diagnostic' >&2; exit 7\n";
+  ASSERT_EQ(::chmod(runtime.c_str(), 0700), 0);
+  libtmux::test::EnvironmentGuard selected{"TMUX_WORKSPACE_TMUXP", runtime.string()};
+  const std::string code = "print('literal --json $VALUE; spaced argument')";
+  const auto result =
+      invoke({"shell", "session name", "window name", "-L", "ignored", "-S",
+              "selected socket", "--code", "--use-pythonrc", "--no-startup",
+              "--no-vi-mode", "--use-vi-mode", "-c", code, "--json"});
+  ASSERT_EQ(result.code, 7) << result.out << result.err;
+  const auto value = Json::parse(result.out);
+  EXPECT_EQ(value.at("status"), "error");
+  EXPECT_EQ(value.at("script_output").at("stdout"), "shell output");
+  EXPECT_EQ(value.at("script_output").at("stderr"), "shell diagnostic");
+  std::ifstream input{"arguments", std::ios::binary};
+  std::vector<std::string> args;
+  for (std::string argument; std::getline(input, argument, '\0');)
+    args.push_back(std::move(argument));
+  EXPECT_NE(std::ranges::find(args, "-c=" + code), args.end());
+  EXPECT_NE(std::ranges::find(args, "session name"), args.end());
+  EXPECT_NE(std::ranges::find(args, "window name"), args.end());
+  EXPECT_NE(std::ranges::find(args, "selected socket"), args.end());
+  EXPECT_EQ(std::ranges::find(args, "ignored"), args.end());
+  EXPECT_LT(std::ranges::find(args, "--use-pythonrc"),
+            std::ranges::find(args, "--no-startup"));
+  EXPECT_LT(std::ranges::find(args, "--no-vi-mode"),
+            std::ranges::find(args, "--use-vi-mode"));
+  EXPECT_EQ(std::ranges::find(args, "--json"), args.end());
+  const auto human = invoke({"--color", "always", "shell", "-c", code});
+  EXPECT_EQ(human.code, 7);
+  EXPECT_EQ(human.out, "shell output");
+  EXPECT_EQ(human.err, "shell diagnostic");
+  std::ifstream human_arguments{"arguments", std::ios::binary};
+  std::string argument;
+  for (int index = 0; index < 2; ++index)
+    std::getline(human_arguments, argument, '\0');
+  EXPECT_EQ(argument, "always");
+  const auto stream = invoke({"shell", "-c", "", "--ndjson"});
+  ASSERT_EQ(stream.code, 7) << stream.err;
+  std::istringstream frames{stream.out};
+  std::string stdout_text, stderr_text;
+  std::size_t sequence{};
+  Json final;
+  for (std::string line; std::getline(frames, line);) {
+    const auto frame = Json::parse(line);
+    EXPECT_EQ(frame.at("sequence"), ++sequence);
+    if (frame.at("event") == "script-output")
+      (frame.at("stream") == "stdout" ? stdout_text : stderr_text) +=
+          frame.at("text").get<std::string>();
+    final = frame;
+  }
+  EXPECT_EQ(stdout_text, "shell output");
+  EXPECT_EQ(stderr_text, "shell diagnostic");
+  EXPECT_EQ(final.at("event"), "failed");
+  EXPECT_EQ(final.at("exit_code"), 7);
+}
+
+TEST(WorkspaceCli, ShellRefusesIncompatibleRuntimeBeforeExecution) {
+  Files files;
+  const auto runtime = files.directory / "wrong runtime";
+  std::ofstream{runtime} << "#!/bin/sh\n"
+                            "if [ \"$3\" = --version ]; then\n"
+                            "  printf 'tmuxp 1.74.00, libtmux fixture\\n'; exit 0\n"
+                            "fi\n"
+                            "touch executed\n";
+  ASSERT_EQ(::chmod(runtime.c_str(), 0700), 0);
+  libtmux::test::EnvironmentGuard selected{"TMUX_WORKSPACE_TMUXP", runtime.string()};
+  const auto result = invoke({"shell", "-c", "print(1)", "--json"});
+  EXPECT_EQ(result.code, 1);
+  EXPECT_TRUE(result.out.empty());
+  EXPECT_EQ(Json::parse(result.err).at("code"), "COMPATIBILITY_RUNTIME");
+  EXPECT_FALSE(std::filesystem::exists("executed"));
+  const auto interactive = invoke({"shell", "--json"});
+  EXPECT_EQ(interactive.code, 2);
+  EXPECT_EQ(Json::parse(interactive.err).at("code"), "USAGE");
+  libtmux::test::EnvironmentGuard missing{"TMUX_WORKSPACE_TMUXP",
+                                          (files.directory / "absent").string()};
+  const auto unavailable = invoke({"shell", "-c", "print(1)", "--json"});
+  EXPECT_EQ(unavailable.code, 1);
+  EXPECT_EQ(Json::parse(unavailable.err).at("code"), "COMPATIBILITY_RUNTIME");
+}
+
+TEST(WorkspaceCli, ShellRetainsOutputLimitFailure) {
+  Files files;
+  const auto runtime = files.directory / "large runtime";
+  std::ofstream{runtime} << "#!/bin/sh\n"
+                            "if [ \"$3\" = --version ]; then\n"
+                            "  printf 'tmuxp 1.74.0, libtmux fixture\\n'; exit 0\n"
+                            "fi\n"
+                            "head -c 1048577 /dev/zero | tr '\\000' x\n";
+  ASSERT_EQ(::chmod(runtime.c_str(), 0700), 0);
+  libtmux::test::EnvironmentGuard selected{"TMUX_WORKSPACE_TMUXP", runtime.string()};
+  const auto result = invoke({"shell", "-c", "", "--ndjson"});
+  ASSERT_EQ(result.code, 1);
+  EXPECT_EQ(Json::parse(result.err).at("code"), "OUTPUT_LIMIT");
+  std::istringstream frames{result.out};
+  Json final;
+  int failures{};
+  for (std::string line; std::getline(frames, line);) {
+    final = Json::parse(line);
+    if (final.at("event") == "failed")
+      ++failures;
+  }
+  ASSERT_EQ(failures, 1);
+  ASSERT_EQ(final.at("event"), "failed");
+  EXPECT_EQ(final.at("exit_code"), 1);
+  EXPECT_TRUE(final.at("script_output").at("truncated").get<bool>());
+  const auto& retained =
+      final.at("script_output").at("stdout").get_ref<const std::string&>();
+  EXPECT_FALSE(retained.empty());
+  EXPECT_LE(retained.size(), 1024U * 1024U);
+}
+
 TEST(WorkspaceCli, HelpAndInvalidRequestsDoNotNeedTmux) {
   const auto help = invoke({"load", "--help"});
   EXPECT_EQ(help.code, 0);
