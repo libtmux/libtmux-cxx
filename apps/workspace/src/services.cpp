@@ -10,6 +10,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <iomanip>
 #include <random>
 #include <ranges>
@@ -106,7 +107,7 @@ Json from_yaml(const YAML::Node& node, int depth = 0) {
     return real;
   return text;
 }
-Json read_document(const fs::path& path) {
+Json read_document(const fs::path& path, bool reject_erb = false) {
   std::ifstream file{path, std::ios::binary};
   if (!file)
     throw Failure{1, "READ_FAILED", "cannot read " + private_path(path)};
@@ -117,6 +118,8 @@ Json read_document(const fs::path& path) {
     if (contents.size() > 4U * 1024U * 1024U)
       throw Failure{1, "INVALID_CONFIG", "workspace exceeds 4 MiB"};
   }
+  if (reject_erb && contents.find("<%") != std::string::npos)
+    throw Failure{1, "UNSUPPORTED_CONFIG", "tmuxinator ERB templates are unsupported"};
   Json result;
   if (path.extension() == ".json")
     result = Json::parse(contents);
@@ -556,54 +559,207 @@ Json save_or_return(const Request& request, const Json& document, std::string fo
           {"destination", private_path(path)},
           {"format", format}};
 }
-Json imported(Json source, const std::string& kind) {
-  if (kind == "teamocil" && source.contains("session"))
-    source = source["session"];
-  Json result{
-      {"session_name", source.value("project_name", source.value("name", Json{}))},
-      {"windows", Json::array()}};
-  if (source.contains("project_root"))
-    result["start_directory"] = source["project_root"];
-  else if (source.contains("root"))
-    result["start_directory"] = source["root"];
-  if (source.contains("pre_window"))
-    result["shell_command_before"] = source["pre_window"];
-  else if (source.contains("pre"))
-    result["shell_command_before"] = source["pre"];
-  const auto windows = source.value("tabs", source.value("windows", Json::array()));
-  if (!windows.is_array())
-    throw Failure{1, "INVALID_CONFIG", "imported windows must be an array"};
-  for (const auto& raw : windows) {
-    if (!raw.is_object())
-      throw Failure{1, "INVALID_CONFIG", "imported window must be a mapping"};
-    const auto append = [&](const std::string& name, Json body) {
-      Json window{{"window_name", name}};
-      if (!body.is_object())
-        window["panes"] = body.is_array() ? body : Json::array({body});
-      else {
-        for (const auto& [from, to] : {std::pair{"root", "start_directory"},
-                                       {"layout", "layout"},
-                                       {"pre", "shell_command_before"},
-                                       {"panes", "panes"},
-                                       {"splits", "panes"}})
-          if (body.contains(from))
-            window[to] = body[from];
-        if (window.contains("panes"))
-          for (auto& pane : window["panes"]) {
-            if (pane.is_object() && pane.contains("cmd")) {
-              pane["shell_command"] = pane["cmd"];
-              pane.erase("cmd");
-            }
-          }
-      }
-      result["windows"].push_back(window);
-    };
-    if (kind == "teamocil")
-      append(raw.value("name", ""), raw);
-    else
-      for (auto it = raw.begin(); it != raw.end(); ++it)
-        append(it.key(), it.value());
+void import_keys(const Json& value, std::initializer_list<std::string_view> allowed,
+                 const std::string& where) {
+  if (!value.is_object())
+    throw Failure{1, "INVALID_CONFIG", where + " must be a mapping"};
+  for (auto it = value.begin(); it != value.end(); ++it)
+    if (std::ranges::find(allowed, it.key()) == allowed.end())
+      throw Failure{1, "UNSUPPORTED_CONFIG",
+                    where + "." + it.key() + " is unsupported"};
+}
+
+Json import_alias(const Json& value, const char* first, const char* second,
+                  const std::string& where) {
+  const auto preferred = value.value(first, Json{});
+  const auto alternative = value.value(second, Json{});
+  if (!preferred.is_null() && !alternative.is_null() && preferred != alternative)
+    throw Failure{1, "UNSUPPORTED_CONFIG",
+                  where + "." + first + " conflicts with " + second};
+  return preferred.is_null() ? alternative : preferred;
+}
+
+Json import_commands(const Json& value, const std::string& where) {
+  if (value.is_string() || value.is_null())
+    return value;
+  if (value.is_array() && std::ranges::all_of(value, [](const Json& command) {
+        return command.is_string() || command.is_null();
+      }))
+    return value;
+  throw Failure{1, "INVALID_CONFIG", where + " requires command strings"};
+}
+
+std::string import_directory(const Json& value, const fs::path& base,
+                             const std::string& where) {
+  if (value.is_null())
+    return base.string();
+  if (!value.is_string())
+    throw Failure{1, "INVALID_CONFIG", where + " must be a path string"};
+  auto text = value.get<std::string>();
+  if (text.find('$') != std::string::npos ||
+      (text.starts_with('~') && text != "~" && !text.starts_with("~/")))
+    throw Failure{1, "UNSUPPORTED_CONFIG",
+                  where + " cannot preserve its expansion rules in a workspace"};
+  fs::path directory{expand(std::move(text))};
+  if (directory.is_relative())
+    directory = base / directory;
+  return directory.lexically_normal().string();
+}
+
+Json import_command_group(const Json& value, std::string_view separator,
+                          const std::string& where) {
+  if (value.is_null() || value.is_string())
+    return value;
+  if (!value.is_array())
+    throw Failure{1, "INVALID_CONFIG", where + " must be a command or command array"};
+  std::string result;
+  for (std::size_t i = 0; i < value.size(); ++i) {
+    if (!value[i].is_string())
+      throw Failure{1, "INVALID_CONFIG", where + " must contain command strings"};
+    if (i != 0)
+      result += separator;
+    result += value[i].get<std::string>();
   }
+  return result;
+}
+
+Json imported(Json source, const std::string& kind, const fs::path& path) {
+  const bool teamocil = kind == "teamocil";
+  if (teamocil && source.contains("session")) {
+    import_keys(source, {"session"}, kind);
+    source = source["session"];
+  }
+  if (teamocil)
+    import_keys(source,
+                {"name", "project_name", "root", "project_root", "windows", "tabs"},
+                kind);
+  else
+    import_keys(source,
+                {"name", "project_name", "root", "project_root", "windows", "tabs",
+                 "pre_window"},
+                kind);
+  const auto cwd = fs::current_path();
+  const auto root = import_directory(import_alias(source, "project_root", "root", kind),
+                                     cwd, kind + ".root");
+  Json name = import_alias(source, "project_name", "name", kind);
+  if (name.is_null())
+    name = path.stem().string();
+  if (!name.is_string() || name.get_ref<const std::string&>().empty())
+    throw Failure{1, "INVALID_CONFIG", kind + ".name must be a nonempty string"};
+  Json result{
+      {"session_name", name}, {"start_directory", root}, {"windows", Json::array()}};
+  if (source.contains("pre_window"))
+    result["shell_command_before"] =
+        import_command_group(source["pre_window"], "; ", kind + ".pre_window");
+  const auto windows = import_alias(source, "tabs", "windows", kind);
+  if (!windows.is_array())
+    throw Failure{1, "INVALID_CONFIG", kind + ".windows must be an array"};
+  bool window_focused = false;
+  for (std::size_t i = 0; i < windows.size(); ++i) {
+    const auto where = kind + ".windows[" + std::to_string(i) + "]";
+    const auto& raw = windows[i];
+    if (!raw.is_object() || (!teamocil && raw.size() != 1))
+      throw Failure{1, "INVALID_CONFIG", where + " must describe one window"};
+    const auto entry = raw.begin();
+    const auto& body = teamocil ? raw : entry.value();
+    if (teamocil && (!raw.contains("name") || !raw["name"].is_string() ||
+                     raw["name"].get_ref<const std::string&>().empty()))
+      throw Failure{1, "INVALID_CONFIG", where + ".name must be a nonempty string"};
+    Json window{
+        {"window_name", teamocil ? raw.value("name", Json{}) : Json(entry.key())}};
+    if (!body.is_object()) {
+      window["panes"] =
+          Json::array({Json{{"shell_command", import_commands(body, where)}}});
+    } else {
+      if (teamocil)
+        import_keys(body,
+                    {"name", "root", "layout", "panes", "splits", "focus", "options"},
+                    where);
+      else
+        import_keys(body, {"root", "layout", "pre", "panes", "synchronize"}, where);
+      window["start_directory"] = import_directory(
+          body.value("root", Json{}),
+          teamocil && body.contains("root") && !body["root"].is_null() ? cwd
+                                                                       : fs::path{root},
+          where + ".root");
+      if (body.contains("layout") && !body["layout"].is_null()) {
+        if (!body["layout"].is_string())
+          throw Failure{1, "INVALID_CONFIG", where + ".layout must be a string"};
+        window["layout"] = body["layout"];
+      }
+      if (body.contains("focus") && !body["focus"].is_null()) {
+        if (!body["focus"].is_boolean())
+          throw Failure{1, "INVALID_CONFIG", where + ".focus must be a boolean"};
+        const bool focus = body["focus"].get<bool>() && !window_focused;
+        window["focus"] = focus;
+        window_focused = window_focused || focus;
+      }
+      if (body.contains("options") && !body["options"].is_null()) {
+        if (!body["options"].is_object())
+          throw Failure{1, "INVALID_CONFIG", where + ".options must be a mapping"};
+        const auto synchronization =
+            body["options"].value("synchronize-panes", Json(false));
+        if (synchronization != false && synchronization != 0 &&
+            synchronization != "off" && synchronization != "false" &&
+            synchronization != "no" && synchronization != "0")
+          throw Failure{
+              1, "UNSUPPORTED_CONFIG",
+              where + ".options.synchronize-panes cannot preserve pre-command timing"};
+        window["options"] = body["options"];
+      }
+      if (body.contains("synchronize") && body["synchronize"] != false &&
+          !body["synchronize"].is_null()) {
+        if (body["synchronize"] != "after")
+          throw Failure{1, "UNSUPPORTED_CONFIG",
+                        where + ".synchronize only supports after-command timing"};
+        window["options_after"]["synchronize-panes"] = "on";
+      }
+      auto panes = import_alias(body, "splits", "panes", where);
+      if (panes.is_null())
+        panes = Json::array();
+      if (!panes.is_array())
+        throw Failure{1, "INVALID_CONFIG", where + ".panes must be an array"};
+      if (body.contains("pre")) {
+        const auto pre = import_command_group(body["pre"], " && ", where + ".pre");
+        if (!pre.is_null() && !pre.get_ref<const std::string&>().empty()) {
+          if (panes.empty())
+            throw Failure{1, "UNSUPPORTED_CONFIG",
+                          where + ".pre requires explicit nonempty panes"};
+          window["shell_command_before"] = pre;
+        }
+      }
+      window["panes"] = Json::array();
+      bool pane_focused = false;
+      for (std::size_t pane = 0; pane < panes.size(); ++pane) {
+        const auto pane_where = where + ".panes[" + std::to_string(pane) + "]";
+        if (panes[pane].is_object()) {
+          if (!teamocil)
+            throw Failure{1, "UNSUPPORTED_CONFIG",
+                          pane_where + " uses an unsupported pane title"};
+          import_keys(panes[pane], {"commands", "cmd", "focus"}, pane_where);
+          Json translated{{"shell_command",
+                           import_command_group(
+                               import_alias(panes[pane], "commands", "cmd", pane_where),
+                               "; ", pane_where + ".commands")}};
+          if (panes[pane].contains("focus") && !panes[pane]["focus"].is_null()) {
+            if (!panes[pane]["focus"].is_boolean())
+              throw Failure{1, "INVALID_CONFIG",
+                            pane_where + ".focus must be a boolean"};
+            const bool focus = panes[pane]["focus"].get<bool>() && !pane_focused;
+            translated["focus"] = focus;
+            pane_focused = pane_focused || focus;
+          }
+          window["panes"].push_back(std::move(translated));
+        } else
+          window["panes"].push_back(
+              Json{{"shell_command", import_commands(panes[pane], pane_where)}});
+      }
+    }
+    result["windows"].push_back(std::move(window));
+  }
+  if (const auto parsed = workspace::parse_tmuxp(result.dump()); !parsed)
+    throw Failure{1, "INVALID_CONFIG",
+                  kind + ": " + parsed.error().where + ": " + parsed.error().reason};
   return result;
 }
 struct Pattern {
@@ -821,9 +977,9 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
   }
   if (request.command == "convert" || request.command == "import") {
     const auto path = resolve(request.value("workspace-file"), request.importer);
-    auto document = read_document(path);
+    auto document = read_document(path, request.importer == "tmuxinator");
     if (request.command == "import")
-      document = imported(document, request.importer);
+      document = imported(document, request.importer, path);
     const auto format = path.extension() == ".json" ? "yaml" : "json";
     if (!request.machine() && !request.flag("yes") && !request.flag("save-to")) {
       return {.value = {{"preview", true},
