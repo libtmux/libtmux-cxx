@@ -44,6 +44,70 @@ def spread(values):
     }
 
 
+def completions(binary, root, env):
+    """Execute generated shell functions with partial command lines."""
+    directory = root / "completion"
+    directory.mkdir()
+    (directory / "project space.yaml").touch()
+    results = {}
+    for name in ("bash", "zsh", "fish"):
+        shell = shutil.which(name, path=env.get("PATH"))
+        if shell is None:
+            results[name] = "SKIP: shell unavailable"
+            continue
+        generated, _ = run([str(binary), "--generate-completion", name], env, root)
+        script = directory / f"workspace.{name}"
+        script.write_bytes(generated.stdout)
+        run([shell, "-n", str(script)], env, root)
+        results[name] = {"syntax": "PASS"}
+        if name == "zsh":
+            continue
+        cases = [
+            (["import", "tm"], ["tmuxinator"]),
+            (["load", "--pr"], ["--progress-format", "--progress-lines"]),
+            (["freeze", "-fj"], ["-fjson"]),
+            (["--color=al"], ["--color=always"]),
+            (["load", "-fproject"], ["-fproject space.yaml"]),
+            (["freeze", "--save-to=project"], ["--save-to=project space.yaml"]),
+        ]
+        for words, expected in cases:
+            if name == "bash":
+                command = [
+                    shell,
+                    "--noprofile",
+                    "--norc",
+                    "-c",
+                    (
+                        'source "$1"; shift; COMP_WORDS=("$@"); '
+                        "COMP_CWORD=$((${#COMP_WORDS[@]}-1)); "
+                        '_tmux_workspace_complete; printf "%s\\n" "${COMPREPLY[@]}"'
+                    ),
+                    "completion",
+                    str(script),
+                    str(binary),
+                    *words,
+                ]
+            else:
+                command = [
+                    shell,
+                    "--no-config",
+                    "-c",
+                    'source "$argv[1]"; complete -C "$argv[2]"',
+                    str(script),
+                    "tmux-workspace " + " ".join(words),
+                ]
+            observed, _ = run(
+                command, dict(env, PATH=f"{binary.parent}:{env['PATH']}"), directory
+            )
+            assert observed.stdout.decode().splitlines() == expected, (
+                name,
+                words,
+                observed,
+            )
+        results[name]["candidates"] = "PASS"
+    return results
+
+
 def _limit_output_file():
     signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
     resource.setrlimit(resource.RLIMIT_FSIZE, (256, 256))
@@ -201,7 +265,13 @@ def before_scripts(binary, root, env, prefix, append_env):
                 assert not state or state.startswith("Z"), (case, pid, state)
             if case == "closed":
                 assert process.returncode == 1, error
-                assert json.loads(error)["code"] == "OUTPUT_CLOSED", error
+                diagnostics = [json.loads(line) for line in error.splitlines()]
+                assert diagnostics and all(
+                    item["code"] == "OUTPUT_CLOSED" for item in diagnostics
+                ), error
+                retained = diagnostics[-1]["retained_state"]
+                assert retained["status"] == "error" and not retained["results"], error
+                assert retained["errors"][0]["failed_stage"] == "before-script", error
             else:
                 records = (
                     [json.loads(line) for line in observed.splitlines()]
@@ -306,6 +376,7 @@ def main():
             TERM="xterm-256color",
             PYTHONUSERBASE=site.USER_BASE,
         )
+        report["checks"]["completion"] = completions(binary, root, env)
         socket = str(root / "tmux.sock")
         prefix = ["tmux", "-S", socket, "-f", "/dev/null"]
         cleanup_prefixes = [prefix]

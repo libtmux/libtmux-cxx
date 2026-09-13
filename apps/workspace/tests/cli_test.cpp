@@ -2,6 +2,7 @@
 #include "../src/services.hpp"
 #include "workspace_cli.hpp"
 
+#include <algorithm>
 #include <cerrno>
 #include <csignal>
 #include <cstdlib>
@@ -37,6 +38,102 @@ Result invoke(std::vector<std::string> args) {
   std::ostringstream out, err;
   const int code = libtmux::workspace::cli::run(std::move(args), input, out, err);
   return {code, out.str(), err.str()};
+}
+
+TEST(WorkspaceCli, CompletionUsesCommandAndValueContextWithoutBackend) {
+  libtmux::test::EnvironmentGuard path{"PATH", "/nonexistent-workspace-completion"};
+  libtmux::test::EnvironmentGuard progress{"TMUXP_PROGRESS_LINES", "invalid"};
+  for (const auto& [words, expected] :
+       std::vector<std::pair<std::vector<std::string>, std::string>>{
+           {{""}, "values\nload\n"},
+           {{"--color", "never", "im"}, "values\nimport\n"},
+           {{"import", "tm"}, "values\ntmuxinator\n"},
+           {{"load", "--pr"}, "values\n--progress-format\n--progress-lines\n"},
+           {{"freeze", "--workspace-format", "j"}, "values\njson\n"},
+           {{"freeze", "-fj"}, "values\n-fjson\n"},
+           {{"load", "-fproject"}, "files\n-f\n"},
+           {{"load", "-?fproject"}, "values\n"},
+           {{"freeze", "--save-to=project"}, "files\n--save-to=\n"},
+           {{"--color", "=", "al"}, "values\nalways\n"},
+           {{"--color=a"}, "values\n--color=auto\n--color=always\n"},
+           {{"load", "-S", "im"}, "files\n"},
+           {{"load", "--", "--pr"}, "files\n"},
+           {{"shell", "--pt"}, "values\n--ptipython\n--ptpython\n"},
+           {{"load", "project path", "--no"}, "values\n--no-progress\n"}}) {
+    auto arguments = words;
+    arguments.insert(arguments.begin(), "--complete");
+    const auto result = invoke(std::move(arguments));
+    EXPECT_EQ(result.code, 0) << result.err;
+    EXPECT_TRUE(result.err.empty());
+    if (words == std::vector<std::string>{""})
+      EXPECT_TRUE(result.out.starts_with(expected)) << result.out;
+    else
+      EXPECT_EQ(result.out, expected);
+  }
+}
+
+TEST(WorkspaceCli, GeneratesNativeCompletionScripts) {
+  for (const auto* shell : {"bash", "zsh", "fish"}) {
+    const auto result = invoke({"--generate-completion", shell});
+    EXPECT_EQ(result.code, 0) << result.err;
+    EXPECT_TRUE(result.err.empty());
+    EXPECT_NE(result.out.find("--complete"), std::string::npos);
+    EXPECT_NE(result.out.find("tmux-workspace"), std::string::npos);
+    const auto machine = invoke({"--generate-completion", shell, "--json"});
+    ASSERT_EQ(machine.code, 0) << machine.err;
+    const auto record = Json::parse(machine.out);
+    EXPECT_EQ(record.at("shell"), shell);
+    EXPECT_EQ(record.at("script"), result.out);
+    const auto stream = invoke({"--generate-completion", shell, "--ndjson"});
+    ASSERT_EQ(stream.code, 0) << stream.err;
+    const auto completed = Json::parse(stream.out);
+    EXPECT_EQ(completed.at("event"), "completed");
+    EXPECT_EQ(completed.at("sequence"), 1);
+    EXPECT_EQ(completed.at("script"), result.out);
+    EXPECT_EQ(completed.at("shell"), shell);
+    EXPECT_EQ(std::count(stream.out.begin(), stream.out.end(), '\n'), 1);
+  }
+  const auto invalid = invoke({"--generate-completion", "unknown", "--json"});
+  EXPECT_EQ(invalid.code, 2);
+  EXPECT_TRUE(invalid.out.empty());
+}
+
+TEST(WorkspaceCli, CompletionReportsClosedOutput) {
+  struct Closed : std::streambuf {
+    int_type overflow(int_type) override { return traits_type::eof(); }
+  };
+  for (const bool throwing : {false, true}) {
+    Closed buffer;
+    std::ostream output{&buffer};
+    if (throwing)
+      output.exceptions(std::ios::badbit);
+    std::istringstream input;
+    std::ostringstream errors;
+    EXPECT_EQ(libtmux::workspace::cli::run({"--complete", "im"}, input, output, errors),
+              1);
+    EXPECT_TRUE(errors.str().empty());
+  }
+}
+
+TEST(WorkspaceCli, CompletionReportsFailedFlush) {
+  struct FailedFlush : std::stringbuf {
+    int sync() override { return -1; }
+  };
+  for (const auto& arguments : std::vector<std::vector<std::string>>{
+           {"--complete", "im"},
+           {"--generate-completion", "bash"},
+           {"--generate-completion", "bash", "--json"},
+           {"--generate-completion", "bash", "--ndjson"}}) {
+    for (const bool throwing : {false, true}) {
+      FailedFlush buffer;
+      std::ostream output{&buffer};
+      if (throwing)
+        output.exceptions(std::ios::badbit);
+      std::istringstream input;
+      std::ostringstream errors;
+      EXPECT_EQ(libtmux::workspace::cli::run(arguments, input, output, errors), 1);
+    }
+  }
 }
 
 struct Files {
