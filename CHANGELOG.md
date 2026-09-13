@@ -18,8 +18,9 @@ was recorded as it landed.
   daemon; tmux retains responsibility for sizing and pruning saved layouts.
 
 - Add terminal load progress with presets, templates and a bounded script panel.
-  Redirected stdout receives script output once; machine streams retain structured
-  events. `--no-progress` streams both script destinations directly. (#17)
+  Stdout redirected to a file, pipe or another terminal receives script output
+  once; machine streams retain structured events. `--no-progress` streams both
+  script destinations directly. (#17)
 - Interrupt pane-command delays and check cancellation between workspace changes.
   Failed appends report retained window IDs; owned builds roll back their session.
   (#17)

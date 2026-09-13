@@ -224,10 +224,10 @@ machine output disable the panel. `--color never` and `NO_COLOR` disable its
 colours. Resize clears the frame and returns subsequent script text to its
 original streams. Progress does not hide the cursor or change terminal modes.
 
-While the panel is active, terminal script output appears there. Redirected
-stdout receives its complete script output once. Without the panel, both script
-streams flush to their original destinations as they arrive. JSON and NDJSON
-retain their structured capture and event records.
+While the panel is active, script output appears there. Stdout redirected to a
+file, pipe or another terminal also receives its complete script output once.
+Without the panel, both script streams flush to their original destinations as
+they arrive. JSON and NDJSON retain their structured capture and event records.
 
 SIGINT and SIGTERM interrupt pane-command delays and are checked between
 creation, command, option and focus operations. Failure removes a newly owned
