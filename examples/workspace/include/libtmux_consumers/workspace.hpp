@@ -153,6 +153,18 @@ inline std::optional<BuildError> validate_layouts(const Server& server,
           return BuildError{index, "cannot determine tmux daemon version for layout"};
         mirrored = *version >= Version{.major = 3, .minor = 5};
       } else {
+        const auto& failure = running.error();
+        // The public socket path can be replaced; classify the retained route's
+        // native missing state or tmux's ECONNREFUSED diagnostic.
+        const bool cold =
+            (failure.kind == FailureKind::missing &&
+             failure.delivery == DeliveryStatus::not_started) ||
+            (failure.kind == FailureKind::refused &&
+             failure.delivery == DeliveryStatus::replied && failure.exit_code == 1 &&
+             failure.diagnostic.starts_with("no server running on ") &&
+             failure.diagnostic.ends_with(" (running: display-message -p #{version})"));
+        if (!cold)
+          return BuildError{index, failure.diagnostic};
         const auto version = server.tmux_version();
         if (!version)
           return BuildError{index, version.error().diagnostic};
