@@ -45,12 +45,6 @@ was recorded as it landed.
   Previously, requesting delivery left the pane silent; output discarded by tmux
   is not replayed. (#18)
 
-### Testing
-
-- `libtmux::testing` now exposes the fixture namespace under the same name as
-  its CMake target. Existing `libtmux::test` types keep their identity.
-  (#18)
-
 ## 0.1.0-alpha.8 (2026-09-12)
 
 This alpha reaches the standard library from the typed surface. An entity and a

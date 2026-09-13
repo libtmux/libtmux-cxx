@@ -27,9 +27,9 @@ public:
   // harness can label the servers a test run leaves behind.
   static ScratchServer open(std::string_view suite = "example") {
     const char* const named = std::getenv("LIBTMUX_EXAMPLE_NAMESPACE");
-    auto fixture = libtmux::testing::ScopedTmuxServer::start({
+    auto fixture = libtmux::test::ScopedTmuxServer::start({
         .session_name = "example",
-        .socket_namespace = libtmux::testing::SocketNamespace::consumer(
+        .socket_namespace = libtmux::test::SocketNamespace::consumer(
             named != nullptr && named[0] != '\0' ? named : suite),
     });
     if (!fixture.has_value()) {
@@ -59,12 +59,12 @@ public:
   }
 
 private:
-  ScratchServer(libtmux::testing::ScopedTmuxServer fixture, libtmux::Server server)
+  ScratchServer(libtmux::test::ScopedTmuxServer fixture, libtmux::Server server)
       : fixture_{std::move(fixture)}, server_{std::move(server)} {}
 
   // Declared first, so it is destroyed last: the handle must not outlive the
   // server it addresses.
-  libtmux::testing::ScopedTmuxServer fixture_;
+  libtmux::test::ScopedTmuxServer fixture_;
   libtmux::Server server_;
 };
 

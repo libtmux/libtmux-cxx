@@ -27,7 +27,3 @@ namespace libtmux::test {
 describe_running_tmux(const std::filesystem::path& tmux_binary = "tmux");
 
 } // namespace libtmux::test
-
-namespace libtmux {
-namespace testing = test;
-}
