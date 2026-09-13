@@ -484,8 +484,8 @@ public:
   [[nodiscard]] expected<void, CommandFailure> rename(std::string_view name) const;
 
   // Rearrange panes using a built-in name, unique abbreviation or saved layout.
-  // Grammar and checksum checks precede dispatch; version-sensitive names use
-  // this window's retained daemon. tmux decides geometry and current pane count.
+  // Saved-layout syntax checks precede dispatch; version-sensitive names and v2
+  // JSON use this window's retained daemon. tmux decides geometry and pane count.
   [[nodiscard]] expected<void, CommandFailure>
   select_layout(std::string_view layout) const;
   [[nodiscard]] expected<void, CommandFailure> resize(long long width,

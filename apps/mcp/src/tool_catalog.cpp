@@ -2227,7 +2227,8 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
                                   : failure(answer.error());
       },
       "Replace the pane layout of one window. Names and mirrored layouts follow "
-      "the selected daemon version; saved layouts require a valid checksum and tree.");
+      "the selected daemon version. Saved layouts accept v1 checksums and v2 JSON; "
+      "v2 requires tmux 3.9 (including next-3.9) or newer.");
 
   manage(
       "resize_window", "Resize a tmux window",
