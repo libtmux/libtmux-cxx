@@ -132,6 +132,82 @@ TEST(WindowLayout, MalformedLayoutsLeaveTheRetainedServerUnchanged) {
   EXPECT_EQ(panes->front().id(), before->front().id());
 }
 
+TEST(WindowLayout, JsonSavedLayoutsPreserveFloatingPanesAndRetainedSessions) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const auto version = server.tmux_version();
+  ASSERT_TRUE(version.has_value());
+  if (*version < libtmux::Version{.major = 3, .minor = 9, .prerelease = true})
+    GTEST_SKIP() << "v2 layouts and floating panes require tmux 3.9";
+  const auto session = server.session(fixture->session_name());
+  ASSERT_TRUE(session.has_value());
+  const auto window = session->active_window();
+  ASSERT_TRUE(window.has_value());
+  const auto keeper = server.new_session("keeper");
+  ASSERT_TRUE(keeper.has_value());
+  const auto keeper_window = keeper->active_window();
+  ASSERT_TRUE(keeper_window.has_value());
+  const auto before_keeper = keeper_window->panes();
+  ASSERT_TRUE(before_keeper.has_value());
+  ASSERT_TRUE(server.run({"new-pane", "-t", window->id(), "-x", "20", "-y", "8"}));
+  const auto saved = window->refresh();
+  ASSERT_TRUE(saved.has_value());
+  ASSERT_TRUE(saved->layout().starts_with('{'));
+  ASSERT_NE(saved->layout().find("\"z\":"), std::string::npos);
+  const auto panes = saved->panes();
+  ASSERT_TRUE(panes.has_value());
+  ASSERT_EQ(panes->size(), 2U);
+  const auto selected = saved->select_layout(saved->layout());
+  ASSERT_TRUE(selected.has_value()) << selected.error().diagnostic;
+  const auto after = saved->refresh();
+  ASSERT_TRUE(after.has_value());
+  EXPECT_EQ(after->layout(), saved->layout());
+  const auto after_panes = after->panes();
+  ASSERT_TRUE(after_panes.has_value());
+  ASSERT_EQ(after_panes->size(), panes->size());
+  for (std::size_t index = 0; index < panes->size(); ++index)
+    EXPECT_EQ(after_panes->at(index).id(), panes->at(index).id());
+  const auto after_keeper = keeper_window->refresh();
+  ASSERT_TRUE(after_keeper.has_value());
+  EXPECT_EQ(after_keeper->layout(), keeper_window->layout());
+  const auto keeper_panes = after_keeper->panes();
+  ASSERT_TRUE(keeper_panes.has_value());
+  ASSERT_EQ(keeper_panes->size(), before_keeper->size());
+  EXPECT_EQ(keeper_panes->front().id(), before_keeper->front().id());
+}
+
+TEST(WindowLayout, JsonSavedLayoutsRefuseOlderDaemonsBeforeMutation) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  std::vector<std::string> issued;
+  const auto server = Server::at_socket_path(
+      fixture->socket_path().string(),
+      [&](std::string_view command, const libtmux::CommandFailure*) {
+        issued.emplace_back(command);
+      });
+  ASSERT_TRUE(server.has_value());
+  const auto version = server->tmux_version();
+  ASSERT_TRUE(version.has_value());
+  if (*version >= libtmux::Version{.major = 3, .minor = 9, .prerelease = true})
+    GTEST_SKIP() << "requires a daemon without v2 layouts";
+  const auto session = server->session(fixture->session_name());
+  ASSERT_TRUE(session.has_value());
+  const auto window = session->active_window();
+  ASSERT_TRUE(window.has_value());
+  issued.clear();
+  const auto selected =
+      window->select_layout(R"({"V":2,"L":{"t":"p","w":80,"h":24,"x":0,"y":0,"i":0}})");
+  ASSERT_FALSE(selected.has_value());
+  EXPECT_EQ(selected.error().delivery, libtmux::DeliveryStatus::not_started);
+  EXPECT_NE(selected.error().diagnostic.find("3.9"), std::string::npos);
+  ASSERT_EQ(issued.size(), 1U);
+  EXPECT_NE(issued.front().find("display-message"), std::string::npos);
+  const auto after = window->refresh();
+  ASSERT_TRUE(after.has_value());
+  EXPECT_EQ(after->layout(), window->layout());
+}
+
 TEST(WindowLayout, NextAndPreviousStepThroughTmuxsArrangements) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();

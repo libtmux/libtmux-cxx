@@ -168,9 +168,9 @@ public:
   [[nodiscard]] expected<Version, CommandFailure> tmux_version() const;
 
   // Validate the complete batch's syntax before any I/O, then query its daemon
-  // once if its version affects a name. No layout is applied. Only an unbound
-  // native subprocess handle may use the client version for an absent socket;
-  // failures from previously bound endpoints remain failures.
+  // once for version-dependent names or v2 JSON layouts. No layout is applied.
+  // Only an unbound native subprocess handle may use the client version for an absent
+  // socket; failures from previously bound endpoints remain failures.
   [[nodiscard]] expected<void, LayoutFailure>
   validate_layouts(std::span<const LayoutRequest> layouts) const;
 

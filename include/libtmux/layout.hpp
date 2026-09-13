@@ -20,9 +20,11 @@ struct LayoutFailure {
   CommandFailure cause;
 };
 
-// Check names, saved-layout checksum, tree grammar and minimum cell count
+// Check names, v1 saved-layout checksum, v1/v2 tree grammar and minimum cell count
 // without I/O. Names must be valid on at least one supported tmux version;
-// Server::validate_layouts resolves version-dependent abbreviations and mirrors.
+// Server::validate_layouts resolves version-dependent names and requires tmux
+// 3.9 or newer for v2 JSON layouts. Saved input, including floating-pane metadata,
+// is retained unchanged. The v2 reader follows tmux's restricted JSON syntax.
 // Geometry and resizing remain tmux's responsibility. Empty layouts are invalid.
 [[nodiscard]] expected<void, CommandFailure>
 validate_layout(std::string_view layout, std::size_t minimum_panes = 1);
