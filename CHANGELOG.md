@@ -36,6 +36,8 @@ was recorded as it landed.
   for indexed batch checks against the selected daemon. `Window::select_layout`
   and MCP validate saved trees before dispatch; MCP rejects malformed layouts
   before target lookup. (#17)
+- Accept v2 JSON saved layouts on tmux 3.9, including `next-3.9`, while preserving
+  floating panes. Older daemons refuse JSON layouts before mutation. (#17)
 
 ## 0.1.0-alpha.8 (2026-09-12)
 

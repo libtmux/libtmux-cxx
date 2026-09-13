@@ -574,7 +574,7 @@ CommandFailure cause;
 ```cpp
 [[nodiscard]] expected<void, CommandFailure> validate_layout(std::string_view layout, std::size_t minimum_panes = 1);
 ```
-Check names, v1 saved-layout checksum, v1/v2 tree grammar and minimum cell count without I/O. Names must be valid on at least one supported tmux version; Server::validate_layouts resolves version-dependent names and requires tmux 3.9 or newer for v2 JSON layouts. Saved input, including floating-pane metadata, is retained unchanged. The v2 reader follows tmux's restricted JSON syntax. Geometry and resizing remain tmux's responsibility. Empty layouts are invalid.
+Check names, v1 saved-layout checksum, v1/v2 tree grammar and minimum cell count without I/O. Names must be valid on at least one supported tmux version; Server::validate_layouts resolves version-dependent names and requires tmux 3.9 (including next-3.9) or newer for v2 JSON layouts. Saved input, including floating-pane metadata, is retained unchanged. The v2 reader follows tmux's restricted JSON syntax. Geometry and resizing remain tmux's responsibility. Empty layouts are invalid.
 
 <a id="libtmux-async-hpp"></a>
 ## `libtmux/async.hpp`
@@ -2260,7 +2260,7 @@ How to address this window, and the reason a window id alone will not do.  The s
 ```cpp
 [[nodiscard]] expected<void, CommandFailure> select_layout(std::string_view layout) const;
 ```
-Rearrange panes using a built-in name, unique abbreviation or saved layout. Grammar and checksum checks precede dispatch; version-sensitive names use this window's retained daemon. tmux decides geometry and current pane count.
+Rearrange panes using a built-in name, unique abbreviation or saved layout. Saved-layout syntax checks precede dispatch; version-sensitive names and v2 JSON use this window's retained daemon. tmux decides geometry and pane count.
 
 <a id="libtmux-entities-hpp-window-resize"></a>
 #### `Window::resize`
