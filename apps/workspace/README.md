@@ -212,8 +212,11 @@ Saved paths are absolute, so moving the imported file does not change them.
 Dollar expansion and `~user` path spellings are refused because native workspace
 loading uses different expansion rules.
 
-ERB templates, host lifecycle hooks, named pane titles, startup selectors and
-endpoint/attachment settings are unsupported. Imports do not execute Ruby.
+Host lifecycle hooks, named pane titles, startup selectors and
+endpoint/attachment settings are unsupported. Tmuxinator imports refuse
+unexpanded ERB markup (`<%`) before output or overwrite; imports do not
+execute Ruby. Teamocil evaluates no templates, so the same markup in a
+Teamocil source is ordinary text and is preserved literally.
 Synchronization before pane commands is refused: this builder creates all panes
 before sending commands, which changes broadcast recipients. Disabled Teamocil
 `synchronize-panes` options and tmuxinator `synchronize: after` are supported.
