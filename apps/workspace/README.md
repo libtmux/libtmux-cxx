@@ -289,15 +289,54 @@ editor's exit status. SIGINT/SIGTERM cancel the owned child group, including
 descendants that retain its pipes. Editing has no fixed process deadline.
 Custom input streams supplied to the callable CLI use captured process I/O.
 
+## Optional tmuxp shell
+
+`shell` uses an installed `tmuxp` 1.74.0 console executable. Native workspace
+loading does not require Python. Put that executable on `PATH`, or select its
+path with `TMUX_WORKSPACE_TMUXP`. The value is one executable path, including
+spaces; command strings and interpreter arguments are not accepted. Install
+optional shell backends in that executable's Python environment.
+
+Inspect a loaded session with its native Python objects:
+
+```console
+$ tmux-workspace shell \
+    -S "$socket_dir/tmux.sock" \
+    -c 'print(pane.pane_id)' \
+    --json
+```
+
+To open the standard Python console from a foreground terminal:
+
+```console
+$ tmux-workspace shell \
+    -S "$socket_dir/tmux.sock" \
+    --code
+```
+
+Optional session and window arguments select the context. `-S` takes precedence
+over `-L`. Opposing startup and vi-mode flags retain their argument order;
+the last flag wins. An empty `-c` still executes without entering a console.
+Interactive mode requires a controlling terminal identified by a standard
+descriptor. Machine modes require `-c`.
+
+With `-c`, human output streams directly; JSON captures stdout, stderr and exit
+status under `script_output`. NDJSON flushes `script-output` records with
+`stream` and `text`, then a completed or failed result. Captured output includes
+the reference runtime's own messages. Each stream is limited to 1 MiB;
+overflow stops the child group and reports `OUTPUT_LIMIT` with bounded capture.
+SIGINT or SIGTERM sent to the workspace process cancels its owned child group
+and preserves the signal exit status. Interactive exit restores terminal
+settings and foreground ownership. Shell execution has no fixed deadline.
+
 ## Remaining work
 
-Python process services, dynamic session/configuration-name completion, full
+Plugin/custom-builder execution, dynamic session/configuration-name completion, full
 configuration/import/capture coverage and supported-platform packaging remain
 incomplete. Terminal suspend/resume job
-control and non-Linux terminal behavior still need verification. The corresponding
-process commands and lifecycle flags return explicit unavailable errors. The parser
-includes their intended grammar so generated metadata can be reviewed; their
-presence in help does not mean those services are finished.
+control and non-Linux terminal behavior still need verification. Unsupported
+extensions return explicit errors; parser coverage alone does not establish
+support for every configuration or execution path.
 
 The application currently requires POSIX tmux. Run tests only with private
 sockets. The workspace fixture never reaches the default server.
