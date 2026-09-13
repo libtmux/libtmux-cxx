@@ -29,6 +29,32 @@ $ build/cxx-dev/apps/workspace/tmux-workspace --help
 $ build/cxx-dev/apps/workspace/tmux-workspace --command-tree
 ```
 
+## Shell completion
+
+With `tmux-workspace` on `PATH`, enable completion in the current Bash session:
+
+```console
+$ source <(tmux-workspace --generate-completion bash)
+```
+
+For Zsh, initialise its completion system before sourcing the script:
+
+```console
+$ autoload -Uz compinit && compinit && source <(tmux-workspace --generate-completion zsh)
+```
+
+For Fish:
+
+```console
+$ tmux-workspace --generate-completion fish | source
+```
+
+Completion follows the command parser for nested commands, scoped flags and
+enumerated values. The shell completes workspace and output paths, including
+filenames containing spaces. Queries do not start tmux or load configuration;
+session names and configuration aliases are not suggested. Add the appropriate
+command to your shell configuration to enable it in future sessions.
+
 ## Current commands
 
 `ls`, `search`, `edit`, `convert`, `import teamocil`, `import tmuxinator`, `debug-info`,
