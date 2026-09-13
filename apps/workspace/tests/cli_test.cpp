@@ -1106,6 +1106,7 @@ TEST(WorkspaceCli, ProgressPreservesRedirectedBytesAndExpandsNativeCounters) {
 class ProgressChild {
   int terminal_{-1}, output_{-1};
   pid_t process_{-1};
+  bool interrupted_{};
 
 public:
   std::string out, err;
@@ -1120,6 +1121,21 @@ public:
       throw std::runtime_error{"cannot open progress output"};
     winsize size{12, 100, 0, 0};
     (void)::ioctl(terminal_, TIOCSWINSZ, &size);
+    std::vector<std::string> command{LIBTMUX_WORKSPACE_BINARY};
+    command.insert(command.end(), arguments.begin(), arguments.end());
+    std::vector<char*> argv;
+    for (auto& argument : command)
+      argv.push_back(argument.data());
+    argv.push_back(nullptr);
+    auto environment = libtmux::test::current_environment();
+    libtmux::test::set_environment(environment, "TERM", "xterm-256color");
+    for (const auto* name :
+         {"TMUXP_PROGRESS", "TMUXP_PROGRESS_LINES", "TMUXP_PROGRESS_FORMAT"})
+      libtmux::test::erase_environment(environment, name);
+    std::vector<char*> envp;
+    for (auto& entry : environment)
+      envp.push_back(entry.data());
+    envp.push_back(nullptr);
     process_ = ::fork();
     if (process_ == 0) {
       (void)::setsid();
@@ -1131,15 +1147,8 @@ public:
       ::close(pipe[0]);
       ::close(pipe[1]);
       ::close(terminal_);
-      ::setenv("TERM", "xterm-256color", 1);
-      ::unsetenv("TMUXP_PROGRESS");
-      ::unsetenv("TMUXP_PROGRESS_LINES");
-      ::unsetenv("TMUXP_PROGRESS_FORMAT");
-      const auto code =
-          libtmux::workspace::cli::run(arguments, std::cin, std::cout, std::cerr);
-      std::cout.flush();
-      std::cerr.flush();
-      ::_exit(code);
+      ::execve(argv.front(), argv.data(), envp.data());
+      ::_exit(127);
     }
     ::close(slave);
     ::close(pipe[1]);
@@ -1162,7 +1171,12 @@ public:
   }
   ProgressChild(const ProgressChild&) = delete;
   ProgressChild& operator=(const ProgressChild&) = delete;
-  void interrupt() { (void)::kill(process_, SIGINT); }
+  void interrupt() {
+    if (::kill(process_, SIGINT) != 0)
+      throw std::runtime_error{"cannot interrupt progress CLI: " +
+                               std::to_string(errno)};
+    interrupted_ = true;
+  }
   void resize() {
     winsize size{6, 40, 0, 0};
     (void)::ioctl(terminal_, TIOCSWINSZ, &size);
@@ -1192,7 +1206,9 @@ public:
       if (observe)
         observe(*this);
       if (std::chrono::steady_clock::now() >= deadline)
-        throw std::runtime_error{"progress CLI exceeded test deadline"};
+        throw std::runtime_error{"progress CLI exceeded test deadline; SIGINT sent: " +
+                                 std::to_string(interrupted_) + "; stdout: " + out +
+                                 "; stderr: " + err};
       pollfd descriptors[]{{output_, POLLIN, 0}, {terminal_, POLLIN, 0}};
       (void)::poll(descriptors, 2, 10);
     }
@@ -1257,8 +1273,8 @@ TEST(WorkspaceCliTmux, InterruptedPaneDelayClearsProgressAndRollsBackOnlyOwnedSe
   bool sent{};
   const auto code = child.wait([&](auto& running) {
     if (!sent && std::filesystem::exists("ready")) {
-      sent = true;
       running.interrupt();
+      sent = true;
     }
   });
   ASSERT_TRUE(sent);
