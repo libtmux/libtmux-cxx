@@ -450,7 +450,8 @@ TEST_F(ProcessEngineFailure, PropagatesFinalReapFailure) {
 }
 
 TEST_F(ProcessEngineFailure, CleanupDoesNotOverwriteTheCausalFailure) {
-  constexpr std::string_view script{"printf answer; trap '' TERM; sleep 30"};
+  // Closing stdout must not let SIGPIPE bypass the injected reap failure.
+  constexpr std::string_view script{"trap '' PIPE TERM; printf answer; sleep 30"};
   auto engine = libtmux::detail::ProcessEngine::start();
   ASSERT_TRUE(engine.has_value()) << engine.error().diagnostic;
   arm({Fault::child_read, Fault::final_reap});
