@@ -74,6 +74,64 @@ std::vector<std::string> geometry(const libtmux::Window& window) {
   return cells;
 }
 
+TEST(WindowLayout, SavedLayoutUsesCurrentTopologyRatherThanTheSnapshotCount) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const auto session = server.session(fixture->session_name());
+  ASSERT_TRUE(session.has_value());
+  const auto first = session->active_window();
+  ASSERT_TRUE(first.has_value());
+  const auto extra = first->split();
+  ASSERT_TRUE(extra.has_value());
+  const auto stale = first->refresh();
+  ASSERT_TRUE(stale.has_value());
+  ASSERT_EQ(stale->pane_count(), 2);
+  ASSERT_TRUE(extra->kill().has_value());
+  const auto current = first->refresh();
+  ASSERT_TRUE(current.has_value());
+  ASSERT_EQ(current->pane_count(), 1);
+  const auto selected = stale->select_layout(current->layout());
+  ASSERT_TRUE(selected.has_value()) << selected.error().diagnostic;
+  const auto panes = stale->panes();
+  ASSERT_TRUE(panes.has_value());
+  EXPECT_EQ(panes->size(), 1U);
+}
+
+TEST(WindowLayout, MalformedLayoutsLeaveTheRetainedServerUnchanged) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  std::vector<std::string> issued;
+  const auto server = Server::at_socket_path(
+      fixture->socket_path().string(),
+      [&](std::string_view command, const libtmux::CommandFailure*) {
+        issued.emplace_back(command);
+      });
+  ASSERT_TRUE(server.has_value());
+  const auto session = server->session(fixture->session_name());
+  ASSERT_TRUE(session.has_value());
+  const auto window = session->active_window();
+  ASSERT_TRUE(window.has_value());
+  const auto before = window->panes();
+  ASSERT_TRUE(before.has_value());
+  issued.clear();
+  for (const auto* layout : {"invalid-layout", "main-", "32d2,80x24,0,0{}"}) {
+    const auto selected = window->select_layout(layout);
+    ASSERT_FALSE(selected.has_value());
+    EXPECT_EQ(selected.error().kind, libtmux::FailureKind::validation);
+    EXPECT_EQ(selected.error().delivery, libtmux::DeliveryStatus::not_started);
+  }
+  EXPECT_TRUE(issued.empty());
+  const auto after = window->refresh();
+  ASSERT_TRUE(after.has_value());
+  EXPECT_EQ(after->id(), window->id());
+  EXPECT_EQ(after->layout(), window->layout());
+  const auto panes = after->panes();
+  ASSERT_TRUE(panes.has_value());
+  ASSERT_EQ(panes->size(), before->size());
+  EXPECT_EQ(panes->front().id(), before->front().id());
+}
+
 TEST(WindowLayout, NextAndPreviousStepThroughTmuxsArrangements) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();

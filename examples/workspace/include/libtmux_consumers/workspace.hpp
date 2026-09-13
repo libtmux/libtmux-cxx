@@ -20,7 +20,6 @@
 
 #include "libtmux/server.hpp"
 #include "libtmux/target.hpp"
-#include "libtmux_consumers/layout.hpp"
 
 namespace libtmux::workspace {
 
@@ -136,43 +135,20 @@ using BuildObserver = std::function<std::optional<std::string>(const BuildEvent&
 // Check all layouts before sessions, settings, or before-build callbacks change.
 inline std::optional<BuildError> validate_layouts(const Server& server,
                                                   const Workspace& description) {
-  std::optional<bool> mirrored;
+  std::vector<LayoutRequest> layouts;
+  std::vector<std::size_t> indexes;
+  layouts.reserve(description.windows.size());
+  indexes.reserve(description.windows.size());
   for (std::size_t index = 0; index < description.windows.size(); ++index) {
     const auto& window = description.windows[index];
-    if (auto error = detail::layout_error(window.layout, window.panes.size()))
-      return BuildError{index, std::move(*error)};
-    if (!detail::layout_needs_version(window.layout))
-      continue;
-    if (!mirrored.has_value()) {
-      // An existing daemon can differ from the client found on PATH. A cold
-      // endpoint has no format context, so use the client that will start it.
-      const auto running = server.run({"display-message", "-p", "#{version}"});
-      if (running) {
-        const auto version = parse_version("tmux " + *running);
-        if (!version)
-          return BuildError{index, "cannot determine tmux daemon version for layout"};
-        mirrored = *version >= Version{.major = 3, .minor = 5};
-      } else {
-        const auto& failure = running.error();
-        // The public socket path can be replaced; classify the retained route's
-        // native missing state or tmux's ECONNREFUSED diagnostic.
-        const bool cold =
-            (failure.kind == FailureKind::missing &&
-             failure.delivery == DeliveryStatus::not_started) ||
-            (failure.kind == FailureKind::refused &&
-             failure.delivery == DeliveryStatus::replied && failure.exit_code == 1 &&
-             failure.diagnostic.starts_with("no server running on ") &&
-             failure.diagnostic.ends_with(" (running: display-message -p #{version})"));
-        if (!cold)
-          return BuildError{index, failure.diagnostic};
-        const auto version = server.tmux_version();
-        if (!version)
-          return BuildError{index, version.error().diagnostic};
-        mirrored = *version >= Version{.major = 3, .minor = 5};
-      }
+    if (!window.layout.empty()) {
+      layouts.push_back({window.layout, window.panes.size()});
+      indexes.push_back(index);
     }
-    if (auto error = detail::layout_error(window.layout, window.panes.size(), mirrored))
-      return BuildError{index, std::move(*error)};
+  }
+  if (auto checked = server.validate_layouts(layouts); !checked) {
+    auto& error = checked.error();
+    return BuildError{indexes[error.index], std::move(error.cause.diagnostic)};
   }
   return std::nullopt;
 }

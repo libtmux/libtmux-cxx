@@ -585,6 +585,46 @@ TEST(McpProtocolCli, StartsAnAbsentPinnedSocketOnlyForCreateSession) {
   EXPECT_TRUE(sibling->is_alive());
 }
 
+TEST_F(McpProtocol, LayoutSelectionValidatesBeforeLookupAndAcceptsSavedLayouts) {
+  const auto server = connect_server();
+  const auto session = server.session("mcp");
+  ASSERT_TRUE(session.has_value());
+  const auto window = session->active_window();
+  ASSERT_TRUE(window.has_value());
+  const auto panes = window->panes();
+  ASSERT_TRUE(panes.has_value());
+  ASSERT_EQ(panes->size(), 1U);
+  const auto messages = converse_ready(
+      socket(),
+      {call("select_layout", {{"windowId", "@999"}, {"layout", "invalid-layout"}}, 1),
+       call("select_layout",
+            {{"windowId", window->id()}, {"layout", "32d2,80x24,0,0{}"}}, 2),
+       call("select_layout", {{"windowId", window->id()}, {"layout", "even-h"}}, 3),
+       call("select_layout", {{"windowId", window->id()}, {"layout", window->layout()}},
+            4),
+       call("select_layout", {{"windowId", "@999"}, {"layout", "tiled"}}, 5)});
+  for (const int id : {1, 2}) {
+    const auto& answer = require_response(messages, id);
+    ASSERT_TRUE(answer.contains("error")) << answer.dump();
+    EXPECT_EQ(answer["error"]["code"], -32602);
+    EXPECT_NE(answer["error"]["message"].get<std::string>().find("layout"),
+              std::string::npos);
+  }
+  for (const int id : {3, 4}) {
+    const auto& answer = require_response(messages, id);
+    ASSERT_TRUE(answer.contains("result")) << answer.dump();
+    EXPECT_FALSE(answer["result"]["isError"].get<bool>()) << answer.dump();
+    EXPECT_EQ(answer["result"]["structuredContent"]["window_id"], window->id());
+  }
+  const auto& missing = require_response(messages, 5);
+  ASSERT_TRUE(missing.contains("result")) << missing.dump();
+  EXPECT_TRUE(missing["result"]["isError"].get<bool>());
+  const auto after = window->panes();
+  ASSERT_TRUE(after.has_value());
+  ASSERT_EQ(after->size(), 1U);
+  EXPECT_EQ(after->front().id(), panes->front().id());
+}
+
 TEST_F(McpProtocol, PublishesTheEffectiveCrossPortCatalog) {
   const auto messages = converse_ready(
       socket(), {json{{"jsonrpc", "2.0"}, {"id", 1}, {"method", "tools/list"}}});

@@ -651,7 +651,7 @@ TEST(WorkspaceBuilder, LayoutVersionProbePreservesLiveDaemonTimeout) {
   EXPECT_TRUE(connect(*fixture).session(fixture->session_name()));
 }
 
-TEST(WorkspaceBuilder, LayoutVersionProbeUsesClientOnlyForMissingOrExitedEndpoint) {
+TEST(WorkspaceBuilder, LayoutVersionProbeUsesClientOnlyForUnboundMissingEndpoint) {
   auto fixture = libtmux::test::ScopedTmuxServer::start(
       {.socket_namespace = libtmux::test::SocketNamespace::consumer("layout")});
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
@@ -675,6 +675,16 @@ TEST(WorkspaceBuilder, LayoutVersionProbeUsesClientOnlyForMissingOrExitedEndpoin
   EXPECT_FALSE(std::filesystem::exists(selected));
   EXPECT_TRUE(connect(*fixture).session(fixture->session_name()));
 
+  const auto ordinary = Server::at_socket_path(selected.string(), observe);
+  ASSERT_TRUE(ordinary.has_value());
+  commands.clear();
+  EXPECT_FALSE(workspace::validate_layouts(*ordinary, description));
+  EXPECT_EQ(commands,
+            (std::vector<std::string>{"display-message -p #{version}", "-V"}));
+  EXPECT_FALSE(std::filesystem::exists(selected));
+  EXPECT_FALSE(ordinary->new_session("must-not-start").has_value());
+  EXPECT_FALSE(std::filesystem::exists(selected));
+
   const auto exited = Server::at_socket_path(fixture->socket_path().string(), observe);
   ASSERT_TRUE(exited.has_value());
   ASSERT_TRUE(exited->run({"kill-server"}).has_value());
@@ -690,9 +700,11 @@ TEST(WorkspaceBuilder, LayoutVersionProbeUsesClientOnlyForMissingOrExitedEndpoin
   ASSERT_TRUE(refused.error().diagnostic.starts_with("no server running on "))
       << refused.error().diagnostic;
   commands.clear();
-  EXPECT_FALSE(workspace::validate_layouts(*exited, description));
-  EXPECT_EQ(commands,
-            (std::vector<std::string>{"display-message -p #{version}", "-V"}));
+  const auto checked = workspace::validate_layouts(*exited, description);
+  ASSERT_TRUE(checked.has_value());
+  EXPECT_EQ(checked->window_index, 0U);
+  EXPECT_EQ(checked->reason, refused.error().diagnostic);
+  EXPECT_EQ(commands, (std::vector<std::string>{"display-message -p #{version}"}));
 }
 
 TEST(WorkspaceBuilder, LayoutVersionProbeKeepsAnEmptyDaemonsVersion) {

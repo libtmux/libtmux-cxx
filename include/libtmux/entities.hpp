@@ -483,9 +483,9 @@ public:
   [[nodiscard]] expected<Pane, CommandFailure> split(SplitOptions options) const;
   [[nodiscard]] expected<void, CommandFailure> rename(std::string_view name) const;
 
-  // Rearrange the panes. tmux names five layouts and also accepts the layout
-  // description `layout()` returns, which is how a saved arrangement is
-  // restored exactly.
+  // Rearrange panes using a built-in name, unique abbreviation or saved layout.
+  // Grammar and checksum checks precede dispatch; version-sensitive names use
+  // this window's retained daemon. tmux decides geometry and current pane count.
   [[nodiscard]] expected<void, CommandFailure>
   select_layout(std::string_view layout) const;
   [[nodiscard]] expected<void, CommandFailure> resize(long long width,

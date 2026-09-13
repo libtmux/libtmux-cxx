@@ -361,8 +361,10 @@ libtmux::expected<Window, ParseError> read_window(const YAML::Node& node,
     }
     window.panes.push_back(*std::move(pane));
   }
-  if (auto error = detail::layout_error(window.layout, window.panes.size()))
-    return fail(where + ".layout", std::move(*error));
+  if (!window.layout.empty())
+    if (auto checked = libtmux::validate_layout(window.layout, window.panes.size());
+        !checked)
+      return fail(where + ".layout", std::move(checked.error().diagnostic));
   return window;
 }
 

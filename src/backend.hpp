@@ -16,6 +16,7 @@
 #include "libtmux/capabilities.hpp"
 #include "libtmux/command.hpp"
 #include "libtmux/expected.hpp"
+#include "libtmux/layout.hpp"
 #include "libtmux/version.hpp"
 #include "process.hpp"
 #include <atomic>
@@ -24,6 +25,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -137,6 +139,10 @@ public:
   // so the executor answers.
   [[nodiscard]] virtual expected<Version, CommandFailure> version() const = 0;
 
+  [[nodiscard]] virtual bool allows_layout_client_version() const noexcept {
+    return false;
+  }
+
   // What a call that names no timeout of its own gets. Applied where a caller
   // reaches the library, not here: this layer keeps taking `nullopt` to mean
   // no deadline, which is what `wait_for` needs to be able to ask for.
@@ -163,6 +169,10 @@ private:
   CommandObserver observer_;
   ExecutionPolicy policy_;
 };
+
+[[nodiscard]] expected<void, LayoutFailure>
+validate_layouts(const Backend& backend, std::span<const LayoutRequest> layouts,
+                 bool allow_cold);
 
 // Do two backends talk to one tmux?
 //
@@ -315,6 +325,10 @@ public:
   // `tmux -V` answers without connecting, so this works against a socket with
   // no server on it.
   [[nodiscard]] expected<Version, CommandFailure> version() const override;
+
+  [[nodiscard]] bool allows_layout_client_version() const noexcept override {
+    return socket_missing_.load(std::memory_order_acquire);
+  }
 
   [[nodiscard]] expected<PreparedAttach, CommandFailure>
   prepare_attach(std::string_view target) const override;
