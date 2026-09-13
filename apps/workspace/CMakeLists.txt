@@ -21,6 +21,9 @@ endif()
 
 if(LIBTMUX_BUILD_TESTS AND NOT WIN32)
   add_executable(workspace_cli_test tests/cli_test.cpp)
+  target_compile_definitions(workspace_cli_test PRIVATE
+    "LIBTMUX_WORKSPACE_BINARY=\"$<TARGET_FILE:tmux-workspace>\"")
+  add_dependencies(workspace_cli_test tmux-workspace)
   target_link_libraries(workspace_cli_test PRIVATE libtmux_build_options workspace_cli
     GTest::gtest_main libtmux::testing nlohmann_json::nlohmann_json)
   add_test(NAME consumer.workspace.cli COMMAND workspace_cli_test
