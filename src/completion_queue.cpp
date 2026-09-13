@@ -1,5 +1,4 @@
 #include "completion_queue.hpp"
-#include "libtmux/async.hpp"
 
 #include <atomic>
 #include <cassert>
@@ -224,12 +223,13 @@ bool CompletionQueue::run_one() {
   {
     std::unique_lock lock{core->mutex};
     while (claimed.empty()) {
-      core->ready_changed.wait(lock,
-                               [&] { return core->closed || core->ready_count != 0U; });
+      core->ready_changed.wait(lock, [&] {
+        return core->closed || core->finished || core->ready_count != 0U;
+      });
       if (core->ready_count != 0U) {
         claimed = core->claim_ready();
       }
-      if (core->closed) {
+      if (core->closed || core->finished) {
         break;
       }
     }
@@ -303,7 +303,7 @@ std::size_t CompletionQueue::discard_ready() {
 
 void CompletionQueue::detach(CompletionToken token) { mailbox().detach(token); }
 
-ReadyStatus
+QueueReadyStatus
 CompletionQueue::wait_ready(std::chrono::steady_clock::time_point deadline) {
   const auto core = core_;
   std::unique_lock lock{core->mutex};
@@ -311,12 +311,12 @@ CompletionQueue::wait_ready(std::chrono::steady_clock::time_point deadline) {
     return core->ready_count != 0U || core->finished || core->closed;
   }));
   if (core->ready_count != 0U) {
-    return ReadyStatus::ready;
+    return QueueReadyStatus::ready;
   }
   if (core->finished || core->closed) {
-    return ReadyStatus::closed;
+    return QueueReadyStatus::closed;
   }
-  return ReadyStatus::timeout;
+  return QueueReadyStatus::timeout;
 }
 
 void CompletionQueue::finish() {

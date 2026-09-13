@@ -45,6 +45,18 @@ deadline_after(std::chrono::milliseconds timeout) {
   return now + timeout;
 }
 
+[[nodiscard]] ReadyStatus to_ready_status(detail::QueueReadyStatus status) {
+  switch (status) {
+  case detail::QueueReadyStatus::ready:
+    return ReadyStatus::ready;
+  case detail::QueueReadyStatus::timeout:
+    return ReadyStatus::timeout;
+  case detail::QueueReadyStatus::closed:
+    return ReadyStatus::closed;
+  }
+  return ReadyStatus::closed;
+}
+
 [[nodiscard]] CommandFailure immediate_failure(FailureKind kind,
                                                std::string diagnostic) {
   return CommandFailure{.kind = kind,
@@ -283,6 +295,30 @@ public:
 
 private:
   std::atomic_size_t& active_;
+};
+
+// Blocked `wait_ready` callers, which `close` waits out. Never held by the
+// closing thread: `wait_ready` runs no caller code.
+class ActiveReadinessWait final {
+public:
+  ActiveReadinessWait(std::atomic_size_t& active, std::mutex& mutex,
+                      std::condition_variable& idle) noexcept
+      : active_{active}, mutex_{mutex}, idle_{idle} {
+    active_.fetch_add(1U);
+  }
+  ~ActiveReadinessWait() {
+    const std::lock_guard<std::mutex> lock{mutex_};
+    if (active_.fetch_sub(1U) == 1U) {
+      idle_.notify_all();
+    }
+  }
+  ActiveReadinessWait(const ActiveReadinessWait&) = delete;
+  ActiveReadinessWait& operator=(const ActiveReadinessWait&) = delete;
+
+private:
+  std::atomic_size_t& active_;
+  std::mutex& mutex_;
+  std::condition_variable& idle_;
 };
 
 #if !defined(_WIN32)
@@ -678,39 +714,44 @@ struct CommandRuntime::State final {
       break;
     }
 
+    bool transports_stopped = true;
     try {
       request_stop();
-      bool transports_stopped = true;
-#if !defined(_WIN32)
-      const auto engine_report = engine_->close();
-      transports_stopped = engine_report.complete;
-      if (consume_runtime_action_failure(
-              detail::RuntimeFailurePoint::engine_shutdown)) {
-        transports_stopped = false;
-      }
-      if (!transports_stopped) {
-        store_lifecycle_failure(accepted_internal_failure(
-            "the process runtime could not retire every accepted child"));
-      }
-#else
-      engine_->close();
-#endif
-#if !defined(_WIN32)
-      if (consume_runtime_action_failure(detail::RuntimeFailurePoint::close)) {
-        throw detail::RuntimeFailurePoint::close;
-      }
-#endif
       {
-        std::lock_guard completion_lock{completion_mutex_};
-        finish_completion_thread_ = true;
-        completion_wake_ = true;
-      }
-      completion_ready_.notify_all();
-      if (completion_thread_.joinable()) {
-        completion_thread_.join();
+        // Runs even if a step below throws, so a `wait_ready` caller is
+        // always woken and fully drained before `~State` can free the
+        // object its `ActiveReadinessWait` still references.
+        FinishReadinessWaits finish_readiness_waits{*this};
+#if !defined(_WIN32)
+        const auto engine_report = engine_->close();
+        transports_stopped = engine_report.complete;
+        if (consume_runtime_action_failure(
+                detail::RuntimeFailurePoint::engine_shutdown)) {
+          transports_stopped = false;
+        }
+        if (!transports_stopped) {
+          store_lifecycle_failure(accepted_internal_failure(
+              "the process runtime could not retire every accepted child"));
+        }
+#else
+        engine_->close();
+#endif
+#if !defined(_WIN32)
+        if (consume_runtime_action_failure(detail::RuntimeFailurePoint::close)) {
+          throw detail::RuntimeFailurePoint::close;
+        }
+#endif
+        {
+          std::lock_guard completion_lock{completion_mutex_};
+          finish_completion_thread_ = true;
+          completion_wake_ = true;
+        }
+        completion_ready_.notify_all();
+        if (completion_thread_.joinable()) {
+          completion_thread_.join();
+        }
       }
 
-      observers_.finish();
       const auto final_snapshot = ledger_->snapshot();
       CommandRuntimeShutdown report{
           .pending_results = final_snapshot.pending_results,
@@ -719,6 +760,7 @@ struct CommandRuntime::State final {
           .safe_to_unload = transports_stopped &&
                             final_snapshot.pending_results == 0U &&
                             final_snapshot.pending_observers == 0U &&
+                            active_readiness_waiters_.load() == 0U &&
                             active_observer_dispositions_.load() == 0U,
           .failure = lifecycle_failure()};
       {
@@ -744,8 +786,9 @@ struct CommandRuntime::State final {
   }
 
   [[nodiscard]] ReadyStatus wait_ready(std::chrono::steady_clock::time_point deadline) {
-    const ActiveObserverDisposition active{active_observer_dispositions_};
-    return observers_.wait_ready(deadline);
+    const ActiveReadinessWait active{active_readiness_waiters_, readiness_wait_mutex_,
+                                     readiness_wait_idle_};
+    return to_ready_status(observers_.wait_ready(deadline));
   }
 
   [[nodiscard]] std::size_t dispatch_ready() {
@@ -759,6 +802,26 @@ struct CommandRuntime::State final {
   }
 
 private:
+  class FinishReadinessWaits final {
+  public:
+    explicit FinishReadinessWaits(State& state) noexcept : state_{state} {}
+    ~FinishReadinessWaits() {
+      state_.observers_.finish();
+      state_.wait_for_idle_readiness_waiters();
+    }
+    FinishReadinessWaits(const FinishReadinessWaits&) = delete;
+    FinishReadinessWaits& operator=(const FinishReadinessWaits&) = delete;
+
+  private:
+    State& state_;
+  };
+
+  void wait_for_idle_readiness_waiters() noexcept {
+    std::unique_lock lock{readiness_wait_mutex_};
+    readiness_wait_idle_.wait(
+        lock, [this] { return active_readiness_waiters_.load() == 0U; });
+  }
+
   void notify_completion() noexcept {
     {
       std::lock_guard lock{completion_mutex_};
@@ -909,6 +972,10 @@ private:
   mutable std::mutex failure_mutex_;
   std::optional<CommandFailure> lifecycle_failure_;
   std::atomic_size_t active_observer_dispositions_{};
+
+  std::mutex readiness_wait_mutex_;
+  std::condition_variable readiness_wait_idle_;
+  std::atomic_size_t active_readiness_waiters_{};
 
 #if !defined(_WIN32)
   std::shared_ptr<detail::ProcessEngine> engine_;

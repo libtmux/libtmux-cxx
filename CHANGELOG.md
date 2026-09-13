@@ -14,6 +14,9 @@ was recorded as it landed.
 - `CommandRuntime::wait_ready` and `wait_ready_for` now replace observer polling
   with blocking waits. Ready, timeout and closed outcomes remain distinct, and
   callbacks run only when the caller dispatches them. (#18)
+- `CommandRuntime::close` now waits for every `wait_ready` caller it wakes to
+  leave before returning, so `safe_to_unload` reflects them accurately and the
+  runtime is never freed while one is still unwinding. (#18)
 - `CommandOperation::wait_for` and `wait_until` now bound a wait without
   consuming the operation. A wait timeout leaves the command running and its own
   deadline unchanged. (#18)

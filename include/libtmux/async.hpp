@@ -90,7 +90,8 @@ public:
 
   // Stops admission and requests cancellation without waiting.
   void request_stop() noexcept;
-  // Joins every owned thread without invoking or discarding observers.
+  // Joins every owned thread without invoking or discarding observers, and
+  // does not return or throw until every blocked `wait_ready` caller has left.
   // The first successful report is cached; a throwing shutdown can be retried.
   [[nodiscard]] CommandRuntimeShutdown close();
   // Reads one lock-consistent instant without waiting for work.

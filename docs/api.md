@@ -789,7 +789,7 @@ Stops admission and requests cancellation without waiting.
 ```cpp
 [[nodiscard]] CommandRuntimeShutdown close();
 ```
-Joins every owned thread without invoking or discarding observers. The first successful report is cached; a throwing shutdown can be retried.
+Joins every owned thread without invoking or discarding observers, and does not return or throw until every blocked `wait_ready` caller has left. The first successful report is cached; a throwing shutdown can be retried.
 
 <a id="libtmux-async-hpp-commandruntime-snapshot"></a>
 #### `CommandRuntime::snapshot`
