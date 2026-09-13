@@ -829,11 +829,11 @@ expected<void, CommandFailure> Window::select_layout(std::string_view layout) co
                              "psmux cannot safely target select-layout")) {
     return unexpected(std::move(*refusal));
   }
-  // `--` before the layout, like every other user-text command in this file:
-  // without it, a leading dash is a flag rather than data, and `-o` in
-  // particular is tmux's own undo flag for this command. The check above is
-  // the actual guard against a hostile or malformed value; this is defence
-  // in depth once a value has already been accepted.
+  if (!backend())
+    return unexpected(detail::disconnected());
+  const std::array requests{LayoutRequest{layout}};
+  if (auto checked = detail::validate_layouts(*backend(), requests, false); !checked)
+    return unexpected(std::move(checked.error().cause));
   return effect(run({"select-layout", "-t", window_command_target(*this), "--",
                      std::string{layout}}));
 }
