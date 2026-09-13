@@ -13,8 +13,10 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -22,6 +24,7 @@
 #include <libtmux/testing/scoped_server.hpp>
 #include <libtmux/testing/tmux_version.hpp>
 
+#include <stdlib.h>
 #include <unistd.h>
 
 #include "run_program.hpp"
@@ -90,6 +93,51 @@ ExampleRun run_example(std::string_view name) {
     return {};
   }
   return {finished->exit_code, finished->output, std::move(leaked)};
+}
+
+class ExampleFiles : public testing::Test {
+protected:
+  void SetUp() override {
+    // Keep nested fixture sockets within macOS's path limit.
+    char pattern[] = "/tmp/libtmux-ex-files-XXXXXX";
+    const auto* created = ::mkdtemp(pattern);
+    ASSERT_NE(created, nullptr);
+    directory = created;
+  }
+
+  void TearDown() override {
+    std::error_code ignored;
+    std::filesystem::remove_all(directory, ignored);
+  }
+
+  std::filesystem::path directory;
+};
+
+TEST_F(ExampleFiles, PreserveExistingTemporaryFiles) {
+  const std::vector<std::pair<std::string_view, std::string_view>> examples{
+      {"01_tour", "libtmux-tour.txt"}, {"02_workspace", "libtmux-workspace.conf"}};
+  for (const auto& [name, filename] : examples) {
+    SCOPED_TRACE(name);
+    const auto existing = directory / filename;
+    {
+      std::ofstream output{existing};
+      output << "existing user file\n";
+      ASSERT_TRUE(output.good());
+    }
+    auto environment = libtmux::test::current_environment();
+    libtmux::test::erase_environment(environment, "TMUX");
+    libtmux::test::erase_environment(environment, "TMUX_PANE");
+    libtmux::test::set_environment(environment, "TMPDIR", directory.string());
+    libtmux::test::set_environment(environment, "LIBTMUX_EXAMPLE_NAMESPACE", "files");
+    const auto run = libtmux::examples::run_program(example_binary(name), environment,
+                                                    std::chrono::seconds{60});
+    ASSERT_TRUE(run.has_value()) << run.error();
+    ASSERT_EQ(run->exit_code, 0) << run->output;
+    std::ifstream input{existing};
+    std::string line;
+    EXPECT_TRUE(static_cast<bool>(std::getline(input, line)));
+    EXPECT_EQ(line, "existing user file");
+  }
 }
 
 class Example : public testing::TestWithParam<std::string_view> {};
