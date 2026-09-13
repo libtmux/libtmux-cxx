@@ -51,8 +51,10 @@ The connection root.  A Server names which tmux server to talk to and how to rea
 
 - [`Server`](#libtmux-server-hpp-server)
   - [`Server::at_socket_path`](#libtmux-server-hpp-server-at-socket-path)
+  - [`Server::at_socket_path`](#libtmux-server-hpp-server-at-socket-path-2)
   - [`Server::at_socket_name`](#libtmux-server-hpp-server-at-socket-name)
   - [`Server::startable_at_socket_path`](#libtmux-server-hpp-server-startable-at-socket-path)
+  - [`Server::startable_at_socket_path`](#libtmux-server-hpp-server-startable-at-socket-path-2)
   - [`Server::startable_at_socket_name`](#libtmux-server-hpp-server-startable-at-socket-name)
   - [`Server::startable_at_default`](#libtmux-server-hpp-server-startable-at-default)
   - [`Server::from_env`](#libtmux-server-hpp-server-from-env)
@@ -116,6 +118,14 @@ class Server;
 ```
 `-S path`: the socket file, used verbatim.  These report `CommandFailure`, the same type every other call reports, rather than the `SocketError` the argument builders use: a factory that failed differently is a factory nothing can be chained onto. The reason a selector was rejected is in the diagnostic, and `socket_path_arguments` still returns the enum for a caller that wants to branch on it.  An observer, if given, is told about every command this server runs. It is fixed at construction because the connection is immutable afterwards, and that is what makes a Server safe to copy between threads. The policy is fixed for the same reason, and says what a call gets when it names no timeout or limit of its own.
 
+<a id="libtmux-server-hpp-server-at-socket-path-2"></a>
+#### `Server::at_socket_path`
+
+```cpp
+template <typename Path> requires std::same_as<std::remove_cvref_t<Path>, std::filesystem::path> [[nodiscard]] static expected<Server, CommandFailure> at_socket_path(Path&& path, CommandObserver observer = {}, ExecutionPolicy policy = {});
+```
+Uses native path bytes on POSIX and UTF-8 on Windows. The exact path constraint keeps string and string-literal calls unambiguous.
+
 <a id="libtmux-server-hpp-server-at-socket-name"></a>
 #### `Server::at_socket_name`
 
@@ -131,6 +141,13 @@ class Server;
 [[nodiscard]] static expected<Server, CommandFailure> startable_at_socket_path(std::string_view path, std::optional<std::filesystem::path> configuration, CommandObserver observer = {}, ExecutionPolicy policy = {});
 ```
 A socket handle that may create an absent server on its first `new_session` call or an explicit `run({"start-server"})`. `configuration` is passed to tmux as `-f`; absent preserves tmux's user configuration. Every other call remains no-start while the socket is absent. The selector and configuration are frozen in the handle, and concurrent first-session calls are serialized.
+
+<a id="libtmux-server-hpp-server-startable-at-socket-path-2"></a>
+#### `Server::startable_at_socket_path`
+
+```cpp
+template <typename Path> requires std::same_as<std::remove_cvref_t<Path>, std::filesystem::path> [[nodiscard]] static expected<Server, CommandFailure> startable_at_socket_path(Path&& path, std::optional<std::filesystem::path> configuration, CommandObserver observer = {}, ExecutionPolicy policy = {});
+```
 
 <a id="libtmux-server-hpp-server-startable-at-socket-name"></a>
 #### `Server::startable_at_socket_name`

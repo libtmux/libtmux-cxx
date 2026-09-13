@@ -15,12 +15,15 @@
 #include "libtmux/command.hpp"
 #include "libtmux/expected.hpp"
 #include <chrono>
+#include <concepts>
 #include <cstddef>
 #include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "libtmux/async.hpp"
@@ -61,6 +64,18 @@ public:
   [[nodiscard]] static expected<Server, CommandFailure>
   at_socket_path(std::string_view path, CommandObserver observer = {},
                  ExecutionPolicy policy = {});
+  // Uses native path bytes on POSIX and UTF-8 on Windows. The exact path
+  // constraint keeps string and string-literal calls unambiguous.
+  template <typename Path>
+    requires std::same_as<std::remove_cvref_t<Path>, std::filesystem::path>
+  [[nodiscard]] static expected<Server, CommandFailure>
+  at_socket_path(Path&& path, CommandObserver observer = {},
+                 ExecutionPolicy policy = {}) {
+    const auto text = path.u8string();
+    return at_socket_path(
+        std::string_view{reinterpret_cast<const char*>(text.data()), text.size()},
+        std::move(observer), policy);
+  }
   // `-L name`: resolved under tmux's socket directory, as the tmux flag does.
   [[nodiscard]] static expected<Server, CommandFailure>
   at_socket_name(std::string_view name, CommandObserver observer = {},
@@ -76,6 +91,17 @@ public:
   startable_at_socket_path(std::string_view path,
                            std::optional<std::filesystem::path> configuration,
                            CommandObserver observer = {}, ExecutionPolicy policy = {});
+  template <typename Path>
+    requires std::same_as<std::remove_cvref_t<Path>, std::filesystem::path>
+  [[nodiscard]] static expected<Server, CommandFailure>
+  startable_at_socket_path(Path&& path,
+                           std::optional<std::filesystem::path> configuration,
+                           CommandObserver observer = {}, ExecutionPolicy policy = {}) {
+    const auto text = path.u8string();
+    return startable_at_socket_path(
+        std::string_view{reinterpret_cast<const char*>(text.data()), text.size()},
+        std::move(configuration), std::move(observer), policy);
+  }
   [[nodiscard]] static expected<Server, CommandFailure>
   startable_at_socket_name(std::string_view name,
                            std::optional<std::filesystem::path> configuration,
