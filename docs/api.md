@@ -242,7 +242,7 @@ Ask the selected subprocess executable with `tmux -V` without touching a server.
 ```cpp
 [[nodiscard]] expected<void, LayoutFailure> validate_layouts(std::span<const LayoutRequest> layouts) const;
 ```
-Validate the complete batch's syntax before any I/O, then query its daemon once if its version affects a name. No layout is applied. Only an unbound native subprocess handle may use the client version for an absent socket; failures from previously bound endpoints remain failures.
+Validate the complete batch's syntax before any I/O, then query its daemon once for version-dependent names or v2 JSON layouts. No layout is applied. Only an unbound native subprocess handle may use the client version for an absent socket; failures from previously bound endpoints remain failures.
 
 <a id="libtmux-server-hpp-server-is-alive"></a>
 #### `Server::is_alive`
@@ -574,7 +574,7 @@ CommandFailure cause;
 ```cpp
 [[nodiscard]] expected<void, CommandFailure> validate_layout(std::string_view layout, std::size_t minimum_panes = 1);
 ```
-Check names, saved-layout checksum, tree grammar and minimum cell count without I/O. Names must be valid on at least one supported tmux version; Server::validate_layouts resolves version-dependent abbreviations and mirrors. Geometry and resizing remain tmux's responsibility. Empty layouts are invalid.
+Check names, v1 saved-layout checksum, v1/v2 tree grammar and minimum cell count without I/O. Names must be valid on at least one supported tmux version; Server::validate_layouts resolves version-dependent names and requires tmux 3.9 or newer for v2 JSON layouts. Saved input, including floating-pane metadata, is retained unchanged. The v2 reader follows tmux's restricted JSON syntax. Geometry and resizing remain tmux's responsibility. Empty layouts are invalid.
 
 <a id="libtmux-async-hpp"></a>
 ## `libtmux/async.hpp`
