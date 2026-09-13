@@ -904,7 +904,7 @@ True means the result can be taken; false means only this wait expired. Neither 
 [[nodiscard]] expected<std::string, CommandFailure> wait(std::stop_token stop) &&;
 ```
 Available when `defined(__cpp_lib_jthread) && __cpp_lib_jthread >= 201911L`.
-Available when the standard library supplies stop_token. The token requests transport cancellation only during this wait; it cannot undo tmux work. The eventual result retains its command failure and delivery status.
+The token requests transport cancellation only during this wait; it cannot undo tmux work. The eventual result retains its command failure and delivery status.
 
 <a id="libtmux-async-hpp-commandoperation-wait-until-2"></a>
 #### `CommandOperation::wait_until`

@@ -143,9 +143,9 @@ public:
   wait_for(std::chrono::milliseconds timeout) const;
 
 #if defined(__cpp_lib_jthread) && __cpp_lib_jthread >= 201911L
-  // Available when the standard library supplies stop_token. The token requests
-  // transport cancellation only during this wait; it cannot undo tmux work.
-  // The eventual result retains its command failure and delivery status.
+  // The token requests transport cancellation only during this wait; it
+  // cannot undo tmux work. The eventual result retains its command failure
+  // and delivery status.
   [[nodiscard]] expected<std::string, CommandFailure> wait(std::stop_token stop) && {
     const std::stop_callback cancellation{stop, cancellation_callback()};
     return std::move(*this).wait();
