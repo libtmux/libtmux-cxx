@@ -218,6 +218,55 @@ class MutationRunnerTest(unittest.TestCase):
             self.assertEqual(outcome.detail, "the selected tests already fail")
             self.assertEqual(source.read_text(encoding="utf-8"), "guard = true;\n")
 
+    def test_recovery_failure_keeps_the_test_diagnostic(self) -> None:
+        """Expose a restored binary's failure instead of an opaque non-result."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "guard.cpp"
+            source.write_text("guard = true;\n", encoding="utf-8")
+            executable = root / "build" / "cxx-dev" / "guard_test"
+            executable.parent.mkdir(parents=True)
+            executable.write_bytes(b"before")
+            builds = 0
+            tests = 0
+
+            def execute(argv: list[str]) -> subprocess.CompletedProcess[bytes]:
+                nonlocal builds, tests
+                if argv[0] == "cmake":
+                    builds += 1
+                    executable.write_bytes(str(builds).encode())
+                    return subprocess.CompletedProcess(argv, 0, b"", b"")
+                if "--show-only=json-v1" in argv:
+                    listing = json.dumps({"tests": [{"name": "guard"}]}).encode()
+                    return subprocess.CompletedProcess(argv, 0, listing, b"")
+                tests += 1
+                if tests == 1:
+                    return subprocess.CompletedProcess(argv, 0, b"", b"")
+                if tests == 2:
+                    return subprocess.CompletedProcess(argv, 1, b"mutant failed", b"")
+                self.assertIn("--output-on-failure", argv)
+                return subprocess.CompletedProcess(
+                    argv,
+                    1,
+                    b"x" * 10_000 + b"restored test output\n",
+                    b"session cleanup refused\xff\n",
+                )
+
+            outcome = run(
+                Mutation(
+                    "recovery", "guard.cpp", "true", "false", "guard_test", "guard"
+                ),
+                root,
+                "cxx-dev",
+                runner=execute,
+            )
+            self.assertEqual(outcome.verdict, "not a result")
+            self.assertIn("the selected tests did not recover", outcome.detail)
+            self.assertIn("restored test output", outcome.detail)
+            self.assertIn("session cleanup refused\ufffd", outcome.detail)
+            self.assertLess(len(outcome.detail), 8300)
+            self.assertEqual(source.read_text(encoding="utf-8"), "guard = true;\n")
+
     def test_run_forces_a_rebuild_when_a_restoration_misses_the_binary(self) -> None:
         """Never return leaving the mutated binary in the tree.
 
