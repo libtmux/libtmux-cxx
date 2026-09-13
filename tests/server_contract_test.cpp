@@ -143,6 +143,29 @@ Server connect(const libtmux::test::ScopedTmuxServer& fixture) {
   return server.value();
 }
 
+TEST(ServerContract, FilesystemSocketFactoriesPreserveSelectionAndValidation) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto server = Server::at_socket_path(fixture->socket_path());
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+  EXPECT_TRUE(server->session(fixture->session_name()).has_value());
+
+  const auto startable =
+      Server::startable_at_socket_path(fixture->socket_path(), std::nullopt);
+  ASSERT_TRUE(startable.has_value()) << startable.error().diagnostic;
+  EXPECT_EQ(startable->socket_path(), server->socket_path());
+
+  const std::filesystem::path oversized{std::string(libtmux::kSocketPathLimit, 'x') +
+                                        "\xc3\xa9"};
+  for (auto rejected : {Server::at_socket_path(oversized),
+                        Server::startable_at_socket_path(oversized, std::nullopt)}) {
+    ASSERT_FALSE(rejected.has_value());
+    EXPECT_EQ(rejected.error().kind, libtmux::FailureKind::validation);
+    EXPECT_EQ(rejected.error().delivery, DeliveryStatus::not_started);
+  }
+  EXPECT_FALSE(Server::at_socket_path(std::filesystem::path{}).has_value());
+}
+
 // Several admitted commands may complete in parallel. Each answer must still
 // belong to the question that caller asked.
 TEST(ServerContract, SubmittedCommandsAreCollectedLater) {
