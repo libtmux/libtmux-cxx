@@ -11,6 +11,7 @@ is the prose there. Run it with `--check` to prove this page is current.
 
 - [`libtmux/libtmux.hpp`](#libtmux-libtmux-hpp)
 - [`libtmux/server.hpp`](#libtmux-server-hpp)
+- [`libtmux/layout.hpp`](#libtmux-layout-hpp)
 - [`libtmux/async.hpp`](#libtmux-async-hpp)
 - [`libtmux/capabilities.hpp`](#libtmux-capabilities-hpp)
 - [`libtmux/entities.hpp`](#libtmux-entities-hpp)
@@ -66,6 +67,7 @@ The connection root.  A Server names which tmux server to talk to and how to rea
   - [`Server::control`](#libtmux-server-hpp-server-control)
   - [`Server::control_with_options`](#libtmux-server-hpp-server-control-with-options)
   - [`Server::tmux_version`](#libtmux-server-hpp-server-tmux-version)
+  - [`Server::validate_layouts`](#libtmux-server-hpp-server-validate-layouts)
   - [`Server::is_alive`](#libtmux-server-hpp-server-is-alive)
   - [`Server::check_alive`](#libtmux-server-hpp-server-check-alive)
   - [`Server::kill`](#libtmux-server-hpp-server-kill)
@@ -233,6 +235,14 @@ The Server supplies the socket and `session` supplies the session name; every ot
 [[nodiscard]] expected<Version, CommandFailure> tmux_version() const;
 ```
 Ask the selected subprocess executable with `tmux -V` without touching a server. The call uses this Server's execution policy.
+
+<a id="libtmux-server-hpp-server-validate-layouts"></a>
+#### `Server::validate_layouts`
+
+```cpp
+[[nodiscard]] expected<void, LayoutFailure> validate_layouts(std::span<const LayoutRequest> layouts) const;
+```
+Validate the complete batch's syntax before any I/O, then query its daemon once if its version affects a name. No layout is applied. Only an unbound native subprocess handle may use the client version for an absent socket; failures from previously bound endpoints remain failures.
 
 <a id="libtmux-server-hpp-server-is-alive"></a>
 #### `Server::is_alive`
@@ -494,6 +504,77 @@ A hook set globally is not reported by the unscoped listing, so reading it back 
 ```cpp
 [[nodiscard]] expected<void, CommandFailure> set_global_hook(std::string_view name, std::string_view command) const;
 ```
+
+<a id="libtmux-layout-hpp"></a>
+## `libtmux/layout.hpp`
+
+Planned panes that need cells. Use one when current topology is unknown.
+
+**Symbols:**
+
+- [`LayoutRequest`](#libtmux-layout-hpp-layoutrequest)
+  - [`LayoutRequest::layout`](#libtmux-layout-hpp-layoutrequest-layout)
+  - [`LayoutRequest::minimum_panes`](#libtmux-layout-hpp-layoutrequest-minimum-panes)
+- [`LayoutFailure`](#libtmux-layout-hpp-layoutfailure)
+  - [`LayoutFailure::index`](#libtmux-layout-hpp-layoutfailure-index)
+  - [`LayoutFailure::cause`](#libtmux-layout-hpp-layoutfailure-cause)
+- [`Free symbols`](#libtmux-layout-hpp-free-symbols)
+  - [`validate_layout`](#libtmux-layout-hpp-free-symbols-validate-layout)
+
+<a id="libtmux-layout-hpp-layoutrequest"></a>
+### `LayoutRequest`
+
+```cpp
+struct LayoutRequest;
+```
+
+<a id="libtmux-layout-hpp-layoutrequest-layout"></a>
+#### `LayoutRequest::layout`
+
+```cpp
+std::string_view layout;
+```
+
+<a id="libtmux-layout-hpp-layoutrequest-minimum-panes"></a>
+#### `LayoutRequest::minimum_panes`
+
+```cpp
+std::size_t minimum_panes{1};
+```
+Planned panes that need cells. Use one when current topology is unknown.
+
+<a id="libtmux-layout-hpp-layoutfailure"></a>
+### `LayoutFailure`
+
+```cpp
+struct LayoutFailure;
+```
+
+<a id="libtmux-layout-hpp-layoutfailure-index"></a>
+#### `LayoutFailure::index`
+
+```cpp
+std::size_t index{};
+```
+Index in the supplied batch, including failures while querying its daemon.
+
+<a id="libtmux-layout-hpp-layoutfailure-cause"></a>
+#### `LayoutFailure::cause`
+
+```cpp
+CommandFailure cause;
+```
+
+<a id="libtmux-layout-hpp-free-symbols"></a>
+### `Free symbols`
+
+<a id="libtmux-layout-hpp-free-symbols-validate-layout"></a>
+#### `validate_layout`
+
+```cpp
+[[nodiscard]] expected<void, CommandFailure> validate_layout(std::string_view layout, std::size_t minimum_panes = 1);
+```
+Check names, saved-layout checksum, tree grammar and minimum cell count without I/O. Names must be valid on at least one supported tmux version; Server::validate_layouts resolves version-dependent abbreviations and mirrors. Geometry and resizing remain tmux's responsibility. Empty layouts are invalid.
 
 <a id="libtmux-async-hpp"></a>
 ## `libtmux/async.hpp`
@@ -2179,7 +2260,7 @@ How to address this window, and the reason a window id alone will not do.  The s
 ```cpp
 [[nodiscard]] expected<void, CommandFailure> select_layout(std::string_view layout) const;
 ```
-Rearrange the panes. tmux names five layouts and also accepts the layout description `layout()` returns, which is how a saved arrangement is restored exactly.
+Rearrange panes using a built-in name, unique abbreviation or saved layout. Grammar and checksum checks precede dispatch; version-sensitive names use this window's retained daemon. tmux decides geometry and current pane count.
 
 <a id="libtmux-entities-hpp-window-resize"></a>
 #### `Window::resize`

@@ -22,6 +22,7 @@
 #include "libtmux/filter_expr.hpp"
 #include "libtmux/format.hpp"
 #include "libtmux/keys.hpp"
+#include "libtmux/layout.hpp"
 #include "libtmux/legacy_lookup.hpp"
 #include "libtmux/lowering.hpp"
 #include "libtmux/notification.hpp"

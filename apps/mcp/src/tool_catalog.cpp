@@ -2211,19 +2211,23 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
       "select_layout", "Select a tmux layout",
       {field("windowId", "Stable window ID.", InputSink::tmux_lookup, true,
              ArgumentType::string, {}, {}, detail::kTargetCharacters),
-       field("layout", "Named or saved tmux layout.", InputSink::tmux_state, true,
-             ArgumentType::string, {}, {}, 4096U)},
+       field("layout", "Built-in name, unambiguous abbreviation or saved tmux layout.",
+             InputSink::tmux_state, true, ArgumentType::string, {}, {}, 4096U)},
       [](const Server& server, const Arguments& arguments,
          const CallContext&) -> ToolResult {
+        const auto& layout = required(arguments, "layout");
+        if (auto checked = validate_layout(layout); !checked)
+          return failure(checked.error());
         const auto window = server.window(required(arguments, "windowId"));
         if (!window.has_value()) {
           return failure(window.error());
         }
-        const auto answer = window->select_layout(required(arguments, "layout"));
+        const auto answer = window->select_layout(layout);
         return answer.has_value() ? changed("window_id", window->id())
                                   : failure(answer.error());
       },
-      "Replace the pane layout of one window.");
+      "Replace the pane layout of one window. Names and mirrored layouts follow "
+      "the selected daemon version; saved layouts require a valid checksum and tree.");
 
   manage(
       "resize_window", "Resize a tmux window",

@@ -671,6 +671,11 @@ expected<void, CommandFailure> Window::select_layout(std::string_view layout) co
                              "psmux cannot safely target select-layout")) {
     return unexpected(std::move(*refusal));
   }
+  if (!backend())
+    return unexpected(detail::disconnected());
+  const std::array requests{LayoutRequest{layout}};
+  if (auto checked = detail::validate_layouts(*backend(), requests, false); !checked)
+    return unexpected(std::move(checked.error().cause));
   return effect(
       run({"select-layout", "-t", window_command_target(*this), std::string{layout}}));
 }
