@@ -9,10 +9,13 @@
 #include "move_only_function.hpp"
 
 LIBTMUX_NAMESPACE_BEGIN
-enum class ReadyStatus : std::uint8_t;
 namespace detail {
 
 class CompletionQueueCore;
+
+// `CompletionQueue`'s own outcome for a bounded wait; `CommandRuntime::wait_ready`
+// maps this to the public `libtmux::ReadyStatus` it mirrors.
+enum class QueueReadyStatus : std::uint8_t { ready, timeout, closed };
 
 struct CompletionToken final {
   std::uint64_t value{};
@@ -48,7 +51,8 @@ public:
   [[nodiscard]] bool run_one();
   [[nodiscard]] std::size_t run_ready();
   [[nodiscard]] std::size_t discard_ready();
-  [[nodiscard]] ReadyStatus wait_ready(std::chrono::steady_clock::time_point deadline);
+  [[nodiscard]] QueueReadyStatus
+  wait_ready(std::chrono::steady_clock::time_point deadline);
   void finish();
   void detach(CompletionToken token);
   void close();

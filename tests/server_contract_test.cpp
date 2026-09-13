@@ -246,10 +246,34 @@ TEST(ServerContract, RuntimeReadinessWaitEndsWhenTheRuntimeCloses) {
   auto runtime = start_runtime();
   auto closing_waiter =
       std::async(std::launch::async, [&] { return runtime.wait_ready(); });
-  EXPECT_TRUE(runtime.close().transports_stopped);
+  const auto report = runtime.close();
+  EXPECT_TRUE(report.transports_stopped);
+  EXPECT_TRUE(report.safe_to_unload);
   EXPECT_EQ(closing_waiter.get(), libtmux::ReadyStatus::closed);
   EXPECT_EQ(runtime.wait_ready_for(std::chrono::milliseconds::max()),
             libtmux::ReadyStatus::closed);
+}
+
+TEST(ServerContract, AThrowingCloseStillWakesABlockedWaiter) {
+#if defined(_WIN32)
+  GTEST_SKIP() << "the runtime failure seam runs in its POSIX lane";
+#else
+  auto runtime = start_runtime();
+  std::promise<void> entered;
+  auto entered_future = entered.get_future();
+  auto waiting = std::async(std::launch::async, [&] {
+    entered.set_value();
+    return runtime.wait_ready();
+  });
+  entered_future.wait();
+  std::this_thread::sleep_for(std::chrono::milliseconds{5});
+  libtmux::detail::fail_next_runtime_action_for_test(
+      libtmux::detail::RuntimeFailurePoint::close);
+  EXPECT_THROW(static_cast<void>(runtime.close()),
+               libtmux::detail::RuntimeFailurePoint);
+  ASSERT_EQ(waiting.wait_for(std::chrono::seconds{1}), std::future_status::ready);
+  EXPECT_EQ(waiting.get(), libtmux::ReadyStatus::closed);
+#endif
 }
 
 TEST(ServerContract, RuntimeReadinessWakesEveryWaitingCaller) {
