@@ -178,4 +178,16 @@ TEST(Cardinality, OwnedSelectionMovesOnlyWhenTheIteratorYieldsOwnership) {
   EXPECT_EQ(values.front(), nullptr);
 }
 
+TEST(Cardinality, SeveralMatchedLeavesAMovingRangeUntouched) {
+  std::vector<std::unique_ptr<int>> values;
+  values.push_back(std::make_unique<int>(19));
+  values.push_back(std::make_unique<int>(23));
+  auto moving = std::ranges::subrange{std::make_move_iterator(values.begin()),
+                                      std::make_move_iterator(values.end())};
+  EXPECT_EQ(libtmux::exactly_one_owned(moving).error(),
+            CardinalityError::several_matched);
+  ASSERT_NE(values.front(), nullptr);
+  EXPECT_EQ(*values.front(), 19);
+}
+
 } // namespace

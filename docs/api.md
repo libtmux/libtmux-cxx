@@ -4732,7 +4732,7 @@ Copies referenced elements; moves when an iterator yields an rvalue. A temporary
 ```cpp
 template <std::ranges::input_range Range> requires std::constructible_from<std::ranges::range_value_t<Range>, std::ranges::range_reference_t<Range>> && std::move_constructible<std::ranges::range_value_t<Range>> [[nodiscard]] expected<std::ranges::range_value_t<Range>, CardinalityError> exactly_one_owned(Range&& range);
 ```
-Saves the first element before advancing a single-pass range. At most two elements are visited; a moving iterator may consume the first even on error.
+A forward range's iterator can be copied and advanced independently of the original, so a second element rules the range out before the first is materialized. A single-pass range (a stream, a generator) shares mutable state between copies instead, so it has no way to look ahead: the first element must be materialized before the range can be advanced to check for a second, and an error there still consumes it.
 
 <a id="libtmux-delivery-hpp"></a>
 ## `libtmux/delivery.hpp`

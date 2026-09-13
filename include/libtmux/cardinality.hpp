@@ -91,8 +91,12 @@ first_owned(Range&& range) {
   return std::optional<std::ranges::range_value_t<Range>>{std::in_place, *iterator};
 }
 
-// Saves the first element before advancing a single-pass range. At most two
-// elements are visited; a moving iterator may consume the first even on error.
+// A forward range's iterator can be copied and advanced independently of the
+// original, so a second element rules the range out before the first is
+// materialized. A single-pass range (a stream, a generator) shares mutable
+// state between copies instead, so it has no way to look ahead: the first
+// element must be materialized before the range can be advanced to check for
+// a second, and an error there still consumes it.
 template <std::ranges::input_range Range>
   requires std::constructible_from<std::ranges::range_value_t<Range>,
                                    std::ranges::range_reference_t<Range>> &&
@@ -104,11 +108,19 @@ exactly_one_owned(Range&& range) {
   if (iterator == last) {
     return unexpected(CardinalityError::none_matched);
   }
-  std::ranges::range_value_t<Range> only(*iterator);
-  if (++iterator != last) {
-    return unexpected(CardinalityError::several_matched);
+  if constexpr (std::ranges::forward_range<Range>) {
+    auto second = iterator;
+    if (++second != last) {
+      return unexpected(CardinalityError::several_matched);
+    }
+    return std::ranges::range_value_t<Range>(*iterator);
+  } else {
+    std::ranges::range_value_t<Range> only(*iterator);
+    if (++iterator != last) {
+      return unexpected(CardinalityError::several_matched);
+    }
+    return only;
   }
-  return only;
 }
 
 LIBTMUX_NAMESPACE_END
