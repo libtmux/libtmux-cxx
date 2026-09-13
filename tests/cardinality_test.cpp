@@ -8,6 +8,7 @@
 #include "libtmux/cardinality.hpp"
 
 #include <ranges>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -120,6 +121,61 @@ TEST(Cardinality, EveryErrorSaysWhichOneItWas) {
   EXPECT_EQ(libtmux::to_string(CardinalityError::none_matched), "nothing matched");
   EXPECT_EQ(libtmux::to_string(CardinalityError::several_matched),
             "several matched where one was required");
+}
+
+TEST(Cardinality, OwnedSelectionOutlivesTheListedSnapshotRange) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const auto selected = [&] {
+    auto windows = three_windows(server, fixture->session_name());
+    return libtmux::exactly_one_owned(windows | matching(window::name == "lone"));
+  }();
+  ASSERT_TRUE(selected.has_value());
+  EXPECT_EQ(selected->name(), "lone");
+  EXPECT_TRUE(selected->refresh().has_value());
+}
+
+TEST(Cardinality, OwnedSelectionCopiesBorrowedElementsAndAcceptsTemporaries) {
+  std::vector<std::string> words{"retained"};
+  auto copied = libtmux::first_owned(words | std::views::all);
+  ASSERT_TRUE(copied.has_value());
+  *copied = "changed";
+  EXPECT_EQ(words.front(), "retained");
+
+  const auto temporary = libtmux::exactly_one_owned(std::vector<std::string>{"owned"});
+  ASSERT_TRUE(temporary.has_value());
+  EXPECT_EQ(*temporary, "owned");
+  EXPECT_FALSE(libtmux::first_owned(std::vector<int>{}).has_value());
+  EXPECT_EQ(libtmux::exactly_one_owned(std::vector<int>{}).error(),
+            CardinalityError::none_matched);
+  EXPECT_EQ(libtmux::exactly_one_owned(std::vector<int>{1, 2}).error(),
+            CardinalityError::several_matched);
+}
+
+TEST(Cardinality, OwnedSelectionMaterializesBeforeAdvancingSinglePassRanges) {
+  std::istringstream input{"42"};
+  const auto selected =
+      libtmux::exactly_one_owned(std::ranges::istream_view<int>{input});
+  ASSERT_TRUE(selected.has_value());
+  EXPECT_EQ(*selected, 42);
+
+  const auto produced = libtmux::first_owned(
+      std::views::iota(7, 9) |
+      std::views::transform([](int value) { return std::make_unique<int>(value); }));
+  ASSERT_TRUE(produced.has_value());
+  EXPECT_EQ(**produced, 7);
+}
+
+TEST(Cardinality, OwnedSelectionMovesOnlyWhenTheIteratorYieldsOwnership) {
+  std::vector<std::unique_ptr<int>> values;
+  values.push_back(std::make_unique<int>(19));
+  auto moving = std::ranges::subrange{std::make_move_iterator(values.begin()),
+                                      std::make_move_iterator(values.end())};
+  const auto selected = libtmux::exactly_one_owned(moving);
+  ASSERT_TRUE(selected.has_value());
+  EXPECT_EQ(**selected, 19);
+  EXPECT_EQ(values.front(), nullptr);
 }
 
 } // namespace

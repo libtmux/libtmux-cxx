@@ -9,6 +9,7 @@
 
 #include "libtmux/abi.hpp"
 #include "libtmux/expected.hpp"
+#include <concepts>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -73,6 +74,41 @@ template <ReferenceRange Range>
     return unexpected(CardinalityError::several_matched);
   }
   return std::cref(*only);
+}
+
+// Copies referenced elements; moves when an iterator yields an rvalue. A
+// temporary view over an lvalue container therefore leaves that container intact.
+// Owning the element does not extend storage borrowed by its own members.
+template <std::ranges::input_range Range>
+  requires std::constructible_from<std::ranges::range_value_t<Range>,
+                                   std::ranges::range_reference_t<Range>>
+[[nodiscard]] std::optional<std::ranges::range_value_t<Range>>
+first_owned(Range&& range) {
+  auto iterator = std::ranges::begin(range);
+  if (iterator == std::ranges::end(range)) {
+    return std::nullopt;
+  }
+  return std::optional<std::ranges::range_value_t<Range>>{std::in_place, *iterator};
+}
+
+// Saves the first element before advancing a single-pass range. At most two
+// elements are visited; a moving iterator may consume the first even on error.
+template <std::ranges::input_range Range>
+  requires std::constructible_from<std::ranges::range_value_t<Range>,
+                                   std::ranges::range_reference_t<Range>> &&
+           std::move_constructible<std::ranges::range_value_t<Range>>
+[[nodiscard]] expected<std::ranges::range_value_t<Range>, CardinalityError>
+exactly_one_owned(Range&& range) {
+  auto iterator = std::ranges::begin(range);
+  const auto last = std::ranges::end(range);
+  if (iterator == last) {
+    return unexpected(CardinalityError::none_matched);
+  }
+  std::ranges::range_value_t<Range> only(*iterator);
+  if (++iterator != last) {
+    return unexpected(CardinalityError::several_matched);
+  }
+  return only;
 }
 
 LIBTMUX_NAMESPACE_END
