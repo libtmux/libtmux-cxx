@@ -1068,8 +1068,11 @@ TEST(ControlModeConnection, MutesOnePaneAndRefusesToWidenASilentConnection) {
   const auto resumed_deadline = std::chrono::steady_clock::now() + 2s;
   while (std::chrono::steady_clock::now() < resumed_deadline &&
          received.find("resumed-pane-marker") == std::string::npos) {
-    for (const auto& notification :
-         connection.wait_for_notifications(resumed_deadline)) {
+    const auto batch = connection.wait_for_notifications(resumed_deadline);
+    if (batch.empty()) {
+      break;
+    }
+    for (const auto& notification : batch) {
       if (libtmux::parse(notification).kind == libtmux::NotificationKind::output) {
         received += text(notification.body);
       }
