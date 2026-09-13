@@ -646,8 +646,9 @@ TEST(WorkspaceCli, ListingEscapesHumanControlsWithoutChangingMachineValues) {
         EXPECT_EQ(row.at("name"), name);
         EXPECT_EQ(row.at("path"), "~/" + name + ".json");
         EXPECT_EQ(row.contains("config"), full);
-        if (full)
+        if (full) {
           EXPECT_EQ(row.at("config"), document);
+        }
       }
     }
   }
