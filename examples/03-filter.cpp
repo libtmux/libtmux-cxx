@@ -49,7 +49,8 @@ int main() {
       *windows, [](const libtmux::Window& window) { return window.width() > 40; });
   std::printf("%lld window(s) wider than 40 columns\n", static_cast<long long>(wide));
 
-  // The owned result keeps its snapshot alive after this temporary view ends.
+  // exactly_one_owned copies the match out, so it accepts this temporary view
+  // directly; exactly_one below needs a name to refer into instead.
   if (const auto only = libtmux::exactly_one_owned(
           *windows | libtmux::matching(libtmux::window::name == "logs"));
       only.has_value()) {
@@ -59,6 +60,8 @@ int main() {
                 std::string{libtmux::to_string(only.error())}.c_str());
   }
 
+  // Asking for one says which way it went wrong. exactly_one takes a named
+  // range: the answer refers into it, so a temporary is a compile error.
   auto missing = *windows | libtmux::matching(libtmux::window::name == "absent");
   const auto none = libtmux::exactly_one(missing);
   std::printf("looking for one that is not there: %s\n",
