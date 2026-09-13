@@ -574,6 +574,96 @@ TEST(WorkspaceCli, FileServicesKeepTypesAndUseNativeWholeWordMatching) {
   EXPECT_EQ(Json::parse(debug.out).at("port"), "cxx");
 }
 
+TEST(WorkspaceCli, ListingGroupsDirectoriesAndIncludesFullDocuments) {
+  Files files;
+  std::filesystem::create_directory(".tmuxp");
+  const Json document{{"session_name", "日本語"},
+                      {"custom", {{"enabled", true}, {"count", 3}}},
+                      {"windows", Json::array({Json::object()})}};
+  for (const auto* path : {".tmuxp.json", ".tmuxp/alpha.json", ".tmuxp/beta.json"})
+    std::ofstream{path} << document;
+  const std::string flat = ".tmuxp  ~/.tmuxp.json\n"
+                           "alpha  ~/.tmuxp/alpha.json\n"
+                           "beta  ~/.tmuxp/beta.json\n";
+  const std::string tree = "~\n"
+                           "└── .tmuxp  ~/.tmuxp.json\n"
+                           "~/.tmuxp\n"
+                           "├── alpha  ~/.tmuxp/alpha.json\n"
+                           "└── beta  ~/.tmuxp/beta.json\n";
+  for (const bool grouped : {false, true}) {
+    std::vector<std::string> arguments{"--color", "never", "ls"};
+    if (grouped)
+      arguments.emplace_back("--tree");
+    const auto listed = invoke(arguments);
+    ASSERT_EQ(listed.code, 0) << listed.err;
+    EXPECT_EQ(listed.out, grouped ? tree : flat);
+    arguments.emplace_back("--full");
+    const auto full = invoke(arguments);
+    ASSERT_EQ(full.code, 0) << full.err;
+    EXPECT_NE(full.out.find("\"session_name\": \"日本語\""), std::string::npos);
+    EXPECT_NE(full.out.find("\"count\": 3"), std::string::npos);
+    EXPECT_NE(full.out.find("\"enabled\": true"), std::string::npos);
+    if (grouped) {
+      EXPECT_NE(full.out.find("├── alpha  ~/.tmuxp/alpha.json\n│     {\n"),
+                std::string::npos);
+      EXPECT_NE(full.out.find("└── beta  ~/.tmuxp/beta.json\n      {\n"),
+                std::string::npos);
+    }
+  }
+}
+
+TEST(WorkspaceCli, ListingEscapesHumanControlsWithoutChangingMachineValues) {
+  Files files;
+  const std::string name = "日本語\n\r\t\033[31m\177\xc2\x9b";
+  const std::string safe = "日本語\\n\\r\\t\\u001b[31m\\u007f\\u009b";
+  const Json document{{"session_name", name},
+                      {"windows", Json::array({Json::object()})}};
+  std::ofstream{name + ".json"} << document;
+  for (const bool tree : {false, true}) {
+    for (const bool full : {false, true}) {
+      std::vector<std::string> arguments{"--color", "never", "ls"};
+      if (tree)
+        arguments.emplace_back("--tree");
+      if (full)
+        arguments.emplace_back("--full");
+      const auto listed = invoke(arguments);
+      ASSERT_EQ(listed.code, 0) << listed.err;
+      EXPECT_NE(listed.out.find(safe), std::string::npos);
+      EXPECT_EQ(listed.out.find('\033'), std::string::npos);
+      EXPECT_EQ(listed.out.find('\r'), std::string::npos);
+      EXPECT_EQ(listed.out.find('\t'), std::string::npos);
+      EXPECT_EQ(listed.out.find('\177'), std::string::npos);
+      EXPECT_EQ(listed.out.find("\xc2\x9b"), std::string::npos);
+      for (const auto* mode : {"--json", "--ndjson"}) {
+        auto machine_arguments = arguments;
+        machine_arguments.emplace_back(mode);
+        const auto machine = invoke(machine_arguments);
+        ASSERT_EQ(machine.code, 0) << machine.err;
+        const auto payload = Json::parse(machine.out);
+        const auto row = std::string_view{mode} == "--json"
+                             ? payload.at("workspaces").at(0)
+                             : payload;
+        EXPECT_EQ(row.at("name"), name);
+        EXPECT_EQ(row.at("path"), "~/" + name + ".json");
+        EXPECT_EQ(row.contains("config"), full);
+        if (full)
+          EXPECT_EQ(row.at("config"), document);
+      }
+    }
+  }
+}
+
+TEST(WorkspaceCli, ListingFullShowsUnreadableDocumentsAndEmptyTrees) {
+  Files files;
+  const auto empty = invoke({"--color", "never", "ls", "--tree", "--full"});
+  ASSERT_EQ(empty.code, 0) << empty.err;
+  EXPECT_TRUE(empty.out.empty());
+  std::ofstream{"broken.json"} << "{";
+  const auto broken = invoke({"--color", "never", "ls", "--full"});
+  ASSERT_EQ(broken.code, 0) << broken.err;
+  EXPECT_EQ(broken.out, "broken  ~/broken.json\n  null\n");
+}
+
 TEST(WorkspaceCli, ImportTeamocilPreservesModernPaneCommandsAndWindowSettings) {
   Files files;
   std::ofstream{"team.yml"}
