@@ -1,3 +1,4 @@
+#include "completion.hpp"
 #include "progress.hpp"
 #include "services.hpp"
 #include "workspace_cli.hpp"
@@ -175,19 +176,28 @@ public:
 
 class Model {
 public:
+  CompletionChoices choices;
   CLI::App root{"Manage tmux workspaces from YAML or JSON", "tmux-workspace"};
+  CLI::Option* choice(CLI::App& app, const std::string& name,
+                      const std::string& description, std::vector<std::string> values) {
+    auto* option = app.add_option(name, description)->check(CLI::IsMember(values));
+    choices.emplace(option, std::move(values));
+    return option;
+  }
   Model() {
     root.require_subcommand(0, 1);
     root.set_version_flag("-V,--version", LIBTMUX_WORKSPACE_VERSION);
-    root.add_option("--color", "Colour policy: auto, always or never")
-        ->check(CLI::IsMember({"auto", "always", "never"}))
+    choice(root, "--color", "Colour policy: auto, always or never",
+           {"auto", "always", "never"})
         ->default_str("auto");
-    root.add_option(
-            "--log-level",
-            "Optional diagnostic level (default warning); errors remain visible")
-        ->check(CLI::IsMember({"debug", "info", "warning", "error", "critical"}))
+    choice(root, "--log-level",
+           "Optional diagnostic level (default warning); errors remain visible",
+           {"debug", "info", "warning", "error", "critical"})
         ->default_str("warning");
     root.add_flag("--command-tree", "Print command metadata as JSON");
+    choice(root, "--generate-completion", "Print a shell completion script",
+           {"bash", "zsh", "fish"});
+    root.add_flag("--complete", "Query partial command arguments")->group("");
     machine(root);
     auto* load = root.add_subcommand("load", "Create or reuse configured sessions");
     load->add_option("workspace-file", "Workspace paths or names")
@@ -222,8 +232,8 @@ public:
     auto* freeze = root.add_subcommand("freeze", "Capture a running session");
     freeze->add_option("session", "Session name or ID");
     sockets(*freeze);
-    freeze->add_option("-f,--workspace-format", "Saved workspace encoding")
-        ->check(CLI::IsMember({"yaml", "json"}));
+    choice(*freeze, "-f,--workspace-format", "Saved workspace encoding",
+           {"yaml", "json"});
     freeze->add_option("-o,--save-to", "Output path; machine mode defaults to stdout");
     freeze->add_flag("-y,--yes", "Answer yes to confirmation prompts");
     freeze->add_flag("-q,--quiet", "Suppress human status text");
@@ -293,10 +303,9 @@ public:
     app.add_option("-L", "tmux socket name");
     app.add_option("-S", "tmux socket path; takes precedence over -L");
   }
-  static void save_options(CLI::App& app) {
+  void save_options(CLI::App& app) {
     app.add_option("--save-to", "Output path; machine mode defaults to stdout");
-    app.add_option("--workspace-format", "Output encoding")
-        ->check(CLI::IsMember({"yaml", "json"}));
+    choice(app, "--workspace-format", "Output encoding", {"yaml", "json"});
     app.add_flag("--force", "Replace an existing destination");
   }
 };
@@ -360,6 +369,17 @@ bool colour_enabled(const Request& request, std::ostream& output) {
 } // namespace
 int run(std::vector<std::string> arguments, std::istream& input, std::ostream& output,
         std::ostream& errors) {
+  Model model;
+  if (!arguments.empty() && arguments.front() == "--complete") {
+    try {
+      complete(model.root, model.choices,
+               std::span<const std::string>{arguments}.subspan(1), output);
+      output.flush();
+    } catch (const std::exception&) {
+      return 1;
+    }
+    return output ? 0 : 1;
+  }
   Request request;
   // A supplied input stream does not authorize borrowing the process terminal.
   request.terminal_allowed = &input == &std::cin;
@@ -371,7 +391,6 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
     if (arg == "--ndjson")
       request.ndjson = true;
   }
-  Model model;
   DiagnosticLog diagnostics{request, errors};
   Execution execution;
   std::unique_ptr<Progress> progress;
@@ -409,6 +428,25 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
     std::reverse(arguments.begin(), arguments.end());
     model.root.parse(arguments);
     collect(model.root, request);
+    if (request.flag("generate-completion")) {
+      const auto shell = request.value("generate-completion");
+      const auto script = completion_script(shell);
+      if (request.machine()) {
+        Json result{{"schema_version", 1},
+                    {"command", "completion"},
+                    {"status", "ok"},
+                    {"shell", shell},
+                    {"script", script}};
+        if (request.ndjson) {
+          result["event"] = "completed";
+          result["sequence"] = 1;
+        }
+        output << encoded(result) << '\n';
+      } else
+        output << script;
+      output.flush();
+      return output ? 0 : 1;
+    }
     if (request.flag("command-tree")) {
       output << encoded(metadata(model.root), 2) << '\n';
       return output ? 0 : 1;

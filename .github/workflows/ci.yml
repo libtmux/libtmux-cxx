@@ -852,6 +852,13 @@ jobs:
           imports = next(node for node in tree["children"] if node["name"] == "import")
           assert len(imports["children"]) == 2
           PY
+          workspace_binary="$PWD/build/prefix/bin/tmux-workspace"
+          # shellcheck source=/dev/null
+          source <("$workspace_binary" --generate-completion bash)
+          COMP_WORDS=("$workspace_binary" import tm)
+          COMP_CWORD=2
+          _tmux_workspace_complete
+          test "${COMPREPLY[*]}" = tmuxinator
           if [ '${{ matrix.standard }}' = 20 ]; then
             test -f build/prefix/include/tl/expected.hpp
           else
