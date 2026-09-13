@@ -94,7 +94,7 @@ TEST(Tmuxp, ADocumentThatCannotBeBuiltSaysWhere) {
   EXPECT_EQ(no_windows.error().where, "windows");
 
   const auto bad_pane =
-      parse_tmuxp("session_name: work\nwindows:\n  - panes:\n      - [a, b]\n");
+      parse_tmuxp("session_name: work\nwindows:\n  - panes:\n      - {bad: value}\n");
   ASSERT_FALSE(bad_pane.has_value());
   EXPECT_EQ(bad_pane.error().where, "windows[0].panes[0]");
 
@@ -254,6 +254,7 @@ TEST(Tmuxp, ACommandCanBeAMappingRatherThanAString) {
   // Seconds in the document, and a fraction of one is a real value.
   EXPECT_EQ(commands[2], (libtmux::workspace::Command{
                              .text = "echo paused",
+                             .enter = false,
                              .pause_before = std::chrono::seconds{2},
                              .pause_after = std::chrono::milliseconds{500}}));
 }
@@ -398,6 +399,110 @@ TEST(Tmuxp, FocusAndOptionsLandOnTheBuiltSession) {
   ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
   ASSERT_EQ(panes->size(), 2U);
   EXPECT_TRUE(panes->front().active());
+}
+
+TEST(Tmuxp, ShorthandAndInheritedCommandsKeepPaneDefaults) {
+  const auto parsed = parse_tmuxp(R"(
+session_name: inherited
+suppress_history: false
+shell_command_before: root
+windows:
+  - shell_command_before: window
+  - suppress_history: true
+    panes:
+      - [one, two]
+      - blank
+      - pane
+      - shell_command_before: pane-before
+        suppress_history: false
+        enter: false
+        sleep_after: 0.25
+        shell_command:
+          - {cmd: first, enter: true, sleep_after: 0}
+          - second
+)");
+  ASSERT_TRUE(parsed.has_value()) << parsed.error().reason;
+  EXPECT_EQ(texts(parsed->windows[0].panes[0].shell_commands),
+            (std::vector<std::string>{"root", "window"}));
+  EXPECT_FALSE(parsed->windows[0].panes[0].shell_commands[0].suppress_history);
+  const auto& panes = parsed->windows[1].panes;
+  EXPECT_EQ(texts(panes[0].shell_commands),
+            (std::vector<std::string>{"root", "one", "two"}));
+  EXPECT_EQ(texts(panes[1].shell_commands), (std::vector<std::string>{"root"}));
+  EXPECT_EQ(texts(panes[2].shell_commands), (std::vector<std::string>{"root"}));
+  EXPECT_TRUE(panes[0].shell_commands[0].suppress_history);
+  const auto& commands = panes[3].shell_commands;
+  ASSERT_EQ(commands.size(), 4U);
+  EXPECT_EQ(commands[1].text, "pane-before");
+  EXPECT_FALSE(commands[0].enter);
+  EXPECT_FALSE(commands[0].suppress_history);
+  EXPECT_EQ(commands[0].pause_after, std::chrono::milliseconds{250});
+  EXPECT_TRUE(commands[2].enter);
+  EXPECT_TRUE(commands[3].enter);
+  EXPECT_EQ(commands[2].pause_after, std::chrono::milliseconds{0});
+  EXPECT_EQ(commands[3].pause_after, std::chrono::milliseconds{0});
+}
+
+TEST(Tmuxp, RefusesMalformedLayoutsBeforeBuilding) {
+  for (const auto* layout :
+       {"invalid-layout", "32d2,80x24,0,0{}", "ffff,80x24,0,0,0"}) {
+    SCOPED_TRACE(layout);
+    const auto parsed = libtmux::workspace::parse_tmuxp(
+        "session_name: layout\nwindows: [{layout: '" + std::string{layout} + "'}]\n");
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().where, "windows[0].layout");
+  }
+}
+
+TEST(Tmuxp, RefusesMultipleDocumentsAndUnrepresentablePauses) {
+  EXPECT_FALSE(parse_tmuxp("session_name: a\nwindows: [{}]\n---\nsession_name: b\n")
+                   .has_value());
+  for (const auto* pause : {".inf", ".nan", "1e100", "-1", "[1]"}) {
+    const auto parsed =
+        parse_tmuxp("session_name: a\nwindows:\n  - panes:\n      - sleep_after: " +
+                    std::string{pause} + "\n        shell_command: value\n");
+    EXPECT_FALSE(parsed.has_value()) << pause;
+  }
+}
+
+TEST(Tmuxp, CommandsPreserveStateAcrossNullsAndHonourHistoryOverrides) {
+  const auto parsed = parse_tmuxp(R"(
+session_name: state
+windows:
+  - panes:
+      - shell_command:
+          - {cmd: first, enter: false, sleep_after: 0.25, suppress_history: false}
+          - null
+          - second
+)");
+  ASSERT_TRUE(parsed.has_value()) << parsed.error().reason;
+  const auto& commands = parsed->windows[0].panes[0].shell_commands;
+  ASSERT_EQ(commands.size(), 3U);
+  for (const auto& command : commands) {
+    EXPECT_FALSE(command.enter);
+    EXPECT_FALSE(command.suppress_history);
+    EXPECT_EQ(command.pause_after, std::chrono::milliseconds{250});
+  }
+}
+
+TEST(Tmuxp, MalformedCommandAndBooleanFieldsAreRefused) {
+  for (const auto* command :
+       {"{cmd: [oops]}", "{enter: true}", "{cmd: x, enter: typo}",
+        "{cmd: x, enter: {}}", "{cmd: x, suppress_history: nope}"}) {
+    EXPECT_FALSE(parse_tmuxp("session_name: a\nwindows:\n  - panes:\n"
+                             "      - shell_command: [" +
+                             std::string{command} + "]\n")
+                     .has_value())
+        << command;
+  }
+  for (const auto* field : {"focus", "suppress_history"}) {
+    EXPECT_FALSE(
+        parse_tmuxp("session_name: a\nwindows:\n  - " + std::string{field} + ": typo\n")
+            .has_value());
+    EXPECT_FALSE(parse_tmuxp("session_name: a\nwindows:\n  - panes:\n      - " +
+                             std::string{field} + ": {}\n")
+                     .has_value());
+  }
 }
 
 } // namespace

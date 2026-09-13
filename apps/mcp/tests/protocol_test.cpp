@@ -585,6 +585,90 @@ TEST(McpProtocolCli, StartsAnAbsentPinnedSocketOnlyForCreateSession) {
   EXPECT_TRUE(sibling->is_alive());
 }
 
+TEST_F(McpProtocol, LayoutSelectionValidatesBeforeLookupAndAcceptsSavedLayouts) {
+  const auto server = connect_server();
+  const auto session = server.session("mcp");
+  ASSERT_TRUE(session.has_value());
+  const auto window = session->active_window();
+  ASSERT_TRUE(window.has_value());
+  const auto panes = window->panes();
+  ASSERT_TRUE(panes.has_value());
+  ASSERT_EQ(panes->size(), 1U);
+  const auto messages = converse_ready(
+      socket(),
+      {call("select_layout", {{"windowId", "@999"}, {"layout", "invalid-layout"}}, 1),
+       call("select_layout",
+            {{"windowId", window->id()}, {"layout", "32d2,80x24,0,0{}"}}, 2),
+       call("select_layout", {{"windowId", window->id()}, {"layout", "even-h"}}, 3),
+       call("select_layout", {{"windowId", window->id()}, {"layout", window->layout()}},
+            4),
+       call("select_layout", {{"windowId", "@999"}, {"layout", "tiled"}}, 5),
+       call("select_layout", {{"windowId", "@999"}, {"layout", R"({"V":2,"L":{}})"}},
+            6)});
+  for (const int id : {1, 2, 6}) {
+    const auto answer = require_response(messages, id);
+    ASSERT_TRUE(answer.contains("error")) << answer.dump();
+    EXPECT_EQ(answer["error"]["code"], -32602);
+    EXPECT_NE(answer["error"]["message"].get<std::string>().find("layout"),
+              std::string::npos);
+  }
+  for (const int id : {3, 4}) {
+    const auto answer = require_response(messages, id);
+    ASSERT_TRUE(answer.contains("result")) << answer.dump();
+    EXPECT_FALSE(answer["result"]["isError"].get<bool>()) << answer.dump();
+    EXPECT_EQ(answer["result"]["structuredContent"]["window_id"], window->id());
+  }
+  const auto missing = require_response(messages, 5);
+  ASSERT_TRUE(missing.contains("result")) << missing.dump();
+  EXPECT_TRUE(missing["result"]["isError"].get<bool>());
+  const auto after = window->panes();
+  ASSERT_TRUE(after.has_value());
+  ASSERT_EQ(after->size(), 1U);
+  EXPECT_EQ(after->front().id(), panes->front().id());
+}
+
+TEST_F(McpProtocol, JsonLayoutSelectionPreservesFloatingPanesAndKeeperState) {
+  const auto server = connect_server();
+  const auto version = server.tmux_version();
+  ASSERT_TRUE(version.has_value());
+  if (*version < libtmux::Version{.major = 3, .minor = 9, .prerelease = true})
+    GTEST_SKIP() << "v2 layouts and floating panes require tmux 3.9";
+  const auto session = server.session("mcp");
+  ASSERT_TRUE(session.has_value());
+  const auto window = session->active_window();
+  ASSERT_TRUE(window.has_value());
+  const auto keeper = server.new_session("keeper");
+  ASSERT_TRUE(keeper.has_value());
+  const auto keeper_window = keeper->active_window();
+  ASSERT_TRUE(keeper_window.has_value());
+  ASSERT_TRUE(server.run({"new-pane", "-t", window->id(), "-x", "20", "-y", "8"}));
+  const auto saved = window->refresh();
+  ASSERT_TRUE(saved.has_value());
+  ASSERT_TRUE(saved->layout().starts_with('{'));
+  ASSERT_NE(saved->layout().find("\"z\":"), std::string::npos);
+  const auto before = saved->panes();
+  ASSERT_TRUE(before.has_value());
+  ASSERT_EQ(before->size(), 2U);
+  const auto messages = converse_ready(
+      socket(), {call("select_layout",
+                      {{"windowId", saved->id()}, {"layout", saved->layout()}}, 1)});
+  const auto answer = require_response(messages, 1);
+  ASSERT_TRUE(answer.contains("result")) << answer.dump();
+  EXPECT_FALSE(answer["result"]["isError"].get<bool>()) << answer.dump();
+  const auto after = saved->refresh();
+  ASSERT_TRUE(after.has_value());
+  EXPECT_EQ(after->layout(), saved->layout());
+  const auto panes = after->panes();
+  ASSERT_TRUE(panes.has_value());
+  ASSERT_EQ(panes->size(), before->size());
+  for (std::size_t index = 0; index < panes->size(); ++index)
+    EXPECT_EQ(panes->at(index).id(), before->at(index).id());
+  const auto retained = keeper_window->refresh();
+  ASSERT_TRUE(retained.has_value());
+  EXPECT_EQ(retained->layout(), keeper_window->layout());
+  EXPECT_EQ(retained->id(), keeper_window->id());
+}
+
 TEST_F(McpProtocol, PublishesTheEffectiveCrossPortCatalog) {
   const auto messages = converse_ready(
       socket(), {json{{"jsonrpc", "2.0"}, {"id", 1}, {"method", "tools/list"}}});

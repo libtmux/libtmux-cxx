@@ -56,6 +56,7 @@ namespace {
   case detail::ProcessError::Kind::pre_exec:
     return FailureKind::pre_exec;
   case detail::ProcessError::Kind::pipe:
+  case detail::ProcessError::Kind::output_limit:
     return FailureKind::pipe;
   case detail::ProcessError::Kind::timeout:
     return FailureKind::timeout;

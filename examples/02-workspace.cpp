@@ -1,6 +1,7 @@
 // Building an arrangement: a session, windows, splits, and something running
 // in each pane — without composing a single tmux argument.
 
+#include <array>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -29,6 +30,13 @@ int main() {
   const example::ScratchServer scratch = example::ScratchServer::open();
   const libtmux::Server& server = scratch.get();
 
+  const std::array layouts{libtmux::LayoutRequest{"even-horizontal", 2}};
+  if (const auto checked = server.validate_layouts(layouts); !checked) {
+    std::fprintf(stderr, "layout %zu: %s\n", checked.error().index,
+                 checked.error().cause.diagnostic.c_str());
+    return 1;
+  }
+
   const auto session = server.new_session(
       {.name = "workspace", .start_directory = "/tmp", .first_window_name = "shell"});
   if (failed(session, "creating the session")) {
@@ -46,7 +54,7 @@ int main() {
   if (failed(logs, "splitting")) {
     return 1;
   }
-  if (failed(editor->select_layout("even-horizontal"), "laying out")) {
+  if (failed(editor->select_layout(layouts.front().layout), "laying out")) {
     return 1;
   }
 
@@ -119,7 +127,7 @@ int main() {
   // A workspace can carry tmux configuration of its own. Checking it first
   // is what keeps a broken line from being half-applied: nothing in the file
   // runs until tmux says it parses.
-  const auto config = std::filesystem::temp_directory_path() / "libtmux-workspace.conf";
+  const auto config = scratch.socket_path().parent_path() / "libtmux-workspace.conf";
   {
     std::ofstream writing{config};
     writing << "set-option -g @workspace built\n";

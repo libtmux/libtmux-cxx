@@ -2,9 +2,12 @@
 
 #include <algorithm>
 #include <chrono>
+#include <csignal>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <thread>
+#include <unistd.h>
 
 #include <gtest/gtest.h>
 
@@ -330,6 +333,410 @@ TEST(WorkspaceBuilder, RefusesAnEmptyDescription) {
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
   EXPECT_FALSE(workspace::build(server, {}).has_value());
+}
+
+TEST(WorkspaceBuilder, CreatedIdentitiesSurviveDuplicateNamesAndIndexes) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("ws")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const workspace::Workspace description{
+      .session_name = "identity",
+      .windows = {
+          {.name = "same",
+           .index = 6,
+           .panes = {{.shell_commands = {{.text = "FIRST", .enter = false}}}}},
+          {.name = "same",
+           .index = 2,
+           .panes = {{.shell_commands = {{.text = "SECOND", .enter = false}}}}}}};
+  const auto built = workspace::build(server, description);
+  ASSERT_TRUE(built.has_value()) << built.error().reason;
+  const auto windows = built->windows();
+  ASSERT_TRUE(windows.has_value());
+  ASSERT_EQ(windows->size(), 2U);
+  for (const auto& [index, marker] :
+       {std::pair{2LL, "SECOND"}, std::pair{6LL, "FIRST"}}) {
+    const auto found = std::ranges::find_if(
+        *windows, [index](const auto& item) { return item.index() == index; });
+    ASSERT_NE(found, windows->end());
+    const auto pane = found->active_pane();
+    ASSERT_TRUE(pane.has_value());
+    const auto captured = pane->capture();
+    ASSERT_TRUE(captured.has_value());
+    EXPECT_NE(captured->find(marker), std::string::npos) << *captured;
+  }
+}
+
+TEST(WorkspaceBuilder, FailureRemovesOnlyTheSessionItCreated) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("ws")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  // A malformed layout crashes tmux 3.3a instead of returning a command error.
+  const workspace::Workspace description{
+      .session_name = "failure",
+      .windows = {{.name = "bad", .options = {{"not-a-window-option", "on"}}}}};
+  EXPECT_FALSE(workspace::build(server, description).has_value());
+  EXPECT_FALSE(server.session("failure").has_value());
+  EXPECT_TRUE(server.session("libtmux_test").has_value());
+  auto borrowed = description;
+  borrowed.session_name = "libtmux_test";
+  EXPECT_FALSE(workspace::build(server, borrowed).has_value());
+  EXPECT_TRUE(server.session("libtmux_test").has_value());
+}
+
+TEST(WorkspaceBuilder, InvalidLayoutsPrecedeBeforeBuildCallbacks) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("layout")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  for (const auto* layout : {"invalid-layout", "32d2,80x24,0,0{}"}) {
+    SCOPED_TRACE(layout);
+    bool called = false;
+    const workspace::Workspace description{
+        .session_name = "invalid", .windows = {{.name = "main", .layout = layout}}};
+    const auto built =
+        workspace::build(server, description,
+                         [&](const libtmux::Session&) -> std::optional<std::string> {
+                           called = true;
+                           return std::nullopt;
+                         });
+    EXPECT_FALSE(built.has_value());
+    EXPECT_FALSE(called);
+    EXPECT_FALSE(server.session("invalid").has_value());
+    EXPECT_TRUE(server.session("libtmux_test").has_value());
+  }
+}
+
+TEST(WorkspaceBuilder, SavedLayoutsAllowTmuxPruningAndSizing) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("layout")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  for (const auto* layout :
+       {"203f,80x24,0,0{39x24,0,0,40x24,40,0}",
+        "8a08,1x1,0,0{39x24,0,0,0,40x24,40,0,1}",
+        "79f5,80x24,0,0{39x23,0,0,0,40x24,40,0,1}",
+        "ac5c,80x24,0,0{39x24,0,0,0,40x24,40,0[40x11,40,0,1,40x12,40,12,2]}"}) {
+    SCOPED_TRACE(layout);
+    const workspace::Workspace description{
+        .session_name = "saved", .windows = {{.name = "main", .layout = layout}}};
+    const auto built = workspace::build(server, description);
+    ASSERT_TRUE(built.has_value()) << built.error().reason;
+    const auto panes = built->panes();
+    ASSERT_TRUE(panes.has_value());
+    EXPECT_EQ(panes->size(), 1U);
+    ASSERT_TRUE(built->kill().has_value());
+    EXPECT_TRUE(server.session("libtmux_test").has_value());
+  }
+}
+
+TEST(WorkspaceBuilder, NamedLayoutsFollowTheRunningDaemonVersion) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("layout")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const auto reply = server.run({"display-message", "-p", "#{version}"});
+  ASSERT_TRUE(reply.has_value());
+  const auto version = libtmux::parse_version("tmux " + *reply);
+  ASSERT_TRUE(version.has_value());
+  const bool mirrored = *version >= libtmux::Version{.major = 3, .minor = 5};
+  for (const auto& [layout, valid] :
+       {std::pair{"main-h", !mirrored}, std::pair{"main-horizontal-mirrored", mirrored},
+        std::pair{"even-h", true}}) {
+    SCOPED_TRACE(layout);
+    bool called = false;
+    const workspace::Workspace description{
+        .session_name = "named", .windows = {{.name = "main", .layout = layout}}};
+    const auto built =
+        workspace::build(server, description,
+                         [&](const libtmux::Session&) -> std::optional<std::string> {
+                           called = true;
+                           return std::nullopt;
+                         });
+    EXPECT_EQ(built.has_value(), valid);
+    EXPECT_EQ(called, valid);
+    if (built) {
+      ASSERT_TRUE(built->kill().has_value());
+    }
+    EXPECT_TRUE(server.session("libtmux_test").has_value());
+  }
+}
+
+TEST(WorkspaceBuilder, DeferredOptionsDoNotBroadcastStartupCommands) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("ws")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const workspace::Workspace description{
+      .session_name = "deferred",
+      .windows = {{.name = "work",
+                   .options_after = {{"synchronize-panes", "on"}},
+                   .panes = {{.shell_commands = {{.text = "ALPHA", .enter = false}}},
+                             {.shell_commands = {{.text = "BETA", .enter = false}}}}}}};
+  const auto built = workspace::build(server, description);
+  ASSERT_TRUE(built.has_value()) << built.error().reason;
+  const auto windows = built->windows();
+  ASSERT_TRUE(windows.has_value());
+  const auto panes = windows->front().panes();
+  ASSERT_TRUE(panes.has_value());
+  ASSERT_EQ(panes->size(), 2U);
+  const auto first = panes->front().capture();
+  const auto second = panes->back().capture();
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(second.has_value());
+  EXPECT_NE(first->find("ALPHA"), std::string::npos);
+  EXPECT_EQ(first->find("BETA"), std::string::npos);
+  EXPECT_NE(second->find("BETA"), std::string::npos);
+  EXPECT_EQ(second->find("ALPHA"), std::string::npos);
+}
+
+TEST(WorkspaceBuilder, EveryPaneReceivesItsLauncherAndEnvironment) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("ws")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const workspace::Command command{
+      .text =
+          "printf '%s:%s:%s\\n' \"$WS_SESSION\" \"${WS_WINDOW-unset}\" \"$WS_LAUNCH\""};
+  const workspace::Workspace description{
+      .session_name = "environment",
+      .environment = {{"WS_SESSION", "session"}},
+      .windows = {
+          {.name = "work",
+           .shell = "/bin/sh -c 'export WS_LAUNCH=launcher; exec /bin/sh'",
+           .environment = {{"WS_WINDOW", "window"}},
+           .panes = {{.shell_commands = {command}},
+                     {.shell_commands = {command}, .environment_overrides = true}}}}};
+  const auto built = workspace::build(server, description);
+  ASSERT_TRUE(built.has_value()) << built.error().reason;
+  const auto windows = built->windows();
+  ASSERT_TRUE(windows.has_value());
+  const auto panes = windows->front().panes();
+  ASSERT_TRUE(panes.has_value());
+  ASSERT_EQ(panes->size(), 2U);
+  for (const auto& [pane, marker] :
+       {std::pair{&panes->front(), "session:window:launcher"},
+        std::pair{&panes->back(), "session:unset:launcher"}}) {
+    std::string captured;
+    for (int attempt = 0; attempt < 20; ++attempt) {
+      const auto output = pane->capture();
+      ASSERT_TRUE(output.has_value());
+      captured = *output;
+      if (captured.find(marker) != std::string::npos) {
+        break;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds{10});
+    }
+    EXPECT_NE(captured.find(marker), std::string::npos) << captured;
+  }
+}
+
+TEST(WorkspaceBuilder, ObserverRefusalStopsCreationAndFinalFocusWithOwnedRollback) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto server = connect(*fixture);
+  const workspace::Workspace description{
+      .session_name = "observed",
+      .windows = {{.name = "first", .focus = true, .panes = {{}, {}, {}}},
+                  {.name = "second", .panes = {{}}}}};
+  for (const bool final_focus : {false, true}) {
+    bool completed{}, refused{};
+    const workspace::BuildObserver observer =
+        [&](const workspace::BuildEvent& event) -> std::optional<std::string> {
+      if (event.phase == workspace::BuildPhase::window_completed &&
+          event.window_index == 1)
+        completed = true;
+      if (event.phase != workspace::BuildPhase::waiting)
+        return std::nullopt;
+      bool refuse = final_focus && completed;
+      if (!final_focus) {
+        const auto session = server.session("=observed:");
+        if (session) {
+          const auto windows = session->windows();
+          if (windows && windows->size() == 1 && windows->front().name() == "first") {
+            const auto panes = windows->front().panes();
+            refuse = panes && panes->size() == 2;
+          }
+        }
+      }
+      if (refuse) {
+        refused = true;
+        return "observer refused";
+      }
+      return std::nullopt;
+    };
+    const auto result = workspace::build(server, description, {}, observer);
+    EXPECT_TRUE(refused);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().reason, "observer refused");
+    EXPECT_FALSE(server.session("=observed:"));
+    EXPECT_TRUE(server.session(fixture->session_name()));
+  }
+}
+
+TEST(WorkspaceBuilder, LayoutVersionProbePreservesPermissionFailure) {
+  if (::geteuid() == 0) {
+    GTEST_SKIP() << "root bypasses directory search permissions";
+  }
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("layout")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  std::vector<std::string> commands;
+  const auto server = Server::at_socket_path(
+      fixture->socket_path().string(),
+      [&](std::string_view command, const libtmux::CommandFailure*) {
+        commands.emplace_back(command);
+      });
+  ASSERT_TRUE(server.has_value());
+  const auto keeper = server->session(fixture->session_name());
+  ASSERT_TRUE(keeper.has_value());
+  const auto attach = keeper->attach_command();
+  ASSERT_TRUE(attach.has_value());
+  ASSERT_GE(attach->argv().size(), 3U);
+  ASSERT_EQ(attach->argv()[1], "-S");
+  struct Permissions {
+    std::filesystem::path path;
+    std::filesystem::perms previous;
+    ~Permissions() {
+      std::error_code ignored;
+      std::filesystem::permissions(path, previous, ignored);
+    }
+  } permissions{std::filesystem::path{attach->argv()[2]}.parent_path(),
+                std::filesystem::perms::owner_all};
+  permissions.previous = std::filesystem::status(permissions.path).permissions();
+  std::filesystem::permissions(permissions.path, std::filesystem::perms::none);
+  EXPECT_TRUE(connect(*fixture).session(fixture->session_name()));
+  const auto refused = server->run({"display-message", "-p", "#{version}"});
+  ASSERT_FALSE(refused.has_value());
+  commands.clear();
+  const workspace::Workspace description{.session_name = "guarded",
+                                         .windows = {{.layout = "main-h"}}};
+  const auto invalid = workspace::validate_layouts(*server, description);
+  std::filesystem::permissions(permissions.path, permissions.previous);
+  ASSERT_TRUE(invalid.has_value());
+  EXPECT_EQ(invalid->reason, refused.error().diagnostic);
+  EXPECT_EQ(commands, (std::vector<std::string>{"display-message -p #{version}"}));
+  EXPECT_TRUE(connect(*fixture).session(fixture->session_name()));
+}
+
+TEST(WorkspaceBuilder, LayoutVersionProbePreservesLiveDaemonTimeout) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("layout")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  std::vector<std::string> commands;
+  const auto server = Server::at_socket_path(
+      fixture->socket_path().string(),
+      [&](std::string_view command, const libtmux::CommandFailure*) {
+        commands.emplace_back(command);
+      },
+      {.timeout = std::chrono::milliseconds{250}});
+  ASSERT_TRUE(server.has_value());
+  struct Resume {
+    pid_t process;
+    ~Resume() { (void)::kill(process, SIGCONT); }
+  } resume{fixture->server_pid()};
+  ASSERT_EQ(::kill(resume.process, SIGSTOP), 0);
+  const auto timed_out = server->run({"display-message", "-p", "#{version}"});
+  ASSERT_FALSE(timed_out.has_value());
+  ASSERT_EQ(timed_out.error().kind, libtmux::FailureKind::timeout);
+  commands.clear();
+  const workspace::Workspace description{.session_name = "guarded",
+                                         .windows = {{.layout = "main-h"}}};
+  const auto invalid = workspace::validate_layouts(*server, description);
+  ASSERT_EQ(::kill(resume.process, SIGCONT), 0);
+  ASSERT_TRUE(invalid.has_value());
+  EXPECT_EQ(invalid->reason, timed_out.error().diagnostic);
+  EXPECT_EQ(commands, (std::vector<std::string>{"display-message -p #{version}"}));
+  EXPECT_TRUE(connect(*fixture).session(fixture->session_name()));
+}
+
+TEST(WorkspaceBuilder, LayoutVersionProbeUsesClientOnlyForUnboundMissingEndpoint) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("layout")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto client = connect(*fixture).tmux_version();
+  ASSERT_TRUE(client.has_value());
+  const std::string layout = *client >= libtmux::Version{.major = 3, .minor = 5}
+                                 ? "main-horizontal-mirrored"
+                                 : "main-h";
+  const workspace::Workspace description{
+      .session_name = "guarded", .windows = {{.layout = layout}, {.layout = layout}}};
+  std::vector<std::string> commands;
+  const auto observe = [&](std::string_view command, const libtmux::CommandFailure*) {
+    commands.emplace_back(command);
+  };
+  const auto selected = fixture->tmux_tmpdir() / "cold-layout.sock";
+  const auto cold = Server::startable_at_socket_path(selected.string(), {}, observe);
+  ASSERT_TRUE(cold.has_value());
+  EXPECT_FALSE(workspace::validate_layouts(*cold, description));
+  EXPECT_EQ(commands,
+            (std::vector<std::string>{"display-message -p #{version}", "-V"}));
+  EXPECT_FALSE(std::filesystem::exists(selected));
+  EXPECT_TRUE(connect(*fixture).session(fixture->session_name()));
+
+  const auto ordinary = Server::at_socket_path(selected.string(), observe);
+  ASSERT_TRUE(ordinary.has_value());
+  commands.clear();
+  EXPECT_FALSE(workspace::validate_layouts(*ordinary, description));
+  EXPECT_EQ(commands,
+            (std::vector<std::string>{"display-message -p #{version}", "-V"}));
+  EXPECT_FALSE(std::filesystem::exists(selected));
+  EXPECT_FALSE(ordinary->new_session("must-not-start").has_value());
+  EXPECT_FALSE(std::filesystem::exists(selected));
+
+  const auto exited = Server::at_socket_path(fixture->socket_path().string(), observe);
+  ASSERT_TRUE(exited.has_value());
+  ASSERT_TRUE(exited->run({"kill-server"}).has_value());
+  auto refused = exited->run({"display-message", "-p", "#{version}"});
+  for (int attempt = 0;
+       attempt < 20 &&
+       (refused || !refused.error().diagnostic.starts_with("no server running on "));
+       ++attempt) {
+    std::this_thread::sleep_for(std::chrono::milliseconds{10});
+    refused = exited->run({"display-message", "-p", "#{version}"});
+  }
+  ASSERT_FALSE(refused.has_value());
+  ASSERT_TRUE(refused.error().diagnostic.starts_with("no server running on "))
+      << refused.error().diagnostic;
+  commands.clear();
+  const auto checked = workspace::validate_layouts(*exited, description);
+  ASSERT_TRUE(checked.has_value());
+  EXPECT_EQ(checked->window_index, 0U);
+  EXPECT_EQ(checked->reason, refused.error().diagnostic);
+  EXPECT_EQ(commands, (std::vector<std::string>{"display-message -p #{version}"}));
+}
+
+TEST(WorkspaceBuilder, LayoutVersionProbeKeepsAnEmptyDaemonsVersion) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("layout")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  std::vector<std::string> commands;
+  const auto server = Server::at_socket_path(
+      fixture->socket_path().string(),
+      [&](std::string_view command, const libtmux::CommandFailure*) {
+        commands.emplace_back(command);
+      });
+  ASSERT_TRUE(server.has_value());
+  const auto daemon = server->run({"display-message", "-p", "#{version}"});
+  ASSERT_TRUE(daemon.has_value());
+  const auto version = libtmux::parse_version("tmux " + *daemon);
+  ASSERT_TRUE(version.has_value());
+  const std::string layout = *version >= libtmux::Version{.major = 3, .minor = 5}
+                                 ? "main-horizontal-mirrored"
+                                 : "main-h";
+  ASSERT_TRUE(server->run({"set-option", "-s", "exit-empty", "off"}).has_value());
+  const auto keeper = server->session(fixture->session_name());
+  ASSERT_TRUE(keeper.has_value());
+  ASSERT_TRUE(keeper->kill().has_value());
+  commands.clear();
+  const workspace::Workspace description{
+      .session_name = "guarded", .windows = {{.layout = layout}, {.layout = layout}}};
+  EXPECT_FALSE(workspace::validate_layouts(*server, description));
+  EXPECT_EQ(commands, (std::vector<std::string>{"display-message -p #{version}"}));
+  const auto sessions = server->sessions();
+  ASSERT_TRUE(sessions.has_value());
+  EXPECT_TRUE(sessions->empty());
 }
 
 } // namespace

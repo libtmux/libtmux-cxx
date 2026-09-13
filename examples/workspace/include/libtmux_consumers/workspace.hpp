@@ -8,15 +8,16 @@
 // serialization concern that belongs in an opt-in integration — the shape
 // below is what a tmuxp document would deserialize into.
 
+#include <charconv>
 #include <chrono>
 #include <expected>
+#include <functional>
 #include <optional>
 #include <string>
 #include <thread>
 #include <utility>
 #include <vector>
 
-#include "libtmux/batch.hpp"
 #include "libtmux/server.hpp"
 #include "libtmux/target.hpp"
 
@@ -61,6 +62,8 @@ struct Pane {
   // Variables the processes here start with. Session variables reach a pane
   // made later; a window's do not.
   std::vector<std::pair<std::string, std::string>> environment{};
+  // An explicit empty mapping also replaces the window-level environment.
+  bool environment_overrides{false};
 };
 
 struct Window {
@@ -78,7 +81,7 @@ struct Window {
   // the two lists are separate: set before the splits, it types into panes
   // that are still being made.
   std::vector<std::pair<std::string, std::string>> options_after{};
-  // What the window's first pane runs instead of the default shell.
+  // Default launcher for every pane without its own shell.
   std::string shell{};
   bool focus{false};
   // Variables the processes here start with. Session variables reach a pane
@@ -107,14 +110,54 @@ struct BuildError {
   // rather than at an opaque tmux message.
   std::size_t window_index{};
   std::string reason;
+  std::vector<std::string> retained_windows{};
 };
 
-// Create the workspace and return the session it made. The session must not
-// already exist: adopting a live session is a different operation with
-// different risks, and conflating them is how a builder silently reshapes
-// something a user was working in.
+// Runs after session selection and before settings or windows. A returned error
+// uses the builder's owned-session rollback and borrowed-session preservation.
+using BeforeBuild = std::function<std::optional<std::string>(const libtmux::Session&)>;
+
+enum class BuildPhase {
+  window_started,
+  pane_started,
+  pane_completed,
+  window_completed,
+  waiting
+};
+struct BuildEvent {
+  BuildPhase phase;
+  std::size_t window_index;
+  std::size_t pane_index;
+};
+// A refusal uses owned-session rollback or reports retained borrowed windows.
+using BuildObserver = std::function<std::optional<std::string>(const BuildEvent&)>;
+
+// Check all layouts before sessions, settings, or before-build callbacks change.
+inline std::optional<BuildError> validate_layouts(const Server& server,
+                                                  const Workspace& description) {
+  std::vector<LayoutRequest> layouts;
+  std::vector<std::size_t> indexes;
+  layouts.reserve(description.windows.size());
+  indexes.reserve(description.windows.size());
+  for (std::size_t index = 0; index < description.windows.size(); ++index) {
+    const auto& window = description.windows[index];
+    if (!window.layout.empty()) {
+      layouts.push_back({window.layout, window.panes.size()});
+      indexes.push_back(index);
+    }
+  }
+  if (auto checked = server.validate_layouts(layouts); !checked) {
+    auto& error = checked.error();
+    return BuildError{indexes[error.index], std::move(error.cause.diagnostic)};
+  }
+  return std::nullopt;
+}
+
+namespace detail {
 [[nodiscard]] inline libtmux::expected<libtmux::Session, BuildError>
-build(const Server& server, const Workspace& description) {
+build_windows(const Server& server, const Workspace& description,
+              const std::optional<libtmux::Session>& borrowed,
+              const BeforeBuild& before, const BuildObserver& observer) {
   if (description.session_name.empty() || description.windows.empty()) {
     return libtmux::unexpected(BuildError{0, "workspace names no session or window"});
   }
@@ -123,120 +166,217 @@ build(const Server& server, const Workspace& description) {
     return libtmux::unexpected(BuildError{0, "session name cannot address itself"});
   }
 
-  // The directory a pane starts in, most specific first.
+  for (std::size_t index = 0; index < description.windows.size(); ++index) {
+    if (description.windows[index].panes.empty()) {
+      return libtmux::unexpected(BuildError{index, "a window needs at least one pane"});
+    }
+  }
+  if (auto error = validate_layouts(server, description))
+    return libtmux::unexpected(std::move(*error));
   const auto directory = [&description](const Window& window, const Pane& pane) {
     if (!pane.start_directory.empty()) {
       return pane.start_directory;
     }
-    if (!window.start_directory.empty()) {
-      return window.start_directory;
-    }
-    return description.start_directory;
+    return window.start_directory.empty() ? description.start_directory
+                                          : window.start_directory;
   };
-  const auto with_directory = [](std::vector<std::string> command,
-                                 const std::string& where) {
-    if (!where.empty()) {
-      command.emplace_back("-c");
-      command.push_back(where);
-    }
-    return command;
+  const auto environment = [](const Window& window, const Pane& pane) {
+    return pane.environment_overrides || !pane.environment.empty() ? pane.environment
+                                                                   : window.environment;
   };
-  // A batch is raw argv, so the pairs are joined here the way the typed
-  // options do it. Everything the description carries at this level, then
-  // the level above it: tmux takes the last `-e` for a repeated name.
-  // A window's shell is the positional a creation command takes last, so it
-  // goes on after every flag.
-  const auto with_shell = [](std::vector<std::string> command,
-                             const std::string& shell) {
-    if (!shell.empty()) {
-      command.emplace_back("--");
-      command.push_back(shell);
-    }
-    return command;
+  const auto shell = [](const Window& window, const Pane& pane) {
+    return pane.shell.empty() ? window.shell : pane.shell;
   };
-  const auto with_environment =
-      [](std::vector<std::string> command,
-         const std::vector<std::pair<std::string, std::string>>& outer,
-         const std::vector<std::pair<std::string, std::string>>& inner,
-         const std::string& shell = {}) {
-        for (const auto* level : {&outer, &inner}) {
-          for (const auto& [name, value] : *level) {
-            command.emplace_back("-e");
-            command.push_back(name + "=" + value);
-          }
-        }
-        if (!shell.empty()) {
-          command.emplace_back("--");
-          command.push_back(shell);
-        }
-        return command;
-      };
-
-  const Window& first = description.windows.front();
-  CommandBatch batch;
-  batch.add(with_shell(
-      with_environment(
-          with_directory({"new-session", "-d", "-s", *session, "-n", first.name},
-                         directory(first, first.panes.front())),
-          description.environment, first.panes.front().environment),
-      first.panes.front().shell.empty() ? first.shell : first.panes.front().shell));
-  for (std::size_t pane = 1; pane < first.panes.size(); ++pane) {
-    batch.add(with_environment(
-        with_directory({"split-window", "-t", *session + ":" + first.name},
-                       directory(first, first.panes[pane])),
-        first.environment, first.panes[pane].environment, first.panes[pane].shell));
-  }
-  for (std::size_t index = 1; index < description.windows.size(); ++index) {
-    const Window& window = description.windows[index];
-    const std::string where = window.index.has_value()
-                                  ? *session + ":" + std::to_string(*window.index)
-                                  : *session;
-    batch.add(with_shell(
-        with_environment(with_directory({"new-window", "-t", where, "-n", window.name},
-                                        directory(window, window.panes.front())),
-                         window.environment, window.panes.front().environment),
-        window.panes.front().shell.empty() ? window.shell
-                                           : window.panes.front().shell));
-    for (std::size_t pane = 1; pane < window.panes.size(); ++pane) {
-      batch.add(with_environment(
-          with_directory({"split-window", "-t", *session + ":" + window.name},
-                         directory(window, window.panes[pane])),
-          window.environment, window.panes[pane].environment,
-          window.panes[pane].shell));
-    }
-  }
-  if (const auto created = server.run_batch(batch); !created.has_value()) {
-    return libtmux::unexpected(BuildError{0, created.error().diagnostic});
-  }
-
-  // Server-wide first, then the session's: a session option set over a
-  // server one is the narrower answer, and doing it in the other order
-  // would leave the wider one on top.
-  for (const auto& [option, value] : description.global_options) {
-    if (const auto set = server.set_global_option(option, value); !set.has_value()) {
-      return libtmux::unexpected(BuildError{0, set.error().diagnostic});
-    }
-  }
-  const auto built_session = server.session(*session);
-  if (!built_session.has_value()) {
-    return libtmux::unexpected(BuildError{0, built_session.error().diagnostic});
-  }
-  for (const auto& [option, value] : description.options) {
-    if (const auto set = built_session->set_option(option, value); !set.has_value()) {
-      return libtmux::unexpected(BuildError{0, set.error().diagnostic});
-    }
-  }
-
-  const auto built = server.session(*session);
+  auto initial_environment = description.environment;
+  if (before)
+    initial_environment.clear();
+  auto built = borrowed
+                   ? libtmux::expected<libtmux::Session, CommandFailure>{*borrowed}
+                   : server.new_session({.name = description.session_name,
+                                         .start_directory = description.start_directory,
+                                         .environment = initial_environment});
   if (!built.has_value()) {
     return libtmux::unexpected(BuildError{0, built.error().diagnostic});
   }
-  const auto windows = built->windows();
-  if (!windows.has_value()) {
-    return libtmux::unexpected(BuildError{0, windows.error().diagnostic});
+  std::vector<std::string> created_windows;
+  const auto fail =
+      [&built, &borrowed, &created_windows](
+          std::size_t index,
+          std::string reason) -> libtmux::expected<libtmux::Session, BuildError> {
+    if (borrowed)
+      return libtmux::unexpected(BuildError{index, std::move(reason), created_windows});
+    if (const auto killed = built->kill(); !killed.has_value()) {
+      reason += "; session cleanup failed: " + killed.error().diagnostic;
+    }
+    return libtmux::unexpected(BuildError{index, std::move(reason)});
+  };
+  const auto notify = [&](BuildPhase phase, std::size_t window,
+                          std::size_t pane) -> std::optional<BuildError> {
+    if (!observer)
+      return std::nullopt;
+    try {
+      if (auto reason = observer({phase, window, pane}))
+        return fail(window, std::move(*reason)).error();
+    } catch (const std::exception& error) {
+      return fail(window, error.what()).error();
+    } catch (...) {
+      return fail(window, "build observer failed").error();
+    }
+    return std::nullopt;
+  };
+  const auto pause = [&](std::chrono::milliseconds duration, std::size_t window,
+                         std::size_t pane) -> std::optional<BuildError> {
+    if (!observer) {
+      std::this_thread::sleep_for(duration);
+      return std::nullopt;
+    }
+    const auto until = std::chrono::steady_clock::now() + duration;
+    do {
+      if (auto error = notify(BuildPhase::waiting, window, pane))
+        return error;
+      std::this_thread::sleep_until(std::min(until, std::chrono::steady_clock::now() +
+                                                        std::chrono::milliseconds{20}));
+    } while (std::chrono::steady_clock::now() < until);
+    return notify(BuildPhase::waiting, window, pane);
+  };
+  if (auto error = notify(BuildPhase::waiting, 0, 0))
+    return libtmux::unexpected(std::move(*error));
+  if (before) {
+    try {
+      if (auto error = before(*built))
+        return fail(0, std::move(*error));
+    } catch (...) {
+      (void)fail(0, "before-build callback failed");
+      throw;
+    }
   }
-  if (windows->size() != description.windows.size()) {
-    return libtmux::unexpected(BuildError{0, "tmux built a different set of windows"});
+  std::optional<libtmux::Window> bootstrap;
+  if (!borrowed) {
+    const auto window = built->active_window();
+    if (!window)
+      return fail(0, window.error().diagnostic);
+    bootstrap = *window;
+  }
+  if (borrowed || before) {
+    for (const auto& [name, value] : description.environment) {
+      if (auto error = notify(BuildPhase::waiting, 0, 0))
+        return libtmux::unexpected(std::move(*error));
+      if (name.empty() || name.find('=') != std::string::npos)
+        return fail(0, "an environment name must be non-empty and contain no '='");
+      const auto set =
+          server.run({"set-environment", "-t", std::string{built->id()}, name, value});
+      if (!set)
+        return fail(0, set.error().diagnostic);
+    }
+  }
+  for (const auto& [option, value] : description.global_options) {
+    if (auto error = notify(BuildPhase::waiting, 0, 0))
+      return libtmux::unexpected(std::move(*error));
+    if (const auto set = server.set_global_option(option, value); !set.has_value()) {
+      return fail(0, set.error().diagnostic);
+    }
+  }
+  for (const auto& [option, value] : description.options) {
+    if (auto error = notify(BuildPhase::waiting, 0, 0))
+      return libtmux::unexpected(std::move(*error));
+    if (const auto set = built->set_option(option, value); !set.has_value()) {
+      return fail(0, set.error().diagnostic);
+    }
+  }
+  std::vector<libtmux::Window> windows;
+  std::vector<std::vector<libtmux::Pane>> created_panes;
+  for (std::size_t index = 0; index < description.windows.size(); ++index) {
+    if (auto error = notify(BuildPhase::waiting, index, 0))
+      return libtmux::unexpected(std::move(*error));
+    const Window& window = description.windows[index];
+    const Pane& first = window.panes.front();
+    std::vector<std::string> command{
+        "new-window", "-d", "-P", "-F", "#{window_id}", "-t", std::string{built->id()}};
+    if ((borrowed || index != 0) && window.index.has_value()) {
+      command.back() += ":" + std::to_string(*window.index);
+    }
+    if (!window.name.empty()) {
+      command.insert(command.end(), {"-n", window.name});
+    }
+    if (const auto path = directory(window, first); !path.empty()) {
+      command.insert(command.end(), {"-c", path});
+    }
+    for (const auto& [name, value] : environment(window, first)) {
+      if (auto error = notify(BuildPhase::waiting, index, 0))
+        return libtmux::unexpected(std::move(*error));
+      if (name.empty() || name.find('=') != std::string::npos) {
+        return fail(index, "an environment name must be non-empty and contain no '='");
+      }
+      command.insert(command.end(), {"-e", name + "=" + value});
+    }
+    if (const auto launcher = shell(window, first); !launcher.empty()) {
+      command.insert(command.end(), {"--", launcher});
+    }
+    auto created = server.run(command);
+    if (!created.has_value()) {
+      return fail(index, created.error().diagnostic);
+    }
+    while (!created->empty() && (created->back() == '\n' || created->back() == '\r')) {
+      created->pop_back();
+    }
+    created_windows.push_back(*created);
+    const auto target = server.window(std::string{built->id()} + ":" + *created);
+    if (!target.has_value()) {
+      return fail(index, target.error().diagnostic);
+    }
+    windows.push_back(*target);
+    if (index == 0 && !borrowed) {
+      const auto base = built->option("base-index");
+      if (!base.has_value()) {
+        return fail(index, base.error().diagnostic);
+      }
+      long long desired{};
+      const auto parsed = std::from_chars(
+          base->value.data(), base->value.data() + base->value.size(), desired);
+      if (parsed.ec != std::errc{}) {
+        return fail(index, "tmux returned an invalid base-index");
+      }
+      desired = window.index.value_or(desired);
+      if (const auto killed = bootstrap->kill(); !killed.has_value()) {
+        return fail(index, killed.error().diagnostic);
+      }
+      if (target->index() != desired) {
+        const auto moved =
+            server.run({"move-window", "-s", target->target(), "-t",
+                        std::string{built->id()} + ":" + std::to_string(desired)});
+        if (!moved.has_value()) {
+          return fail(index, moved.error().diagnostic);
+        }
+      }
+    }
+    for (const auto& [option, value] : window.options) {
+      if (auto error = notify(BuildPhase::waiting, index, 0))
+        return libtmux::unexpected(std::move(*error));
+      if (const auto set = target->set_option(option, value); !set.has_value()) {
+        return fail(index, set.error().diagnostic);
+      }
+    }
+    const auto first_pane = target->active_pane();
+    if (!first_pane.has_value()) {
+      return fail(index, first_pane.error().diagnostic);
+    }
+    std::vector<libtmux::Pane> panes{*first_pane};
+    for (std::size_t pane = 1; pane < window.panes.size(); ++pane) {
+      if (auto error = notify(BuildPhase::waiting, index, pane))
+        return libtmux::unexpected(std::move(*error));
+      const auto& planned = window.panes[pane];
+      const auto split = target->split({.start_directory = directory(window, planned),
+                                        .shell_command = shell(window, planned),
+                                        .environment = environment(window, planned)});
+      if (!split.has_value()) {
+        return fail(index, split.error().diagnostic);
+      }
+      panes.push_back(*split);
+      if (const auto arranged = target->select_layout("tiled"); !arranged.has_value()) {
+        return fail(index, arranged.error().diagnostic);
+      }
+    }
+    created_panes.push_back(std::move(panes));
   }
 
   // Commands run after every pane exists, so an earlier window's command
@@ -245,44 +385,27 @@ build(const Server& server, const Workspace& description) {
   // `pane-base-index` is free to change under the caller.
   for (std::size_t index = 0; index < description.windows.size(); ++index) {
     const Window& described = description.windows[index];
-    const auto panes = (*windows)[index].panes();
-    if (!panes.has_value()) {
-      return libtmux::unexpected(BuildError{index, panes.error().diagnostic});
-    }
-    if (panes->size() != described.panes.size()) {
-      return libtmux::unexpected(
-          BuildError{index, "tmux built a different set of panes"});
-    }
-    // Options first: a layout reads them, so `main-pane-height` set after
-    // `select-layout` would arrange the window to the previous value.
-    for (const auto& [option, value] : described.options) {
-      if (const auto set = (*windows)[index].set_option(option, value);
-          !set.has_value()) {
-        return libtmux::unexpected(BuildError{index, set.error().diagnostic});
-      }
-    }
+    const auto& panes = created_panes[index];
+    if (auto error = notify(BuildPhase::window_started, index, 0))
+      return libtmux::unexpected(std::move(*error));
     // The layout is applied before anything runs, so a command that reacts to
     // its pane's size sees the size it will keep.
     if (!described.layout.empty()) {
-      if (const auto arranged = (*windows)[index].select_layout(described.layout);
+      if (const auto arranged = windows[index].select_layout(described.layout);
           !arranged.has_value()) {
-        return libtmux::unexpected(BuildError{index, arranged.error().diagnostic});
-      }
-    }
-    // And the ones that cannot be set until the panes exist:
-    // `synchronize-panes` set before the splits types into panes that are
-    // still being made.
-    for (const auto& [option, value] : described.options_after) {
-      if (const auto set = (*windows)[index].set_option(option, value);
-          !set.has_value()) {
-        return libtmux::unexpected(BuildError{index, set.error().diagnostic});
+        return fail(index, arranged.error().diagnostic);
       }
     }
     for (std::size_t pane = 0; pane < described.panes.size(); ++pane) {
-      const libtmux::Pane& target = (*panes)[pane];
+      const libtmux::Pane& target = panes[pane];
+      if (auto error = notify(BuildPhase::pane_started, index, pane))
+        return libtmux::unexpected(std::move(*error));
       for (const Command& command : described.panes[pane].shell_commands) {
+        if (auto error = notify(BuildPhase::waiting, index, pane))
+          return libtmux::unexpected(std::move(*error));
         if (command.pause_before.count() != 0) {
-          std::this_thread::sleep_for(command.pause_before);
+          if (auto error = pause(command.pause_before, index, pane))
+            return libtmux::unexpected(std::move(*error));
         }
         // An empty command is a carriage return, which is what a tmuxp
         // document means by one: the pane is left at a fresh prompt.
@@ -290,41 +413,79 @@ build(const Server& server, const Workspace& description) {
           const std::string typed_text =
               command.suppress_history ? " " + command.text : command.text;
           if (const auto typed = target.send_text(typed_text); !typed.has_value()) {
-            return libtmux::unexpected(BuildError{index, typed.error().diagnostic});
+            return fail(index, typed.error().diagnostic);
           }
         }
         if (!command.enter) {
           if (command.pause_after.count() != 0) {
-            std::this_thread::sleep_for(command.pause_after);
+            if (auto error = pause(command.pause_after, index, pane))
+              return libtmux::unexpected(std::move(*error));
           }
           continue;
         }
         if (const auto entered = target.send_key("Enter"); !entered.has_value()) {
-          return libtmux::unexpected(BuildError{index, entered.error().diagnostic});
+          return fail(index, entered.error().diagnostic);
         }
         if (command.pause_after.count() != 0) {
-          std::this_thread::sleep_for(command.pause_after);
+          if (auto error = pause(command.pause_after, index, pane))
+            return libtmux::unexpected(std::move(*error));
         }
       }
       if (described.panes[pane].focus) {
         if (const auto selected = target.select(); !selected.has_value()) {
-          return libtmux::unexpected(BuildError{index, selected.error().diagnostic});
+          return fail(index, selected.error().diagnostic);
         }
       }
+      if (auto error = notify(BuildPhase::pane_completed, index, pane))
+        return libtmux::unexpected(std::move(*error));
     }
+    for (const auto& [option, value] : described.options_after) {
+      if (auto error = notify(BuildPhase::waiting, index, 0))
+        return libtmux::unexpected(std::move(*error));
+      if (const auto set = windows[index].set_option(option, value); !set.has_value()) {
+        return fail(index, set.error().diagnostic);
+      }
+    }
+    if (auto error =
+            notify(BuildPhase::window_completed, index, described.panes.size() - 1))
+      return libtmux::unexpected(std::move(*error));
   }
 
   // Last, so selecting a pane in a later window cannot leave that window
   // active over the one the description asked for.
   for (std::size_t index = 0; index < description.windows.size(); ++index) {
+    if (auto error = notify(BuildPhase::waiting, index, 0))
+      return libtmux::unexpected(std::move(*error));
     if (!description.windows[index].focus) {
       continue;
     }
-    if (const auto selected = (*windows)[index].select(); !selected.has_value()) {
-      return libtmux::unexpected(BuildError{index, selected.error().diagnostic});
+    if (const auto selected = windows[index].select(); !selected.has_value()) {
+      return fail(index, selected.error().diagnostic);
     }
   }
+  if (auto error = notify(BuildPhase::waiting, description.windows.size() - 1, 0))
+    return libtmux::unexpected(std::move(*error));
   return *built;
+}
+
+} // namespace detail
+
+// Create a new session. A failed build removes only the session it created.
+[[nodiscard]] inline libtmux::expected<libtmux::Session, BuildError>
+build(const Server& server, const Workspace& description,
+      const BeforeBuild& before = {}, const BuildObserver& observer = {}) {
+  return detail::build_windows(server, description, std::nullopt, before, observer);
+}
+
+// Add windows to a borrowed session. Failure retains that session, applied
+// settings and any new windows, whose IDs are included in the error.
+[[nodiscard]] inline libtmux::expected<libtmux::Session, BuildError>
+append(const libtmux::Session& session, const Workspace& description,
+       const BeforeBuild& before = {}, const BuildObserver& observer = {}) {
+  const auto server = session.server();
+  if (!server)
+    return libtmux::unexpected(BuildError{0, server.error().diagnostic});
+  return detail::build_windows(*server, description, session, before, observer);
 }
 
 } // namespace libtmux::workspace

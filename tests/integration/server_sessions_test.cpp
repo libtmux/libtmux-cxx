@@ -42,6 +42,19 @@ TEST(ServerSessions, NewSessionCreatesOneAndHandsItBack) {
   EXPECT_FALSE(created->attached());
 }
 
+TEST(ServerSessions, MissingSessionLookupKeepsTheServerAlive) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+
+  const auto missing = server.session("missing-workspace");
+  ASSERT_FALSE(missing.has_value());
+  EXPECT_EQ(missing.error().kind, libtmux::FailureKind::missing);
+  const auto keeper = server.session(fixture->session_name());
+  ASSERT_TRUE(keeper.has_value()) << keeper.error().diagnostic;
+  EXPECT_EQ(keeper->name(), fixture->session_name());
+}
+
 TEST(ServerSessions, KillEndsTheServerAndEverythingOnIt) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();

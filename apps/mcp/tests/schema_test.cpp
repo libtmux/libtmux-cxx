@@ -81,9 +81,13 @@ read_batch_with(Handler handler) {
 // below that delay expires while still resolving its target.
 class SlowBackend final : public libtmux::detail::Backend {
 public:
+  explicit SlowBackend(libtmux::ExecutionPolicy policy = {}) : Backend{{}, policy} {}
+  mutable std::size_t command_count{};
+
   libtmux::expected<std::string, libtmux::CommandFailure>
   run(const libtmux::CommandRequest&, std::optional<std::chrono::milliseconds> timeout,
       std::optional<std::size_t>) const override {
+    ++command_count;
     if (timeout.has_value()) {
       std::this_thread::sleep_for(*timeout);
     }
@@ -114,6 +118,21 @@ private:
       {{"target", "mcp"}, {"text", "never appears"}, {"timeout_ms", "1"}});
   EXPECT_TRUE(waited.has_value()) << waited.error().message;
   return waited.value_or(ToolOutput{});
+}
+
+TEST(McpProtocolSchema, InvalidLayoutIsRefusedBeforeTargetLookup) {
+  auto backend = std::make_shared<SlowBackend>(
+      libtmux::ExecutionPolicy{.timeout = std::chrono::milliseconds{1}});
+  const auto server = libtmux::detail::server_over(backend);
+  const auto tools = all_tools();
+  for (const auto* layout : {"invalid-layout", "0000,80x24,0,0", "32d2,80x24,0,0{}"}) {
+    const auto answer =
+        tools.call(server, "select_layout", {{"windowId", "@999"}, {"layout", layout}});
+    ASSERT_FALSE(answer.has_value());
+    EXPECT_NE(answer.error().message.find("layout"), std::string::npos)
+        << answer.error().message;
+    EXPECT_EQ(backend->command_count, 0U);
+  }
 }
 
 TEST(McpProtocolSchema, PreservesStructuredScalarTypes) {

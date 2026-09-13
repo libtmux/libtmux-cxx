@@ -66,9 +66,14 @@ option(LIBTMUX_BUILD_FUZZERS "Build the parser fuzzers" OFF)
 # `cmake -S . -B build` wanted nlohmann/json and the documented default said
 # otherwise. The presets and CI turn it on explicitly.
 option(LIBTMUX_BUILD_MCP_SERVER "Build the MCP server program" OFF)
+option(LIBTMUX_BUILD_WORKSPACE_CLI "Build the workspace manager program" OFF)
 option(LIBTMUX_ENABLE_COVERAGE "Instrument for coverage" OFF)
 set(LIBTMUX_CXX_STANDARD "23" CACHE STRING "C++ package standard: 20 or 23")
 set_property(CACHE LIBTMUX_CXX_STANDARD PROPERTY STRINGS 20 23)
+
+if(WIN32 AND LIBTMUX_BUILD_WORKSPACE_CLI)
+  message(FATAL_ERROR "The workspace CLI currently requires POSIX tmux")
+endif()
 
 if(WIN32 AND LIBTMUX_BUILD_TESTING_LIBRARY)
   message(FATAL_ERROR "libtmux::testing requires the POSIX tmux fixture")
@@ -115,13 +120,22 @@ if(NOT WIN32 AND (LIBTMUX_BUILD_TESTS OR LIBTMUX_BUILD_EXAMPLES) AND
       "private tmux server from the fixture the package ships")
 endif()
 
+if((LIBTMUX_BUILD_TESTS AND NOT WIN32) OR LIBTMUX_BUILD_WORKSPACE_CLI)
+  if(LIBTMUX_BUILD_TESTS AND NOT WIN32)
+    include(cmake/GoogleTest.cmake)
+    libtmux_resolve_googletest()
+  endif()
+  add_subdirectory(examples/workspace)
+endif()
+
+if(LIBTMUX_BUILD_WORKSPACE_CLI)
+  add_subdirectory(apps/workspace)
+endif()
+
 if(LIBTMUX_BUILD_TESTS)
   if(WIN32)
     add_subdirectory(tests/windows)
   else()
-    include(cmake/GoogleTest.cmake)
-    libtmux_resolve_googletest()
-    add_subdirectory(examples/workspace)
     add_subdirectory(tests)
   endif()
 endif()
