@@ -310,6 +310,15 @@ public:
   }
 };
 void collect(CLI::App& node, Request& request) {
+  if (node.get_name() == "shell") {
+    for (const auto* option : node.parse_order()) {
+      for (const auto& name : option->get_lnames()) {
+        if (name == "use-pythonrc" || name == "no-startup" || name == "use-vi-mode" ||
+            name == "no-vi-mode")
+          request.shell_flags.push_back("--" + name);
+      }
+    }
+  }
   for (auto* option : node.get_options()) {
     if (option->count() != 0) {
       for (const auto& name : option->get_lnames())
@@ -401,12 +410,14 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
       progress->finish();
     diagnostics.diagnostic(code, message);
     try {
-      if (request.command == "load" && execution.value.is_object()) {
+      if ((request.command == "load" || request.command == "shell") &&
+          execution.value.is_object()) {
         const auto primary = execution.value.at("exit_code").get<int>();
         if (primary != 0)
           status = primary;
       }
-      if (retained_state.is_null() && request.command == "load" &&
+      if (retained_state.is_null() &&
+          (request.command == "load" || request.command == "shell") &&
           execution.value.is_object())
         retained_state = execution.value;
       if (request.machine()) {
@@ -469,6 +480,12 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
     const auto emit = [&](const std::string& name, Json data) {
       diagnostics.event(name, data, ++sequence);
       progress->event(name, data);
+      if (request.command == "shell" && name == "script-output" && !request.machine()) {
+        auto& stream = data.at("stream") == "stdout" ? output : errors;
+        stream << data.at("text").get<std::string>() << std::flush;
+        if (!stream)
+          throw Failure{1, "OUTPUT_CLOSED", "shell output stream closed"};
+      }
       if (!request.ndjson)
         return;
       data["schema_version"] = 1;
@@ -490,7 +507,9 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
         throw;
       }
     };
-    execution = request.command == "load" ? with_interrupts(operation) : operation();
+    execution = request.command == "load" || request.command == "shell"
+                    ? with_interrupts(operation)
+                    : operation();
     const auto& result = execution.value;
     if (request.command == "freeze" && request.json && !request.ndjson &&
         !result.contains("destination") && diagnostics.enabled("warning")) {
@@ -500,11 +519,13 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
                                      "arguments, history, plugins or before scripts."}})
              << '\n';
     }
-    const bool failed = (request.command == "load" || request.command == "edit") &&
-                        result.at("status") != "ok";
+    const bool process_command = request.command == "load" ||
+                                 request.command == "edit" ||
+                                 request.command == "shell";
+    const bool failed = process_command && result.at("status") != "ok";
     if (request.command == "edit" && !request.machine())
       errors << result.at("stderr").get<std::string>();
-    if (failed && request.command == "load") {
+    if (failed && (request.command == "load" || request.command == "shell")) {
       for (const auto& error : result.at("errors")) {
         diagnostics.diagnostic(error.at("code").get<std::string>(),
                                error.at("message").get<std::string>());
@@ -516,10 +537,10 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
           errors << "Error: " << error.at("message").get<std::string>() << '\n';
       }
     }
-    if (!request.ndjson && (request.command == "load" || request.command == "edit"))
+    if (!request.ndjson && process_command)
       diagnostics.event(failed ? "failed" : "completed", result, ++sequence);
     if (request.ndjson) {
-      if (request.command == "load" || request.command == "edit")
+      if (process_command)
         emit(failed ? "failed" : "completed", result);
       else if (request.command == "ls") {
         for (const auto& item : result.at("workspaces"))
@@ -542,7 +563,7 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
       if (execution.handoff)
         execution.handoff();
     }
-    if ((request.command == "edit" || request.command == "load") && output)
+    if (process_command && output && errors)
       return result.at("exit_code").get<int>();
     return output && !failed ? 0 : 1;
   } catch (const CLI::ParseError& error) {

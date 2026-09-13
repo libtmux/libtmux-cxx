@@ -27,6 +27,7 @@ struct Request {
   std::string command;
   std::string importer;
   std::map<std::string, std::vector<std::string>> values;
+  std::vector<std::string> shell_flags{};
   bool json{}, ndjson{}, terminal_allowed{};
   bool machine() const { return json || ndjson; }
   bool flag(const std::string& key) const { return values.contains(key); }

@@ -976,11 +976,81 @@ void validate(const Request& request) {
   }
   if (request.command == "freeze" && request.value("session").empty())
     throw Failure{2, "USAGE", "freeze requires a session name or ID"};
-  if (request.command == "shell")
-    throw Failure{1, "FEATURE_UNAVAILABLE",
-                  "process services are not implemented in this build"};
+  if (request.command == "shell" && !request.flag("c") &&
+      (request.machine() || !request.terminal_allowed))
+    throw Failure{2, "USAGE",
+                  "interactive shell requires a foreground terminal; use -c"};
 }
 static Execution execute_impl(const Request& request, const EventSink& event) {
+  if (request.command == "shell") {
+    auto runtime = environment("TMUX_WORKSPACE_TMUXP");
+    if (runtime.empty())
+      runtime = "tmuxp";
+    ChildOutput version;
+    try {
+      version = run_child({runtime, "--color", "never", "--version"});
+    } catch (const Failure&) {
+      throw Failure{1, "COMPATIBILITY_RUNTIME",
+                    "shell requires tmuxp 1.74.0; install it or set "
+                    "TMUX_WORKSPACE_TMUXP to its executable"};
+    }
+    if (version.code >= 128)
+      throw Failure{version.code, "INTERRUPTED", "shell version check interrupted"};
+    if (version.code != 0 || !version.out.starts_with("tmuxp 1.74.0, libtmux "))
+      throw Failure{1, "COMPATIBILITY_RUNTIME", "shell requires tmuxp 1.74.0"};
+    std::vector<std::string> arguments{
+        runtime, "--color",
+        request.machine() ? "never" : request.value("color", "auto")};
+    if (request.flag("log-level")) {
+      arguments.push_back("--log-level");
+      arguments.push_back(request.value("log-level"));
+    }
+    arguments.push_back("shell");
+    if (request.flag("S")) {
+      arguments.push_back("-S");
+      arguments.push_back(request.value("S"));
+    } else if (request.flag("L")) {
+      arguments.push_back("-L");
+      arguments.push_back(request.value("L"));
+    }
+    for (const auto* name :
+         {"best", "pdb", "code", "ptipython", "ptpython", "ipython", "bpython"})
+      if (request.flag(name))
+        arguments.push_back("--" + std::string{name});
+    arguments.insert(arguments.end(), request.shell_flags.begin(),
+                     request.shell_flags.end());
+    if (request.flag("c")) {
+      arguments.push_back("-c=" + request.value("c"));
+    }
+    if (request.flag("session")) {
+      arguments.push_back("--");
+      arguments.push_back(request.value("session"));
+      if (request.flag("window"))
+        arguments.push_back(request.value("window"));
+    }
+    event("started", {{"runtime", "tmuxp 1.74.0"}});
+    Json result{{"schema_version", 1},
+                {"command", "shell"},
+                {"runtime", "tmuxp 1.74.0"},
+                {"errors", Json::array()}};
+    try {
+      const auto child = run_child(
+          arguments, {.terminal = !request.flag("c"),
+                      .terminal_required = !request.flag("c"),
+                      .timeout = std::nullopt,
+                      .output = [&](std::string_view stream, std::string_view data) {
+                        event("script-output", {{"stream", stream}, {"text", data}});
+                      }});
+      result["exit_code"] = child.code;
+      result["script_output"] = child.value();
+    } catch (const Failure& error) {
+      result["exit_code"] = error.exit_code;
+      result["script_output"] = error.child_output;
+      result["errors"].push_back({{"code", error.code}, {"message", error.what()}});
+    }
+    result["status"] = result.at("exit_code") == 0 ? "ok" : "error";
+    return {.value = std::move(result)};
+  }
   if (request.command == "edit") {
     const auto path = resolve(request.value("workspace-file"));
     const auto visual = environment("VISUAL"), editor = environment("EDITOR");
@@ -1297,7 +1367,7 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
   throw Failure{1, "FEATURE_UNAVAILABLE", "command is not implemented"};
 }
 Execution execute(const Request& request, const EventSink& event) {
-  if (request.command == "load")
+  if (request.command == "load" || request.command == "shell")
     return with_interrupts([&] { return execute_impl(request, event); });
   return execute_impl(request, event);
 }
@@ -1314,6 +1384,8 @@ std::string human_result(const Request& request, const Json& result, bool colour
   }
   if (request.command == "edit")
     return result.at("stdout").get<std::string>();
+  if (request.command == "shell")
+    return {};
   if (request.command == "ls" || request.command == "search") {
     const auto& rows = request.command == "ls" ? result.at("workspaces") : result;
     const auto write = [&](const Json& row, std::string_view branch,
