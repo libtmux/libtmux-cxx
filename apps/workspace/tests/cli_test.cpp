@@ -792,7 +792,8 @@ TEST(WorkspaceCli, ImportTeamocilPreservesModernPaneCommandsAndWindowSettings) {
       << "name: imported\nwindows:\n"
          "  - name: editor\n    focus: true\n"
          "    options: {'@import-source': teamocil}\n"
-         "    panes:\n      - commands: [cd /tmp, printf ready]\n        focus: true\n";
+         "    panes:\n      - commands: [cd /tmp, printf ready, 'echo <%= literal "
+         "%>']\n        focus: true\n";
   const auto imported = invoke({"import", "teamocil", "team.yml", "--json"});
   ASSERT_EQ(imported.code, 0) << imported.err;
   const auto parsed = libtmux::workspace::parse_tmuxp(imported.out);
@@ -806,7 +807,10 @@ TEST(WorkspaceCli, ImportTeamocilPreservesModernPaneCommandsAndWindowSettings) {
   ASSERT_EQ(window.panes.size(), 1U);
   EXPECT_TRUE(window.panes[0].focus);
   ASSERT_EQ(window.panes[0].shell_commands.size(), 1U);
-  EXPECT_EQ(window.panes[0].shell_commands[0].text, "cd /tmp; printf ready");
+  // Teamocil evaluates no templates, so this markup is ordinary text and
+  // must survive the import.
+  EXPECT_EQ(window.panes[0].shell_commands[0].text,
+            "cd /tmp; printf ready; echo <%= literal %>");
 }
 
 TEST(WorkspaceCli, ImportTmuxinatorKeepsWindowCommandArraysInOnePane) {
@@ -833,6 +837,9 @@ TEST(WorkspaceCli, ImportRefusesUnsupportedBehaviourBeforeSaving) {
             "panes[0]"},
            {"name: imported\nroot: '<%= ENV[\"ROOT\"] %>'\nwindows: [{editor: null}]\n",
             "ERB"},
+           {"name: imported\nwindows: [{editor: 'echo <%= dynamic_command %>'}]\n",
+            "ERB"},
+           {"name: imported\nwindows: [{'<%= dynamic_window %>': null}]\n", "ERB"},
            {"name: imported\nstartup_window: editor\nwindows: [{editor: null}]\n",
             "startup_window"}}) {
     std::ofstream{"project.yml"} << source;
