@@ -106,10 +106,9 @@ and custom builders remain unsupported and are rejected.
 
 Conversion preserves unknown document fields. Human conversion previews by
 default; `--yes` saves beside the source, and `--save-to` names a destination.
-Import currently covers names, directories, panes, pre-commands and layouts;
-additional importer fields still
-need implementation. Capture records current pane commands, directories,
-window names, indexes, focus and layouts. It warns that original arguments,
+Import translates supported Teamocil and tmuxinator settings and refuses
+unsupported behaviour before saving. Capture records current pane commands,
+directories, window names, indexes, focus and layouts. It warns that arguments,
 history, scripts and plugins cannot be recovered. This build omits environment
 and options from captured documents.
 
@@ -132,6 +131,50 @@ Invalid destinations fail before backend mutation. A later write failure
 disables that file and emits one optional warning after primary output checks.
 It preserves child status, cleanup and terminal handoff. A failed write can
 leave an incomplete final log record.
+
+## Importing workspaces
+
+Import validates the source and translated workspace before previewing or
+saving. Unsupported fields are reported by source path. An existing destination
+requires `--force`; a refused import leaves it intact.
+
+```console
+$ tmux-workspace import teamocil team.yml --save-to team.json
+```
+
+```console
+$ tmux-workspace import tmuxinator project.yml --save-to project.json
+```
+
+Both formats support session names, roots, windows, pane commands and layouts.
+
+- Teamocil preserves window options and window/pane focus. Pane `commands`
+  arrays form one semicolon-joined shell input. The legacy `session` wrapper,
+  `splits` and `cmd` spellings are accepted.
+- Tmuxinator window command arrays run sequentially in one pane; explicit
+  panes may each contain a command array. `pre_window`, window `pre` and
+  `synchronize: after` are supported.
+
+Both accept `project_name`, `project_root` and `tabs` aliases. An omitted
+session name uses the source filename stem. Null aliases fall back to the
+other spelling; conflicting non-null values are refused. Command text
+must be strings; tmuxinator command arrays may also contain null entries.
+Numeric or boolean values are not converted into executable text.
+`pre_window` arrays join with `; `; window `pre` arrays join with ` && ` to
+retain short-circuit behaviour. Nonempty window `pre` requires explicit panes.
+Teamocil retains the first true focus flag in each window and session.
+
+Relative project roots and Teamocil window roots resolve against the directory
+where import runs. Tmuxinator window roots resolve against the project root.
+Saved paths are absolute, so moving the imported file does not change them.
+Dollar expansion and `~user` path spellings are refused because native workspace
+loading uses different expansion rules.
+
+ERB templates, host lifecycle hooks, named pane titles, startup selectors and
+endpoint/attachment settings are unsupported. Imports do not execute Ruby.
+Synchronization before pane commands is refused: this builder creates all panes
+before sending commands, which changes broadcast recipients. Disabled Teamocil
+`synchronize-panes` options and tmuxinator `synchronize: after` are supported.
 
 ## Before scripts
 

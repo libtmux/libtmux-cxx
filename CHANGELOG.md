@@ -27,6 +27,8 @@ was recorded as it landed.
   or exited daemons use the selected client version. (#17)
 - Add Bash, Zsh and Fish completion for commands, flags, enumerated values and
   file paths. Generate scripts with `--generate-completion`. (#17)
+- Preserve native Teamocil and tmuxinator command grouping, directories, focus
+  and options during import. Refuse unsupported behaviour before saving. (#17)
 
 ## 0.1.0-alpha.8 (2026-09-12)
 
