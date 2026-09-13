@@ -458,6 +458,27 @@ Server start_endpoint(const Request& request, Bootstrap& bootstrap) {
     throw;
   }
 }
+Json capture_options(const Server& server, std::string target, bool window = false) {
+  CommandRequest command{"show-options"};
+  if (window)
+    command.push_back("-w");
+  command.push_back("-t");
+  command.push_back(std::move(target));
+  const auto reply = server.run(command);
+  if (!reply)
+    throw Failure{1, "CAPTURE_FAILED", reply.error().diagnostic};
+  Json options = Json::object();
+  for (const auto& entry : parse_options(*reply)) {
+    std::string name = entry.name;
+    if (entry.index)
+      name += "[" + std::to_string(*entry.index) + "]";
+    // Without -A, a trailing asterisk is part of a local user option's name.
+    if (entry.inherited)
+      name += '*';
+    options[name] = entry.value;
+  }
+  return options;
+}
 Json capture(const Request& request) {
   const auto server = endpoint(request);
   const auto name = request.value("session");
@@ -469,7 +490,9 @@ Json capture(const Request& request) {
   const auto windows = session->windows();
   if (!windows)
     throw Failure{1, "CAPTURE_FAILED", windows.error().diagnostic};
-  Json document{{"session_name", session->name()}, {"windows", Json::array()}};
+  Json document{{"session_name", session->name()},
+                {"options", capture_options(server, std::string{session->id()})},
+                {"windows", Json::array()}};
   for (const auto& window : *windows) {
     const auto panes = window.panes();
     if (!panes)
@@ -479,6 +502,13 @@ Json capture(const Request& request) {
               {"layout", window.layout()},
               {"focus", window.active()},
               {"panes", Json::array()}};
+    auto options = capture_options(
+        server, std::string{session->id()} + ":" + std::string{window.id()}, true);
+    if (options.contains("synchronize-panes")) {
+      item["options_after"] = {{"synchronize-panes", options["synchronize-panes"]}};
+      options.erase("synchronize-panes");
+    }
+    item["options"] = std::move(options);
     for (const auto& pane : *panes) {
       Json commands = Json::array();
       const std::string command{pane.command()};

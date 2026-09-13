@@ -903,6 +903,120 @@ TEST(WorkspaceCliTmux, NativeLoadCaptureAndConversionRoundTrip) {
   EXPECT_GT(sequence, 2U);
 }
 
+TEST(WorkspaceCliTmux, CaptureReloadsExplicitLocalOptions) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("capture")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value());
+  ASSERT_TRUE(server->set_global_option("@inherited", "global only").has_value());
+  const auto source = server->new_session("capture-original");
+  ASSERT_TRUE(source.has_value());
+  const auto window = source->active_window();
+  ASSERT_TRUE(window.has_value());
+  const std::string value = "quotes ' \" \\ and = equals\na second line\twith tabs";
+  ASSERT_TRUE(source->set_option("status", "off").has_value());
+  ASSERT_TRUE(source->set_option("@literal*", value).has_value());
+  ASSERT_TRUE(source->set_option("status-format[3]", value).has_value());
+  ASSERT_TRUE(window->set_option("automatic-rename", "off").has_value());
+  ASSERT_TRUE(window->set_option("@window-note", value).has_value());
+  ASSERT_TRUE(window->set_option("synchronize-panes", "on").has_value());
+  const auto decoy = server->new_session("capture-original-longer");
+  ASSERT_TRUE(decoy.has_value());
+  ASSERT_TRUE(decoy->set_option("status", "on").has_value());
+
+  const auto captured = invoke(
+      {"freeze", "capture-original", "-S", fixture->socket_path().string(), "--json"});
+  ASSERT_EQ(captured.code, 0) << captured.err;
+  auto document = Json::parse(captured.out);
+  const auto options = document.value("options", Json::object());
+  EXPECT_EQ(options.value("status", "missing"), "off");
+  EXPECT_EQ(options.value("@literal*", "missing"), value);
+  EXPECT_EQ(options.value("status-format[3]", "missing"), value);
+  EXPECT_FALSE(options.contains("@inherited"));
+  EXPECT_FALSE(document.contains("global_options"));
+  const auto window_options =
+      document.at("windows")[0].value("options", Json::object());
+  EXPECT_EQ(window_options.value("automatic-rename", "missing"), "off");
+  EXPECT_EQ(window_options.value("@window-note", "missing"), value);
+  EXPECT_FALSE(window_options.contains("synchronize-panes"));
+  EXPECT_EQ(document.at("windows")[0]
+                .value("options_after", Json::object())
+                .value("synchronize-panes", "missing"),
+            "on");
+  const auto by_id = invoke({"freeze", std::string{source->id()}, "-S",
+                             fixture->socket_path().string(), "--json"});
+  ASSERT_EQ(by_id.code, 0) << by_id.err;
+  EXPECT_EQ(Json::parse(by_id.out), document);
+
+  document["session_name"] = "capture-restored";
+  const auto file = fixture->socket_path().parent_path() / "captured.json";
+  std::ofstream{file} << document.dump();
+  const auto loaded = invoke(
+      {"load", file.string(), "-d", "-S", fixture->socket_path().string(), "--json"});
+  ASSERT_EQ(loaded.code, 0) << loaded.err << loaded.out;
+  const auto restored = server->session("=capture-restored:");
+  ASSERT_TRUE(restored.has_value());
+  const auto restored_window = restored->active_window();
+  ASSERT_TRUE(restored_window.has_value());
+  const auto status = restored->option("status");
+  ASSERT_TRUE(status.has_value());
+  EXPECT_EQ(status->value, "off");
+  EXPECT_FALSE(status->inherited);
+  for (const auto* name : {"@literal*", "status-format[3]"}) {
+    const auto option = restored->option(name);
+    ASSERT_TRUE(option.has_value()) << name;
+    EXPECT_EQ(option->value, value);
+    EXPECT_FALSE(option->inherited);
+  }
+  const auto note = restored_window->option("@window-note");
+  ASSERT_TRUE(note.has_value());
+  EXPECT_EQ(note->value, value);
+  const auto synchronized = restored_window->option("synchronize-panes");
+  ASSERT_TRUE(synchronized.has_value());
+  EXPECT_EQ(synchronized->value, "on");
+  EXPECT_TRUE(fixture->is_alive());
+}
+
+TEST(WorkspaceCliTmux, CaptureOptionReadFailureDoesNotPublish) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("capfail")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto shim = fixture->socket_path().parent_path() / "shim";
+  std::filesystem::create_directory(shim);
+  const auto executable = shim / "tmux";
+  std::ofstream{executable}
+      << "#!/bin/sh\nexport PATH=\"$CXX_ORIGINAL_PATH\"\n"
+         "show=no\nwindow=no\nfor argument do\n"
+         "[ \"$argument\" = show-options ] && show=yes\n"
+         "[ \"$argument\" = -w ] && window=yes\ndone\n"
+         "if [ \"$show\" = yes ] && [ \"$window\" = \"$CXX_CAPTURE_WINDOW\" ]; then\n"
+         "printf 'capture option read refused\\n' >&2\nexit 1\nfi\n"
+         "exec tmux \"$@\"\n";
+  std::filesystem::permissions(executable, std::filesystem::perms::owner_all);
+  const auto destination = fixture->socket_path().parent_path() / "capture.json";
+  const std::string previous_path = std::getenv("PATH");
+  const libtmux::test::EnvironmentGuard original{"CXX_ORIGINAL_PATH", previous_path};
+  const libtmux::test::EnvironmentGuard path{"PATH",
+                                             shim.string() + ":" + previous_path};
+  for (const auto* scope : {"no", "yes"}) {
+    SCOPED_TRACE(scope);
+    const libtmux::test::EnvironmentGuard window_scope{"CXX_CAPTURE_WINDOW", scope};
+    const auto captured = invoke({"freeze", std::string{fixture->session_name()}, "-S",
+                                  fixture->socket_path().string(), "--json",
+                                  "--save-to", destination.string()});
+    EXPECT_EQ(captured.code, 1);
+    EXPECT_TRUE(captured.out.empty());
+    EXPECT_FALSE(std::filesystem::exists(destination));
+    ASSERT_FALSE(captured.err.empty());
+    const auto error = Json::parse(captured.err);
+    EXPECT_EQ(error.at("code"), "CAPTURE_FAILED");
+    EXPECT_NE(
+        error.at("message").get<std::string>().find("capture option read refused"),
+        std::string::npos);
+  }
+}
+
 TEST(WorkspaceCliTmux, AppendKeepsItsBorrowedSessionAndReportsRetainedWindows) {
   auto fixture = libtmux::test::ScopedTmuxServer::start(
       {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-append")});
