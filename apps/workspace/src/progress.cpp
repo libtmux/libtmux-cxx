@@ -5,6 +5,7 @@
 #include <cwchar>
 #include <iostream>
 #include <sys/ioctl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 namespace libtmux::workspace::cli {
@@ -12,6 +13,13 @@ namespace {
 std::string environment(const char* name) {
   const auto* value = std::getenv(name);
   return value ? value : "";
+}
+bool shared_output_terminal() {
+  struct stat output {};
+  struct stat errors {};
+  return ::isatty(STDOUT_FILENO) != 0 && ::fstat(STDOUT_FILENO, &output) == 0 &&
+         ::fstat(STDERR_FILENO, &errors) == 0 && output.st_dev == errors.st_dev &&
+         output.st_ino == errors.st_ino;
 }
 std::string fraction(std::size_t done, std::size_t total) {
   return std::to_string(done) + "/" + std::to_string(total);
@@ -65,7 +73,7 @@ ProgressTerminal progress_terminal(const Request& request, std::ostream& output,
                 return std::pair{static_cast<int>(size.ws_col),
                                  static_cast<int>(size.ws_row)};
               },
-          .stdout_terminal = &output == &std::cout && ::isatty(STDOUT_FILENO) != 0,
+          .stdout_terminal = &output == &std::cout && shared_output_terminal(),
           .colour =
               environment("NO_COLOR").empty() && request.value("color") != "never"};
 }

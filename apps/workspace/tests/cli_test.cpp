@@ -1560,9 +1560,10 @@ class ProgressChild {
   bool interrupted_{};
 
 public:
+  enum class Output { pipe, shared_terminal, distinct_terminal };
   std::string out, err;
   explicit ProgressChild(const std::vector<std::string>& arguments,
-                         bool stdout_terminal = false) {
+                         Output output = Output::pipe) {
     terminal_ = ::posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC);
     if (terminal_ < 0 || ::grantpt(terminal_) != 0 || ::unlockpt(terminal_) != 0)
       throw std::runtime_error{"cannot open progress PTY"};
@@ -1570,6 +1571,15 @@ public:
     int pipe[2];
     if (slave < 0 || ::pipe(pipe) != 0)
       throw std::runtime_error{"cannot open progress output"};
+    int output_slave = -1;
+    if (output == Output::distinct_terminal) {
+      output_ = ::posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC);
+      if (output_ < 0 || ::grantpt(output_) != 0 || ::unlockpt(output_) != 0)
+        throw std::runtime_error{"cannot open distinct stdout PTY"};
+      output_slave = ::open(::ptsname(output_), O_RDWR | O_NOCTTY | O_CLOEXEC);
+      if (output_slave < 0)
+        throw std::runtime_error{"cannot open distinct stdout slave"};
+    }
     winsize size{12, 100, 0, 0};
     (void)::ioctl(terminal_, TIOCSWINSZ, &size);
     std::vector<std::string> command{LIBTMUX_WORKSPACE_BINARY};
@@ -1592,18 +1602,30 @@ public:
       (void)::setsid();
       (void)::ioctl(slave, TIOCSCTTY, 0);
       (void)::dup2(slave, STDIN_FILENO);
-      (void)::dup2(stdout_terminal ? slave : pipe[1], STDOUT_FILENO);
+      (void)::dup2(output == Output::shared_terminal     ? slave
+                   : output == Output::distinct_terminal ? output_slave
+                                                         : pipe[1],
+                   STDOUT_FILENO);
       (void)::dup2(slave, STDERR_FILENO);
       ::close(slave);
       ::close(pipe[0]);
       ::close(pipe[1]);
       ::close(terminal_);
+      if (output_slave >= 0)
+        ::close(output_slave);
+      if (output_ >= 0)
+        ::close(output_);
       ::execve(argv.front(), argv.data(), envp.data());
       ::_exit(127);
     }
     ::close(slave);
     ::close(pipe[1]);
-    output_ = pipe[0];
+    if (output_slave >= 0) {
+      ::close(output_slave);
+      ::close(pipe[0]);
+    } else {
+      output_ = pipe[0];
+    }
     if (process_ < 0)
       throw std::runtime_error{"cannot fork progress CLI"};
     (void)::fcntl(output_, F_SETFL, O_NONBLOCK);
@@ -1704,6 +1726,57 @@ TEST(WorkspaceCliTmux, ProgressUsesStderrAndNeverReplaysRedirectedScriptOutput) 
       EXPECT_NE(child.err.find("FRAME progress 2/2"), std::string::npos);
       EXPECT_EQ(child.err.find("\033[36m"), std::string::npos);
       EXPECT_TRUE(child.err.ends_with("\r\033[J"));
+    }
+  }
+}
+
+TEST(WorkspaceCliTmux, ProgressKeepsStdoutOnItsDesignatedTerminal) {
+  Files files;
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-pg")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value());
+  const auto keeper = server->session(fixture->session_name());
+  ASSERT_TRUE(keeper.has_value());
+  const auto keeper_window = keeper->active_window();
+  ASSERT_TRUE(keeper_window.has_value());
+  std::ofstream{"before.sh"}
+      << "printf 'ROUTED-STDOUT\\n'\nprintf 'ROUTED-STDERR\\n' >&2\n";
+  unsigned sequence{};
+  for (const auto route :
+       {ProgressChild::Output::pipe, ProgressChild::Output::shared_terminal,
+        ProgressChild::Output::distinct_terminal}) {
+    for (const bool enabled : {false, true}) {
+      const auto name = "route" + std::to_string(sequence++);
+      std::ofstream{"config.yaml"} << "session_name: " << name
+                                   << "\nbefore_script: sh before.sh\nwindows: [{}]\n";
+      std::vector<std::string> args{"--color",
+                                    "never",
+                                    "load",
+                                    "config.yaml",
+                                    "-d",
+                                    "-S",
+                                    fixture->socket_path().string()};
+      if (!enabled)
+        args.push_back("--no-progress");
+      ProgressChild child{args, route};
+      ASSERT_EQ(child.wait(), 0) << child.out << child.err;
+      const auto& destination =
+          route == ProgressChild::Output::shared_terminal ? child.err : child.out;
+      const auto marker = destination.find("ROUTED-STDOUT");
+      ASSERT_NE(marker, std::string::npos) << child.out << child.err;
+      if (route != ProgressChild::Output::shared_terminal) {
+        EXPECT_EQ(destination.find("ROUTED-STDOUT", marker + 1), std::string::npos);
+        EXPECT_EQ(child.out.find('\033'), std::string::npos);
+        EXPECT_EQ(child.out.find("Loading workspace:"), std::string::npos);
+      }
+      EXPECT_EQ(child.err.find("Loading workspace:") != std::string::npos, enabled);
+      EXPECT_NE(child.err.find("ROUTED-STDERR"), std::string::npos);
+      const auto retained = keeper_window->refresh();
+      ASSERT_TRUE(retained.has_value());
+      EXPECT_EQ(retained->id(), keeper_window->id());
+      EXPECT_EQ(retained->layout(), keeper_window->layout());
     }
   }
 }
@@ -1881,7 +1954,7 @@ TEST(WorkspaceCliTmux, FailedTerminalLoadRetainsOnlyBoundedScriptContext) {
       << "session_name: failed\nbefore_script: sh before.sh\nwindows: [{}]\n";
   ProgressChild child{{"--color", "never", "load", "config.yaml", "-d", "-S",
                        fixture->socket_path().string(), "--progress-lines", "1"},
-                      true};
+                      ProgressChild::Output::shared_terminal};
   EXPECT_EQ(child.wait(), 1) << child.out << child.err;
   EXPECT_TRUE(child.out.empty());
   const auto cleared = child.err.rfind("\r\033[J");
