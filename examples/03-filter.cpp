@@ -49,16 +49,19 @@ int main() {
       *windows, [](const libtmux::Window& window) { return window.width() > 40; });
   std::printf("%lld window(s) wider than 40 columns\n", static_cast<long long>(wide));
 
-  // Asking for one says which way it went wrong. Both helpers take a named
-  // range: the answer refers into it, so a temporary is a compile error.
-  auto logs = *windows | libtmux::matching(libtmux::window::name == "logs");
-  if (const auto only = libtmux::exactly_one(logs); only.has_value()) {
-    std::printf("exactly one logs window: %s\n", std::string{only->get().id()}.c_str());
+  // exactly_one_owned copies the match out, so it accepts this temporary view
+  // directly; exactly_one below needs a name to refer into instead.
+  if (const auto only = libtmux::exactly_one_owned(
+          *windows | libtmux::matching(libtmux::window::name == "logs"));
+      only.has_value()) {
+    std::printf("exactly one logs window: %s\n", std::string{only->id()}.c_str());
   } else {
     std::printf("no single logs window: %s\n",
                 std::string{libtmux::to_string(only.error())}.c_str());
   }
 
+  // Asking for one says which way it went wrong. exactly_one takes a named
+  // range: the answer refers into it, so a temporary is a compile error.
   auto missing = *windows | libtmux::matching(libtmux::window::name == "absent");
   const auto none = libtmux::exactly_one(missing);
   std::printf("looking for one that is not there: %s\n",

@@ -42,6 +42,9 @@ void uses() {
   auto named = rows | libtmux::matching(libtmux::window::name == "editor");
   (void)libtmux::exactly_one(named);
   (void)libtmux::first(named);
+  (void)libtmux::first_owned(listed());
+  (void)libtmux::exactly_one_owned(
+      listed() | libtmux::matching(libtmux::window::name == "editor"));
 
   // A flag field is a predicate on its own, and compares against a bool.
   (void)libtmux::matching(libtmux::window::active);

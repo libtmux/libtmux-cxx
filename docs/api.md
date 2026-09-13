@@ -4562,6 +4562,8 @@ Exception-free cardinality over snapshot views.  Callers ask for one entity far 
   - [`ReferenceRange`](#libtmux-cardinality-hpp-free-symbols-referencerange)
   - [`first`](#libtmux-cardinality-hpp-free-symbols-first)
   - [`exactly_one`](#libtmux-cardinality-hpp-free-symbols-exactly-one)
+  - [`first_owned`](#libtmux-cardinality-hpp-free-symbols-first-owned)
+  - [`exactly_one_owned`](#libtmux-cardinality-hpp-free-symbols-exactly-one-owned)
 
 <a id="libtmux-cardinality-hpp-cardinalityerror"></a>
 ### `CardinalityError`
@@ -4616,6 +4618,22 @@ template <ReferenceRange Range> [[nodiscard]] std::optional<Referenced<Range>> f
 template <ReferenceRange Range> [[nodiscard]] expected<Referenced<Range>, CardinalityError> exactly_one(Range& range);
 ```
 `exactly_one` states that several is a caller error, and says which one.
+
+<a id="libtmux-cardinality-hpp-free-symbols-first-owned"></a>
+#### `first_owned`
+
+```cpp
+template <std::ranges::input_range Range> requires std::constructible_from<std::ranges::range_value_t<Range>, std::ranges::range_reference_t<Range>> [[nodiscard]] std::optional<std::ranges::range_value_t<Range>> first_owned(Range&& range);
+```
+Copies referenced elements; moves when an iterator yields an rvalue. A temporary view over an lvalue container therefore leaves that container intact. Owning the element does not extend storage borrowed by its own members.
+
+<a id="libtmux-cardinality-hpp-free-symbols-exactly-one-owned"></a>
+#### `exactly_one_owned`
+
+```cpp
+template <std::ranges::input_range Range> requires std::constructible_from<std::ranges::range_value_t<Range>, std::ranges::range_reference_t<Range>> && std::move_constructible<std::ranges::range_value_t<Range>> [[nodiscard]] expected<std::ranges::range_value_t<Range>, CardinalityError> exactly_one_owned(Range&& range);
+```
+A forward range's iterator can be copied and advanced independently of the original, so a second element rules the range out before the first is materialized. A single-pass range (a stream, a generator) shares mutable state between copies instead, so it has no way to look ahead: the first element must be materialized before the range can be advanced to check for a second, and an error there still consumes it.
 
 <a id="libtmux-delivery-hpp"></a>
 ## `libtmux/delivery.hpp`
