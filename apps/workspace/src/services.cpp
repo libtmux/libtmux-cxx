@@ -68,6 +68,29 @@ std::string private_path(const fs::path& path) {
     value.replace(0, home.size(), "~");
   return value;
 }
+std::string visible_controls(std::string_view text) {
+  constexpr std::string_view hex = "0123456789abcdef";
+  std::string result;
+  for (std::size_t index = 0; index < text.size(); ++index) {
+    auto byte = static_cast<unsigned char>(text[index]);
+    if (byte == 0xc2 && index + 1 < text.size() &&
+        static_cast<unsigned char>(text[index + 1]) >= 0x80 &&
+        static_cast<unsigned char>(text[index + 1]) <= 0x9f)
+      byte = static_cast<unsigned char>(text[++index]);
+    else if (byte != 0x7f) {
+      result += text[index];
+      continue;
+    }
+    result += "\\u00";
+    result += hex[byte >> 4];
+    result += hex[byte & 0xf];
+  }
+  return result;
+}
+std::string human_text(const std::string& value) {
+  const auto quoted = encoded(Json(value));
+  return visible_controls(std::string_view{quoted}.substr(1, quoted.size() - 2));
+}
 Json from_yaml(const YAML::Node& node, int depth = 0) {
   if (depth > 64)
     throw Failure{1, "INVALID_CONFIG", "workspace nesting exceeds 64 levels"};
@@ -1281,7 +1304,8 @@ Execution execute(const Request& request, const EventSink& event) {
 
 std::string human_result(const Request& request, const Json& result, bool colour) {
   const auto role = [colour](const std::string& code, const std::string& value) {
-    return colour ? "\033[" + code + "m" + value + "\033[0m" : value;
+    const auto text = human_text(value);
+    return colour ? "\033[" + code + "m" + text + "\033[0m" : text;
   };
   std::ostringstream output;
   if (result.is_object() && result.value("preview", false)) {
@@ -1292,9 +1316,42 @@ std::string human_result(const Request& request, const Json& result, bool colour
     return result.at("stdout").get<std::string>();
   if (request.command == "ls" || request.command == "search") {
     const auto& rows = request.command == "ls" ? result.at("workspaces") : result;
-    for (const auto& row : rows)
-      output << role("1;35", row.at("name").get<std::string>()) << "  "
+    const auto write = [&](const Json& row, std::string_view branch,
+                           std::string_view continuation) {
+      output << branch << role("1;35", row.at("name").get<std::string>()) << "  "
              << role("36", row.at("path").get<std::string>()) << '\n';
+      if (request.command == "ls" && request.flag("full")) {
+        std::istringstream document{visible_controls(encoded(row.at("config"), 2))};
+        for (std::string line; std::getline(document, line);)
+          output << continuation << "  " << line << '\n';
+      }
+    };
+    if (request.command == "ls" && request.flag("tree")) {
+      struct Group {
+        std::string directory;
+        std::vector<const Json*> rows;
+      };
+      std::vector<Group> groups;
+      for (const auto& row : rows) {
+        const auto directory =
+            fs::path{row.at("path").get<std::string>()}.parent_path().string();
+        auto group = std::ranges::find(groups, directory, &Group::directory);
+        if (group == groups.end()) {
+          groups.push_back({directory, {&row}});
+        } else
+          group->rows.push_back(&row);
+      }
+      for (const auto& group : groups) {
+        output << role("36", group.directory) << '\n';
+        for (std::size_t index = 0; index < group.rows.size(); ++index) {
+          const bool last = index + 1 == group.rows.size();
+          write(*group.rows[index], last ? "└── " : "├── ", last ? "    " : "│   ");
+        }
+      }
+    } else {
+      for (const auto& row : rows)
+        write(row, {}, {});
+    }
   } else if (request.command == "load") {
     for (const auto& item : result.at("results"))
       output << role("32", item.at("action").get<std::string>()) << ' '
