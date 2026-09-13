@@ -9,6 +9,45 @@ was recorded as it landed.
 
 ## Unreleased
 
+### Asynchronous commands
+
+- Add `CommandRuntime::wait_ready` and `wait_ready_for`, which block for
+  observer readiness without dispatching callbacks. Readiness, wait timeout
+  and runtime closure have distinct results.
+- Add non-consuming `CommandOperation::wait_for` and `wait_until`. Expiring a
+  wait leaves the command, result handle and admission slot intact; the
+  command's own deadline remains independent.
+- Add stop-token overloads of operation waits when the standard library
+  defines `__cpp_lib_jthread`. Stop requests use transport cancellation and
+  preserve delivery diagnostics. The pinned libc++ 18 build does not enable
+  experimental standard-library features implicitly.
+
+### Queries
+
+- Add `first_owned` and `exactly_one_owned` alongside borrowed cardinality.
+  They retain values from temporary or single-pass ranges, copying ordinary
+  references and moving from iterators that yield ownership.
+
+### Server
+
+- Socket-path factories accept `std::filesystem::path` directly. Existing
+  strings, string views and literals remain unambiguous, and paths retain
+  byte-length validation.
+
+### Control mode
+
+- Add `Connection::mute_pane_output` and `resume_pane_output`. The existing
+  `set_pane_output` boolean form remains available.
+- Resuming pane output now clears both mute and pause. Previously,
+  `set_pane_output(pane, true, deadline)` left a muted pane silent because it
+  only cleared tmux's pause flag.
+
+### Testing
+
+- Add the `libtmux::testing` namespace alias to match the installed component
+  and CMake target. Existing `libtmux::test` types and symbols retain their
+  identity.
+
 ## 0.1.0-alpha.8 (2026-09-12)
 
 This alpha reaches the standard library from the typed surface. An entity and a
