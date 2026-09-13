@@ -25,6 +25,7 @@
 #include "libtmux/server.hpp"
 #include "libtmux/testing/environment_guard.hpp"
 #include "libtmux/testing/scoped_server.hpp"
+#include "libtmux_consumers/tmuxp.hpp"
 
 namespace {
 using Json = nlohmann::json;
@@ -573,6 +574,185 @@ TEST(WorkspaceCli, FileServicesKeepTypesAndUseNativeWholeWordMatching) {
   EXPECT_EQ(Json::parse(debug.out).at("port"), "cxx");
 }
 
+TEST(WorkspaceCli, ImportTeamocilPreservesModernPaneCommandsAndWindowSettings) {
+  Files files;
+  std::ofstream{"team.yml"}
+      << "name: imported\nwindows:\n"
+         "  - name: editor\n    focus: true\n"
+         "    options: {'@import-source': teamocil}\n"
+         "    panes:\n      - commands: [cd /tmp, printf ready]\n        focus: true\n";
+  const auto imported = invoke({"import", "teamocil", "team.yml", "--json"});
+  ASSERT_EQ(imported.code, 0) << imported.err;
+  const auto parsed = libtmux::workspace::parse_tmuxp(imported.out);
+  ASSERT_TRUE(parsed.has_value()) << parsed.error().where << parsed.error().reason;
+  ASSERT_EQ(parsed->windows.size(), 1U);
+  const auto& window = parsed->windows[0];
+  EXPECT_TRUE(window.focus);
+  ASSERT_EQ(window.options.size(), 1U);
+  EXPECT_EQ(window.options[0],
+            (std::pair<std::string, std::string>{"@import-source", "teamocil"}));
+  ASSERT_EQ(window.panes.size(), 1U);
+  EXPECT_TRUE(window.panes[0].focus);
+  ASSERT_EQ(window.panes[0].shell_commands.size(), 1U);
+  EXPECT_EQ(window.panes[0].shell_commands[0].text, "cd /tmp; printf ready");
+}
+
+TEST(WorkspaceCli, ImportTmuxinatorKeepsWindowCommandArraysInOnePane) {
+  Files files;
+  std::ofstream{"project.yml"}
+      << "name: imported\nwindows: [{editor: [cd /tmp, printf ready]}]\n";
+  const auto imported = invoke({"import", "tmuxinator", "project.yml", "--json"});
+  ASSERT_EQ(imported.code, 0) << imported.err;
+  const auto parsed = libtmux::workspace::parse_tmuxp(imported.out);
+  ASSERT_TRUE(parsed.has_value()) << parsed.error().where << parsed.error().reason;
+  ASSERT_EQ(parsed->windows.size(), 1U);
+  ASSERT_EQ(parsed->windows[0].panes.size(), 1U);
+  const auto& commands = parsed->windows[0].panes[0].shell_commands;
+  ASSERT_EQ(commands.size(), 2U);
+  EXPECT_EQ(commands[0].text, "cd /tmp");
+  EXPECT_EQ(commands[1].text, "printf ready");
+}
+
+TEST(WorkspaceCli, ImportRefusesUnsupportedBehaviourBeforeSaving) {
+  Files files;
+  for (const auto& [source, field] : std::vector<std::pair<std::string, std::string>>{
+           {"name: imported\npre: echo host\nwindows: [{editor: echo pane}]\n", "pre"},
+           {"name: imported\nwindows: [{editor: {panes: [{title: [echo pane]}]}}]\n",
+            "panes[0]"},
+           {"name: imported\nroot: '<%= ENV[\"ROOT\"] %>'\nwindows: [{editor: null}]\n",
+            "ERB"},
+           {"name: imported\nstartup_window: editor\nwindows: [{editor: null}]\n",
+            "startup_window"}}) {
+    std::ofstream{"project.yml"} << source;
+    std::ofstream{"saved.json"} << "preserved";
+    const auto result = invoke({"import", "tmuxinator", "project.yml", "--save-to",
+                                "saved.json", "--force", "--json"});
+    EXPECT_EQ(result.code, 1) << result.out << result.err;
+    EXPECT_TRUE(result.out.empty());
+    EXPECT_NE(result.err.find(field), std::string::npos) << result.err;
+    std::ifstream saved{"saved.json"};
+    EXPECT_EQ((std::string{std::istreambuf_iterator<char>{saved}, {}}), "preserved");
+  }
+}
+
+TEST(WorkspaceCli, ImportPreservesCommandGroupingAndSourceDirectory) {
+  Files files;
+  std::filesystem::create_directory("configs");
+  std::ofstream{"configs/project.yml"}
+      << "name: imported\nroot: project\npre_window: [cd /tmp, printf global]\n"
+         "windows: [{editor: {root: src, pre: ['false', printf local], panes: [echo "
+         "pane]}}]\n";
+  const auto result = invoke({"import", "tmuxinator", "configs/project.yml", "--json"});
+  ASSERT_EQ(result.code, 0) << result.err;
+  const auto document = Json::parse(result.out);
+  EXPECT_EQ(document.at("start_directory"), (files.directory / "project").string());
+  EXPECT_EQ(document.at("shell_command_before"), "cd /tmp; printf global");
+  EXPECT_EQ(document.at("windows")[0].at("start_directory"),
+            (files.directory / "project/src").string());
+  EXPECT_EQ(document.at("windows")[0].at("shell_command_before"),
+            "false && printf local");
+}
+
+TEST(WorkspaceCli, ImportTeamocilUsesTheFilenameForAnUnnamedSession) {
+  Files files;
+  std::ofstream{"team.yml"} << "windows: [{name: editor, panes: [echo ready]}]\n";
+  const auto result = invoke({"import", "teamocil", "team.yml", "--json"});
+  ASSERT_EQ(result.code, 0) << result.err;
+  const auto parsed = libtmux::workspace::parse_tmuxp(result.out);
+  ASSERT_TRUE(parsed.has_value()) << parsed.error().where << parsed.error().reason;
+  EXPECT_EQ(parsed->session_name, "team");
+}
+
+TEST(WorkspaceCli, ImportRefusesWindowPreWithoutExplicitPanesBeforeSaving) {
+  Files files;
+  for (const auto* panes : {"", ", panes: null", ", panes: []"}) {
+    std::ofstream{"project.yml"}
+        << "name: imported\nwindows: [{work: {pre: echo unexpected" << panes << "}}]\n";
+    std::ofstream{"saved.json"} << "preserved";
+    const auto result = invoke({"import", "tmuxinator", "project.yml", "--save-to",
+                                "saved.json", "--force", "--json"});
+    EXPECT_EQ(result.code, 1) << panes << result.out << result.err;
+    EXPECT_TRUE(result.out.empty());
+    EXPECT_NE(result.err.find("windows[0].pre"), std::string::npos) << result.err;
+    std::ifstream saved{"saved.json"};
+    EXPECT_EQ((std::string{std::istreambuf_iterator<char>{saved}, {}}), "preserved");
+  }
+}
+
+TEST(WorkspaceCli, ImportTeamocilKeepsTheFirstFocusInEachScope) {
+  Files files;
+  std::ofstream{"team.yml"}
+      << "name: imported\nwindows:\n"
+         "  - name: first\n    focus: true\n"
+         "    panes: [{commands: ':', focus: true}, {commands: ':', focus: true}]\n"
+         "  - name: second\n    focus: true\n"
+         "    panes: [{commands: ':', focus: true}, {commands: ':', focus: true}]\n";
+  const auto result = invoke({"import", "teamocil", "team.yml", "--json"});
+  ASSERT_EQ(result.code, 0) << result.err;
+  const auto parsed = libtmux::workspace::parse_tmuxp(result.out);
+  ASSERT_TRUE(parsed.has_value()) << parsed.error().where << parsed.error().reason;
+  ASSERT_EQ(parsed->windows.size(), 2U);
+  EXPECT_TRUE(parsed->windows[0].focus);
+  EXPECT_FALSE(parsed->windows[1].focus);
+  for (const auto& window : parsed->windows) {
+    ASSERT_EQ(window.panes.size(), 2U);
+    EXPECT_TRUE(window.panes[0].focus);
+    EXPECT_FALSE(window.panes[1].focus);
+  }
+}
+
+TEST(WorkspaceCli, ImportRejectsChangedSynchronizationTimingAndScalarTypes) {
+  Files files;
+  for (const auto& [kind, source] : std::vector<std::pair<std::string, std::string>>{
+           {"tmuxinator",
+            "name: bad\nwindows: [{work: {synchronize: before, panes: [':', ':']}}]\n"},
+           {"teamocil", "name: bad\nwindows: [{name: work, options: "
+                        "{synchronize-panes: true}, panes: [':', ':']}]\n"},
+           {"tmuxinator", "name: 42\nwindows: [{work: ':'}]\n"},
+           {"tmuxinator", "name: bad\nwindows: [{work: 42}]\n"},
+           {"teamocil", "name: bad\nwindows: [{name: 42, panes: [':']}]\n"},
+           {"teamocil",
+            "name: bad\nwindows: [{name: work, panes: [{commands: [true]}]}]\n"},
+           {"teamocil",
+            "name: bad\nwindows: [{name: work, focus: 'true', panes: [':']}]\n"},
+           {"teamocil",
+            "name: bad\nwindows: [{name: work, layout: 42, panes: [':']}]\n"}}) {
+    std::ofstream{"source.yml"} << source;
+    const auto result = invoke({"import", kind, "source.yml", "--json"});
+    EXPECT_EQ(result.code, 1) << source << result.out << result.err;
+    EXPECT_TRUE(result.out.empty());
+    EXPECT_FALSE(result.err.empty());
+  }
+}
+
+TEST(WorkspaceCli, ImportUsesNonNullAliasesAndRefusesConflicts) {
+  Files files;
+  std::ofstream{"source.yml"}
+      << "project_name: null\nname: expected\nproject_root: null\nroot: /tmp\n"
+         "tabs: null\nwindows: [{work: ':'}]\n";
+  const auto accepted = invoke({"import", "tmuxinator", "source.yml", "--json"});
+  ASSERT_EQ(accepted.code, 0) << accepted.err;
+  const auto parsed = libtmux::workspace::parse_tmuxp(accepted.out);
+  ASSERT_TRUE(parsed.has_value()) << parsed.error().where << parsed.error().reason;
+  EXPECT_EQ(parsed->session_name, "expected");
+  EXPECT_EQ(parsed->start_directory, "/tmp");
+  for (const auto& [kind, source] : std::vector<std::pair<std::string, std::string>>{
+           {"tmuxinator", "project_name: one\nname: two\nwindows: [{work: ':'}]\n"},
+           {"tmuxinator",
+            "name: bad\nproject_root: /one\nroot: /two\nwindows: [{work: ':'}]\n"},
+           {"tmuxinator", "name: bad\ntabs: [{old: ':'}]\nwindows: [{new: ':'}]\n"},
+           {"teamocil",
+            "name: bad\nwindows: [{name: work, panes: [':'], splits: [echo wrong]}]\n"},
+           {"teamocil", "name: bad\nwindows: [{name: work, panes: [{commands: [echo "
+                        "one], cmd: echo two}]}]\n"}}) {
+    std::ofstream{"source.yml"} << source;
+    const auto refused = invoke({"import", kind, "source.yml", "--json"});
+    EXPECT_EQ(refused.code, 1) << source << refused.out;
+    EXPECT_TRUE(refused.out.empty());
+    EXPECT_NE(refused.err.find("conflict"), std::string::npos) << refused.err;
+  }
+}
+
 TEST(WorkspaceCli, EditorKeepsQuotedArgumentsAndChildStatus) {
   Files files;
   std::ofstream{"dev.yaml"} << "session_name: editor\nwindows: [{}]\n";
@@ -612,6 +792,66 @@ TEST(WorkspaceCli, EditorLaunchFailureEndsItsNdjsonOperation) {
   EXPECT_EQ(failed.at("sequence"), 2);
   EXPECT_FALSE(static_cast<bool>(std::getline(lines, line)));
   EXPECT_EQ(Json::parse(result.err).at("code"), "PROCESS_FAILED");
+}
+
+TEST(WorkspaceCliTmux, ImportedWorkspacesKeepCommandsFocusAndOptions) {
+  Files files;
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-import")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value());
+  std::ofstream{"teamocil.yml"}
+      << "name: team-native\nwindows:\n"
+         "  - name: work\n    focus: true\n"
+         "    options: {'@import-source': teamocil}\n"
+         "    panes:\n      - commands: ':'\n        focus: true\n      - focus: true\n"
+         "        commands: ['export IMPORT_SEQUENCE=teamocil', 'printf %s "
+         "\"$IMPORT_SEQUENCE\" > teamocil-marker']\n"
+         "  - name: other\n    focus: true\n    panes: [':']\n";
+  std::ofstream{"tmuxinator.yml"}
+      << "name: tmuxinator-native\nwindows:\n"
+         "  - work: ['export IMPORT_SEQUENCE=tmuxinator', 'printf %s "
+         "\"$IMPORT_SEQUENCE\" > tmuxinator-marker']\n";
+  for (const auto* kind : {"teamocil", "tmuxinator"}) {
+    const auto input = std::string{kind} + ".yml";
+    const auto output = std::string{kind} + ".json";
+    const auto imported =
+        invoke({"import", kind, input, "--save-to", output, "--json"});
+    ASSERT_EQ(imported.code, 0) << imported.out << imported.err;
+    const auto loaded =
+        invoke({"load", output, "-d", "-S", fixture->socket_path().string(), "--json"});
+    ASSERT_EQ(loaded.code, 0) << loaded.out << loaded.err;
+    const auto marker = std::string{kind} + "-marker";
+    std::string contents;
+    for (int wait = 0; wait < 300; ++wait) {
+      std::ifstream observed{marker};
+      contents.assign(std::istreambuf_iterator<char>{observed}, {});
+      if (contents == kind)
+        break;
+      ::poll(nullptr, 0, 10);
+    }
+    EXPECT_EQ(contents, kind);
+  }
+  const auto team = server->session("=team-native:");
+  ASSERT_TRUE(team.has_value());
+  const auto active = team->active_window();
+  ASSERT_TRUE(active.has_value());
+  EXPECT_EQ(active->name(), "work");
+  const auto origin = active->option("@import-source");
+  ASSERT_TRUE(origin.has_value());
+  EXPECT_EQ(origin->value, "teamocil");
+  const auto panes = active->panes();
+  ASSERT_TRUE(panes.has_value());
+  ASSERT_EQ(panes->size(), 2U);
+  EXPECT_TRUE((*panes)[0].active());
+  const auto tmuxinator = server->session("=tmuxinator-native:");
+  ASSERT_TRUE(tmuxinator.has_value());
+  const auto window = tmuxinator->active_window();
+  ASSERT_TRUE(window.has_value());
+  const auto single = window->panes();
+  ASSERT_TRUE(single.has_value());
+  EXPECT_EQ(single->size(), 1U);
 }
 
 TEST(WorkspaceCliTmux, NativeLoadCaptureAndConversionRoundTrip) {
