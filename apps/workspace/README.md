@@ -29,6 +29,40 @@ $ build/cxx-dev/apps/workspace/tmux-workspace --help
 $ build/cxx-dev/apps/workspace/tmux-workspace --command-tree
 ```
 
+## Inspect a workspace through MCP
+
+Loaded workspaces are ordinary tmux sessions. The separate
+[MCP server](../mcp/README.md#build-and-install) can inspect them when both
+commands select the same socket. Create a directory for a dedicated socket:
+
+```console
+$ socket_dir=$(mktemp -d)
+```
+
+Load a workspace without attaching:
+
+```console
+$ tmux-workspace load \
+    -S "$socket_dir/tmux.sock" \
+    -d \
+    ./project.yaml
+```
+
+Configure your MCP client to launch `libtmux-mcp-server` with `--socket-path`
+and the absolute socket path used above, and set `LIBTMUX_TOOLSETS=inspect`.
+The server selects one endpoint at startup. When loading with `-L NAME`, use
+its `--socket-name NAME` option instead.
+
+Discover tools with `tools/list`, then call `list_sessions`, `list_windows`
+with its `session` argument, and `list_panes`. Retain the returned stable IDs.
+Use `capture_pane` with `paneId` for visible text, or `wait_for_text` with
+`target`, literal `text`, and a bounded `timeout_ms`. Other inspections remain
+responsive while a text wait is pending. `tmux://capabilities` reports the
+selected endpoint and effective tools. Closing the MCP connection cancels
+pending work and leaves this separately loaded tmux session running. See the
+[MCP tool reference](../mcp/README.md#core-workflow-quick-reference) for capture
+cursors, snapshots and position lookup.
+
 ## Shell completion
 
 With `tmux-workspace` on `PATH`, enable completion in the current Bash session:
