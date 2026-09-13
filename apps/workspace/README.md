@@ -97,6 +97,12 @@ uses C++ ECMAScript regular expressions without Python. Whole-word matching
 groups alternatives.
 Python-only expressions are not supported yet.
 
+`ls --tree` groups workspaces by directory in discovery order. `--full` prints
+each parsed configuration as indented JSON; unreadable configurations show
+`null`. The flags can be combined. Human names and paths escape terminal
+controls while preserving Unicode. JSON and NDJSON retain their data values;
+`--tree` changes only human presentation.
+
 Load starts tmux when needed, creates sessions or reuses exact existing names.
 A session-name override
 applies to the final input. New sessions retain explicit window indexes,
