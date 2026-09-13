@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cassert>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <memory>
@@ -247,6 +248,12 @@ public:
     return static_cast<bool>(outcome_);
   }
 
+  [[nodiscard]] bool wait_until(std::chrono::steady_clock::time_point deadline) {
+    std::unique_lock lock{mutex_};
+    return outcome_changed_.wait_until(lock, deadline,
+                                       [this] { return static_cast<bool>(outcome_); });
+  }
+
   [[nodiscard]] bool blocking_observer_waiting() const {
     std::lock_guard lock{mutex_};
     return observer_ == ObserverPhase::blocking_waiting;
@@ -461,6 +468,10 @@ public:
       return {};
     }
     return OperationCancellation<T>{state_};
+  }
+
+  [[nodiscard]] bool wait_until(std::chrono::steady_clock::time_point deadline) const {
+    return state_ && state_->wait_until(deadline);
   }
 
   [[nodiscard]] Subscription<T> subscribe(CompletionQueue& queue,
