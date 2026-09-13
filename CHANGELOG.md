@@ -9,6 +9,43 @@ was recorded as it landed.
 
 ## Unreleased
 
+### Workspace CLI
+
+- Add the optional `tmux-workspace` executable for workspace discovery, loading,
+  capture, conversion and imports, with JSON and NDJSON output. (#17)
+- Validate layout names, checksums, tree syntax and pane counts before startup
+  scripts or tmux changes. Version-sensitive abbreviations follow the running
+  daemon; tmux retains responsibility for sizing and pruning saved layouts. (#17)
+- Execute optional shells through an installed tmuxp 1.74.0 executable, with
+  literal arguments, streamed output, bounded failures and terminal restoration.
+  Select its path with `TMUX_WORKSPACE_TMUXP`. (#17)
+- Add terminal load progress with presets, templates and a bounded script panel.
+  Stdout redirected to a file, pipe or another terminal receives script output
+  once; machine streams retain structured events. `--no-progress` streams both
+  script destinations directly. (#17)
+- Interrupt pane-command delays and check cancellation between workspace changes.
+  Failed appends report retained window IDs; owned builds roll back their session.
+  (#17)
+- Preserve daemon-version query failures during layout validation. Only native
+  handles opened on absent sockets use the selected client version. (#17)
+- Add Bash, Zsh and Fish completion for commands, flags, enumerated values and
+  file paths. Generate scripts with `--generate-completion`. (#17)
+- Preserve native Teamocil and tmuxinator command grouping, directories, focus
+  and options during import. Refuse unsupported behaviour before saving. (#17)
+- Refuse unexpanded ERB markup (`<%`) in tmuxinator imports before output or
+  overwrite. Teamocil evaluates no templates, so the same markup there is
+  preserved literally. (#17)
+
+### Layouts
+
+- Add `validate_layout` for pure syntax checks and `Server::validate_layouts`
+  for indexed batch checks against the selected daemon. `Window::select_layout`
+  and MCP validate saved trees before dispatch; MCP rejects malformed layouts
+  before target lookup. (#17)
+- Accept v2 JSON saved layouts on tmux 3.9, including `next-3.9`, while
+  preserving floating panes. Older daemons refuse JSON layouts before mutation.
+  (#17)
+
 ## 0.1.0-alpha.8 (2026-09-12)
 
 This alpha reaches the standard library from the typed surface. An entity and a
