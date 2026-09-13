@@ -23,6 +23,8 @@ was recorded as it landed.
 - Interrupt pane-command delays and check cancellation between workspace changes.
   Failed appends report retained window IDs; owned builds roll back their session.
   (#17)
+- Preserve daemon-version query failures during layout validation. Only missing
+  or exited daemons use the selected client version. (#17)
 
 ## 0.1.0-alpha.8 (2026-09-12)
 
