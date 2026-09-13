@@ -1217,7 +1217,8 @@ Connection::set_pane_output(std::string_view pane, bool deliver,
       {"refresh-client", "-A", std::string{pane} + (deliver ? ":on" : ":off")}};
   if (deliver) {
     // tmux tracks muted and paused output separately; resume clears both.
-    refresh.argv.insert(refresh.argv.end(), {"-A", std::string{pane} + ":continue"});
+    refresh.argv.emplace_back("-A");
+    refresh.argv.emplace_back(std::string{pane} + ":continue");
   }
   request.group.push_back(std::move(refresh));
   auto result = execute(std::move(request), deadline);
