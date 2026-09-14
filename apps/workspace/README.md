@@ -346,11 +346,12 @@ sockets. The workspace fixture never reaches the default server.
 
 ## Verification
 
-Run the native CLI unit and isolated lifecycle checks:
+Run the native CLI unit and isolated lifecycle checks, the two verifiers below,
+and the cases that prove each verifier still reports a failure:
 
 ```console
 $ ctest --preset cxx-dev \
-    -R '^consumer.workspace.cli' \
+    -R '^consumer.workspace' \
     --output-on-failure \
     --no-tests=error
 ```
