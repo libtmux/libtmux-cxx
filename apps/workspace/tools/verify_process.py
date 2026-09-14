@@ -689,7 +689,11 @@ def terminal_switch(binary, root, env, mode):
                 sorted(row.split("|")[0] for row in client_rows) == expected_clients
             ), observed
             if failed:
-                assert "active-pane" in error and "-d" in error, observed
+                assert "-d" in error, observed
+                # tmux next-3.9 associates a client with its own pane, so the
+                # refusal names the detached route rather than `-f active-pane`.
+                if released_daemon(query):
+                    assert "active-pane" in error, observed
                 if refused:
                     assert not output and windows == initial_windows, observed
                 else:
