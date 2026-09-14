@@ -513,6 +513,12 @@ Json capture(const Request& request) {
   const auto windows = session->windows();
   if (!windows)
     throw Failure{1, "CAPTURE_FAILED", windows.error().diagnostic};
+  // A pane sitting at the shell tmux starts for it carries no command of its
+  // own, and tmux starts `default-shell`, which is not one of a fixed few.
+  const auto shell = session->option("default-shell");
+  if (!shell)
+    throw Failure{1, "CAPTURE_FAILED", shell.error().diagnostic};
+  const std::string login = fs::path{shell->value}.filename().string();
   Json document{{"session_name", session->name()},
                 {"options", capture_options(server, std::string{session->id()})},
                 {"windows", Json::array()}};
@@ -535,8 +541,7 @@ Json capture(const Request& request) {
     for (const auto& pane : *panes) {
       Json commands = Json::array();
       const std::string command{pane.command()};
-      if (!command.empty() && command != "sh" && command != "bash" &&
-          command != "zsh" && command != "fish")
+      if (!command.empty() && command != login)
         commands.push_back(command);
       item["panes"].push_back({{"shell_command", commands},
                                {"start_directory", pane.path()},
