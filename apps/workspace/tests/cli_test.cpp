@@ -972,6 +972,24 @@ TEST(WorkspaceCli, ImportUsesNonNullAliasesAndRefusesConflicts) {
   }
 }
 
+TEST(WorkspaceCli, ConvertNamesTheDestinationAfterTheEncodingItWrites) {
+  Files files;
+  for (const std::string encoding : {"yaml", "json"}) {
+    const std::string written = "source." + encoding;
+    const std::string absent = encoding == "json" ? "source.yaml" : "source.json";
+    std::ofstream{"source.yml"} << "session_name: converted\nwindows: [{}]\n";
+    const auto result =
+        invoke({"convert", "--yes", "--workspace-format", encoding, "source.yml"});
+    ASSERT_EQ(result.code, 0) << encoding << result.err;
+    EXPECT_FALSE(std::filesystem::exists(absent)) << encoding;
+    ASSERT_TRUE(std::filesystem::exists(written)) << encoding;
+    std::ifstream saved{written};
+    const std::string bytes{std::istreambuf_iterator<char>{saved}, {}};
+    EXPECT_EQ(Json::accept(bytes), encoding == "json") << bytes;
+    std::filesystem::remove(written);
+  }
+}
+
 TEST(WorkspaceCli, EditorKeepsQuotedArgumentsAndChildStatus) {
   Files files;
   std::ofstream{"dev.yaml"} << "session_name: editor\nwindows: [{}]\n";
