@@ -895,7 +895,7 @@ Json search(const Request& request) {
     for (const auto* key : {"name", "session_name", "path"})
       if (info[key].is_string())
         fields[key].push_back(info[key].get<std::string>());
-    const auto config = info["config"];
+    const auto& config = info["config"];
     if (config.is_object() && config.contains("windows") &&
         config["windows"].is_array()) {
       for (const auto& window : config["windows"]) {
