@@ -7,6 +7,7 @@ import json
 import os
 import pathlib
 import pty
+import re
 import select
 import shlex
 import signal
@@ -41,13 +42,16 @@ def line_settings(descriptor):
     return settings
 
 
-def released_daemon(query):
-    """Whether the server behind `query` is a tmux release rather than master.
+def has_active_pane_flag(query):
+    """Whether the server behind `query` carries the `active-pane` client flag.
 
-    A prerelease answers `next-<version>`, and what a client projects through
-    `list-clients` is still moving there.
+    tmux removed it in 3.8, so from there a client cannot hold a pane focus
+    independent of its session and nothing can reach the refusal that names it.
+    A development tree answers `next-<the release it becomes>`.
     """
-    return "next-" not in query("display-message", "-p", "#{version}")
+    release = query("display-message", "-p", "#{version}").removeprefix("next-")
+    numbers = re.match(r"(\d+)\.(\d+)", release)
+    return numbers is None or (int(numbers[1]), int(numbers[2])) < (3, 8)
 
 
 def socket_path(root, name="tmux.sock"):
@@ -485,6 +489,7 @@ def terminal_switch(binary, root, env, mode):
             timeout=1,
         )
         if focus_case:
+            flagged = has_active_pane_flag(query)
             first_pane = query("display-message", "-p", "-t", "=origin:", "#{pane_id}")
             first_window = query(
                 "display-message", "-p", "-t", first_pane, "#{window_id}"
@@ -589,12 +594,12 @@ def terminal_switch(binary, root, env, mode):
                 "window": projected[1],
                 "flags": projected[2],
             }
-            if released_daemon(query):
+            if flagged:
                 assert projected[0] == first_pane and projected[1] == first_window, (
                     focus
                 )
                 assert "active-pane" in projected[2].split(","), focus
-        elif mode == "independent-other-window" and released_daemon(query):
+        elif mode == "independent-other-window" and flagged:
             rows = [
                 row.split("|")
                 for row in query(
@@ -666,8 +671,12 @@ def terminal_switch(binary, root, env, mode):
                 "script_ran": ran,
                 "focus": focus,
             }
+            # Moving a client's focus still refuses the handoff without the
+            # flag, because it moves the session and leaves the pane the load
+            # was started from unviewed. Only gaining the flag mid-load needs
+            # it to exist at all.
             refused = mode in {"independent", "independent-linked"}
-            failed = refused or mode == "gained-independent"
+            failed = refused or (flagged and mode == "gained-independent")
             assert code == (2 if failed else 0), observed
             assert ran != refused, observed
             assert sessions == (
@@ -683,6 +692,10 @@ def terminal_switch(binary, root, env, mode):
                 if mode == "independent-linked"
                 else ["destination", "other"]
                 if mode == "independent-other-window"
+                # Nothing made this client independent, so the load handed it
+                # to the last workspace it opened.
+                else ["destination"]
+                if mode == "gained-independent" and not flagged
                 else ["origin"]
             )
             assert (
@@ -690,9 +703,7 @@ def terminal_switch(binary, root, env, mode):
             ), observed
             if failed:
                 assert "-d" in error, observed
-                # tmux next-3.9 associates a client with its own pane, so the
-                # refusal names the detached route rather than `-f active-pane`.
-                if released_daemon(query):
+                if flagged:
                     assert "active-pane" in error, observed
                 if refused:
                     assert not output and windows == initial_windows, observed
@@ -700,7 +711,7 @@ def terminal_switch(binary, root, env, mode):
                     assert (
                         "Retained state:" in error and "created loaded $" in output
                     ), observed
-            if mode == "gained-independent":
+            if mode == "gained-independent" and flagged:
                 assert any(
                     "active-pane" in row.split("|")[1].split(",") for row in client_rows
                 ), observed
