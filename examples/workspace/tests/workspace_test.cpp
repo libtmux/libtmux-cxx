@@ -247,6 +247,27 @@ TEST(WorkspaceBuilder, OptionsReachTheServerTheSessionAndTheWindow) {
   EXPECT_EQ(before->value, "7");
 }
 
+TEST(WorkspaceBuilder, RenumberingReindexesTheSessionAsTheBootstrapWindowCloses) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+
+  const workspace::Workspace description{
+      .session_name = "renumbered",
+      .options = {{"renumber-windows", "on"}},
+      .windows = {{.name = "editor", .panes = {{}}}}};
+  const auto built = workspace::build(server, description);
+  ASSERT_TRUE(built.has_value()) << built.error().reason;
+
+  const auto base = built->option("base-index");
+  ASSERT_TRUE(base.has_value()) << base.error().diagnostic;
+  const auto windows = built->windows();
+  ASSERT_TRUE(windows.has_value()) << windows.error().diagnostic;
+  ASSERT_EQ(windows->size(), 1U);
+  EXPECT_EQ(windows->front().name(), "editor");
+  EXPECT_EQ(std::to_string(windows->front().index()), base->value);
+}
+
 TEST(WorkspaceBuilder, ASuppressedCommandIsTypedWithTheSpaceThatHidesIt) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
