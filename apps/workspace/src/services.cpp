@@ -1103,14 +1103,14 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
     auto document = read_document(path, request.importer == "tmuxinator");
     if (request.command == "import")
       document = imported(document, request.importer, path);
-    const auto format = path.extension() == ".json" ? "yaml" : "json";
+    const auto format = request.value("workspace-format",
+                                      path.extension() == ".json" ? "yaml" : "json");
     if (!request.machine() && !request.flag("yes") && !request.flag("save-to")) {
-      return {.value = {{"preview", true},
-                        {"format", request.value("workspace-format", format)},
-                        {"workspace", document}}};
+      return {
+          .value = {{"preview", true}, {"format", format}, {"workspace", document}}};
     }
     auto destination = path;
-    destination.replace_extension(format == std::string{"json"} ? ".json" : ".yaml");
+    destination.replace_extension(format == "json" ? ".json" : ".yaml");
     return {.value = save_or_return(request, document, format,
                                     request.machine() ? "" : destination.string())};
   }
