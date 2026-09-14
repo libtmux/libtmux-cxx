@@ -118,7 +118,10 @@ public:
   }
   ~Terminal() {
     if (descriptor_ >= 0) {
-      if (child_ > 0 && ::tcgetpgrp(descriptor_) == child_)
+      // BSD clears the session tty's `t_pgrp` as the foreground group's last
+      // member goes, so `tcgetpgrp` no longer answers the reaped child's id.
+      // The handoff is undone unless this process already holds the terminal.
+      if (child_ > 0 && ::tcgetpgrp(descriptor_) != previous_)
         (void)foreground(previous_, true);
       ::close(descriptor_);
     }
