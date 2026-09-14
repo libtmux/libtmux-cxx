@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <csignal>
 #include <string>
@@ -53,6 +54,24 @@ TEST(SpawnSignals, ChildDoesNotInheritAnIgnoredDisposition) {
 
   ASSERT_TRUE(reply.has_value()) << reply.error().diagnostic;
   EXPECT_TRUE(std::holds_alternative<Signaled>(reply->termination));
+}
+
+// The grace between SIGTERM and SIGKILL is for descendants that outlived the
+// leader. A child leaving none must not pay it, and the leader's own status
+// cannot say so: it is held unreaped until the group is killed.
+TEST(SpawnSignals, TerminatingDescendantsWaitsOutNoGraceWithoutOne) {
+  ProcessRequest request;
+  request.executable = "/bin/sh";
+  request.arguments = {Argument{"-c"}, Argument{"exit 0"}};
+  request.timeout = std::chrono::seconds{10};
+  auto quickest = std::chrono::steady_clock::duration::max();
+  for (int attempt = 0; attempt < 5; ++attempt) {
+    const auto started = std::chrono::steady_clock::now();
+    auto reply = run_process(request, {}, libtmux::detail::DescendantPolicy::terminate);
+    quickest = std::min(quickest, std::chrono::steady_clock::now() - started);
+    ASSERT_TRUE(reply.has_value()) << reply.error().diagnostic;
+  }
+  EXPECT_LT(quickest, std::chrono::milliseconds{100});
 }
 
 } // namespace
