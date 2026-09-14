@@ -51,8 +51,10 @@ The connection root.  A Server names which tmux server to talk to and how to rea
 
 - [`Server`](#libtmux-server-hpp-server)
   - [`Server::at_socket_path`](#libtmux-server-hpp-server-at-socket-path)
+  - [`Server::at_socket_path`](#libtmux-server-hpp-server-at-socket-path-2)
   - [`Server::at_socket_name`](#libtmux-server-hpp-server-at-socket-name)
   - [`Server::startable_at_socket_path`](#libtmux-server-hpp-server-startable-at-socket-path)
+  - [`Server::startable_at_socket_path`](#libtmux-server-hpp-server-startable-at-socket-path-2)
   - [`Server::startable_at_socket_name`](#libtmux-server-hpp-server-startable-at-socket-name)
   - [`Server::startable_at_default`](#libtmux-server-hpp-server-startable-at-default)
   - [`Server::from_env`](#libtmux-server-hpp-server-from-env)
@@ -116,6 +118,14 @@ class Server;
 ```
 `-S path`: the socket file, used verbatim.  These report `CommandFailure`, the same type every other call reports, rather than the `SocketError` the argument builders use: a factory that failed differently is a factory nothing can be chained onto. The reason a selector was rejected is in the diagnostic, and `socket_path_arguments` still returns the enum for a caller that wants to branch on it.  An observer, if given, is told about every command this server runs. It is fixed at construction because the connection is immutable afterwards, and that is what makes a Server safe to copy between threads. The policy is fixed for the same reason, and says what a call gets when it names no timeout or limit of its own.
 
+<a id="libtmux-server-hpp-server-at-socket-path-2"></a>
+#### `Server::at_socket_path`
+
+```cpp
+template <typename Path> requires std::same_as<std::remove_cvref_t<Path>, std::filesystem::path> [[nodiscard]] static expected<Server, CommandFailure> at_socket_path(Path&& path, CommandObserver observer = {}, ExecutionPolicy policy = {});
+```
+Uses native path bytes on POSIX and UTF-8 on Windows. The exact path constraint keeps string and string-literal calls unambiguous.
+
 <a id="libtmux-server-hpp-server-at-socket-name"></a>
 #### `Server::at_socket_name`
 
@@ -131,6 +141,13 @@ class Server;
 [[nodiscard]] static expected<Server, CommandFailure> startable_at_socket_path(std::string_view path, std::optional<std::filesystem::path> configuration, CommandObserver observer = {}, ExecutionPolicy policy = {});
 ```
 A socket handle that may create an absent server on its first `new_session` call or an explicit `run({"start-server"})`. `configuration` is passed to tmux as `-f`; absent preserves tmux's user configuration. Every other call remains no-start while the socket is absent. The selector and configuration are frozen in the handle, and concurrent first-session calls are serialized.
+
+<a id="libtmux-server-hpp-server-startable-at-socket-path-2"></a>
+#### `Server::startable_at_socket_path`
+
+```cpp
+template <typename Path> requires std::same_as<std::remove_cvref_t<Path>, std::filesystem::path> [[nodiscard]] static expected<Server, CommandFailure> startable_at_socket_path(Path&& path, std::optional<std::filesystem::path> configuration, CommandObserver observer = {}, ExecutionPolicy policy = {});
+```
 
 <a id="libtmux-server-hpp-server-startable-at-socket-name"></a>
 #### `Server::startable_at_socket_name`
@@ -502,6 +519,10 @@ Explicit bounded ownership for asynchronous Server commands. Results and global 
 
 **Symbols:**
 
+- [`ReadyStatus`](#libtmux-async-hpp-readystatus)
+  - [`ReadyStatus::ready`](#libtmux-async-hpp-readystatus-ready)
+  - [`ReadyStatus::timeout`](#libtmux-async-hpp-readystatus-timeout)
+  - [`ReadyStatus::closed`](#libtmux-async-hpp-readystatus-closed)
 - [`CommandRuntimeConfig`](#libtmux-async-hpp-commandruntimeconfig)
   - [`CommandRuntimeConfig::capacity`](#libtmux-async-hpp-commandruntimeconfig-capacity)
 - [`CommandRuntimeSnapshot`](#libtmux-async-hpp-commandruntimesnapshot)
@@ -529,6 +550,8 @@ Explicit bounded ownership for asynchronous Server commands. Results and global 
   - [`CommandRuntime::request_stop`](#libtmux-async-hpp-commandruntime-request-stop)
   - [`CommandRuntime::close`](#libtmux-async-hpp-commandruntime-close)
   - [`CommandRuntime::snapshot`](#libtmux-async-hpp-commandruntime-snapshot)
+  - [`CommandRuntime::wait_ready`](#libtmux-async-hpp-commandruntime-wait-ready)
+  - [`CommandRuntime::wait_ready_for`](#libtmux-async-hpp-commandruntime-wait-ready-for)
   - [`CommandRuntime::dispatch_ready`](#libtmux-async-hpp-commandruntime-dispatch-ready)
   - [`CommandRuntime::discard_ready`](#libtmux-async-hpp-commandruntime-discard-ready)
 - [`CommandOperation`](#libtmux-async-hpp-commandoperation)
@@ -538,8 +561,29 @@ Explicit bounded ownership for asynchronous Server commands. Results and global 
   - [`CommandOperation::operator=`](#libtmux-async-hpp-commandoperation-operator-2)
   - [`CommandOperation::~CommandOperation`](#libtmux-async-hpp-commandoperation-commandoperation-3)
   - [`CommandOperation::wait`](#libtmux-async-hpp-commandoperation-wait)
+  - [`CommandOperation::wait_until`](#libtmux-async-hpp-commandoperation-wait-until)
+  - [`CommandOperation::wait_for`](#libtmux-async-hpp-commandoperation-wait-for)
+  - [`CommandOperation::wait`](#libtmux-async-hpp-commandoperation-wait-2)
+  - [`CommandOperation::wait_until`](#libtmux-async-hpp-commandoperation-wait-until-2)
+  - [`CommandOperation::wait_for`](#libtmux-async-hpp-commandoperation-wait-for-2)
   - [`CommandOperation::detach`](#libtmux-async-hpp-commandoperation-detach)
   - [`CommandOperation::request_cancel`](#libtmux-async-hpp-commandoperation-request-cancel)
+
+<a id="libtmux-async-hpp-readystatus"></a>
+### `ReadyStatus`
+
+```cpp
+enum class ReadyStatus : std::uint8_t;
+```
+
+<a id="libtmux-async-hpp-readystatus-ready"></a>
+#### `ReadyStatus::ready` — `ready,`
+
+<a id="libtmux-async-hpp-readystatus-timeout"></a>
+#### `ReadyStatus::timeout` — `timeout,`
+
+<a id="libtmux-async-hpp-readystatus-closed"></a>
+#### `ReadyStatus::closed` — `closed,`
 
 <a id="libtmux-async-hpp-commandruntimeconfig"></a>
 ### `CommandRuntimeConfig`
@@ -668,7 +712,7 @@ Whether every owned child and transport thread retired.
 ```cpp
 bool safe_to_unload{};
 ```
-True only when transports and pending work ended and no caller-side dispatch or discard, including callback-target teardown, remains active. Callers must prevent concurrent or later runtime entry before unloading.
+True only when transports and pending work ended and no caller-side readiness wait, dispatch or discard, including callback-target teardown, remains active. Callers must prevent concurrent or later runtime entry before unloading.
 
 <a id="libtmux-async-hpp-commandruntimeshutdown-failure"></a>
 #### `CommandRuntimeShutdown::failure`
@@ -745,7 +789,7 @@ Stops admission and requests cancellation without waiting.
 ```cpp
 [[nodiscard]] CommandRuntimeShutdown close();
 ```
-Joins every owned thread without invoking or discarding observers. The first successful report is cached; a throwing shutdown can be retried.
+Joins every owned thread without invoking or discarding observers, and does not return or throw until every blocked `wait_ready` caller has left. The first successful report is cached; a throwing shutdown can be retried.
 
 <a id="libtmux-async-hpp-commandruntime-snapshot"></a>
 #### `CommandRuntime::snapshot`
@@ -754,6 +798,21 @@ Joins every owned thread without invoking or discarding observers. The first suc
 [[nodiscard]] CommandRuntimeSnapshot snapshot() const noexcept;
 ```
 Reads one lock-consistent instant without waiting for work.
+
+<a id="libtmux-async-hpp-commandruntime-wait-ready"></a>
+#### `CommandRuntime::wait_ready`
+
+```cpp
+[[nodiscard]] ReadyStatus wait_ready(std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::time_point::max());
+```
+Waits for a ready observer without invoking it. `closed` means close has joined the transports and no ready observers remain, or this owner was moved. Ready records take precedence over closure and deadline expiry.
+
+<a id="libtmux-async-hpp-commandruntime-wait-ready-for"></a>
+#### `CommandRuntime::wait_ready_for`
+
+```cpp
+[[nodiscard]] ReadyStatus wait_ready_for(std::chrono::milliseconds timeout);
+```
 
 <a id="libtmux-async-hpp-commandruntime-dispatch-ready"></a>
 #### `CommandRuntime::dispatch_ready`
@@ -822,6 +881,46 @@ CommandOperation& operator=(const CommandOperation&) = delete;
 [[nodiscard]] expected<std::string, CommandFailure> wait() &&;
 ```
 Consumes the same bounded answer `Server::run` gives. Waiting never dispatches the Server's global observer.
+
+<a id="libtmux-async-hpp-commandoperation-wait-until"></a>
+#### `CommandOperation::wait_until`
+
+```cpp
+[[nodiscard]] expected<bool, CommandFailure> wait_until(std::chrono::steady_clock::time_point deadline) const;
+```
+True means the result can be taken; false means only this wait expired. Neither outcome consumes the handle or changes the command's deadline. A consumed or moved-from handle reports FailureKind::validation.
+
+<a id="libtmux-async-hpp-commandoperation-wait-for"></a>
+#### `CommandOperation::wait_for`
+
+```cpp
+[[nodiscard]] expected<bool, CommandFailure> wait_for(std::chrono::milliseconds timeout) const;
+```
+
+<a id="libtmux-async-hpp-commandoperation-wait-2"></a>
+#### `CommandOperation::wait`
+
+```cpp
+[[nodiscard]] expected<std::string, CommandFailure> wait(std::stop_token stop) &&;
+```
+Available when `defined(__cpp_lib_jthread) && __cpp_lib_jthread >= 201911L`.
+The token requests transport cancellation only during this wait; it cannot undo tmux work. The eventual result retains its command failure and delivery status.
+
+<a id="libtmux-async-hpp-commandoperation-wait-until-2"></a>
+#### `CommandOperation::wait_until`
+
+```cpp
+[[nodiscard]] expected<bool, CommandFailure> wait_until(std::chrono::steady_clock::time_point deadline, std::stop_token stop) const;
+```
+Available when `defined(__cpp_lib_jthread) && __cpp_lib_jthread >= 201911L`.
+
+<a id="libtmux-async-hpp-commandoperation-wait-for-2"></a>
+#### `CommandOperation::wait_for`
+
+```cpp
+[[nodiscard]] expected<bool, CommandFailure> wait_for(std::chrono::milliseconds timeout, std::stop_token stop) const;
+```
+Available when `defined(__cpp_lib_jthread) && __cpp_lib_jthread >= 201911L`.
 
 <a id="libtmux-async-hpp-commandoperation-detach"></a>
 #### `CommandOperation::detach`
@@ -4562,6 +4661,8 @@ Exception-free cardinality over snapshot views.  Callers ask for one entity far 
   - [`ReferenceRange`](#libtmux-cardinality-hpp-free-symbols-referencerange)
   - [`first`](#libtmux-cardinality-hpp-free-symbols-first)
   - [`exactly_one`](#libtmux-cardinality-hpp-free-symbols-exactly-one)
+  - [`first_owned`](#libtmux-cardinality-hpp-free-symbols-first-owned)
+  - [`exactly_one_owned`](#libtmux-cardinality-hpp-free-symbols-exactly-one-owned)
 
 <a id="libtmux-cardinality-hpp-cardinalityerror"></a>
 ### `CardinalityError`
@@ -4616,6 +4717,22 @@ template <ReferenceRange Range> [[nodiscard]] std::optional<Referenced<Range>> f
 template <ReferenceRange Range> [[nodiscard]] expected<Referenced<Range>, CardinalityError> exactly_one(Range& range);
 ```
 `exactly_one` states that several is a caller error, and says which one.
+
+<a id="libtmux-cardinality-hpp-free-symbols-first-owned"></a>
+#### `first_owned`
+
+```cpp
+template <std::ranges::input_range Range> requires std::constructible_from<std::ranges::range_value_t<Range>, std::ranges::range_reference_t<Range>> [[nodiscard]] std::optional<std::ranges::range_value_t<Range>> first_owned(Range&& range);
+```
+Copies referenced elements; moves when an iterator yields an rvalue. A temporary view over an lvalue container therefore leaves that container intact. Owning the element does not extend storage borrowed by its own members.
+
+<a id="libtmux-cardinality-hpp-free-symbols-exactly-one-owned"></a>
+#### `exactly_one_owned`
+
+```cpp
+template <std::ranges::input_range Range> requires std::constructible_from<std::ranges::range_value_t<Range>, std::ranges::range_reference_t<Range>> && std::move_constructible<std::ranges::range_value_t<Range>> [[nodiscard]] expected<std::ranges::range_value_t<Range>, CardinalityError> exactly_one_owned(Range&& range);
+```
+A forward range's iterator can be copied and advanced independently of the original, so a second element rules the range out before the first is materialized. A single-pass range (a stream, a generator) shares mutable state between copies instead, so it has no way to look ahead: the first element must be materialized before the range can be advanced to check for a second, and an error there still consumes it.
 
 <a id="libtmux-delivery-hpp"></a>
 ## `libtmux/delivery.hpp`
@@ -5190,6 +5307,8 @@ Decode tmux's control protocol.  A control-mode stream interleaves command reply
   - [`Connection::wait_for_notifications`](#libtmux-control-hpp-connection-wait-for-notifications)
   - [`Connection::notification_fd`](#libtmux-control-hpp-connection-notification-fd)
   - [`Connection::set_pane_output`](#libtmux-control-hpp-connection-set-pane-output)
+  - [`Connection::mute_pane_output`](#libtmux-control-hpp-connection-mute-pane-output)
+  - [`Connection::resume_pane_output`](#libtmux-control-hpp-connection-resume-pane-output)
   - [`Connection::events`](#libtmux-control-hpp-connection-events)
   - [`Connection::dropped_notifications`](#libtmux-control-hpp-connection-dropped-notifications)
   - [`Connection::native_child_pid`](#libtmux-control-hpp-connection-native-child-pid)
@@ -5653,7 +5772,22 @@ A descriptor that is readable exactly when a take would return something.  For a
 ```cpp
 expected<void, ProtocolError> set_pane_output(std::string_view pane, bool deliver, std::chrono::steady_clock::time_point deadline);
 ```
-Stop or resume `%output` for one pane, on a connection that asked for it.  The direction is not symmetrical, because tmux is not: a connection that started without `pane_output` cannot be made to listen to anything, and muting is the only per-pane control it offers. So this narrows what a listening connection receives; it cannot widen a silent one.  `resume` on a pane that tmux paused also clears the pause, and tmux moves that pane's offset to the current end — so whatever was produced while it was paused or muted is not delivered afterwards.
+Stop or resume `%output` for one pane, on a connection that asked for it.  The direction is not symmetrical, because tmux is not: a connection that started without `pane_output` cannot be made to listen to anything, and muting is the only per-pane control it offers. So this narrows what a listening connection receives; it cannot widen a silent one.  Resuming clears both mute and pause, starting at tmux's current output offset. Output already discarded by tmux is not replayed.
+
+<a id="libtmux-control-hpp-connection-mute-pane-output"></a>
+#### `Connection::mute_pane_output`
+
+```cpp
+[[nodiscard]] expected<void, ProtocolError> mute_pane_output(std::string_view pane, std::chrono::steady_clock::time_point deadline);
+```
+Named forms of set_pane_output; the same connection policy applies.
+
+<a id="libtmux-control-hpp-connection-resume-pane-output"></a>
+#### `Connection::resume_pane_output`
+
+```cpp
+[[nodiscard]] expected<void, ProtocolError> resume_pane_output(std::string_view pane, std::chrono::steady_clock::time_point deadline);
+```
 
 <a id="libtmux-control-hpp-connection-events"></a>
 #### `Connection::events`

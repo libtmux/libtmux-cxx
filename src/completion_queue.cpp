@@ -89,6 +89,7 @@ public:
   std::uint64_t last_ready_generation{};
   std::uint64_t next_token{1U};
   bool closed{false};
+  bool finished{false};
   std::atomic_bool dispatching{false};
 };
 
@@ -135,7 +136,7 @@ bool WeakCompletionMailbox::enqueue(CompletionToken token) const noexcept {
     }
     core->link_ready(token.value, *record->second);
   }
-  core->ready_changed.notify_one();
+  core->ready_changed.notify_all();
   return true;
 }
 
@@ -207,7 +208,7 @@ bool CompletionQueue::push_ready(MoveOnlyFunction<void()> callback) {
     position->second = std::move(record);
     core->link_ready(token, *position->second);
   }
-  core->ready_changed.notify_one();
+  core->ready_changed.notify_all();
   return true;
 }
 
@@ -222,12 +223,13 @@ bool CompletionQueue::run_one() {
   {
     std::unique_lock lock{core->mutex};
     while (claimed.empty()) {
-      core->ready_changed.wait(lock,
-                               [&] { return core->closed || core->ready_count != 0U; });
+      core->ready_changed.wait(lock, [&] {
+        return core->closed || core->finished || core->ready_count != 0U;
+      });
       if (core->ready_count != 0U) {
         claimed = core->claim_ready();
       }
-      if (core->closed) {
+      if (core->closed || core->finished) {
         break;
       }
     }
@@ -300,6 +302,31 @@ std::size_t CompletionQueue::discard_ready() {
 }
 
 void CompletionQueue::detach(CompletionToken token) { mailbox().detach(token); }
+
+QueueReadyStatus
+CompletionQueue::wait_ready(std::chrono::steady_clock::time_point deadline) {
+  const auto core = core_;
+  std::unique_lock lock{core->mutex};
+  static_cast<void>(core->ready_changed.wait_until(lock, deadline, [&] {
+    return core->ready_count != 0U || core->finished || core->closed;
+  }));
+  if (core->ready_count != 0U) {
+    return QueueReadyStatus::ready;
+  }
+  if (core->finished || core->closed) {
+    return QueueReadyStatus::closed;
+  }
+  return QueueReadyStatus::timeout;
+}
+
+void CompletionQueue::finish() {
+  const auto core = core_;
+  {
+    std::lock_guard lock{core->mutex};
+    core->finished = true;
+  }
+  core->ready_changed.notify_all();
+}
 
 void CompletionQueue::close() {
   const auto core = core_;

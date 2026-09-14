@@ -1213,8 +1213,14 @@ Connection::set_pane_output(std::string_view pane, bool deliver,
   }
 
   ControlRequest request;
-  request.group.push_back(ControlCommand{
-      {"refresh-client", "-A", std::string{pane} + (deliver ? ":continue" : ":off")}});
+  ControlCommand refresh{
+      {"refresh-client", "-A", std::string{pane} + (deliver ? ":on" : ":off")}};
+  if (deliver) {
+    // tmux tracks muted and paused output separately; resume clears both.
+    refresh.argv.emplace_back("-A");
+    refresh.argv.emplace_back(std::string{pane} + ":continue");
+  }
+  request.group.push_back(std::move(refresh));
   auto result = execute(std::move(request), deadline);
   if (result.connection_error.has_value()) {
     return unexpected(*result.connection_error);

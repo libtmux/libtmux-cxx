@@ -276,27 +276,23 @@ int main() {
     return 1;
   }
   auto runtime = *std::move(started_runtime);
-  const auto wait_for_completion = [&runtime](std::uint64_t wanted) {
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
-    while (runtime.snapshot().completed < wanted &&
-           std::chrono::steady_clock::now() < deadline) {
-      std::this_thread::sleep_for(std::chrono::milliseconds{10});
-    }
-    return runtime.snapshot().completed >= wanted;
-  };
-
   auto submitted =
       async_server->try_submit(runtime, {"display-message", "-p", "async result"});
   if (!submitted.has_value()) { // Refused before admission.
     std::cerr << std::format("{}\n", submitted.error());
     return 1;
   }
+  const auto ready = submitted->wait_for(std::chrono::seconds{5});
+  if (!ready.has_value() || !*ready) {
+    // A wait timeout keeps the command alive. Cancellation is a separate choice.
+    static_cast<void>(submitted->request_cancel());
+  }
   auto result = std::move(*submitted).wait();
   if (!result.has_value()) { // Failed after admission.
     std::cerr << std::format("{}\n", result.error());
     return 1;
   }
-  if (!wait_for_completion(1U)) {
+  if (runtime.wait_ready_for(std::chrono::seconds{5}) != libtmux::ReadyStatus::ready) {
     return 1;
   }
 
@@ -312,7 +308,7 @@ int main() {
     return 1;
   }
   std::move(*detached).detach(); // Keep no result; the observation remains.
-  if (!wait_for_completion(2U)) {
+  if (runtime.wait_ready_for(std::chrono::seconds{5}) != libtmux::ReadyStatus::ready) {
     return 1;
   }
   std::cout << std::format("discarded {} observation(s)\n", runtime.discard_ready());

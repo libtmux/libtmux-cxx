@@ -207,6 +207,14 @@ TEST(CompletionQueue, DispatchDestroysCapturesOnTheDispatchingThread) {
   EXPECT_EQ(destroyed_on.get(), dispatching_thread);
 }
 
+TEST(CompletionQueue, FinishWakesARunOneWaiterWithNoReadyRecord) {
+  CompletionQueue queue;
+  auto waiting = std::async(std::launch::async, [&] { return queue.run_one(); });
+  queue.finish();
+  ASSERT_EQ(waiting.wait_for(std::chrono::seconds{1}), std::future_status::ready);
+  EXPECT_FALSE(waiting.get());
+}
+
 TEST(CompletionQueue, ADispatchClaimWinsAgainstClose) {
   CompletionQueue queue;
   const CompletionToken token = queue.next_token();

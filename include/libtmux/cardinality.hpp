@@ -9,6 +9,7 @@
 
 #include "libtmux/abi.hpp"
 #include "libtmux/expected.hpp"
+#include <concepts>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -73,6 +74,53 @@ template <ReferenceRange Range>
     return unexpected(CardinalityError::several_matched);
   }
   return std::cref(*only);
+}
+
+// Copies referenced elements; moves when an iterator yields an rvalue. A
+// temporary view over an lvalue container therefore leaves that container intact.
+// Owning the element does not extend storage borrowed by its own members.
+template <std::ranges::input_range Range>
+  requires std::constructible_from<std::ranges::range_value_t<Range>,
+                                   std::ranges::range_reference_t<Range>>
+[[nodiscard]] std::optional<std::ranges::range_value_t<Range>>
+first_owned(Range&& range) {
+  auto iterator = std::ranges::begin(range);
+  if (iterator == std::ranges::end(range)) {
+    return std::nullopt;
+  }
+  return std::optional<std::ranges::range_value_t<Range>>{std::in_place, *iterator};
+}
+
+// A forward range's iterator can be copied and advanced independently of the
+// original, so a second element rules the range out before the first is
+// materialized. A single-pass range (a stream, a generator) shares mutable
+// state between copies instead, so it has no way to look ahead: the first
+// element must be materialized before the range can be advanced to check for
+// a second, and an error there still consumes it.
+template <std::ranges::input_range Range>
+  requires std::constructible_from<std::ranges::range_value_t<Range>,
+                                   std::ranges::range_reference_t<Range>> &&
+           std::move_constructible<std::ranges::range_value_t<Range>>
+[[nodiscard]] expected<std::ranges::range_value_t<Range>, CardinalityError>
+exactly_one_owned(Range&& range) {
+  auto iterator = std::ranges::begin(range);
+  const auto last = std::ranges::end(range);
+  if (iterator == last) {
+    return unexpected(CardinalityError::none_matched);
+  }
+  if constexpr (std::ranges::forward_range<Range>) {
+    auto second = iterator;
+    if (++second != last) {
+      return unexpected(CardinalityError::several_matched);
+    }
+    return std::ranges::range_value_t<Range>(*iterator);
+  } else {
+    std::ranges::range_value_t<Range> only(*iterator);
+    if (++iterator != last) {
+      return unexpected(CardinalityError::several_matched);
+    }
+    return only;
+  }
 }
 
 LIBTMUX_NAMESPACE_END

@@ -33,6 +33,20 @@ static_assert(libtmux::Pane::kFields.size() == 19U);
 
 std::vector<libtmux::Window> listed();
 
+void socket_factories_accept_paths_and_text(const std::filesystem::path& path,
+                                            const std::string& text,
+                                            std::string_view view) {
+  (void)libtmux::Server::at_socket_path(path);
+  (void)libtmux::Server::at_socket_path(std::filesystem::path{path});
+  (void)libtmux::Server::at_socket_path(text);
+  (void)libtmux::Server::at_socket_path(view);
+  (void)libtmux::Server::at_socket_path("socket");
+  (void)libtmux::Server::startable_at_socket_path(path, std::nullopt);
+  (void)libtmux::Server::startable_at_socket_path(text, std::nullopt);
+  (void)libtmux::Server::startable_at_socket_path(view, std::nullopt);
+  (void)libtmux::Server::startable_at_socket_path("socket", std::nullopt);
+}
+
 void uses() {
   const std::vector<libtmux::Window> rows = listed();
   const auto windows_of = libtmux::children_of<libtmux::Session, libtmux::Window>(
@@ -42,6 +56,9 @@ void uses() {
   auto named = rows | libtmux::matching(libtmux::window::name == "editor");
   (void)libtmux::exactly_one(named);
   (void)libtmux::first(named);
+  (void)libtmux::first_owned(listed());
+  (void)libtmux::exactly_one_owned(
+      listed() | libtmux::matching(libtmux::window::name == "editor"));
 
   // A flag field is a predicate on its own, and compares against a bool.
   (void)libtmux::matching(libtmux::window::active);
