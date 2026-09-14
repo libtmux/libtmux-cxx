@@ -22,6 +22,19 @@ from contextlib import suppress
 SUN_PATH = 104
 
 
+# `PENDIN` is the kernel's note that input typed before a mode change has yet to
+# be reprocessed, not a setting `tcsetattr` writes. macOS reports it where Linux
+# does not, so it is not part of what a restore can be judged on.
+PENDING_INPUT = getattr(termios, "PENDIN", 0)
+
+
+def line_settings(descriptor):
+    """Read the terminal settings a program controls."""
+    settings = termios.tcgetattr(descriptor)
+    settings[3] &= ~PENDING_INPUT
+    return settings
+
+
 def socket_path(root, name="tmux.sock"):
     """Name a private tmux socket, refusing one `sun_path` cannot hold."""
     path = str(root / name)
@@ -41,15 +54,19 @@ def terminal_edit(binary, root, env, *, cancelled=False):
         os.dup2(output_write, 2)
         os.close(output_write)
         os.chdir(root)
-        settings = termios.tcgetattr(0)
+        settings = line_settings(0)
         process = subprocess.Popen(
             [binary, "edit", "dev.yaml", "--json"],
             env=dict(env, TERMINAL_CANCEL="1" if cancelled else "0"),
         )
         (root / "cli.pid").write_text(str(process.pid))
         code = process.wait()
-        restored = termios.tcgetattr(0)
-        queued = os.read(0, 128) if select.select([0], [], [], 0.1)[0] else b""
+        restored = line_settings(0)
+        queued = b""
+        readable = time.monotonic() + 0.5
+        while not queued and time.monotonic() < readable:
+            if select.select([0], [], [], 0.05)[0]:
+                queued = os.read(0, 128)
         (root / "terminal-state.json").write_text(
             json.dumps(
                 {
@@ -219,7 +236,7 @@ def terminal_load(binary, root, env, mode="detach", *, logging=False):
         os.dup2(output_write, 1)
         os.dup2(output_write, 2)
         os.close(output_write)
-        settings = termios.tcgetattr(0)
+        settings = line_settings(0)
         closed = None
         if mode == "closed":
             reader, closed = os.pipe()
@@ -237,8 +254,10 @@ def terminal_load(binary, root, env, mode="detach", *, logging=False):
         (root / "restored.json").write_text(
             json.dumps(
                 {
-                    "settings": termios.tcgetattr(0) == settings,
+                    "settings": line_settings(0) == settings,
                     "foreground": os.tcgetpgrp(0) == os.getpgrp(),
+                    "before": settings[:4],
+                    "after": line_settings(0)[:4],
                 }
             )
         )
@@ -318,7 +337,7 @@ def terminal_load(binary, root, env, mode="detach", *, logging=False):
             terminal_output,
         )
         state = json.loads((root / "restored.json").read_text())
-        assert all(state.values()), state
+        assert state["settings"] and state["foreground"], state
         retained = subprocess.run(
             [*command, "has-session", "-t", "=loaded:"],
             env=env,
