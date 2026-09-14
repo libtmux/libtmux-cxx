@@ -123,11 +123,24 @@ cleanup_group(PosixChild& child, bool allow_term, DescendantPolicy descendants) 
     }
   };
 
+  // Escalation is only about descendants once the leader has exited, and BSD
+  // drops an emptied process group before its zombie leader is reaped, so a
+  // signal that finds nothing left must not replace the child's own result.
+  const auto escalate = [&](int signal_number) {
+    auto refused = child.signal_group(signal_number);
+    if (refused && descendants == DescendantPolicy::terminate) {
+      const auto observed = child.exit_pending(DeliveryStatus::indeterminate);
+      if (observed && *observed)
+        return;
+    }
+    retain(std::move(refused));
+  };
+
   if (allow_term) {
-    retain(child.signal_group(SIGTERM));
+    escalate(SIGTERM);
     settle(Clock::now() + terminate_grace);
   }
-  retain(child.signal_group(SIGKILL));
+  escalate(SIGKILL);
   while (child.status() == ChildStatus::running) {
     retain(child.wait_for_exit());
   }
