@@ -27,6 +27,12 @@ SUN_PATH = 104
 # does not, so it is not part of what a restore can be judged on.
 PENDING_INPUT = getattr(termios, "PENDIN", 0)
 
+# What the editor consumes, byte by byte, and what is left behind it. A shell's
+# `read` builtin is free to buffer past the line it returns, so the editor takes
+# an exact count and the rest provably stays in the terminal's input queue.
+EDITOR_ANSWER = "terminal answer\n"
+QUEUED_ANSWER = "queued answer\n"
+
 
 def line_settings(descriptor):
     """Read the terminal settings a program controls."""
@@ -100,9 +106,9 @@ def terminal_edit(binary, root, env, *, cancelled=False):
                 )
                 os.write(
                     terminal,
-                    b"queued answer\n"
-                    if cancelled
-                    else b"terminal answer\nqueued answer\n",
+                    (
+                        QUEUED_ANSWER if cancelled else EDITOR_ANSWER + QUEUED_ANSWER
+                    ).encode(),
                 )
                 if cancelled:
                     os.kill(int((root / "cli.pid").read_text()), signal.SIGTERM)
@@ -120,10 +126,10 @@ def terminal_edit(binary, root, env, *, cancelled=False):
         assert result["exit_code"] == expected and result["stdout"] == ""
         assert b"EDITOR_READY" not in machine
         if not cancelled:
-            assert (root / "answer").read_text() == "terminal answer"
+            assert (root / "answer").read_text() == EDITOR_ANSWER
         state = json.loads((root / "terminal-state.json").read_text())
         assert state["restored"], state
-        assert state["queued"] == "queued answer\n", state
+        assert state["queued"] == QUEUED_ANSWER, state
         return {"status": "PASS", "exit_code": result["exit_code"], **state}
     finally:
         child_pid = root / "editor.pid"
@@ -350,7 +356,11 @@ def terminal_load(binary, root, env, mode="detach", *, logging=False):
             assert b"Retained state:" in output, output
         if logging:
             assert output.count(b"log file disabled") == 1, output
-            assert (root / "load.log").stat().st_size == 2048
+            # How much of the append that crosses `RLIMIT_FSIZE` reaches the
+            # file is the kernel's: macOS lets the first one through and
+            # refuses the next. What the writer owes is to stop after that.
+            beyond = (root / "load.log").read_bytes()[2048:]
+            assert beyond.count(b"\n") <= 1, beyond
         return {"status": "PASS", "exit_code": code, **state}
     finally:
         if not reaped:
@@ -970,9 +980,14 @@ def main():
             "echo $$ >editor.pid\nstty -echo -icanon min 1 time 0\n"
             "printf EDITOR_READY\n"
             'if test "$TERMINAL_CANCEL" = 1; then sleep 30; fi\n'
-            "IFS= read -r answer\nprintf '%s' \"$answer\" >answer\nexit 7\n"
+            'dd bs=1 "count=$EDITOR_ANSWER_BYTES" 2>/dev/null >answer\nexit 7\n'
         )
-        env = dict(os.environ, EDITOR=f"/bin/sh {script}", VISUAL="")
+        env = dict(
+            os.environ,
+            EDITOR=f"/bin/sh {script}",
+            VISUAL="",
+            EDITOR_ANSWER_BYTES=str(len(EDITOR_ANSWER)),
+        )
         report = (
             {}
             if args.logging
