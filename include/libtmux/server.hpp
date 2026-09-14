@@ -19,6 +19,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -29,6 +30,7 @@
 #include "libtmux/chain.hpp"
 #include "libtmux/control.hpp"
 #include "libtmux/entities.hpp"
+#include "libtmux/layout.hpp"
 #include "libtmux/options.hpp"
 #include "libtmux/socket.hpp"
 #include "libtmux/version.hpp"
@@ -164,6 +166,13 @@ public:
   // Ask the selected subprocess executable with `tmux -V` without touching a
   // server. The call uses this Server's execution policy.
   [[nodiscard]] expected<Version, CommandFailure> tmux_version() const;
+
+  // Validate the complete batch's syntax before any I/O, then query its daemon
+  // once for version-dependent names or v2 JSON layouts. No layout is applied.
+  // Only an unbound native subprocess handle may use the client version for an absent
+  // socket; failures from previously bound endpoints remain failures.
+  [[nodiscard]] expected<void, LayoutFailure>
+  validate_layouts(std::span<const LayoutRequest> layouts) const;
 
   // Whether a server is answering on this socket. False covers every reason —
   // no server, no socket, a tmux that would not run — because a caller who

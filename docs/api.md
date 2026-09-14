@@ -11,6 +11,7 @@ is the prose there. Run it with `--check` to prove this page is current.
 
 - [`libtmux/libtmux.hpp`](#libtmux-libtmux-hpp)
 - [`libtmux/server.hpp`](#libtmux-server-hpp)
+- [`libtmux/layout.hpp`](#libtmux-layout-hpp)
 - [`libtmux/async.hpp`](#libtmux-async-hpp)
 - [`libtmux/capabilities.hpp`](#libtmux-capabilities-hpp)
 - [`libtmux/entities.hpp`](#libtmux-entities-hpp)
@@ -66,6 +67,7 @@ The connection root.  A Server names which tmux server to talk to and how to rea
   - [`Server::control`](#libtmux-server-hpp-server-control)
   - [`Server::control_with_options`](#libtmux-server-hpp-server-control-with-options)
   - [`Server::tmux_version`](#libtmux-server-hpp-server-tmux-version)
+  - [`Server::validate_layouts`](#libtmux-server-hpp-server-validate-layouts)
   - [`Server::is_alive`](#libtmux-server-hpp-server-is-alive)
   - [`Server::check_alive`](#libtmux-server-hpp-server-check-alive)
   - [`Server::kill`](#libtmux-server-hpp-server-kill)
@@ -233,6 +235,14 @@ The Server supplies the socket and `session` supplies the session name; every ot
 [[nodiscard]] expected<Version, CommandFailure> tmux_version() const;
 ```
 Ask the selected subprocess executable with `tmux -V` without touching a server. The call uses this Server's execution policy.
+
+<a id="libtmux-server-hpp-server-validate-layouts"></a>
+#### `Server::validate_layouts`
+
+```cpp
+[[nodiscard]] expected<void, LayoutFailure> validate_layouts(std::span<const LayoutRequest> layouts) const;
+```
+Validate the complete batch's syntax before any I/O, then query its daemon once for version-dependent names or v2 JSON layouts. No layout is applied. Only an unbound native subprocess handle may use the client version for an absent socket; failures from previously bound endpoints remain failures.
 
 <a id="libtmux-server-hpp-server-is-alive"></a>
 #### `Server::is_alive`
@@ -494,6 +504,77 @@ A hook set globally is not reported by the unscoped listing, so reading it back 
 ```cpp
 [[nodiscard]] expected<void, CommandFailure> set_global_hook(std::string_view name, std::string_view command) const;
 ```
+
+<a id="libtmux-layout-hpp"></a>
+## `libtmux/layout.hpp`
+
+Planned panes that need cells. Use one when current topology is unknown.
+
+**Symbols:**
+
+- [`LayoutRequest`](#libtmux-layout-hpp-layoutrequest)
+  - [`LayoutRequest::layout`](#libtmux-layout-hpp-layoutrequest-layout)
+  - [`LayoutRequest::minimum_panes`](#libtmux-layout-hpp-layoutrequest-minimum-panes)
+- [`LayoutFailure`](#libtmux-layout-hpp-layoutfailure)
+  - [`LayoutFailure::index`](#libtmux-layout-hpp-layoutfailure-index)
+  - [`LayoutFailure::cause`](#libtmux-layout-hpp-layoutfailure-cause)
+- [`Free symbols`](#libtmux-layout-hpp-free-symbols)
+  - [`validate_layout`](#libtmux-layout-hpp-free-symbols-validate-layout)
+
+<a id="libtmux-layout-hpp-layoutrequest"></a>
+### `LayoutRequest`
+
+```cpp
+struct LayoutRequest;
+```
+
+<a id="libtmux-layout-hpp-layoutrequest-layout"></a>
+#### `LayoutRequest::layout`
+
+```cpp
+std::string_view layout;
+```
+
+<a id="libtmux-layout-hpp-layoutrequest-minimum-panes"></a>
+#### `LayoutRequest::minimum_panes`
+
+```cpp
+std::size_t minimum_panes{1};
+```
+Planned panes that need cells. Use one when current topology is unknown.
+
+<a id="libtmux-layout-hpp-layoutfailure"></a>
+### `LayoutFailure`
+
+```cpp
+struct LayoutFailure;
+```
+
+<a id="libtmux-layout-hpp-layoutfailure-index"></a>
+#### `LayoutFailure::index`
+
+```cpp
+std::size_t index{};
+```
+Index in the supplied batch, including failures while querying its daemon.
+
+<a id="libtmux-layout-hpp-layoutfailure-cause"></a>
+#### `LayoutFailure::cause`
+
+```cpp
+CommandFailure cause;
+```
+
+<a id="libtmux-layout-hpp-free-symbols"></a>
+### `Free symbols`
+
+<a id="libtmux-layout-hpp-free-symbols-validate-layout"></a>
+#### `validate_layout`
+
+```cpp
+[[nodiscard]] expected<void, CommandFailure> validate_layout(std::string_view layout, std::size_t minimum_panes = 1);
+```
+Check names, v1 saved-layout checksum, v1/v2 tree grammar and minimum cell count without I/O. Names must be valid on at least one supported tmux version; Server::validate_layouts resolves version-dependent names and requires tmux 3.9 (including next-3.9) or newer for v2 JSON layouts. Saved input, including floating-pane metadata, is retained unchanged. The v2 reader follows tmux's restricted JSON syntax. Geometry and resizing remain tmux's responsibility. Empty layouts are invalid.
 
 <a id="libtmux-async-hpp"></a>
 ## `libtmux/async.hpp`
@@ -1270,6 +1351,10 @@ The tmux object hierarchy.  A Session, Window, Pane or Client is one row of a sn
   - [`Client::last_activity`](#libtmux-entities-hpp-client-last-activity)
   - [`Client::terminal`](#libtmux-entities-hpp-client-terminal)
   - [`Client::control_mode`](#libtmux-entities-hpp-client-control-mode)
+  - [`Client::pid`](#libtmux-entities-hpp-client-pid)
+  - [`Client::active_pane_id`](#libtmux-entities-hpp-client-active-pane-id)
+  - [`Client::flags`](#libtmux-entities-hpp-client-flags)
+  - [`Client::window_id`](#libtmux-entities-hpp-client-window-id)
   - [`Client::operator==`](#libtmux-entities-hpp-client-operator)
   - [`Client::session`](#libtmux-entities-hpp-client-session)
   - [`Client::switch_to`](#libtmux-entities-hpp-client-switch-to)
@@ -1344,6 +1429,10 @@ The tmux object hierarchy.  A Session, Window, Pane or Client is one row of a sn
   - [`client::control_mode`](#libtmux-entities-hpp-free-symbols-client-control-mode)
   - [`client::width`](#libtmux-entities-hpp-free-symbols-client-width)
   - [`client::height`](#libtmux-entities-hpp-free-symbols-client-height)
+  - [`client::pid`](#libtmux-entities-hpp-free-symbols-client-pid)
+  - [`client::active_pane_id`](#libtmux-entities-hpp-free-symbols-client-active-pane-id)
+  - [`client::flags`](#libtmux-entities-hpp-free-symbols-client-flags)
+  - [`client::window_id`](#libtmux-entities-hpp-free-symbols-client-window-id)
 
 <a id="libtmux-entities-hpp-splitoptions"></a>
 ### `SplitOptions`
@@ -2171,7 +2260,7 @@ How to address this window, and the reason a window id alone will not do.  The s
 ```cpp
 [[nodiscard]] expected<void, CommandFailure> select_layout(std::string_view layout) const;
 ```
-Rearrange the panes. tmux names five layouts and also accepts the layout description `layout()` returns, which is how a saved arrangement is restored exactly.
+Rearrange panes using a built-in name, unique abbreviation or saved layout. Saved-layout syntax checks precede dispatch; version-sensitive names and v2 JSON use this window's retained daemon. tmux decides geometry and pane count.
 
 <a id="libtmux-entities-hpp-window-resize"></a>
 #### `Window::resize`
@@ -2930,7 +3019,7 @@ static constexpr std::string_view kNoun{"client"};
 #### `Client::kFields`
 
 ```cpp
-static constexpr std::array kFields{ std::string_view{"client_name"}, std::string_view{"client_session"}, std::string_view{"client_readonly"}, std::string_view{"client_tty"}, std::string_view{"client_width"}, std::string_view{"client_height"}, std::string_view{"client_created"}, std::string_view{"client_activity"}, std::string_view{"client_termname"}, std::string_view{"client_control_mode"}};
+static constexpr std::array kFields{ std::string_view{"client_name"}, std::string_view{"client_session"}, std::string_view{"client_readonly"}, std::string_view{"client_tty"}, std::string_view{"client_width"}, std::string_view{"client_height"}, std::string_view{"client_created"}, std::string_view{"client_activity"}, std::string_view{"client_termname"}, std::string_view{"client_control_mode"}, std::string_view{"client_pid"}, std::string_view{"pane_id"}, std::string_view{"client_flags"}, std::string_view{"window_id"}};
 ```
 
 <a id="libtmux-entities-hpp-client-client"></a>
@@ -3025,6 +3114,35 @@ A client is named by its terminal path, which is the only stable handle tmux giv
 [[nodiscard]] bool control_mode() const noexcept;
 ```
 A control-mode client is a program driving tmux, not a terminal.
+
+<a id="libtmux-entities-hpp-client-pid"></a>
+#### `Client::pid`
+
+```cpp
+[[nodiscard]] long long pid() const noexcept;
+```
+
+<a id="libtmux-entities-hpp-client-active-pane-id"></a>
+#### `Client::active_pane_id`
+
+```cpp
+[[nodiscard]] std::string_view active_pane_id() const noexcept;
+```
+The session window's active pane, not independent client-local focus.
+
+<a id="libtmux-entities-hpp-client-flags"></a>
+#### `Client::flags`
+
+```cpp
+[[nodiscard]] std::string_view flags() const noexcept;
+```
+
+<a id="libtmux-entities-hpp-client-window-id"></a>
+#### `Client::window_id`
+
+```cpp
+[[nodiscard]] std::string_view window_id() const noexcept;
+```
 
 <a id="libtmux-entities-hpp-client-operator"></a>
 #### `Client::operator==`
@@ -3547,6 +3665,34 @@ inline constexpr NumberFieldHandle<Client> width{ {Client::kFields[4], [](const 
 
 ```cpp
 inline constexpr NumberFieldHandle<Client> height{ {Client::kFields[5], [](const Client& row) { /* implementation omitted */ }}};
+```
+
+<a id="libtmux-entities-hpp-free-symbols-client-pid"></a>
+#### `client::pid`
+
+```cpp
+inline constexpr NumberFieldHandle<Client> pid{ {Client::kFields[10], [](const Client& row) { /* implementation omitted */ }}};
+```
+
+<a id="libtmux-entities-hpp-free-symbols-client-active-pane-id"></a>
+#### `client::active_pane_id`
+
+```cpp
+inline constexpr StringFieldHandle<Client> active_pane_id{ {Client::kFields[11], [](const Client& row) { /* implementation omitted */ }}};
+```
+
+<a id="libtmux-entities-hpp-free-symbols-client-flags"></a>
+#### `client::flags`
+
+```cpp
+inline constexpr StringFieldHandle<Client> flags{ {Client::kFields[12], [](const Client& row) { /* implementation omitted */ }}};
+```
+
+<a id="libtmux-entities-hpp-free-symbols-client-window-id"></a>
+#### `client::window_id`
+
+```cpp
+inline constexpr StringFieldHandle<Client> window_id{ {Client::kFields[13], [](const Client& row) { /* implementation omitted */ }}};
 ```
 
 <a id="libtmux-snapshot-hpp"></a>

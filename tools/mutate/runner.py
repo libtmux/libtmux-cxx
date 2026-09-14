@@ -302,6 +302,7 @@ def run(
         "--preset",
         preset,
         "--no-tests=error",
+        "--output-on-failure",
         "--tests-regex",
         test_regex,
     ]
@@ -368,8 +369,17 @@ def run(
                 "not a result",
                 "the restoration did not reach the binary that was retested",
             )
-    if execute(test_command).returncode != 0:
-        return Outcome(mutation, "not a result", "the selected tests did not recover")
+    recovered = execute(test_command)
+    if recovered.returncode != 0:
+        detail = "the selected tests did not recover"
+        output = (
+            ((recovered.stdout or b"") + (recovered.stderr or b""))
+            .decode("utf-8", errors="replace")[-8192:]
+            .strip()
+        )
+        if output:
+            detail += f":\n{output}"
+        return Outcome(mutation, "not a result", detail)
     return Outcome(mutation, "killed")
 
 
