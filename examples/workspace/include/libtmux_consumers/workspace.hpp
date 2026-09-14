@@ -340,9 +340,15 @@ build_windows(const Server& server, const Workspace& description,
       if (const auto killed = bootstrap->kill(); !killed.has_value()) {
         return fail(index, killed.error().diagnostic);
       }
-      if (target->index() != desired) {
+      // `renumber-windows on` re-indexes the session as the bootstrap window
+      // closes, so the index this window held is read back after the kill.
+      const auto placed = server.window(std::string{built->id()} + ":" + *created);
+      if (!placed.has_value()) {
+        return fail(index, placed.error().diagnostic);
+      }
+      if (placed->index() != desired) {
         const auto moved =
-            server.run({"move-window", "-s", target->target(), "-t",
+            server.run({"move-window", "-s", placed->target(), "-t",
                         std::string{built->id()} + ":" + std::to_string(desired)});
         if (!moved.has_value()) {
           return fail(index, moved.error().diagnostic);
