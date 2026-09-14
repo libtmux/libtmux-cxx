@@ -1221,24 +1221,35 @@ TEST(WorkspaceCliTmux, CaptureLeavesOutTheShellTmuxStartedForThePane) {
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
   ASSERT_TRUE(server.has_value());
-  // Named after nothing a fixed list of shells would hold: what tmux starts
-  // for a pane with no command of its own is whatever `default-shell` names.
-  const auto shell = fixture->socket_path().parent_path() / "noshell";
-  std::filesystem::create_symlink("/bin/sh", shell);
-  ASSERT_TRUE(server->set_global_option("default-shell", shell.string()).has_value());
-  ASSERT_TRUE(server->new_session("capture-shell").has_value());
+  const auto session = server->new_session("capture-shell");
+  ASSERT_TRUE(session.has_value());
+  const auto window = session->active_window();
+  ASSERT_TRUE(window.has_value());
+  const auto panes = window->panes();
+  ASSERT_TRUE(panes.has_value());
+  // How tmux names the shell it started is its business and differs by
+  // platform, so the option is pointed at that name rather than the reverse.
+  const std::string running{panes->front().command()};
+  ASSERT_FALSE(running.empty());
+  const auto directory = fixture->socket_path().parent_path();
+  for (const auto& name : {running, std::string{"not-a-shell"}})
+    std::filesystem::create_symlink("/bin/sh", directory / name);
   const auto freeze = [&] {
     const auto result = invoke(
         {"freeze", "capture-shell", "-S", fixture->socket_path().string(), "--json"});
     EXPECT_EQ(result.code, 0) << result.err;
     return Json::parse(result.out).at("windows")[0].at("panes")[0].at("shell_command");
   };
+  ASSERT_TRUE(server->set_global_option("default-shell", (directory / running).string())
+                  .has_value());
   EXPECT_EQ(freeze(), Json::array());
 
   // The same pane again, once tmux would start something else for it: a
   // command that is not the session's shell is one a reload has to run.
-  ASSERT_TRUE(server->set_global_option("default-shell", "/bin/sh").has_value());
-  EXPECT_EQ(freeze(), Json::array({"noshell"}));
+  ASSERT_TRUE(
+      server->set_global_option("default-shell", (directory / "not-a-shell").string())
+          .has_value());
+  EXPECT_EQ(freeze(), Json::array({running}));
 }
 
 TEST(WorkspaceCliTmux, CaptureOptionReadFailureDoesNotPublish) {
