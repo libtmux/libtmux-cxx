@@ -249,8 +249,16 @@ fs::path resolve(const std::string& name, const std::string& importer = {}) {
       return fs::absolute(path).lexically_normal();
   throw Failure{1, "WORKSPACE_NOT_FOUND", "workspace not found: " + name};
 }
-Json record(const WorkspaceFile& file, bool full) {
-  const auto modified = fs::last_write_time(file.path);
+// Empty for a file that went away between the listing and this read, which
+// `discover` cannot rule out and a listing should not end on.
+std::optional<Json> record(const WorkspaceFile& file, bool full) {
+  std::error_code gone;
+  const auto modified = fs::last_write_time(file.path, gone);
+  if (gone)
+    return std::nullopt;
+  const auto size = fs::file_size(file.path, gone);
+  if (gone)
+    return std::nullopt;
   const auto system = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
       modified - fs::file_time_type::clock::now() + std::chrono::system_clock::now());
   const std::time_t stamp = std::chrono::system_clock::to_time_t(system);
@@ -270,7 +278,7 @@ Json record(const WorkspaceFile& file, bool full) {
   Json result{{"name", file.path.stem().string()},
               {"path", private_path(file.path)},
               {"format", file.path.extension() == ".json" ? "json" : "yaml"},
-              {"size", fs::file_size(file.path)},
+              {"size", size},
               {"mtime", time.str()},
               {"session_name",
                config.is_object() ? config.value("session_name", Json{}) : Json{}},
@@ -879,7 +887,10 @@ Json search(const Request& request) {
   const auto compiled = patterns(request);
   Json results = Json::array();
   for (const auto& file : discover()) {
-    Json info = record(file, true);
+    auto found = record(file, true);
+    if (!found)
+      continue;
+    Json& info = *found;
     std::map<std::string, std::vector<std::string>> fields;
     for (const auto* key : {"name", "session_name", "path"})
       if (info[key].is_string())
@@ -1087,7 +1098,8 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
   if (request.command == "ls") {
     Json workspaces = Json::array(), dirs = Json::array();
     for (const auto& file : discover())
-      workspaces.push_back(record(file, request.flag("full")));
+      if (auto row = record(file, request.flag("full")))
+        workspaces.push_back(std::move(*row));
     for (const auto& directory : global_directories())
       dirs.push_back(
           {{"path", private_path(directory)}, {"exists", fs::is_directory(directory)}});
