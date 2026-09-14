@@ -17,6 +17,19 @@ import termios
 import time
 from contextlib import suppress
 
+# `sockaddr_un.sun_path` holds 104 bytes on macOS, where `$TMPDIR` alone spends
+# around sixty of them before this script adds anything.
+SUN_PATH = 104
+
+
+def socket_path(root, name="tmux.sock"):
+    """Name a private tmux socket, refusing one `sun_path` cannot hold."""
+    path = str(root / name)
+    if len(path.encode()) >= SUN_PATH:
+        message = f"tmux socket path exceeds sun_path: {path}"
+        raise RuntimeError(message)
+    return path
+
 
 def terminal_edit(binary, root, env, *, cancelled=False):
     """Keep machine stdout separate while the editor exchanges terminal input."""
@@ -184,7 +197,7 @@ def output_limit(binary, root, env):
 def terminal_load(binary, root, env, mode="detach", *, logging=False):
     """Publish loaded results before attaching, then retain the loaded session."""
     root.mkdir()
-    socket = str(root / "tmux.sock")
+    socket = socket_path(root)
     command = ["tmux", "-S", socket]
     env = dict(env, TMUX="", TMUX_PANE="", TERM="xterm-256color")
     subprocess.run(
@@ -343,7 +356,7 @@ def terminal_load(binary, root, env, mode="detach", *, logging=False):
 def terminal_switch(binary, root, env, mode):
     """Select a unique pane's human client and recheck it after before_script."""
     root.mkdir()
-    command = ["tmux", "-S", str(root / "tmux.sock")]
+    command = ["tmux", "-S", socket_path(root)]
     env = dict(env, TMUX="", TMUX_PANE="", TERM="xterm-256color")
 
     def query(*arguments):
@@ -390,7 +403,7 @@ def terminal_switch(binary, root, env, mode):
         arguments.append("-d")
     if mode == "independent-append":
         arguments.append("--append")
-    foreign = ["tmux", "-S", str(root / "foreign.sock")]
+    foreign = ["tmux", "-S", socket_path(root, "foreign.sock")]
     if mode == "foreign":
         arguments[-1] = foreign[2]
     if mode == "stale":
@@ -743,7 +756,7 @@ def with_log_limit(arguments):
 def failed_log_file(binary, root, env, mode):
     """Keep process completion and workspace ownership after a real file error."""
     root.mkdir()
-    command = ["tmux", "-S", str(root / "tmux.sock")]
+    command = ["tmux", "-S", socket_path(root)]
     env = dict(env, TMUX="", TMUX_PANE="")
     subprocess.run(
         [*command, "-f", "/dev/null", "new-session", "-d", "-s", "keeper"],
@@ -822,12 +835,15 @@ def failed_log_file(binary, root, env, mode):
             start_new_session=True,
         )
         if mode == "cancel":
+            # The owned script has to be running as well as the log full: how
+            # much a record costs depends on the path lengths in it, so the
+            # limit can otherwise be reached before the script starts.
             deadline = time.monotonic() + 2
-            while (
-                not (root / "operation.log").exists()
-                or (root / "operation.log").stat().st_size < 2048
+            log = root / "operation.log"
+            while not (root / "script.pid").exists() or not (
+                log.exists() and log.stat().st_size >= 2048
             ):
-                assert time.monotonic() < deadline, "log write did not reach its limit"
+                assert time.monotonic() < deadline, "script and log write did not start"
                 time.sleep(0.005)
             process.send_signal(signal.SIGTERM)
         output, diagnostic = process.communicate(timeout=3)
@@ -927,7 +943,7 @@ def main():
     args = parser.parse_args()
     binary = str(args.binary.resolve(strict=True))
     started = time.monotonic()
-    with tempfile.TemporaryDirectory(prefix="cxx-workspace-process-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="cxx-ws-") as temporary:
         root = pathlib.Path(temporary)
         (root / "dev.yaml").write_text("session_name: editor\nwindows: [{}]\n")
         script = root / "editor.sh"
@@ -951,43 +967,49 @@ def main():
             }
         )
         if args.logging:
-            for mode in (
-                "success",
-                "failed",
-                "stderr",
-                "failed-stderr",
-                "stdout",
-                "failed-stdout",
-                "borrowed",
-                "cancel",
+            for case, mode in enumerate(
+                (
+                    "success",
+                    "failed",
+                    "stderr",
+                    "failed-stderr",
+                    "stdout",
+                    "failed-stdout",
+                    "borrowed",
+                    "cancel",
+                )
             ):
-                report["log_" + mode] = failed_log_file(binary, root / mode, env, mode)
-            for mode in ("detach", "cancel"):
+                report["log_" + mode] = failed_log_file(
+                    binary, root / f"g{case}", env, mode
+                )
+            for case, mode in enumerate(("detach", "cancel")):
                 report["log_terminal_" + mode] = terminal_load(
-                    binary, root / ("terminal-" + mode), env, mode, logging=True
+                    binary, root / f"t{case}", env, mode, logging=True
                 )
         if args.load:
-            for mode in ("detach", "cancel", "unavailable", "closed"):
+            for case, mode in enumerate(("detach", "cancel", "unavailable", "closed")):
                 report["terminal_load_" + mode] = terminal_load(
-                    binary, root / ("load-" + mode), env, mode
+                    binary, root / f"l{case}", env, mode
                 )
-            for mode in (
-                "normal",
-                "ambiguous",
-                "control",
-                "changed",
-                "replaced",
-                "foreign",
-                "stale",
-                "independent",
-                "independent-detached",
-                "independent-append",
-                "independent-linked",
-                "independent-other-window",
-                "gained-independent",
+            for case, mode in enumerate(
+                (
+                    "normal",
+                    "ambiguous",
+                    "control",
+                    "changed",
+                    "replaced",
+                    "foreign",
+                    "stale",
+                    "independent",
+                    "independent-detached",
+                    "independent-append",
+                    "independent-linked",
+                    "independent-other-window",
+                    "gained-independent",
+                )
             ):
                 report["terminal_switch_" + mode] = terminal_switch(
-                    binary, root / ("switch-" + mode), env, mode
+                    binary, root / f"s{case}", env, mode
                 )
     report["binary_sha256"] = hashlib.sha256(
         pathlib.Path(binary).read_bytes()
