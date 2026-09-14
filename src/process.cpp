@@ -95,10 +95,25 @@ cleanup_group(PosixChild& child, bool allow_term, DescendantPolicy descendants) 
       failure = std::move(*candidate);
     }
   };
+  // The leader stays unreaped under `terminate`, so its status never leaves
+  // `running` here and the grace has to end on what the group still holds: a
+  // descendant that outlived the leader keeps the inherited pipes open.
+  const auto waited_out = [&] {
+    if (descendants == DescendantPolicy::leave_running) {
+      retain(child.update_status(DeliveryStatus::indeterminate));
+      return child.status() != ChildStatus::running;
+    }
+    auto observed = child.exit_pending(DeliveryStatus::indeterminate);
+    if (!observed) {
+      retain(std::move(observed.error()));
+      return true;
+    }
+    return *observed && child.output_closed();
+  };
   const auto settle = [&](Clock::time_point until) {
     while (child.status() == ChildStatus::running && Clock::now() < until) {
-      if (descendants == DescendantPolicy::leave_running)
-        retain(child.update_status(DeliveryStatus::indeterminate));
+      if (waited_out())
+        return;
       auto drain = poll_and_drain(child, std::min(until, Clock::now() + poll_quantum),
                                   DeliveryStatus::indeterminate);
       if (drain) {
