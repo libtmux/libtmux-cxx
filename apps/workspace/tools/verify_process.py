@@ -41,6 +41,15 @@ def line_settings(descriptor):
     return settings
 
 
+def released_daemon(query):
+    """Whether the server behind `query` is a tmux release rather than master.
+
+    A prerelease answers `next-<version>`, and what a client projects through
+    `list-clients` is still moving there.
+    """
+    return "next-" not in query("display-message", "-p", "#{version}")
+
+
 def socket_path(root, name="tmux.sock"):
     """Name a private tmux socket, refusing one `sun_path` cannot hold."""
     path = str(root / name)
@@ -580,9 +589,12 @@ def terminal_switch(binary, root, env, mode):
                 "window": projected[1],
                 "flags": projected[2],
             }
-            assert projected[0] == first_pane and projected[1] == first_window, focus
-            assert "active-pane" in projected[2].split(","), focus
-        elif mode == "independent-other-window":
+            if released_daemon(query):
+                assert projected[0] == first_pane and projected[1] == first_window, (
+                    focus
+                )
+                assert "active-pane" in projected[2].split(","), focus
+        elif mode == "independent-other-window" and released_daemon(query):
             rows = [
                 row.split("|")
                 for row in query(

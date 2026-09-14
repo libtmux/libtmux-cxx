@@ -37,8 +37,14 @@ if(LIBTMUX_BUILD_TESTS AND NOT WIN32)
   # What the in-process suite cannot reach: a real controlling terminal and the
   # foreground process group around it, and the generated completion scripts
   # executed by the shells they are written for.
+  # They cap the program's file size with `RLIMIT_FSIZE` to make a log write
+  # fail, and a sanitizer or coverage runtime writes its own files from inside
+  # that same process, so it dies under the cap instead of the log failing.
   find_package(Python3 COMPONENTS Interpreter QUIET)
-  if(Python3_Interpreter_FOUND)
+  if(Python3_Interpreter_FOUND
+     AND NOT LIBTMUX_ENABLE_SANITIZERS
+     AND NOT LIBTMUX_ENABLE_THREAD_SANITIZER
+     AND NOT LIBTMUX_ENABLE_COVERAGE)
     set(_verify_cli "${CMAKE_CURRENT_SOURCE_DIR}/tools/verify_cli.py")
     set(_verify_process "${CMAKE_CURRENT_SOURCE_DIR}/tools/verify_process.py")
     add_test(NAME consumer.workspace.verify.cli
