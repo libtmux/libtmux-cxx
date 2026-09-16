@@ -157,26 +157,30 @@ Json read_document(const fs::path& path, bool reject_erb = false) {
     throw Failure{1, "INVALID_CONFIG", "workspace must be a mapping"};
   return result;
 }
+// tmuxp has exactly one active global workspace directory: the first that
+// exists of $TMUXP_CONFIGDIR, $XDG_CONFIG_HOME/tmuxp (else ~/.config/tmuxp),
+// then legacy ~/.tmuxp. Falls back to the last candidate when none exist.
 std::vector<fs::path> global_directories() {
-  std::vector<fs::path> directories;
+  std::vector<fs::path> candidates;
   const auto explicit_dir = environment("TMUXP_CONFIGDIR");
   if (!explicit_dir.empty())
-    directories.emplace_back(expand(explicit_dir));
+    candidates.emplace_back(expand(explicit_dir));
   const auto home = environment("HOME");
-  if (!home.empty())
-    directories.emplace_back(fs::path{home} / ".tmuxp");
   auto xdg = environment("XDG_CONFIG_HOME");
   if (xdg.empty() && !home.empty())
     xdg = (fs::path{home} / ".config").string();
   if (!xdg.empty())
-    directories.emplace_back(fs::path{xdg} / "tmuxp");
-  std::vector<fs::path> unique;
-  for (const auto& dir : directories) {
-    const auto absolute = fs::absolute(dir).lexically_normal();
-    if (std::ranges::find(unique, absolute) == unique.end())
-      unique.push_back(absolute);
+    candidates.emplace_back(fs::path{xdg} / "tmuxp");
+  if (!home.empty())
+    candidates.emplace_back(fs::path{home} / ".tmuxp");
+  for (const auto& dir : candidates) {
+    std::error_code error;
+    if (fs::is_directory(dir, error))
+      return {fs::absolute(dir).lexically_normal()};
   }
-  return unique;
+  if (!candidates.empty())
+    return {fs::absolute(candidates.back()).lexically_normal()};
+  return {};
 }
 bool workspace_extension(const fs::path& path) {
   return path.extension() == ".yaml" || path.extension() == ".yml" ||

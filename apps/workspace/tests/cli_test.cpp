@@ -764,6 +764,10 @@ TEST(WorkspaceCli, VersionNamesTheToolAndJsonOutputIsOneCompactLine) {
 
 TEST(WorkspaceCli, ListingGroupsDirectoriesAndIncludesFullDocuments) {
   Files files;
+  // Only one global directory is ever active (B0); exercise the legacy
+  // ~/.tmuxp one by clearing the higher-precedence candidates Files() sets.
+  ::unsetenv("TMUXP_CONFIGDIR");
+  ::unsetenv("XDG_CONFIG_HOME");
   std::filesystem::create_directory(".tmuxp");
   const Json document{{"session_name", "日本語"},
                       {"custom", {{"enabled", true}, {"count", 3}}},
@@ -1055,6 +1059,31 @@ TEST(WorkspaceCli, ConvertNamesTheDestinationAfterTheEncodingItWrites) {
     EXPECT_EQ(Json::accept(bytes), encoding == "json") << bytes;
     std::filesystem::remove(written);
   }
+}
+
+// B0: tmuxp has exactly one active global workspace directory (the first
+// that exists of $TMUXP_CONFIGDIR, $XDG_CONFIG_HOME/tmuxp, then legacy
+// ~/.tmuxp); a name that collides must resolve from the active one, and a
+// name that exists only in an inactive directory must not be found.
+TEST(WorkspaceCli, EditByNamePrefersActiveWorkspaceDirectoryOverLegacy) {
+  Files files;
+  ::unsetenv("TMUXP_CONFIGDIR");
+  std::filesystem::create_directories("tmuxp");  // $XDG_CONFIG_HOME/tmuxp: active
+  std::filesystem::create_directories(".tmuxp"); // legacy: inactive here
+  std::ofstream{"tmuxp/dup.yaml"} << "session_name: dup-xdg\nwindows: [{}]\n";
+  std::ofstream{".tmuxp/dup.yaml"} << "session_name: dup-legacy\nwindows: [{}]\n";
+  std::ofstream{".tmuxp/alpha.yaml"} << "session_name: alpha-legacy\nwindows: [{}]\n";
+  libtmux::test::EnvironmentGuard visual{"VISUAL", ""};
+  libtmux::test::EnvironmentGuard editor{"EDITOR", "/bin/echo"};
+
+  const auto found = invoke({"edit", "dup", "--json"});
+  ASSERT_EQ(found.code, 0) << found.err;
+  const auto path = Json::parse(found.out).at("stdout").get<std::string>();
+  EXPECT_NE(path.find("/tmuxp/dup.yaml"), std::string::npos) << path;
+  EXPECT_EQ(path.find("/.tmuxp/dup.yaml"), std::string::npos) << path;
+
+  const auto missing = invoke({"edit", "alpha", "--json"});
+  EXPECT_NE(missing.code, 0);
 }
 
 TEST(WorkspaceCli, EditorKeepsQuotedArgumentsAndChildStatus) {
