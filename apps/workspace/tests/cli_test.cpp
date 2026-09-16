@@ -1172,15 +1172,14 @@ TEST(WorkspaceCliTmux, CaptureReloadsExplicitLocalOptions) {
   EXPECT_EQ(options.value("status-format[3]", "missing"), value);
   EXPECT_FALSE(options.contains("@inherited"));
   EXPECT_FALSE(document.contains("global_options"));
+  // Window options round-trip through `options_after`: `automatic-rename:
+  // off` only holds if it is applied once the window's panes already exist.
+  EXPECT_FALSE(document.at("windows")[0].contains("options"));
   const auto window_options =
-      document.at("windows")[0].value("options", Json::object());
+      document.at("windows")[0].value("options_after", Json::object());
   EXPECT_EQ(window_options.value("automatic-rename", "missing"), "off");
   EXPECT_EQ(window_options.value("@window-note", "missing"), value);
-  EXPECT_FALSE(window_options.contains("synchronize-panes"));
-  EXPECT_EQ(document.at("windows")[0]
-                .value("options_after", Json::object())
-                .value("synchronize-panes", "missing"),
-            "on");
+  EXPECT_EQ(window_options.value("synchronize-panes", "missing"), "on");
   const auto by_id = invoke({"freeze", std::string{source->id()}, "-S",
                              fixture->socket_path().string(), "--json"});
   ASSERT_EQ(by_id.code, 0) << by_id.err;
@@ -1238,18 +1237,54 @@ TEST(WorkspaceCliTmux, CaptureLeavesOutTheShellTmuxStartedForThePane) {
     const auto result = invoke(
         {"freeze", "capture-shell", "-S", fixture->socket_path().string(), "--json"});
     EXPECT_EQ(result.code, 0) << result.err;
-    return Json::parse(result.out).at("windows")[0].at("panes")[0].at("shell_command");
+    return Json::parse(result.out).at("windows")[0].at("panes")[0];
   };
+  // Reloading a named default shell builds a shell inside a shell, so the
+  // key is left out rather than emitted as an empty command list.
   ASSERT_TRUE(server->set_global_option("default-shell", (directory / running).string())
                   .has_value());
-  EXPECT_EQ(freeze(), Json::array());
+  EXPECT_FALSE(freeze().contains("shell_command"));
 
   // The same pane again, once tmux would start something else for it: a
   // command that is not the session's shell is one a reload has to run.
   ASSERT_TRUE(
       server->set_global_option("default-shell", (directory / "not-a-shell").string())
           .has_value());
-  EXPECT_EQ(freeze(), Json::array({running}));
+  EXPECT_EQ(freeze().at("shell_command"), Json::array({running}));
+}
+
+TEST(WorkspaceCliTmux, FreezeSavesBlockStyleYaml) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("capblk")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value());
+  const auto session = server->new_session("capture-block");
+  ASSERT_TRUE(session.has_value());
+  ASSERT_TRUE(session->set_option("status", "off").has_value());
+  const auto window = session->active_window();
+  ASSERT_TRUE(window.has_value());
+  ASSERT_TRUE(window->split().has_value());
+
+  const auto destination = fixture->socket_path().parent_path() / "frozen.yaml";
+  const auto result =
+      invoke({"freeze", "capture-block", "-S", fixture->socket_path().string(),
+              "--save-to", destination.string()});
+  ASSERT_EQ(result.code, 0) << result.err;
+  ASSERT_TRUE(std::filesystem::exists(destination));
+  std::ifstream saved{destination};
+  const std::string bytes{std::istreambuf_iterator<char>{saved}, {}};
+  // `YAML::Load` on the JSON text `capture()` builds records flow style on
+  // every map and sequence it parses, and the emitter otherwise carries that
+  // through: a frozen workspace exists to be read and edited, which one
+  // JSON-shaped line is not.
+  EXPECT_NE(bytes.find("session_name: capture-block\n"), std::string::npos) << bytes;
+  EXPECT_NE(bytes.find("options:\n"), std::string::npos) << bytes;
+  EXPECT_NE(bytes.find("windows:\n"), std::string::npos) << bytes;
+  EXPECT_NE(bytes.find("  - window_name:"), std::string::npos) << bytes;
+  EXPECT_NE(bytes.find("\n    panes:\n"), std::string::npos) << bytes;
+  EXPECT_NE(bytes.find("\n      - start_directory:"), std::string::npos) << bytes;
+  EXPECT_GT(std::count(bytes.begin(), bytes.end(), '\n'), 8) << bytes;
 }
 
 TEST(WorkspaceCliTmux, CaptureOptionReadFailureDoesNotPublish) {
