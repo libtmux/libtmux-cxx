@@ -459,7 +459,9 @@ TEST(WorkspaceBuilder, ABuildFailureReportsOnlyTheDiagnosisSentence) {
       .session_name = "toosmall", .windows = {{.name = "plain", .panes = {{}, {}}}}};
   const auto built = workspace::build(server, description);
   ASSERT_FALSE(built.has_value());
-  EXPECT_NE(built.error().reason.find("no space for a new pane"), std::string::npos)
+  // tmux 3.7 reworded this: "no space for new pane" became "size or position
+  // no space for a new pane". Match the part both spellings share.
+  EXPECT_NE(built.error().reason.find("no space for"), std::string::npos)
       << built.error().reason;
   // No leaked command line or escaping format string.
   EXPECT_EQ(built.error().reason.find("(running:"), std::string::npos)
