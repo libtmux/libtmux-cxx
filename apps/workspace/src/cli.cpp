@@ -395,6 +395,9 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
   Request request;
   // A supplied input stream does not authorize borrowing the process terminal.
   request.terminal_allowed = &input == &std::cin;
+#ifndef _WIN32
+  request.stdout_terminal = &output == &std::cout && ::isatty(STDOUT_FILENO) != 0;
+#endif
   for (const auto& arg : arguments) {
     if (arg == "--")
       break;

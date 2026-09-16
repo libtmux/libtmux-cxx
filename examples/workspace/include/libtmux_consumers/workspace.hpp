@@ -167,7 +167,9 @@ inline std::string sentence(std::string_view diagnostic) {
 [[nodiscard]] inline libtmux::expected<libtmux::Session, BuildError>
 build_windows(const Server& server, const Workspace& description,
               const std::optional<libtmux::Session>& borrowed,
-              const BeforeBuild& before, const BuildObserver& observer) {
+              const BeforeBuild& before, const BuildObserver& observer,
+              std::optional<int> width = std::nullopt,
+              std::optional<int> height = std::nullopt) {
   if (description.session_name.empty() || description.windows.empty()) {
     return libtmux::unexpected(BuildError{0, "workspace names no session or window"});
   }
@@ -200,10 +202,16 @@ build_windows(const Server& server, const Workspace& description,
   auto initial_environment = description.environment;
   if (before)
     initial_environment.clear();
+  // A session built with an explicit size stays that size until a client
+  // attaches, so every window laid out before then — not only the one a
+  // client happens to focus first — is built at the real terminal size
+  // instead of tmux's `default-size` (80x24 unless the user changed it).
   auto built = borrowed
                    ? libtmux::expected<libtmux::Session, CommandFailure>{*borrowed}
                    : server.new_session({.name = description.session_name,
                                          .start_directory = description.start_directory,
+                                         .width = width,
+                                         .height = height,
                                          .environment = initial_environment});
   if (!built.has_value()) {
     return libtmux::unexpected(BuildError{0, built.error().diagnostic});
@@ -499,10 +507,16 @@ build_windows(const Server& server, const Workspace& description,
 } // namespace detail
 
 // Create a new session. A failed build removes only the session it created.
+// `width`/`height` fix the session's size (tmux's `-x`/`-y`) until a client
+// attaches; they are not workspace data, so the caller supplies them rather
+// than the description carrying them.
 [[nodiscard]] inline libtmux::expected<libtmux::Session, BuildError>
 build(const Server& server, const Workspace& description,
-      const BeforeBuild& before = {}, const BuildObserver& observer = {}) {
-  return detail::build_windows(server, description, std::nullopt, before, observer);
+      const BeforeBuild& before = {}, const BuildObserver& observer = {},
+      std::optional<int> width = std::nullopt,
+      std::optional<int> height = std::nullopt) {
+  return detail::build_windows(server, description, std::nullopt, before, observer, width,
+                               height);
 }
 
 // Add windows to a borrowed session. Failure retains that session, applied
