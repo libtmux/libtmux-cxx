@@ -1924,6 +1924,17 @@ public:
                                std::to_string(errno)};
     interrupted_ = true;
   }
+  // A real terminal delivers Ctrl-C to the whole foreground process group,
+  // not just the process reading the keystroke. `setsid()` in the fork above
+  // made this child its own process group leader, so its negated pid reaches
+  // it and every tmux child it has spawned, the way an interactive user's
+  // interrupt does and `interrupt()` above does not.
+  void interrupt_group() {
+    if (::kill(-process_, SIGINT) != 0)
+      throw std::runtime_error{"cannot interrupt progress CLI group: " +
+                               std::to_string(errno)};
+    interrupted_ = true;
+  }
   void resize() {
     winsize size{6, 40, 0, 0};
     (void)::ioctl(terminal_, TIOCSWINSZ, &size);
@@ -2082,6 +2093,52 @@ TEST(WorkspaceCliTmux, InterruptedPaneDelayClearsProgressAndRollsBackOnlyOwnedSe
       << child.err;
   EXPECT_FALSE(server->session("interrupted"));
   EXPECT_TRUE(server->session(fixture->session_name()));
+}
+
+TEST(WorkspaceCliTmux, GroupInterruptNeverReportsSuccessOrLeaksARawCommand) {
+  Files files;
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-pg")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value());
+
+  // A group-wide interrupt (what a real Ctrl-C sends) can kill the tmux
+  // child a build step is waiting on before this process's own
+  // check_interruption() call ever observes the signal. Enough windows keep
+  // that race live past the "ready" pane, so most attempts land the signal
+  // while a later window is still being built rather than after it finishes.
+  std::ostringstream config;
+  config << "session_name: raced\nwindows:\n- window_name: w0\n  panes:\n"
+         << "  - shell_command:\n    - cmd: 'touch "
+         << (files.directory / "ready").string() << "'\n";
+  for (int window = 1; window <= 15; ++window) {
+    config << "- window_name: w" << window << "\n  panes:\n";
+    for (int pane = 0; pane < 4; ++pane)
+      config << "  - printf 'x" << pane << "\\n'\n";
+  }
+  std::ofstream{"config.yaml"} << config.str();
+
+  for (int attempt = 0; attempt < 6; ++attempt) {
+    std::filesystem::remove("ready");
+    ProgressChild child{{"--color", "never", "load", "config.yaml", "-d", "-S",
+                         fixture->socket_path().string()}};
+    bool sent{};
+    const auto code = child.wait([&](auto& running) {
+      if (!sent && std::filesystem::exists("ready")) {
+        running.interrupt_group();
+        sent = true;
+      }
+    });
+    ASSERT_TRUE(sent);
+    EXPECT_NE(code, 0) << "attempt " << attempt << ": " << child.err;
+    EXPECT_EQ(child.err.find("(running:"), std::string::npos)
+        << "attempt " << attempt << " leaked a raw tmux invocation: " << child.err;
+    EXPECT_EQ(child.err.find("#{"), std::string::npos)
+        << "attempt " << attempt << " leaked a format string: " << child.err;
+    if (const auto session = server->session("raced"); session.has_value())
+      (void)session->kill();
+  }
 }
 
 TEST(WorkspaceCliTmux, ProgressSinkFailureReportsBorrowedWindowsAndOriginalStatus) {
