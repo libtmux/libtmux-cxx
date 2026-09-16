@@ -1305,12 +1305,28 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
         if (!built) {
           if (!script_error && observer_error)
             script_error = observer_error;
+          // A signal can kill the tmux child a build step was waiting on
+          // before any check_interruption() call observes the flag: the
+          // terminal delivers SIGINT to the whole foreground process group,
+          // not just this process, so the command that was running dies on
+          // its own and surfaces here as an ordinary failure rather than the
+          // cancellation it actually was. Reclassify it now so the exit code
+          // and message agree with every other interruption instead of
+          // leaking that command's raw diagnostic with an unrelated status.
+          if (!script_error) {
+            try {
+              check_interruption();
+            } catch (Failure& cancelled) {
+              script_error = std::move(cancelled);
+            }
+          }
           if (script_error)
             failure_status = script_error->exit_code;
-          Json problem{{"code", script_error ? script_error->code : "BUILD_FAILED"},
-                       {"message", built.error().reason},
-                       {"input_index", index},
-                       {"failed_stage", stage}};
+          Json problem{
+              {"code", script_error ? script_error->code : "BUILD_FAILED"},
+              {"message", script_error ? script_error->what() : built.error().reason},
+              {"input_index", index},
+              {"failed_stage", stage}};
           if (!script_output.is_null())
             problem["script_output"] = script_output;
           if (borrowed) {
