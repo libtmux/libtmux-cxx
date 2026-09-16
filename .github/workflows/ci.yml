@@ -813,7 +813,7 @@ jobs:
 
       - name: Check formatting
         run: |
-          find include src tests apps examples tools/mcp \
+          find include src tests apps examples benchmarks tools/mcp \
             \( -name '*.hpp' -o -name '*.cpp' \) \
             -exec clang-format --dry-run --Werror --style=file {} +
 
