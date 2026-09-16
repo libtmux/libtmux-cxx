@@ -282,7 +282,8 @@ TEST(Tmuxp, AMalformedCommandMappingIsRefused) {
       parse_tmuxp("session_name: w\nwindows:\n  - panes:\n"
                   "      - shell_command:\n          - cmd: x\n            wat: 1\n");
   ASSERT_FALSE(unknown.has_value());
-  EXPECT_EQ(unknown.error().reason, "unsupported key: wat");
+  EXPECT_EQ(unknown.error().reason,
+           "unsupported key: wat (prefix a custom key with \"x-\" to keep it)");
 
   const auto backwards = parse_tmuxp(
       "session_name: w\nwindows:\n  - panes:\n"
@@ -351,19 +352,23 @@ TEST(Tmuxp, AKeyThisCannotHonourIsRefusedRatherThanDropped) {
       "session_name: w\nbefore_script: ./setup.sh\nwindows:\n  - panes: [x]\n");
   ASSERT_FALSE(document.has_value());
   EXPECT_EQ(document.error().where, "");
-  EXPECT_EQ(document.error().reason, "unsupported key: before_script");
+  EXPECT_EQ(document.error().reason,
+           "unsupported key: before_script (prefix a custom key with \"x-\" to keep it)");
 
   const auto window = parse_tmuxp(
       "session_name: w\nwindows:\n  - not_a_window_key: 1\n    panes: [x]\n");
   ASSERT_FALSE(window.has_value());
   EXPECT_EQ(window.error().where, "windows[0]");
-  EXPECT_EQ(window.error().reason, "unsupported key: not_a_window_key");
+  EXPECT_EQ(
+      window.error().reason,
+      "unsupported key: not_a_window_key (prefix a custom key with \"x-\" to keep it)");
 
   const auto pane = parse_tmuxp("session_name: w\nwindows:\n  - panes:\n"
                                 "      - shell_command: x\n        wat: false\n");
   ASSERT_FALSE(pane.has_value());
   EXPECT_EQ(pane.error().where, "windows[0].panes[0]");
-  EXPECT_EQ(pane.error().reason, "unsupported key: wat");
+  EXPECT_EQ(pane.error().reason,
+           "unsupported key: wat (prefix a custom key with \"x-\" to keep it)");
 
   const auto options =
       parse_tmuxp("session_name: w\nwindows:\n  - options: [a]\n    panes: [x]\n");
