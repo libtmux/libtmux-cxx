@@ -1127,6 +1127,57 @@ TEST(WorkspaceCli, EditorLaunchFailureEndsItsNdjsonOperation) {
   EXPECT_EQ(Json::parse(result.err).at("code"), "PROCESS_FAILED");
 }
 
+// A1/A2: a session built with no explicit size sits at tmux's `default-size`
+// (80x24) until a client attaches, so every window is laid out wrong for the
+// terminal the user is looking at, and only the window a client happens to
+// focus first is ever corrected. `load` must size the session to the
+// terminal (S1) up front, so every window it builds — not only the focused
+// one — already has that size before any client exists.
+TEST(WorkspaceCliTmux, LoadSizesEveryWindowToTheTerminalNotToDefaultSize) {
+  Files files;
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-size")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value());
+  std::ofstream{"size.yaml"} << "session_name: sized\nwindows:\n"
+                                "  - window_name: one\n    panes: [':']\n"
+                                "  - window_name: two\n    panes: [':']\n";
+  {
+    // The test harness never gives `run()` a real std::cout, so terminal
+    // detection is always off here; COLUMNS/LINES stand in for it (S1).
+    libtmux::test::EnvironmentGuard columns{"COLUMNS", "160"};
+    libtmux::test::EnvironmentGuard lines{"LINES", "48"};
+    const auto result = invoke(
+        {"load", "size.yaml", "-d", "-S", fixture->socket_path().string(), "--json"});
+    ASSERT_EQ(result.code, 0) << result.err;
+  }
+  const auto session = server->session("=sized:");
+  ASSERT_TRUE(session.has_value());
+  const auto windows = session->windows();
+  ASSERT_TRUE(windows.has_value());
+  ASSERT_EQ(windows->size(), 2U);
+  for (const auto& window : *windows) {
+    EXPECT_EQ(window.width(), 160) << window.name();
+    EXPECT_EQ(window.height(), 48) << window.name();
+  }
+  ASSERT_TRUE(session->kill().has_value());
+
+  // TMUXP_DETECT_TERMINAL_SIZE disabled: no -x/-y at all, tmux's own
+  // default-size (80x24) governs, matching a script that wants that.
+  libtmux::test::EnvironmentGuard disabled{"TMUXP_DETECT_TERMINAL_SIZE", "0"};
+  libtmux::test::EnvironmentGuard columns{"COLUMNS", "160"};
+  const auto result = invoke(
+      {"load", "size.yaml", "-d", "-S", fixture->socket_path().string(), "--json"});
+  ASSERT_EQ(result.code, 0) << result.err;
+  const auto unsized = server->session("=sized:");
+  ASSERT_TRUE(unsized.has_value());
+  const auto unsized_windows = unsized->windows();
+  ASSERT_TRUE(unsized_windows.has_value());
+  EXPECT_EQ(unsized_windows->front().width(), 80);
+  EXPECT_EQ(unsized_windows->front().height(), 24);
+}
+
 TEST(WorkspaceCliTmux, ImportedWorkspacesKeepCommandsFocusAndOptions) {
   Files files;
   auto fixture = libtmux::test::ScopedTmuxServer::start(

@@ -18,6 +18,7 @@
 #include <regex>
 #include <set>
 #include <sstream>
+#include <sys/ioctl.h>
 #include <unistd.h>
 
 #include "libtmux/server.hpp"
@@ -61,6 +62,51 @@ std::string expand(std::string value) {
     }
   }
   return value;
+}
+// A positive whole number from the environment, or nullopt when unset.
+// Anything else (letters, zero, negative, fractional) is a usage error: S1
+// says so explicitly, where tmuxp's own `shutil.get_terminal_size` silently
+// treats a bad COLUMNS/LINES as absent.
+std::optional<int> sized_env(const char* name) {
+  const auto value = environment(name);
+  if (value.empty())
+    return std::nullopt;
+  long long parsed{};
+  const auto* end = value.data() + value.size();
+  const auto result = std::from_chars(value.data(), end, parsed);
+  if (result.ec != std::errc{} || result.ptr != end || parsed <= 0)
+    throw Failure{2, "USAGE", std::string{name} + " must be a positive whole number"};
+  return static_cast<int>(parsed);
+}
+// S1: the size a newly built session is given while no client is attached,
+// matching tmuxp's own `shutil.get_terminal_size(fallback=(columns, rows))`
+// so cxx and `uvx tmuxp` build identical layouts from the same terminal.
+// nullopt/nullopt means "pass no -x/-y", which is what a disabled detection
+// and tmux's own `default-size` mean.
+std::pair<std::optional<int>, std::optional<int>> session_dimensions(bool stdout_terminal) {
+  const auto detect = environment("TMUXP_DETECT_TERMINAL_SIZE");
+  if (!detect.empty() && detect != "1")
+    return {std::nullopt, std::nullopt};
+  auto columns = sized_env("COLUMNS");
+  auto rows = sized_env("LINES");
+  if (!columns || !rows) {
+    struct winsize size {};
+    const bool have_terminal =
+        stdout_terminal && ::ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0 &&
+        size.ws_col > 0 && size.ws_row > 0;
+    if (have_terminal) {
+      if (!columns)
+        columns = size.ws_col;
+      if (!rows)
+        rows = size.ws_row;
+    } else {
+      if (!columns)
+        columns = sized_env("TMUXP_DEFAULT_COLUMNS").value_or(80);
+      if (!rows)
+        rows = sized_env("TMUXP_DEFAULT_ROWS").value_or(24);
+    }
+  }
+  return {columns, rows};
 }
 std::string private_path(const fs::path& path) {
   auto value = path.string();
@@ -1262,6 +1308,7 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
       } else if (!server.is_alive())
         server = start_endpoint(request, bootstrap);
       stage = "load";
+      const auto [session_width, session_height] = session_dimensions(request.stdout_terminal);
       for (std::size_t index = 0; index < plans.size(); ++index) {
         active_input = index;
         const auto& plan = plans[index];
@@ -1352,7 +1399,8 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
         }
         auto built = borrowed   ? append(*borrowed, plan.workspace, before, observer)
                      : existing ? libtmux::expected<Session, BuildError>{*existing}
-                                : build(server, plan.workspace, before, observer);
+                                : build(server, plan.workspace, before, observer,
+                                       session_width, session_height);
         if (!built) {
           if (!script_error && observer_error)
             script_error = observer_error;
