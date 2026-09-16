@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <chrono>
 #include <csignal>
 #include <cstdlib>
 #include <fcntl.h>
@@ -18,6 +19,7 @@
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <thread>
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -1320,6 +1322,40 @@ TEST(WorkspaceCliTmux, CaptureLeavesOutTheShellTmuxStartedForThePane) {
       server->set_global_option("default-shell", (directory / "not-a-shell").string())
           .has_value());
   EXPECT_EQ(freeze().at("shell_command"), Json::array({running}));
+}
+
+TEST(WorkspaceCliTmux, CaptureTreatsAnyOrdinaryShellAsTheDefaultOne) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("capsh2")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value());
+  // On macOS /bin/sh is bash, so a plain pane's pane_current_command reads
+  // "bash" while default-shell's basename reads "sh" -- comparing only
+  // against that basename reports a shell tmux itself started as an
+  // explicit command. default-command reproduces the same mismatch here:
+  // default-shell names one ordinary shell, the pane actually runs another.
+  ASSERT_TRUE(server->set_global_option("default-shell", "/bin/sh").has_value());
+  ASSERT_TRUE(server->set_global_option("default-command", "/bin/bash -i").has_value());
+  const auto session = server->new_session("capture-mismatch");
+  ASSERT_TRUE(session.has_value());
+  const auto window = session->active_window();
+  ASSERT_TRUE(window.has_value());
+  const auto panes = window->panes();
+  ASSERT_TRUE(panes.has_value());
+  std::string observed;
+  for (int attempt = 0; attempt < 200; ++attempt) {
+    observed = panes->front().command();
+    if (observed == "bash")
+      break;
+    std::this_thread::sleep_for(std::chrono::milliseconds{10});
+  }
+  ASSERT_EQ(observed, "bash") << "fixture did not settle on bash";
+  const auto result = invoke(
+      {"freeze", "capture-mismatch", "-S", fixture->socket_path().string(), "--json"});
+  ASSERT_EQ(result.code, 0) << result.err;
+  const auto pane = Json::parse(result.out).at("windows")[0].at("panes")[0];
+  EXPECT_FALSE(pane.contains("shell_command")) << pane;
 }
 
 TEST(WorkspaceCliTmux, FreezeSavesBlockStyleYaml) {

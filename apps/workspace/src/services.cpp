@@ -1,6 +1,7 @@
 #include "services.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cerrno>
 #include <charconv>
@@ -510,6 +511,21 @@ Json capture_options(const Server& server, std::string target, bool window = fal
   }
   return options;
 }
+// A pane's command names the process tmux found running there, which need
+// not match `default-shell`'s basename: on macOS `/bin/sh` is bash, so a
+// plain pane's command reads "bash" while `default-shell`'s basename reads
+// "sh". Comparing only the basename reports a plain pane as running an
+// explicit command. Treat any ordinary interactive shell as the default
+// alongside a shell actually named `default-shell`, and keep the exact
+// comparison for anything else a caller configured.
+bool names_the_default_shell(std::string_view command, std::string_view login) {
+  if (command == login)
+    return true;
+  static constexpr std::array<std::string_view, 10> ordinary{
+      "sh", "bash", "zsh", "dash", "ash", "ksh", "mksh", "fish", "csh", "tcsh"};
+  return std::ranges::find(ordinary, command) != ordinary.end() &&
+         std::ranges::find(ordinary, login) != ordinary.end();
+}
 Json capture(const Request& request) {
   const auto server = endpoint(request);
   const auto name = request.value("session");
@@ -551,7 +567,7 @@ Json capture(const Request& request) {
       // Omit rather than name the shell tmux itself would start for this
       // pane: naming it builds a shell inside a shell on reload.
       const std::string command{pane.command()};
-      if (!command.empty() && command != login)
+      if (!command.empty() && !names_the_default_shell(command, login))
         pane_item["shell_command"] = Json::array({command});
       item["panes"].push_back(std::move(pane_item));
     }
