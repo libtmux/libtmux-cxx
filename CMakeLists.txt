@@ -42,7 +42,8 @@ option(LIBTMUX_WARNINGS_AS_ERRORS "Treat first-party warnings as errors" OFF)
 # add_subdirectory should not have this package's headers and CMake config
 # appear in its own install prefix.
 option(LIBTMUX_INSTALL "Generate install rules" ${PROJECT_IS_TOP_LEVEL})
-option(LIBTMUX_BUILD_MATRIX "Build the transport matrix benchmark" OFF)
+option(LIBTMUX_BUILD_BENCHMARKS "Build the benchmark suite (apps/matrix, benchmarks/)"
+       OFF)
 option(LIBTMUX_BUILD_EXAMPLES "Build and run the examples"
        ${PROJECT_IS_TOP_LEVEL})
 # `libtmux::testing` — the private-tmux-server fixture, installed alongside
@@ -105,8 +106,9 @@ add_subdirectory(src)
 # links it in turn.
 if(NOT WIN32 AND LIBTMUX_BUILD_TESTING_LIBRARY)
   add_subdirectory(src/testing)
-  if(LIBTMUX_BUILD_MATRIX)
+  if(LIBTMUX_BUILD_BENCHMARKS)
     add_subdirectory(apps/matrix)
+    add_subdirectory(benchmarks)
   endif()
 endif()
 
