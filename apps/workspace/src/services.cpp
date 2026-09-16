@@ -138,6 +138,11 @@ std::string human_text(const std::string& value) {
   const auto quoted = encoded(Json(value));
   return visible_controls(std::string_view{quoted}.substr(1, quoted.size() - 2));
 }
+// A document-level ParseError has no path (`where` is empty); joining it
+// with ": " regardless produced "Error: : unsupported key: ..." (S15/B3).
+std::string parse_error_message(const workspace::ParseError& error) {
+  return error.where.empty() ? error.reason : error.where + ": " + error.reason;
+}
 Json from_yaml(const YAML::Node& node, int depth = 0) {
   if (depth > 64)
     throw Failure{1, "INVALID_CONFIG", "workspace nesting exceeds 64 levels"};
@@ -150,15 +155,45 @@ Json from_yaml(const YAML::Node& node, int depth = 0) {
     return array;
   }
   if (node.IsMap()) {
+    // S5: `<<: *anchor` or `<<: [*a, *b]` merges that mapping's (or those
+    // mappings', earlier winning) keys into this one; an explicit key here
+    // always overrides a merged one. A quoted `"<<"` is an ordinary key, not
+    // a merge directive.
     Json object = Json::object();
+    std::vector<std::pair<std::string, YAML::Node>> explicit_entries;
+    std::vector<YAML::Node> merge_sources;
+    std::set<std::string> seen;
     for (const auto& entry : node) {
       if (!entry.first.IsScalar())
         throw Failure{1, "INVALID_CONFIG", "mapping keys must be strings"};
       const auto key = entry.first.Scalar();
-      if (object.contains(key))
+      const bool literal =
+          entry.first.Tag() == "!" || entry.first.Tag() == "tag:yaml.org,2002:str";
+      if (key == "<<" && !literal) {
+        if (entry.second.IsSequence())
+          for (const auto& source : entry.second)
+            merge_sources.push_back(source);
+        else
+          merge_sources.push_back(entry.second);
+        continue;
+      }
+      if (!seen.insert(key).second)
         throw Failure{1, "INVALID_CONFIG", "duplicate mapping key: " + key};
-      object[key] = from_yaml(entry.second, depth + 1);
+      explicit_entries.emplace_back(key, entry.second);
     }
+    for (const auto& source : merge_sources) {
+      if (!source.IsMap())
+        throw Failure{1, "INVALID_CONFIG", "<< merges a mapping or a list of mappings"};
+      for (const auto& merged : source) {
+        if (!merged.first.IsScalar())
+          throw Failure{1, "INVALID_CONFIG", "mapping keys must be strings"};
+        const auto key = merged.first.Scalar();
+        if (!object.contains(key))
+          object[key] = from_yaml(merged.second, depth + 1);
+      }
+    }
+    for (const auto& [key, value] : explicit_entries)
+      object[key] = from_yaml(value, depth + 1);
     return object;
   }
   const auto text = node.Scalar();
@@ -937,8 +972,7 @@ Json imported(Json source, const std::string& kind, const fs::path& path) {
     result["windows"].push_back(std::move(window));
   }
   if (const auto parsed = workspace::parse_tmuxp(result.dump()); !parsed)
-    throw Failure{1, "INVALID_CONFIG",
-                  kind + ": " + parsed.error().where + ": " + parsed.error().reason};
+    throw Failure{1, "INVALID_CONFIG", kind + ": " + parse_error_message(parsed.error())};
   return result;
 }
 struct Pattern {
@@ -1305,8 +1339,7 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
         document["session_name"] = request.value("s");
       const auto workspace = parse_tmuxp(document.dump());
       if (!workspace)
-        throw Failure{1, "INVALID_CONFIG",
-                      workspace.error().where + ": " + workspace.error().reason};
+        throw Failure{1, "INVALID_CONFIG", parse_error_message(workspace.error())};
       if (!libtmux::session_target(workspace->session_name))
         throw Failure{1, "INVALID_CONFIG", "session name cannot address itself"};
       std::string directory;

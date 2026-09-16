@@ -1043,6 +1043,83 @@ TEST(WorkspaceCli, ImportUsesNonNullAliasesAndRefusesConflicts) {
   }
 }
 
+// S6: a key starting with "x-", at any level, is inert -- accepted, ignored
+// at load, and its refusal message (for every other unknown key) suggests
+// the prefix. B3 also covers the empty `where` a document-level refusal
+// left in "Error: : unsupported key: ...".
+TEST(WorkspaceCli, ParseTmuxpIgnoresExtensionKeysAtEveryLevel) {
+  const auto* text = R"({
+    "session_name": "x-test",
+    "x-doc-extra": {"anything": true},
+    "windows": [
+      {"window_name": "a", "x-window-extra": 1, "panes": [
+        {"shell_command": "echo a", "x-pane-extra": 2}
+      ]}
+    ]
+  })";
+  const auto parsed = libtmux::workspace::parse_tmuxp(text);
+  ASSERT_TRUE(parsed.has_value()) << parsed.error().where << ": " << parsed.error().reason;
+  EXPECT_EQ(parsed->session_name, "x-test");
+  ASSERT_EQ(parsed->windows.size(), 1U);
+  EXPECT_EQ(parsed->windows[0].name, "a");
+
+  const auto refused = libtmux::workspace::parse_tmuxp(
+      R"({"session_name":"s","bogus":1,"windows":[{"panes":[":"]}]})");
+  ASSERT_FALSE(refused.has_value());
+  EXPECT_EQ(refused.error().where, "");
+  EXPECT_NE(refused.error().reason.find("x-"), std::string::npos) << refused.error().reason;
+}
+
+TEST(WorkspaceCli, ConvertPreservesExtensionKeysUnread) {
+  Files files;
+  std::ofstream{"ext.yaml"}
+      << "session_name: ext-test\nx-shared: &shared\n  shell_command_before: "
+         "[export QA_ANCHOR=1]\nwindows:\n  - window_name: a\n    panes: [echo a]\n";
+  const auto converted = invoke({"convert", "ext.yaml", "--json"});
+  ASSERT_EQ(converted.code, 0) << converted.err;
+  EXPECT_TRUE(Json::parse(converted.out).contains("x-shared"));
+}
+
+TEST(WorkspaceCli, LoadRefusalOfATopLevelKeyIsOneCleanSentence) {
+  Files files;
+  std::ofstream{"bogus.yaml"} << "session_name: s\nbogus: 1\nwindows: [{}]\n";
+  const auto refused = invoke({"load", "bogus.yaml", "-d"});
+  EXPECT_NE(refused.code, 0);
+  EXPECT_EQ(refused.err.find("Error: :"), std::string::npos) << refused.err;
+  EXPECT_NE(refused.err.find("unsupported key: bogus"), std::string::npos) << refused.err;
+  EXPECT_NE(refused.err.find("x-"), std::string::npos) << refused.err;
+}
+
+// B2: `<<: *anchor` or `<<: [*a, *b]` merges that mapping's keys, in order,
+// with explicit keys overriding merged ones.
+TEST(WorkspaceCli, ConvertResolvesYamlMergeKeys) {
+  Files files;
+  std::ofstream{"merge.yaml"}
+      << "session_name: merge-test\nwindows:\n"
+         "  - &base\n    window_name: a\n    panes: [echo a]\n"
+         "  - <<: *base\n    window_name: b\n";
+  const auto converted = invoke({"convert", "merge.yaml", "--json"});
+  ASSERT_EQ(converted.code, 0) << converted.err;
+  const auto document = Json::parse(converted.out);
+  ASSERT_EQ(document.at("windows").size(), 2U);
+  EXPECT_EQ(document.at("windows")[1].at("window_name"), "b");
+  EXPECT_EQ(document.at("windows")[1].at("panes"), document.at("windows")[0].at("panes"));
+  EXPECT_FALSE(document.at("windows")[1].contains("<<"));
+
+  std::ofstream{"merge-list.yaml"}
+      << "session_name: merge-list\nwindows:\n"
+         "  - &one\n    window_name: one\n    panes: [echo one]\n"
+         "  - &two\n    window_name: two\n    panes: [echo two]\n"
+         "  - <<: [*one, *two]\n    panes: [echo three]\n";
+  const auto listed = invoke({"convert", "merge-list.yaml", "--json"});
+  ASSERT_EQ(listed.code, 0) << listed.err;
+  const auto merged = Json::parse(listed.out).at("windows")[2];
+  // The first merge source wins the collision on window_name; explicit
+  // `panes` (present on the mapping itself) always wins over either.
+  EXPECT_EQ(merged.at("window_name"), "one");
+  EXPECT_EQ(merged.at("panes"), Json::array({"echo three"}));
+}
+
 TEST(WorkspaceCli, ConvertNamesTheDestinationAfterTheEncodingItWrites) {
   Files files;
   for (const std::string encoding : {"yaml", "json"}) {
