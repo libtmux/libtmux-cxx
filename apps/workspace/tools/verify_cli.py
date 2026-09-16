@@ -267,7 +267,7 @@ def before_scripts(binary, root, env, prefix, append_env):
                 assert process.returncode == 1, error
                 diagnostics = [json.loads(line) for line in error.splitlines()]
                 assert diagnostics and all(
-                    item["code"] == "OUTPUT_CLOSED" for item in diagnostics
+                    item["code"] == "output_closed" for item in diagnostics
                 ), error
                 retained = diagnostics[-1]["retained_state"]
                 assert retained["status"] == "error" and not retained["results"], error
@@ -303,13 +303,13 @@ def before_scripts(binary, root, env, prefix, append_env):
                     if case == "limit":
                         assert (
                             process.returncode == 1
-                            and problem["code"] == "OUTPUT_LIMIT"
+                            and problem["code"] == "output_limit"
                         ), problem
                         assert problem["script_output"]["truncated"]
                         assert len(problem["script_output"]["stdout"]) <= 1024 * 1024
                     elif case == "leader-exit":
                         assert process.returncode == 1, (summary, error)
-                        assert problem["code"] == "BEFORE_SCRIPT_FAILED", problem
+                        assert problem["code"] == "script_failed", problem
                         assert problem["script_output"]["exit_code"] == 7, problem
                         assert problem["script_output"]["stdout"] == "failed", problem
                     else:

@@ -266,7 +266,7 @@ void Progress::event(const std::string& name, const Json& data) {
       auto& destination = data.at("stream") == "stdout" ? output_ : errors_;
       destination << data.at("text").get_ref<const std::string&>() << std::flush;
       if (!destination)
-        throw Failure{1, "OUTPUT_CLOSED", "script output stream closed"};
+        throw Failure{1, "output_closed", "script output stream closed"};
     }
     return;
   }

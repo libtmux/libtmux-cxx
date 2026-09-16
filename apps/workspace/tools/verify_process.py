@@ -218,7 +218,7 @@ def output_limit(binary, root, env):
     try:
         output, error = process.communicate(timeout=1)
         assert process.returncode == 1 and not output, (output, error)
-        assert json.loads(error)["code"] == "OUTPUT_LIMIT", error
+        assert json.loads(error)["code"] == "output_limit", error
         return {"status": "PASS", "exit_code": process.returncode}
     finally:
         owned = root / "overflow.pid"
@@ -366,7 +366,11 @@ def terminal_load(binary, root, env, mode="detach", *, logging=False):
         )
         assert retained.returncode == (1 if mode == "unavailable" else 0)
         if mode == "closed":
-            assert b"Retained state:" in output, output
+            # S15: human output never prints a machine record. The build
+            # succeeded before stdout closed, so retained_state exists, but
+            # only --json/--ndjson carry it -- not a "Retained state:" dump.
+            assert b"Retained state:" not in output, output
+            assert b"Error: load output stream closed" in output, output
         if logging:
             assert output.count(b"log file disabled") == 1, output
             # How much of the append that crosses `RLIMIT_FSIZE` reaches the
@@ -708,9 +712,12 @@ def terminal_switch(binary, root, env, mode):
                 if refused:
                     assert not output and windows == initial_windows, observed
                 else:
-                    assert (
-                        "Retained state:" in error and "created loaded $" in output
-                    ), observed
+                    # S15: human output never prints a machine record; the
+                    # build succeeded (retained) but only --json/--ndjson
+                    # carry that as retained_state, not a "Retained state:"
+                    # dump alongside the ordinary "Error: " line.
+                    assert "created loaded $" in output, observed
+                    assert "Retained state:" not in error, observed
             if mode == "gained-independent" and flagged:
                 assert any(
                     "active-pane" in row.split("|")[1].split(",") for row in client_rows
@@ -754,7 +761,9 @@ def terminal_switch(binary, root, env, mode):
             )
             assert clients == expected_clients, clients
             if mode in {"changed", "replaced"}:
-                assert "Retained state:" in error, error
+                # S15: no "Retained state:" JSON dump in human output.
+                assert "Retained state:" not in error, error
+                assert "Error: " in error, error
         if mode == "foreign":
             sessions = (
                 subprocess.run(
@@ -950,7 +959,7 @@ def failed_log_file(binary, root, env, mode):
         if diagnostic is not None:
             records = [json.loads(line) for line in diagnostic.splitlines()]
             assert (
-                sum(record["code"] == "LOG_FILE_WRITE_FAILED" for record in records)
+                sum(record["code"] == "log_file_write_failed" for record in records)
                 == 1
             ), records
             if mode.endswith("stdout"):
