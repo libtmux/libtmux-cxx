@@ -366,7 +366,7 @@ def terminal_load(binary, root, env, mode="detach", *, logging=False):
         )
         assert retained.returncode == (1 if mode == "unavailable" else 0)
         if mode == "closed":
-            # S15: human output never prints a machine record. The build
+            # Human output never prints a machine record. The build
             # succeeded before stdout closed, so retained_state exists, but
             # only --json/--ndjson carry it -- not a "Retained state:" dump.
             assert b"Retained state:" not in output, output
@@ -712,10 +712,10 @@ def terminal_switch(binary, root, env, mode):
                 if refused:
                     assert not output and windows == initial_windows, observed
                 else:
-                    # S15: human output never prints a machine record; the
-                    # build succeeded (retained) but only --json/--ndjson
-                    # carry that as retained_state, not a "Retained state:"
-                    # dump alongside the ordinary "Error: " line.
+                    # Human output never prints a machine record; the build
+                    # succeeded (retained) but only --json/--ndjson carry
+                    # that as retained_state, not a "Retained state:" dump
+                    # alongside the ordinary "Error: " line.
                     assert "created loaded $" in output, observed
                     assert "Retained state:" not in error, observed
             if mode == "gained-independent" and flagged:
@@ -761,7 +761,7 @@ def terminal_switch(binary, root, env, mode):
             )
             assert clients == expected_clients, clients
             if mode in {"changed", "replaced"}:
-                # S15: no "Retained state:" JSON dump in human output.
+                # No "Retained state:" JSON dump in human output.
                 assert "Retained state:" not in error, error
                 assert "Error: " in error, error
         if mode == "foreign":

@@ -30,8 +30,9 @@ struct ParseError {
   // points at the line a reader has to change.
   std::string where;
   std::string reason;
-  // Set when this is specifically a refused key (S14's `unsupported_key`),
-  // as opposed to any other malformed document (`invalid_workspace`).
+  // Set when this is specifically a refused key, reported as
+  // `unsupported_key`, as opposed to any other malformed document
+  // (`invalid_workspace`).
   bool unsupported_key{false};
 };
 

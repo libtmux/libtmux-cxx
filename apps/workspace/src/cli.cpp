@@ -427,15 +427,16 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
           execution.value.is_object())
         retained_state = execution.value;
       if (request.machine()) {
-        // S14: {"schema_version":1,"code":"...","message":"..."} on stderr.
+        // A machine error record on stderr: schema_version, code, message,
+        // and the state a failed build or attach left behind, if any.
         Json diagnostic{{"schema_version", 1}, {"code", code}, {"message", message}};
         if (!retained_state.is_null())
           diagnostic["retained_state"] = retained_state;
         errors << encoded(diagnostic) << '\n';
       } else {
-        // S15: human output is for humans -- retained_state is a machine
-        // record (and, for the load/shell summary it can hold, potentially
-        // its whole result); --json/--ndjson already carry it.
+        // Human output is for humans -- retained_state is a machine record
+        // (and, for the load/shell summary it can hold, potentially its
+        // whole result); --json/--ndjson already carry it.
         errors << "Error: " << message << '\n';
       }
     } catch (const std::exception&) {
@@ -538,7 +539,7 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
         diagnostics.diagnostic(error.at("code").get<std::string>(),
                                error.at("message").get<std::string>());
         if (request.machine()) {
-          // S14: {"schema_version":1,"code":"...","message":"..."} on stderr.
+          // Same machine error record shape as the diagnostic above.
           Json diagnostic{{"schema_version", 1}};
           for (const auto& [key, value] : error.items())
             if (key != "script_output")
