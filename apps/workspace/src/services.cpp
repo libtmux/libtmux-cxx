@@ -539,29 +539,46 @@ Json capture(const Request& request) {
               {"layout", window.layout()},
               {"focus", window.active()},
               {"panes", Json::array()}};
+    // Window options round-trip through `options_after`: `automatic-rename:
+    // off` and the like only hold if applied once the window's panes already
+    // exist, which is when `load` applies `options_after`.
     auto options = capture_options(
         server, std::string{session->id()} + ":" + std::string{window.id()}, true);
-    if (options.contains("synchronize-panes")) {
-      item["options_after"] = {{"synchronize-panes", options["synchronize-panes"]}};
-      options.erase("synchronize-panes");
-    }
-    item["options"] = std::move(options);
+    if (!options.empty())
+      item["options_after"] = std::move(options);
     for (const auto& pane : *panes) {
-      Json commands = Json::array();
+      Json pane_item{{"start_directory", pane.path()}, {"focus", pane.active()}};
+      // Omit rather than name the shell tmux itself would start for this
+      // pane: naming it builds a shell inside a shell on reload.
       const std::string command{pane.command()};
       if (!command.empty() && command != login)
-        commands.push_back(command);
-      item["panes"].push_back({{"shell_command", commands},
-                               {"start_directory", pane.path()},
-                               {"focus", pane.active()}});
+        pane_item["shell_command"] = Json::array({command});
+      item["panes"].push_back(std::move(pane_item));
     }
     document["windows"].push_back(item);
   }
   return document;
 }
+// `YAML::Load` records the flow style every map and sequence arrives in from
+// the JSON text it parsed, and the emitter honours that recorded style over
+// its own block default. Clearing it here is what makes a saved workspace
+// block-style YAML instead of one JSON-shaped line.
+void force_block_style(YAML::Node node) {
+  if (!node.IsMap() && !node.IsSequence())
+    return;
+  node.SetStyle(YAML::EmitterStyle::Block);
+  if (node.IsMap())
+    for (auto entry : node)
+      force_block_style(entry.second);
+  else
+    for (auto entry : node)
+      force_block_style(entry);
+}
 std::string yaml(const Json& document) {
   YAML::Emitter output;
-  output << YAML::Load(document.dump());
+  YAML::Node root = YAML::Load(document.dump());
+  force_block_style(root);
+  output << root;
   if (!output.good())
     throw Failure{1, "ENCODE_FAILED", output.GetLastError()};
   return std::string{output.c_str()} + "\n";
