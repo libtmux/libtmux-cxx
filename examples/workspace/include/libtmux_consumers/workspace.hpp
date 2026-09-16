@@ -128,9 +128,7 @@ struct BuildEvent {
   BuildPhase phase;
   std::size_t window_index;
   std::size_t pane_index;
-  // Populated for window_started, window_completed, pane_started and
-  // pane_completed, which name what now exists; empty for waiting, which
-  // reports progress toward something that may not yet.
+  // Populated for the four named phases; empty for waiting.
   std::string session_id{};
   std::string window_id{};
   std::string pane_id{};
@@ -160,11 +158,7 @@ inline std::optional<BuildError> validate_layouts(const Server& server,
 }
 
 namespace detail {
-// tmux's own refusal is the sentence a caller needs. The library appends the
-// command line that failed after it, and for a call built with the escaping
-// `-F` format — as a split fetching the new pane's fields is — that command
-// line runs to hundreds of bytes of internal parsing machinery with no place
-// in a failure a user reads.
+// Drops the " (running: ...)" command-line suffix a diagnostic carries.
 inline std::string sentence(std::string_view diagnostic) {
   const auto marker = diagnostic.rfind(" (running: ");
   return std::string{marker == std::string_view::npos ? diagnostic
@@ -390,13 +384,8 @@ build_windows(const Server& server, const Workspace& description,
       if (auto error = notify(BuildPhase::waiting, index, pane))
         return libtmux::unexpected(std::move(*error));
       const auto& planned = window.panes[pane];
-      // Split the pane just created, not the window: a window target resolves
-      // to whatever pane is active, which a `-d` split (the default here)
-      // never changes, so a window-targeted split always divides the same
-      // original pane and tmux inserts every new pane right after it —
-      // panes after the first come out in reverse. Splitting the exact pane
-      // this loop just made addresses it by id, so the source moves forward
-      // with each iteration and panes land in the order they were described.
+      // Split the pane just created, not the window: a window target stays
+      // on the same original pane and reverses every pane after the first.
       const auto split =
           panes.back().split({.start_directory = directory(window, planned),
                               .shell_command = shell(window, planned),

@@ -511,13 +511,8 @@ Json capture_options(const Server& server, std::string target, bool window = fal
   }
   return options;
 }
-// A pane's command names the process tmux found running there, which need
-// not match `default-shell`'s basename: on macOS `/bin/sh` is bash, so a
-// plain pane's command reads "bash" while `default-shell`'s basename reads
-// "sh". Comparing only the basename reports a plain pane as running an
-// explicit command. Treat any ordinary interactive shell as the default
-// alongside a shell actually named `default-shell`, and keep the exact
-// comparison for anything else a caller configured.
+// Matches default-shell's basename, or any two ordinary interactive shells
+// against each other (macOS names `/bin/sh` bash).
 bool names_the_default_shell(std::string_view command, std::string_view login) {
   if (command == login)
     return true;
@@ -555,9 +550,8 @@ Json capture(const Request& request) {
               {"layout", window.layout()},
               {"focus", window.active()},
               {"panes", Json::array()}};
-    // Window options round-trip through `options_after`: `automatic-rename:
-    // off` and the like only hold if applied once the window's panes already
-    // exist, which is when `load` applies `options_after`.
+    // load applies options_after once the panes exist, which is what
+    // automatic-rename: off needs.
     auto options = capture_options(
         server, std::string{session->id()} + ":" + std::string{window.id()}, true);
     if (!options.empty())
@@ -575,10 +569,8 @@ Json capture(const Request& request) {
   }
   return document;
 }
-// `YAML::Load` records the flow style every map and sequence arrives in from
-// the JSON text it parsed, and the emitter honours that recorded style over
-// its own block default. Clearing it here is what makes a saved workspace
-// block-style YAML instead of one JSON-shaped line.
+// YAML::Load tags every node with the flow style it parsed from the JSON
+// text; the emitter honours that over its own block default.
 void force_block_style(YAML::Node node) {
   if (!node.IsMap() && !node.IsSequence())
     return;
@@ -1032,16 +1024,12 @@ void validate(const Request& request) {
 }
 static Execution execute_impl(const Request& request, const EventSink& event) {
   if (request.command == "shell") {
-    // TMUX_WORKSPACE_PYTHON picks the interpreter tmuxp runs under, the way
-    // the other six libtmux workspace ports let it; TMUX_WORKSPACE_TMUXP
-    // instead names the tmuxp console script directly. The interpreter wins
-    // when both are set: it says which Python's tmuxp, not just which
-    // executable.
+    // TMUX_WORKSPACE_PYTHON selects the interpreter and wins over
+    // TMUX_WORKSPACE_TMUXP's executable path; tmuxp has no `__main__`, so
+    // call its CLI entry point directly rather than `-m tmuxp`.
     std::vector<std::string> runtime;
     const auto interpreter = environment("TMUX_WORKSPACE_PYTHON");
     if (!interpreter.empty()) {
-      // tmuxp has no `__main__`, so `-m tmuxp` refuses to run it; call its
-      // CLI entry point the way the interpreter's own console script does.
       runtime = {interpreter, "-u", "-c",
                  "from tmuxp.cli import cli; import sys; cli(sys.argv[1:])"};
     } else {
@@ -1364,14 +1352,9 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
         if (!built) {
           if (!script_error && observer_error)
             script_error = observer_error;
-          // A signal can kill the tmux child a build step was waiting on
-          // before any check_interruption() call observes the flag: the
-          // terminal delivers SIGINT to the whole foreground process group,
-          // not just this process, so the command that was running dies on
-          // its own and surfaces here as an ordinary failure rather than the
-          // cancellation it actually was. Reclassify it now so the exit code
-          // and message agree with every other interruption instead of
-          // leaking that command's raw diagnostic with an unrelated status.
+          // A group-wide signal can kill the tmux child a step was waiting on
+          // before check_interruption() sees the flag; reclassify that here
+          // as the cancellation it was.
           if (!script_error) {
             try {
               check_interruption();
