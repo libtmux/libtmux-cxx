@@ -450,6 +450,29 @@ TEST(WorkspaceBuilder, FailureRemovesOnlyTheSessionItCreated) {
   EXPECT_TRUE(server.session("libtmux_test").has_value());
 }
 
+TEST(WorkspaceBuilder, ABuildFailureReportsOnlyTheDiagnosisSentence) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("ws")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  // A window too small for a second pane makes tmux refuse the split, the
+  // way it also refuses one that would collide with a saved layout's sizing.
+  ASSERT_TRUE(server.set_global_option("default-size", "2x2").has_value());
+
+  const workspace::Workspace description{
+      .session_name = "toosmall", .windows = {{.name = "plain", .panes = {{}, {}}}}};
+  const auto built = workspace::build(server, description);
+  ASSERT_FALSE(built.has_value());
+  EXPECT_NE(built.error().reason.find("no space for a new pane"), std::string::npos)
+      << built.error().reason;
+  // The command line a refused split failed with includes, among other
+  // things, the internal escaping format string used to parse tmux's reply:
+  // debugging detail with no place in a message a user reads.
+  EXPECT_EQ(built.error().reason.find("(running:"), std::string::npos)
+      << built.error().reason;
+  EXPECT_EQ(built.error().reason.find("#{"), std::string::npos) << built.error().reason;
+}
+
 TEST(WorkspaceBuilder, InvalidLayoutsPrecedeBeforeBuildCallbacks) {
   auto fixture = libtmux::test::ScopedTmuxServer::start(
       {.socket_namespace = libtmux::test::SocketNamespace::consumer("layout")});

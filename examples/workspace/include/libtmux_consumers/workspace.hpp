@@ -154,6 +154,16 @@ inline std::optional<BuildError> validate_layouts(const Server& server,
 }
 
 namespace detail {
+// tmux's own refusal is the sentence a caller needs. The library appends the
+// command line that failed after it, and for a call built with the escaping
+// `-F` format — as a split fetching the new pane's fields is — that command
+// line runs to hundreds of bytes of internal parsing machinery with no place
+// in a failure a user reads.
+inline std::string sentence(std::string_view diagnostic) {
+  const auto marker = diagnostic.rfind(" (running: ");
+  return std::string{marker == std::string_view::npos ? diagnostic
+                                                      : diagnostic.substr(0, marker)};
+}
 [[nodiscard]] inline libtmux::expected<libtmux::Session, BuildError>
 build_windows(const Server& server, const Workspace& description,
               const std::optional<libtmux::Session>& borrowed,
@@ -203,10 +213,11 @@ build_windows(const Server& server, const Workspace& description,
       [&built, &borrowed, &created_windows](
           std::size_t index,
           std::string reason) -> libtmux::expected<libtmux::Session, BuildError> {
+    reason = sentence(reason);
     if (borrowed)
       return libtmux::unexpected(BuildError{index, std::move(reason), created_windows});
     if (const auto killed = built->kill(); !killed.has_value()) {
-      reason += "; session cleanup failed: " + killed.error().diagnostic;
+      reason += "; session cleanup failed: " + sentence(killed.error().diagnostic);
     }
     return libtmux::unexpected(BuildError{index, std::move(reason)});
   };
