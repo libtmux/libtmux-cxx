@@ -155,6 +155,17 @@ Edit the example, never the block in the README, then bring the quote across:
 $ python3 tools/docs/check_readme.py --fix
 ```
 
+Matching the code is not the same as pasting it: a region quoted mid-`main()`
+can compile there while depending on a binding a reader's own file does not
+have. Each `#region` must also compile as the only code in its own
+translation unit, so a region that needs something declares it on its first
+line as `// Given: <type> <name>` (repeated for more than one, separated by
+`;`), which becomes that line in the README too:
+
+```console
+$ python3 -m tools.docs.check_example_isolation
+```
+
 This repository is also a vcpkg registry, and the versions database can drift
 from the ports beside it:
 

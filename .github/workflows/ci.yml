@@ -748,7 +748,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y clang-18 clang-format-18 clang-tidy-18 \
-            libc++-18-dev libc++abi-18-dev ninja-build
+            libc++-18-dev libc++abi-18-dev ninja-build g++
           for tool in clang clang++ clang-format clang-tidy; do
             sudo update-alternatives --install /usr/bin/$tool $tool /usr/bin/$tool-18 100
           done
@@ -786,15 +786,19 @@ jobs:
           uvx --from ruff==0.16.1 ruff format --check .
           uvx --from ruff==0.16.1 ruff check .
           uv run --no-project python -m unittest \
-            tools.docs.test_api_index tools.mutate.test_main \
-            tools.mutate.test_runner tools.vcpkg.test_probe \
-            tools.vcpkg.test_release
+            tools.docs.test_api_index tools.docs.test_check_readme \
+            tools.mutate.test_main tools.mutate.test_runner \
+            tools.vcpkg.test_probe tools.vcpkg.test_release \
+            tools.vcpkg.test_archive
 
       # The README's C++ is quoted from an example that is compiled and run.
       # This is the half that checks the quoting; the example lane checks that
       # the code still works.
       - name: Check the README quotes code that builds
         run: python3 tools/docs/check_readme.py
+
+      - name: Check every README region compiles as its own snippet
+        run: python3 -m tools.docs.check_example_isolation
 
       - name: Run clang-tidy over the library
         run: |

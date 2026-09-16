@@ -27,6 +27,7 @@ Both are run from the repository root.
 | [`mutate/`](mutate/) | `python3 -m tools.mutate` | Whether the tests can actually fail |
 | [`docs/`](docs/) | `python3 tools/docs/api_index.py` | Generates [`docs/api.md`](../docs/api.md) from the headers, so the reference cannot outrun them |
 | [`docs/`](docs/) | `python3 tools/docs/check_readme.py` | Whether the README's C++ still matches the example it is quoted from |
+| [`docs/`](docs/) | `python3 -m tools.docs.check_example_isolation` | Whether each quoted region compiles as the only code in its own file, the way a reader pastes it |
 | [`mcp/`](mcp/) | `./build/cxx-dev/tools/mcp/mcp-swap` | Points POSIX agent CLI configs at a chosen build of [the MCP server](../apps/mcp/README.md), and puts them back |
 | [`vcpkg/`](vcpkg/) | `python3 -m tools.vcpkg check` | Whether [the registry](../docs/vcpkg-registry.md) still publishes the ports beside it |
 | [`coverage/`](coverage/) | — | How much of the shipped surface the tests reach |
