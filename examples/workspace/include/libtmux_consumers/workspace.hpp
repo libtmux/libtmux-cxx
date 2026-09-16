@@ -371,9 +371,17 @@ build_windows(const Server& server, const Workspace& description,
       if (auto error = notify(BuildPhase::waiting, index, pane))
         return libtmux::unexpected(std::move(*error));
       const auto& planned = window.panes[pane];
-      const auto split = target->split({.start_directory = directory(window, planned),
-                                        .shell_command = shell(window, planned),
-                                        .environment = environment(window, planned)});
+      // Split the pane just created, not the window: a window target resolves
+      // to whatever pane is active, which a `-d` split (the default here)
+      // never changes, so a window-targeted split always divides the same
+      // original pane and tmux inserts every new pane right after it —
+      // panes after the first come out in reverse. Splitting the exact pane
+      // this loop just made addresses it by id, so the source moves forward
+      // with each iteration and panes land in the order they were described.
+      const auto split =
+          panes.back().split({.start_directory = directory(window, planned),
+                              .shell_command = shell(window, planned),
+                              .environment = environment(window, planned)});
       if (!split.has_value()) {
         return fail(index, split.error().diagnostic);
       }
