@@ -1319,6 +1319,45 @@ TEST(WorkspaceCliTmux, ImportedWorkspacesKeepCommandsFocusAndOptions) {
 // read back as bool, null or a number must stay quoted when cxx writes YAML,
 // or the value comes back corrupted (a window named "yes" reloads as the
 // boolean true, "1.0" as a float, ...).
+// B4/S7: match tmuxp -- expand $VAR, ${VAR} and a leading ~ in command text
+// from the *loading process's* environment before sending it, rather than
+// leaving the literal text for the pane's own (differently-environed) shell
+// to resolve later. QA_LOADER_ONLY is set only on this test process, never
+// passed into the session/window `environment:`, so the pane's shell cannot
+// resolve it itself -- only a loader-side expansion can produce it.
+TEST(WorkspaceCliTmux, LoadExpandsShellVariablesFromTheLoadingProcessEnvironment) {
+  Files files;
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-expand")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value());
+  libtmux::test::EnvironmentGuard loader{"QA_LOADER_ONLY", "fromloader"};
+  std::ofstream{"expand.yaml"} << "session_name: expand-test\nwindows:\n"
+                                  "  - panes:\n      - echo \"marker=$QA_LOADER_ONLY\"\n";
+  const auto result = invoke(
+      {"load", "expand.yaml", "-d", "-S", fixture->socket_path().string(), "--json"});
+  ASSERT_EQ(result.code, 0) << result.err;
+  const auto session = server->session("=expand-test:");
+  ASSERT_TRUE(session.has_value());
+  const auto window = session->active_window();
+  ASSERT_TRUE(window.has_value());
+  const auto panes = window->panes();
+  ASSERT_TRUE(panes.has_value());
+  ASSERT_FALSE(panes->empty());
+  std::string captured;
+  for (int wait = 0; wait < 300; ++wait) {
+    const auto text = panes->front().capture();
+    if (text.has_value() && text->find("marker=") != std::string::npos) {
+      captured = *text;
+      break;
+    }
+    ::poll(nullptr, 0, 10);
+  }
+  EXPECT_NE(captured.find("marker=fromloader"), std::string::npos) << captured;
+  EXPECT_EQ(captured.find("$QA_LOADER_ONLY"), std::string::npos) << captured;
+}
+
 TEST(WorkspaceCliTmux, ConvertToYamlQuotesScalarLookingWindowNames) {
   Files files;
   auto fixture = libtmux::test::ScopedTmuxServer::start(
