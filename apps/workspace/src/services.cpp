@@ -75,7 +75,7 @@ std::optional<int> sized_env(const char* name) {
   const auto* end = value.data() + value.size();
   const auto result = std::from_chars(value.data(), end, parsed);
   if (result.ec != std::errc{} || result.ptr != end || parsed <= 0)
-    throw Failure{2, "USAGE", std::string{name} + " must be a positive whole number"};
+    throw Failure{2, "usage", std::string{name} + " must be a positive whole number"};
   return static_cast<int>(parsed);
 }
 // S1: the size a newly built session is given while no client is attached,
@@ -143,9 +143,14 @@ std::string human_text(const std::string& value) {
 std::string parse_error_message(const workspace::ParseError& error) {
   return error.where.empty() ? error.reason : error.where + ": " + error.reason;
 }
+// S14: a refused key is its own `unsupported_key` code, not the general
+// `invalid_workspace` every other malformed document gets.
+const char* parse_error_code(const workspace::ParseError& error) {
+  return error.unsupported_key ? "unsupported_key" : "invalid_workspace";
+}
 Json from_yaml(const YAML::Node& node, int depth = 0) {
   if (depth > 64)
-    throw Failure{1, "INVALID_CONFIG", "workspace nesting exceeds 64 levels"};
+    throw Failure{1, "invalid_workspace", "workspace nesting exceeds 64 levels"};
   if (!node || node.IsNull())
     return nullptr;
   if (node.IsSequence()) {
@@ -165,7 +170,7 @@ Json from_yaml(const YAML::Node& node, int depth = 0) {
     std::set<std::string> seen;
     for (const auto& entry : node) {
       if (!entry.first.IsScalar())
-        throw Failure{1, "INVALID_CONFIG", "mapping keys must be strings"};
+        throw Failure{1, "invalid_workspace", "mapping keys must be strings"};
       const auto key = entry.first.Scalar();
       const bool literal =
           entry.first.Tag() == "!" || entry.first.Tag() == "tag:yaml.org,2002:str";
@@ -178,15 +183,15 @@ Json from_yaml(const YAML::Node& node, int depth = 0) {
         continue;
       }
       if (!seen.insert(key).second)
-        throw Failure{1, "INVALID_CONFIG", "duplicate mapping key: " + key};
+        throw Failure{1, "invalid_workspace", "duplicate mapping key: " + key};
       explicit_entries.emplace_back(key, entry.second);
     }
     for (const auto& source : merge_sources) {
       if (!source.IsMap())
-        throw Failure{1, "INVALID_CONFIG", "<< merges a mapping or a list of mappings"};
+        throw Failure{1, "invalid_workspace", "<< merges a mapping or a list of mappings"};
       for (const auto& merged : source) {
         if (!merged.first.IsScalar())
-          throw Failure{1, "INVALID_CONFIG", "mapping keys must be strings"};
+          throw Failure{1, "invalid_workspace", "mapping keys must be strings"};
         const auto key = merged.first.Scalar();
         if (!object.contains(key))
           object[key] = from_yaml(merged.second, depth + 1);
@@ -215,27 +220,33 @@ Json from_yaml(const YAML::Node& node, int depth = 0) {
 Json read_document(const fs::path& path, bool reject_erb = false) {
   std::ifstream file{path, std::ios::binary};
   if (!file)
-    throw Failure{1, "READ_FAILED", "cannot read " + private_path(path)};
+    throw Failure{1, "read_failed", "cannot read " + private_path(path)};
   std::string contents;
   char buffer[8192];
   while (file.read(buffer, sizeof buffer) || file.gcount() != 0) {
     contents.append(buffer, static_cast<std::size_t>(file.gcount()));
     if (contents.size() > 4U * 1024U * 1024U)
-      throw Failure{1, "INVALID_CONFIG", "workspace exceeds 4 MiB"};
+      throw Failure{1, "invalid_workspace", "workspace exceeds 4 MiB"};
   }
   if (reject_erb && contents.find("<%") != std::string::npos)
-    throw Failure{1, "UNSUPPORTED_CONFIG", "tmuxinator ERB templates are unsupported"};
+    throw Failure{1, "invalid_workspace", "tmuxinator ERB templates are unsupported"};
   Json result;
-  if (path.extension() == ".json")
-    result = Json::parse(contents);
-  else {
-    const auto documents = YAML::LoadAll(contents);
-    if (documents.size() != 1)
-      throw Failure{1, "INVALID_CONFIG", "exactly one YAML document is required"};
-    result = from_yaml(documents.front());
+  try {
+    if (path.extension() == ".json")
+      result = Json::parse(contents);
+    else {
+      const auto documents = YAML::LoadAll(contents);
+      if (documents.size() != 1)
+        throw Failure{1, "invalid_workspace", "exactly one YAML document is required"};
+      result = from_yaml(documents.front());
+    }
+  } catch (const YAML::Exception& error) {
+    throw Failure{1, "invalid_workspace", error.what()};
+  } catch (const Json::parse_error& error) {
+    throw Failure{1, "invalid_workspace", error.what()};
   }
   if (!result.is_object())
-    throw Failure{1, "INVALID_CONFIG", "workspace must be a mapping"};
+    throw Failure{1, "invalid_workspace", "workspace must be a mapping"};
   return result;
 }
 // tmuxp has exactly one active global workspace directory: the first that
@@ -333,7 +344,7 @@ fs::path resolve(const std::string& name, const std::string& importer = {}) {
   for (const auto& path : candidates)
     if (fs::is_regular_file(path))
       return fs::absolute(path).lexically_normal();
-  throw Failure{1, "WORKSPACE_NOT_FOUND", "workspace not found: " + name};
+  throw Failure{1, "workspace_not_found", "workspace not found: " + name};
 }
 // Empty for a file that went away between the listing and this read, which
 // `discover` cannot rule out and a listing should not end on.
@@ -454,7 +465,7 @@ Server endpoint(const Request& request) {
       : !environment("TMUX").empty() ? Server::from_env()
                                      : Server::at_default();
   if (!server)
-    throw Failure{1, "INVALID_ENDPOINT", server.error().diagnostic};
+    throw Failure{1, "invalid_endpoint", server.error().diagnostic};
   return *server;
 }
 libtmux::Pane current_pane(const Server& server, const std::string& code) {
@@ -479,16 +490,16 @@ libtmux::Pane current_pane(const Server& server, const std::string& code) {
   return *selected;
 }
 Session append_target(const Server& server) {
-  const auto session = current_pane(server, "APPEND_CONTEXT").session();
+  const auto session = current_pane(server, "append_context").session();
   if (!session)
-    throw Failure{1, "APPEND_CONTEXT", session.error().diagnostic};
+    throw Failure{1, "append_context", session.error().diagnostic};
   return *session;
 }
 Client current_client(const Server& server, std::string_view pane,
                       std::string_view window) {
   const auto clients = server.clients();
   if (!clients)
-    throw Failure{1, "CLIENT_CONTEXT", clients.error().diagnostic};
+    throw Failure{1, "client_context", clients.error().diagnostic};
   std::optional<Client> selected;
   for (const auto& client : *clients) {
     if (client.control_mode() || client.tty().empty() || client.window_id() != window)
@@ -497,17 +508,17 @@ Client current_client(const Server& server, std::string_view pane,
           return std::ranges::equal(flag, std::string_view{"active-pane"});
         }))
       throw Failure{
-          2, "CLIENT_CONTEXT",
+          2, "client_context",
           "independent active-pane client focus is unverifiable; use load -d"};
     if (client.active_pane_id() != pane)
       continue;
     if (selected)
-      throw Failure{2, "CLIENT_CONTEXT",
+      throw Failure{2, "client_context",
                     "multiple clients view this pane; use load -d"};
     selected = client;
   }
   if (!selected || selected->pid() <= 0 || selected->name().empty())
-    throw Failure{2, "CLIENT_CONTEXT",
+    throw Failure{2, "client_context",
                   "no terminal client views this pane; use load -d"};
   return *selected;
 }
@@ -516,7 +527,7 @@ std::function<void()> load_handoff(Session session, std::optional<Client> caller
   if (!caller) {
     const auto prepared = session.attach_command();
     if (!prepared)
-      throw Failure{1, "ATTACH_FAILED", prepared.error().diagnostic};
+      throw Failure{1, "attach_failed", prepared.error().diagnostic};
     command = *prepared;
   }
   return [session = std::move(session), caller = std::move(caller),
@@ -524,24 +535,24 @@ std::function<void()> load_handoff(Session session, std::optional<Client> caller
     if (caller) {
       const auto server = caller->server();
       if (!server)
-        throw Failure{1, "CLIENT_CONTEXT", server.error().diagnostic};
+        throw Failure{1, "client_context", server.error().diagnostic};
       const auto current =
           current_client(*server, caller->active_pane_id(), caller->window_id());
       if (current.connection_identity() != caller->connection_identity() ||
           current.name() != caller->name() || current.pid() != caller->pid() ||
           current.created() != caller->created() || current.tty() != caller->tty())
-        throw Failure{1, "CLIENT_CHANGED",
+        throw Failure{1, "client_changed",
                       "the invoking client changed; loaded sessions remain"};
       // tmux targets a client name; it cannot atomically check this incarnation.
       const auto switched = current.switch_to(session);
       if (!switched)
-        throw Failure{1, "SWITCH_FAILED", switched.error().diagnostic};
+        throw Failure{1, "switch_failed", switched.error().diagnostic};
     } else {
       const auto child = run_child(
           command->argv(),
           {.terminal = true, .terminal_required = true, .timeout = std::nullopt});
       if (child.code != 0)
-        throw Failure{child.code, "ATTACH_FAILED",
+        throw Failure{child.code, "attach_failed",
                       "attachment exited with status " + std::to_string(child.code) +
                           "; loaded sessions remain"};
     }
@@ -580,23 +591,33 @@ Server start_endpoint(const Request& request, Bootstrap& bootstrap) {
                  {"new-session", "-d", "-P", "-F", "#{session_id} #{pid}", "-s", name,
                   "--", "sleep 2147483647"});
   try {
-    const auto reply = run_child(command);
+    ChildOutput reply{};
+    try {
+      reply = run_child(command);
+    } catch (Failure& spawn) {
+      // run_child()'s own "process_failed" is generic (it also spawns
+      // EDITOR, tmuxp, before_script); here it specifically means tmux
+      // itself could not be started (S14: tmux_unavailable).
+      if (spawn.code == "process_failed")
+        spawn.code = "tmux_unavailable";
+      throw;
+    }
     if (reply.code != 0)
-      throw Failure{1, "STARTUP_FAILED", reply.err};
+      throw Failure{1, "tmux_unavailable", reply.err};
     std::string identity, pid, extra;
     std::istringstream response{reply.out};
     if (!(response >> identity >> pid) || (response >> extra) || identity.size() < 2 ||
         identity.front() != '$' ||
         identity.find_first_not_of("0123456789", 1) != std::string::npos ||
         pid.empty() || pid.find_first_not_of("0123456789") != std::string::npos)
-      throw Failure{1, "STARTUP_IDENTITY", "tmux returned an invalid startup identity"};
+      throw Failure{1, "startup_identity", "tmux returned an invalid startup identity"};
     const auto server = endpoint(request);
     const auto current_pid = server.run({"display-message", "-p", "#{pid}"});
     if (!current_pid || *current_pid != pid + "\n")
-      throw Failure{1, "STARTUP_IDENTITY", "tmux server changed during startup"};
+      throw Failure{1, "startup_identity", "tmux server changed during startup"};
     const auto owned = server.session(identity);
     if (!owned || owned->name() != name)
-      throw Failure{1, "STARTUP_IDENTITY",
+      throw Failure{1, "startup_identity",
                     "tmux bootstrap session changed during startup"};
     bootstrap.session = *owned;
     return server;
@@ -617,7 +638,7 @@ Json capture_options(const Server& server, std::string target, bool window = fal
   command.push_back(std::move(target));
   const auto reply = server.run(command);
   if (!reply)
-    throw Failure{1, "CAPTURE_FAILED", reply.error().diagnostic};
+    throw Failure{1, "capture_failed", reply.error().diagnostic};
   Json options = Json::object();
   for (const auto& entry : parse_options(*reply)) {
     std::string name = entry.name;
@@ -647,15 +668,15 @@ Json capture(const Request& request) {
                      name.find_first_not_of("0123456789", 1) == std::string::npos;
   const auto session = server.session(by_id ? name : "=" + name + ":");
   if (!session)
-    throw Failure{1, "SESSION_NOT_FOUND", session.error().diagnostic};
+    throw Failure{1, "session_not_found", session.error().diagnostic};
   const auto windows = session->windows();
   if (!windows)
-    throw Failure{1, "CAPTURE_FAILED", windows.error().diagnostic};
+    throw Failure{1, "capture_failed", windows.error().diagnostic};
   // A pane sitting at the shell tmux starts for it carries no command of its
   // own, and tmux starts `default-shell`, which is not one of a fixed few.
   const auto shell = session->option("default-shell");
   if (!shell)
-    throw Failure{1, "CAPTURE_FAILED", shell.error().diagnostic};
+    throw Failure{1, "capture_failed", shell.error().diagnostic};
   const std::string login = fs::path{shell->value}.filename().string();
   Json document{{"session_name", session->name()},
                 {"options", capture_options(server, std::string{session->id()})},
@@ -663,7 +684,7 @@ Json capture(const Request& request) {
   for (const auto& window : *windows) {
     const auto panes = window.panes();
     if (!panes)
-      throw Failure{1, "CAPTURE_FAILED", panes.error().diagnostic};
+      throw Failure{1, "capture_failed", panes.error().diagnostic};
     Json item{{"window_name", window.name()},
               {"window_index", window.index()},
               {"layout", window.layout()},
@@ -745,7 +766,7 @@ std::string yaml(const Json& document) {
   YAML::Emitter output;
   emit_yaml(output, document);
   if (!output.good())
-    throw Failure{1, "ENCODE_FAILED", output.GetLastError()};
+    throw Failure{1, "encode_failed", output.GetLastError()};
   return std::string{output.c_str()} + "\n";
 }
 Json save_or_return(const Request& request, const Json& document, std::string format,
@@ -761,16 +782,16 @@ Json save_or_return(const Request& request, const Json& document, std::string fo
     return document;
   }
   if (destination.empty())
-    throw Failure{2, "USAGE", "specify --save-to or a machine output mode"};
+    throw Failure{2, "usage", "specify --save-to or a machine output mode"};
   const fs::path path = fs::absolute(expand(destination)).lexically_normal();
   if (fs::exists(path) && !request.flag("force"))
-    throw Failure{1, "DESTINATION_EXISTS",
+    throw Failure{1, "destination_exists",
                   "destination exists; use --force: " + private_path(path)};
   auto temporary_name =
       (path.parent_path() / ("." + path.filename().string() + ".XXXXXX")).string();
   int descriptor = ::mkstemp(temporary_name.data());
   if (descriptor < 0)
-    throw Failure{1, "WRITE_FAILED", "cannot create a temporary output file"};
+    throw Failure{1, "write_failed", "cannot create a temporary output file"};
   const fs::path temporary{temporary_name};
   try {
     const auto bytes = format == "json" ? encoded(document, 2) + "\n" : yaml(document);
@@ -781,13 +802,13 @@ Json save_or_return(const Request& request, const Json& document, std::string fo
       if (count < 0 && errno == EINTR)
         continue;
       if (count <= 0)
-        throw Failure{1, "WRITE_FAILED", "could not write destination"};
+        throw Failure{1, "write_failed", "could not write destination"};
       offset += static_cast<std::size_t>(count);
     }
     const int closed = ::close(descriptor);
     descriptor = -1;
     if (closed != 0)
-      throw Failure{1, "WRITE_FAILED", "could not close destination"};
+      throw Failure{1, "write_failed", "could not close destination"};
     if (request.flag("force"))
       fs::rename(temporary, path);
     else {
@@ -810,11 +831,10 @@ Json save_or_return(const Request& request, const Json& document, std::string fo
 void import_keys(const Json& value, std::initializer_list<std::string_view> allowed,
                  const std::string& where) {
   if (!value.is_object())
-    throw Failure{1, "INVALID_CONFIG", where + " must be a mapping"};
+    throw Failure{1, "invalid_workspace", where + " must be a mapping"};
   for (auto it = value.begin(); it != value.end(); ++it)
     if (std::ranges::find(allowed, it.key()) == allowed.end())
-      throw Failure{1, "UNSUPPORTED_CONFIG",
-                    where + "." + it.key() + " is unsupported"};
+      throw Failure{1, "unsupported_key", where + "." + it.key() + " is unsupported"};
 }
 
 Json import_alias(const Json& value, const char* first, const char* second,
@@ -822,7 +842,7 @@ Json import_alias(const Json& value, const char* first, const char* second,
   const auto preferred = value.value(first, Json{});
   const auto alternative = value.value(second, Json{});
   if (!preferred.is_null() && !alternative.is_null() && preferred != alternative)
-    throw Failure{1, "UNSUPPORTED_CONFIG",
+    throw Failure{1, "invalid_workspace",
                   where + "." + first + " conflicts with " + second};
   return preferred.is_null() ? alternative : preferred;
 }
@@ -834,7 +854,7 @@ Json import_commands(const Json& value, const std::string& where) {
         return command.is_string() || command.is_null();
       }))
     return value;
-  throw Failure{1, "INVALID_CONFIG", where + " requires command strings"};
+  throw Failure{1, "invalid_workspace", where + " requires command strings"};
 }
 
 std::string import_directory(const Json& value, const fs::path& base,
@@ -842,11 +862,11 @@ std::string import_directory(const Json& value, const fs::path& base,
   if (value.is_null())
     return base.string();
   if (!value.is_string())
-    throw Failure{1, "INVALID_CONFIG", where + " must be a path string"};
+    throw Failure{1, "invalid_workspace", where + " must be a path string"};
   auto text = value.get<std::string>();
   if (text.find('$') != std::string::npos ||
       (text.starts_with('~') && text != "~" && !text.starts_with("~/")))
-    throw Failure{1, "UNSUPPORTED_CONFIG",
+    throw Failure{1, "invalid_workspace",
                   where + " cannot preserve its expansion rules in a workspace"};
   fs::path directory{expand(std::move(text))};
   if (directory.is_relative())
@@ -859,11 +879,11 @@ Json import_command_group(const Json& value, std::string_view separator,
   if (value.is_null() || value.is_string())
     return value;
   if (!value.is_array())
-    throw Failure{1, "INVALID_CONFIG", where + " must be a command or command array"};
+    throw Failure{1, "invalid_workspace", where + " must be a command or command array"};
   std::string result;
   for (std::size_t i = 0; i < value.size(); ++i) {
     if (!value[i].is_string())
-      throw Failure{1, "INVALID_CONFIG", where + " must contain command strings"};
+      throw Failure{1, "invalid_workspace", where + " must contain command strings"};
     if (i != 0)
       result += separator;
     result += value[i].get<std::string>();
@@ -893,7 +913,7 @@ Json imported(Json source, const std::string& kind, const fs::path& path) {
   if (name.is_null())
     name = path.stem().string();
   if (!name.is_string() || name.get_ref<const std::string&>().empty())
-    throw Failure{1, "INVALID_CONFIG", kind + ".name must be a nonempty string"};
+    throw Failure{1, "invalid_workspace", kind + ".name must be a nonempty string"};
   Json result{
       {"session_name", name}, {"start_directory", root}, {"windows", Json::array()}};
   if (source.contains("pre_window"))
@@ -901,18 +921,18 @@ Json imported(Json source, const std::string& kind, const fs::path& path) {
         import_command_group(source["pre_window"], "; ", kind + ".pre_window");
   const auto windows = import_alias(source, "tabs", "windows", kind);
   if (!windows.is_array())
-    throw Failure{1, "INVALID_CONFIG", kind + ".windows must be an array"};
+    throw Failure{1, "invalid_workspace", kind + ".windows must be an array"};
   bool window_focused = false;
   for (std::size_t i = 0; i < windows.size(); ++i) {
     const auto where = kind + ".windows[" + std::to_string(i) + "]";
     const auto& raw = windows[i];
     if (!raw.is_object() || (!teamocil && raw.size() != 1))
-      throw Failure{1, "INVALID_CONFIG", where + " must describe one window"};
+      throw Failure{1, "invalid_workspace", where + " must describe one window"};
     const auto entry = raw.begin();
     const auto& body = teamocil ? raw : entry.value();
     if (teamocil && (!raw.contains("name") || !raw["name"].is_string() ||
                      raw["name"].get_ref<const std::string&>().empty()))
-      throw Failure{1, "INVALID_CONFIG", where + ".name must be a nonempty string"};
+      throw Failure{1, "invalid_workspace", where + ".name must be a nonempty string"};
     Json window{
         {"window_name", teamocil ? raw.value("name", Json{}) : Json(entry.key())}};
     if (!body.is_object()) {
@@ -932,33 +952,33 @@ Json imported(Json source, const std::string& kind, const fs::path& path) {
           where + ".root");
       if (body.contains("layout") && !body["layout"].is_null()) {
         if (!body["layout"].is_string())
-          throw Failure{1, "INVALID_CONFIG", where + ".layout must be a string"};
+          throw Failure{1, "invalid_workspace", where + ".layout must be a string"};
         window["layout"] = body["layout"];
       }
       if (body.contains("focus") && !body["focus"].is_null()) {
         if (!body["focus"].is_boolean())
-          throw Failure{1, "INVALID_CONFIG", where + ".focus must be a boolean"};
+          throw Failure{1, "invalid_workspace", where + ".focus must be a boolean"};
         const bool focus = body["focus"].get<bool>() && !window_focused;
         window["focus"] = focus;
         window_focused = window_focused || focus;
       }
       if (body.contains("options") && !body["options"].is_null()) {
         if (!body["options"].is_object())
-          throw Failure{1, "INVALID_CONFIG", where + ".options must be a mapping"};
+          throw Failure{1, "invalid_workspace", where + ".options must be a mapping"};
         const auto synchronization =
             body["options"].value("synchronize-panes", Json(false));
         if (synchronization != false && synchronization != 0 &&
             synchronization != "off" && synchronization != "false" &&
             synchronization != "no" && synchronization != "0")
           throw Failure{
-              1, "UNSUPPORTED_CONFIG",
+              1, "invalid_workspace",
               where + ".options.synchronize-panes cannot preserve pre-command timing"};
         window["options"] = body["options"];
       }
       if (body.contains("synchronize") && body["synchronize"] != false &&
           !body["synchronize"].is_null()) {
         if (body["synchronize"] != "after")
-          throw Failure{1, "UNSUPPORTED_CONFIG",
+          throw Failure{1, "invalid_workspace",
                         where + ".synchronize only supports after-command timing"};
         window["options_after"]["synchronize-panes"] = "on";
       }
@@ -966,12 +986,12 @@ Json imported(Json source, const std::string& kind, const fs::path& path) {
       if (panes.is_null())
         panes = Json::array();
       if (!panes.is_array())
-        throw Failure{1, "INVALID_CONFIG", where + ".panes must be an array"};
+        throw Failure{1, "invalid_workspace", where + ".panes must be an array"};
       if (body.contains("pre")) {
         const auto pre = import_command_group(body["pre"], " && ", where + ".pre");
         if (!pre.is_null() && !pre.get_ref<const std::string&>().empty()) {
           if (panes.empty())
-            throw Failure{1, "UNSUPPORTED_CONFIG",
+            throw Failure{1, "invalid_workspace",
                           where + ".pre requires explicit nonempty panes"};
           window["shell_command_before"] = pre;
         }
@@ -982,7 +1002,7 @@ Json imported(Json source, const std::string& kind, const fs::path& path) {
         const auto pane_where = where + ".panes[" + std::to_string(pane) + "]";
         if (panes[pane].is_object()) {
           if (!teamocil)
-            throw Failure{1, "UNSUPPORTED_CONFIG",
+            throw Failure{1, "invalid_workspace",
                           pane_where + " uses an unsupported pane title"};
           import_keys(panes[pane], {"commands", "cmd", "focus"}, pane_where);
           Json translated{{"shell_command",
@@ -991,7 +1011,7 @@ Json imported(Json source, const std::string& kind, const fs::path& path) {
                                "; ", pane_where + ".commands")}};
           if (panes[pane].contains("focus") && !panes[pane]["focus"].is_null()) {
             if (!panes[pane]["focus"].is_boolean())
-              throw Failure{1, "INVALID_CONFIG",
+              throw Failure{1, "invalid_workspace",
                             pane_where + ".focus must be a boolean"};
             const bool focus = panes[pane]["focus"].get<bool>() && !pane_focused;
             translated["focus"] = focus;
@@ -1006,7 +1026,7 @@ Json imported(Json source, const std::string& kind, const fs::path& path) {
     result["windows"].push_back(std::move(window));
   }
   if (const auto parsed = workspace::parse_tmuxp(result.dump()); !parsed)
-    throw Failure{1, "INVALID_CONFIG", kind + ": " + parse_error_message(parsed.error())};
+    throw Failure{1, parse_error_code(parsed.error()), kind + ": " + parse_error_message(parsed.error())};
   return result;
 }
 struct Pattern {
@@ -1028,7 +1048,7 @@ std::string field_name(std::string value) {
       {"cmd", "pane"}};
   const auto found = aliases.find(value);
   if (found == aliases.end())
-    throw Failure{2, "USAGE", "unknown search field: " + value};
+    throw Failure{2, "usage", "unknown search field: " + value};
   return found->second;
 }
 std::vector<Pattern> patterns(const Request& request) {
@@ -1059,7 +1079,7 @@ std::vector<Pattern> patterns(const Request& request) {
     try {
       result.push_back({fields, std::regex{query, flags}});
     } catch (const std::regex_error& error) {
-      throw Failure{2, "INVALID_PATTERN", error.what()};
+      throw Failure{2, "invalid_pattern", error.what()};
     }
   }
   return result;
@@ -1140,18 +1160,18 @@ std::string encoded(const Json& value, int indent) {
 }
 void validate(const Request& request) {
   if (request.command == "load" && request.flag("8"))
-    throw Failure{2, "USAGE", "88-colour mode is unsupported; use -2 for 256 colours"};
+    throw Failure{2, "usage", "88-colour mode is unsupported; use -2 for 256 colours"};
   if (request.command == "search") {
     if (request.list("query").empty())
-      throw Failure{2, "USAGE", "search requires at least one pattern"};
+      throw Failure{2, "usage", "search requires at least one pattern"};
     (void)patterns(request);
   }
   if (request.command == "load" && !request.flag("d")) {
     if (!request.flag("append")) {
       if (request.machine())
-        throw Failure{2, "USAGE", "machine output requires load -d or --append"};
+        throw Failure{2, "usage", "machine output requires load -d or --append"};
       if (!request.terminal_allowed)
-        throw Failure{2, "USAGE",
+        throw Failure{2, "usage",
                       "load requires a foreground controlling terminal; use -d"};
       require_terminal();
     }
@@ -1168,14 +1188,14 @@ void validate(const Request& request) {
           context.find_first_not_of("0123456789", last + 1) != std::string::npos ||
           pane.size() < 2 || pane.front() != '%' ||
           pane.find_first_not_of("0123456789", 1) != std::string::npos)
-        throw Failure{2, "USAGE", "load requires valid TMUX and TMUX_PANE context"};
+        throw Failure{2, "usage", "load requires valid TMUX and TMUX_PANE context"};
     }
   }
   if (request.command == "freeze" && request.value("session").empty())
-    throw Failure{2, "USAGE", "freeze requires a session name or ID"};
+    throw Failure{2, "usage", "freeze requires a session name or ID"};
   if (request.command == "shell" && !request.flag("c") &&
       (request.machine() || !request.terminal_allowed))
-    throw Failure{2, "USAGE",
+    throw Failure{2, "usage",
                   "interactive shell requires a foreground terminal; use -c"};
 }
 static Execution execute_impl(const Request& request, const EventSink& event) {
@@ -1200,15 +1220,15 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
       probe.insert(probe.end(), {"--color", "never", "--version"});
       version = run_child(probe);
     } catch (const Failure&) {
-      throw Failure{1, "COMPATIBILITY_RUNTIME",
+      throw Failure{1, "compatibility_runtime",
                     "shell requires tmuxp 1.74.0; install it, set "
                     "TMUX_WORKSPACE_PYTHON to an interpreter with it installed, "
                     "or set TMUX_WORKSPACE_TMUXP to its executable"};
     }
     if (version.code >= 128)
-      throw Failure{version.code, "INTERRUPTED", "shell version check interrupted"};
+      throw Failure{version.code, "interrupted", "shell version check interrupted"};
     if (version.code != 0 || !version.out.starts_with("tmuxp 1.74.0, libtmux "))
-      throw Failure{1, "COMPATIBILITY_RUNTIME", "shell requires tmuxp 1.74.0"};
+      throw Failure{1, "compatibility_runtime", "shell requires tmuxp 1.74.0"};
     std::vector<std::string> arguments = runtime;
     arguments.insert(
         arguments.end(),
@@ -1353,18 +1373,18 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
       std::vector<std::string> script;
       if (document.contains("before_script") && !document["before_script"].is_null()) {
         if (!document["before_script"].is_string())
-          throw Failure{1, "INVALID_CONFIG", "before_script must be a command string"};
+          throw Failure{1, "invalid_workspace", "before_script must be a command string"};
         const auto command = document["before_script"].get<std::string>();
         if (!command.empty()) {
           try {
             script = split_command(command);
           } catch (const Failure& error) {
-            throw Failure{1, "INVALID_CONFIG",
+            throw Failure{1, "invalid_workspace",
                           "before_script: " + std::string{error.what()}};
           }
           for (const auto& argument : script)
             if (argument.find('\0') != std::string::npos)
-              throw Failure{1, "INVALID_CONFIG",
+              throw Failure{1, "invalid_workspace",
                             "before_script arguments cannot contain NUL"};
         }
       }
@@ -1373,15 +1393,15 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
         document["session_name"] = request.value("s");
       const auto workspace = parse_tmuxp(document.dump());
       if (!workspace)
-        throw Failure{1, "INVALID_CONFIG", parse_error_message(workspace.error())};
+        throw Failure{1, parse_error_code(workspace.error()), parse_error_message(workspace.error())};
       if (!libtmux::session_target(workspace->session_name))
-        throw Failure{1, "INVALID_CONFIG", "session name cannot address itself"};
+        throw Failure{1, "invalid_workspace", "session name cannot address itself"};
       std::string directory;
       if (!script.empty()) {
         directory = workspace->start_directory.empty() ? fs::current_path().string()
                                                        : workspace->start_directory;
         if (directory.find('\0') != std::string::npos || !fs::is_directory(directory))
-          throw Failure{1, "INVALID_CONFIG",
+          throw Failure{1, "invalid_workspace",
                         "before_script working directory does not exist"};
       }
       plans.push_back({path, *workspace, std::move(script), std::move(directory)});
@@ -1401,14 +1421,14 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
       auto server = endpoint(request);
       for (const auto& plan : plans)
         if (auto error = validate_layouts(server, plan.workspace))
-          throw Failure{1, "INVALID_CONFIG",
+          throw Failure{1, "invalid_workspace",
                         "windows[" + std::to_string(error->window_index) +
                             "].layout: " + error->reason};
       std::optional<Session> borrowed;
       if (appending)
         borrowed = append_target(server);
       else if (interactive && !environment("TMUX").empty()) {
-        const auto pane = current_pane(server, "CLIENT_CONTEXT");
+        const auto pane = current_pane(server, "client_context");
         caller = current_client(server, pane.id(), pane.window_id());
       } else if (!server.is_alive())
         server = start_endpoint(request, bootstrap);
@@ -1456,7 +1476,7 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
           } catch (const Failure& error) {
             observer_error = error;
           } catch (const std::exception& error) {
-            observer_error.emplace(1, "OPERATION_FAILED", error.what());
+            observer_error.emplace(1, "operation_failed", error.what());
           }
           return observer_error->what();
         };
@@ -1485,7 +1505,7 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
               script_output = child.value();
               if (child.code != 0)
                 script_error.emplace(
-                    child.code >= 128 ? child.code : 1, "BEFORE_SCRIPT_FAILED",
+                    child.code >= 128 ? child.code : 1, "script_failed",
                     "before_script exited with status " + std::to_string(child.code));
               event("script-completed",
                     {{"input_index", index}, {"script_output", script_output}});
@@ -1522,7 +1542,7 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
           if (script_error)
             failure_status = script_error->exit_code;
           Json problem{
-              {"code", script_error ? script_error->code : "BUILD_FAILED"},
+              {"code", script_error ? script_error->code : "tmux_failed"},
               {"message", script_error ? script_error->what() : built.error().reason},
               {"input_index", index},
               {"failed_stage", stage}};
@@ -1565,7 +1585,7 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
         problem["retained_state"] = error.retained_state;
       errors.push_back(std::move(problem));
     } catch (const std::exception& error) {
-      errors.push_back({{"code", "OPERATION_FAILED"},
+      errors.push_back({{"code", "operation_failed"},
                         {"message", error.what()},
                         {"input_index", active_input},
                         {"failed_stage", stage}});
@@ -1574,7 +1594,7 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
       const auto cleaned = bootstrap.session->kill();
       bootstrap.session.reset();
       if (!cleaned)
-        errors.push_back({{"code", "BOOTSTRAP_CLEANUP_FAILED"},
+        errors.push_back({{"code", "bootstrap_cleanup_failed"},
                           {"message", cleaned.error().diagnostic},
                           {"failed_stage", "cleanup"}});
     }
@@ -1596,7 +1616,7 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
     }
     return execution;
   }
-  throw Failure{1, "FEATURE_UNAVAILABLE", "command is not implemented"};
+  throw Failure{1, "feature_unavailable", "command is not implemented"};
 }
 Execution execute(const Request& request, const EventSink& event) {
   if (request.command == "load" || request.command == "shell")

@@ -35,16 +35,16 @@ public:
       }
     } mask;
     if (::sigprocmask(SIG_BLOCK, &blocked, &mask.previous) != 0)
-      throw Failure{1, "SIGNAL_HANDLER", "cannot block load interruption signals"};
+      throw Failure{1, "signal_handler", "cannot block load interruption signals"};
     mask.active = true;
     struct sigaction action {};
     action.sa_handler = interrupted;
     sigemptyset(&action.sa_mask);
     if (::sigaction(SIGINT, &action, &interrupt_) != 0)
-      throw Failure{1, "SIGNAL_HANDLER", "cannot install child interruption handler"};
+      throw Failure{1, "signal_handler", "cannot install child interruption handler"};
     if (::sigaction(SIGTERM, &action, &terminate_) != 0) {
       (void)::sigaction(SIGINT, &interrupt_, nullptr);
-      throw Failure{1, "SIGNAL_HANDLER", "cannot install child termination handler"};
+      throw Failure{1, "signal_handler", "cannot install child termination handler"};
     }
     if (interrupt_.sa_handler != interrupted)
       interrupted_signal = 0;
@@ -108,12 +108,12 @@ public:
     if (previous_ != ::getpgrp()) {
       ::close(descriptor_);
       descriptor_ = -1;
-      throw Failure{1, "TERMINAL_BACKGROUND", "command requires a foreground terminal"};
+      throw Failure{1, "terminal_background", "command requires a foreground terminal"};
     }
     if (::tcgetattr(descriptor_, &settings_) != 0) {
       ::close(descriptor_);
       descriptor_ = -1;
-      throw Failure{1, "TERMINAL_SETTINGS", "cannot read terminal settings"};
+      throw Failure{1, "terminal_settings", "cannot read terminal settings"};
     }
   }
   ~Terminal() {
@@ -167,7 +167,7 @@ std::vector<std::string> split_command(const std::string& value) {
     const char character = value[index];
     if (character == '\\' && quote != '\'') {
       if (++index == value.size())
-        throw Failure{2, "USAGE", "incomplete escape in command"};
+        throw Failure{2, "usage", "incomplete escape in command"};
       if (value[index] == '\n')
         continue;
       if (quote == '"' && value[index] != '"' && value[index] != '\\' &&
@@ -194,17 +194,17 @@ std::vector<std::string> split_command(const std::string& value) {
     }
   }
   if (quote)
-    throw Failure{2, "USAGE", "unterminated quote in command"};
+    throw Failure{2, "usage", "unterminated quote in command"};
   if (active)
     result.push_back(std::move(word));
   if (result.empty() || result.front().empty())
-    throw Failure{2, "USAGE", "command needs an executable"};
+    throw Failure{2, "usage", "command needs an executable"};
   return result;
 }
 void require_terminal() {
   const Terminal display{true, true};
   if (display.descriptor() < 0)
-    throw Failure{2, "USAGE",
+    throw Failure{2, "usage",
                   "load requires a foreground controlling terminal; use -d"};
 }
 Execution with_interrupts(const std::function<Execution()>& operation) {
@@ -213,16 +213,16 @@ Execution with_interrupts(const std::function<Execution()>& operation) {
 }
 void check_interruption() {
   if (interrupted_signal != 0)
-    throw Failure{128 + interrupted_signal, "INTERRUPTED",
+    throw Failure{128 + interrupted_signal, "interrupted",
                   "workspace load interrupted"};
 }
 ChildOutput run_child(const std::vector<std::string>& arguments, ChildOptions options) {
   if (arguments.empty())
-    throw Failure{2, "USAGE", "child command is empty"};
+    throw Failure{2, "usage", "child command is empty"};
   SignalGuard signals;
   Terminal display{options.terminal, options.terminal_required};
   if (options.terminal_required && display.descriptor() < 0)
-    throw Failure{1, "TERMINAL_UNAVAILABLE", "controlling terminal is unavailable"};
+    throw Failure{1, "terminal_unavailable", "controlling terminal is unavailable"};
   libtmux::detail::ProcessRequest request;
   request.executable = arguments.front();
   request.timeout = options.timeout;
@@ -261,7 +261,7 @@ ChildOutput run_child(const std::vector<std::string>& arguments, ChildOptions op
               text(reply.error().stderr_bytes), reply.error().output_truncated};
     const bool limited =
         reply.error().kind == libtmux::detail::ProcessError::Kind::output_limit;
-    Failure failure{1, limited ? "OUTPUT_LIMIT" : "PROCESS_FAILED",
+    Failure failure{1, limited ? "output_limit" : "process_failed",
                     limited ? "child output exceeds 1 MiB per stream"
                             : reply.error().diagnostic};
     failure.child_output =
@@ -271,7 +271,7 @@ ChildOutput run_child(const std::vector<std::string>& arguments, ChildOptions op
     throw failure;
   }
   if (reply->output_truncated) {
-    Failure failure{1, "OUTPUT_LIMIT", "child output exceeds 1 MiB"};
+    Failure failure{1, "output_limit", "child output exceeds 1 MiB"};
     failure.child_output =
         ChildOutput{1, text(reply->stdout_bytes), text(reply->stderr_bytes), true}
             .value();

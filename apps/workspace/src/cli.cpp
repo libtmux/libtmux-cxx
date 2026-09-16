@@ -87,31 +87,31 @@ public:
 #ifndef _WIN32
     const auto path = request_.value("log-file");
     if (path.find('\0') != std::string::npos)
-      throw Failure{1, "LOG_FILE_UNAVAILABLE", "log path contains a null byte"};
+      throw Failure{1, "log_file_unavailable", "log path contains a null byte"};
     struct stat status {};
     const int inspected = ::lstat(path.c_str(), &status);
     if (inspected == 0 && !S_ISREG(status.st_mode))
-      throw Failure{1, "LOG_FILE_UNAVAILABLE",
+      throw Failure{1, "log_file_unavailable",
                     "log destination must be a regular file"};
     if (inspected != 0 && errno != ENOENT)
-      throw Failure{1, "LOG_FILE_UNAVAILABLE", std::strerror(errno)};
+      throw Failure{1, "log_file_unavailable", std::strerror(errno)};
     const int file = ::open(path.c_str(),
                             O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW | O_NONBLOCK |
                                 O_CLOEXEC | O_NOCTTY,
                             0600);
     if (file < 0)
-      throw Failure{1, "LOG_FILE_UNAVAILABLE", std::strerror(errno)};
+      throw Failure{1, "log_file_unavailable", std::strerror(errno)};
     const int verified = ::fstat(file, &status);
     const int cause = errno;
     if (verified != 0 || !S_ISREG(status.st_mode)) {
       (void)::close(file);
-      throw Failure{1, "LOG_FILE_UNAVAILABLE",
+      throw Failure{1, "log_file_unavailable",
                     verified != 0 ? std::strerror(cause)
                                   : "opened log destination is not a regular file"};
     }
     descriptor_ = file;
 #else
-    throw Failure{1, "LOG_FILE_UNAVAILABLE",
+    throw Failure{1, "log_file_unavailable",
                   "log files require POSIX file descriptors"};
 #endif
   }
@@ -161,7 +161,7 @@ public:
     try {
       const auto message = std::string{"log file disabled: "} + std::strerror(failure_);
       if (request_.machine())
-        errors_ << encoded({{"code", "LOG_FILE_WRITE_FAILED"},
+        errors_ << encoded({{"code", "log_file_write_failed"},
                             {"level", "warning"},
                             {"message", message}})
                 << '\n';
@@ -427,14 +427,16 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
           execution.value.is_object())
         retained_state = execution.value;
       if (request.machine()) {
-        Json diagnostic{{"code", code}, {"message", message}};
+        // S14: {"schema_version":1,"code":"...","message":"..."} on stderr.
+        Json diagnostic{{"schema_version", 1}, {"code", code}, {"message", message}};
         if (!retained_state.is_null())
           diagnostic["retained_state"] = retained_state;
         errors << encoded(diagnostic) << '\n';
       } else {
+        // S15: human output is for humans -- retained_state is a machine
+        // record (and, for the load/shell summary it can hold, potentially
+        // its whole result); --json/--ndjson already carry it.
         errors << "Error: " << message << '\n';
-        if (!retained_state.is_null())
-          errors << "Retained state: " << encoded(retained_state) << '\n';
       }
     } catch (const std::exception&) {
       // A failed diagnostic sink does not replace the operation's status.
@@ -471,7 +473,7 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
     auto parsed = model.root.get_subcommands();
     if (parsed.empty()) {
       if (request.machine())
-        throw Failure{2, "USAGE", "a command is required"};
+        throw Failure{2, "usage", "a command is required"};
       output << model.root.help();
       return output ? 0 : 1;
     }
@@ -490,7 +492,7 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
         auto& stream = data.at("stream") == "stdout" ? output : errors;
         stream << data.at("text").get<std::string>() << std::flush;
         if (!stream)
-          throw Failure{1, "OUTPUT_CLOSED", "shell output stream closed"};
+          throw Failure{1, "output_closed", "shell output stream closed"};
       }
       if (!request.ndjson)
         return;
@@ -500,7 +502,7 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
       data["sequence"] = sequence;
       output << encoded(data) << '\n' << std::flush;
       if (!output)
-        throw Failure{1, "OUTPUT_CLOSED", "output stream closed"};
+        throw Failure{1, "output_closed", "output stream closed"};
     };
     const auto operation = [&] {
       try {
@@ -519,7 +521,7 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
     const auto& result = execution.value;
     if (request.command == "freeze" && request.json && !request.ndjson &&
         !result.contains("destination") && diagnostics.enabled("warning")) {
-      errors << encoded({{"code", "CAPTURE_LOSSY"},
+      errors << encoded({{"code", "capture_lossy"},
                          {"level", "warning"},
                          {"message", "Capture cannot recover original command "
                                      "arguments, history, plugins or before scripts."}})
@@ -536,8 +538,11 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
         diagnostics.diagnostic(error.at("code").get<std::string>(),
                                error.at("message").get<std::string>());
         if (request.machine()) {
-          auto diagnostic = error;
-          diagnostic.erase("script_output");
+          // S14: {"schema_version":1,"code":"...","message":"..."} on stderr.
+          Json diagnostic{{"schema_version", 1}};
+          for (const auto& [key, value] : error.items())
+            if (key != "script_output")
+              diagnostic[key] = value;
           errors << encoded(diagnostic) << '\n';
         } else
           errors << "Error: " << error.at("message").get<std::string>() << '\n';
@@ -566,7 +571,7 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
       output.flush();
       errors.flush();
       if (!output || !errors)
-        throw Failure{1, "OUTPUT_CLOSED", "load output stream closed"};
+        throw Failure{1, "output_closed", "load output stream closed"};
       diagnostics.report_failure();
       if (execution.handoff)
         execution.handoff();
@@ -578,7 +583,8 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
     if (error.get_exit_code() == 0)
       return model.root.exit(error, output, errors);
     if (request.machine())
-      errors << encoded({{"code", "USAGE"}, {"message", error.what()}}) << '\n';
+      errors << encoded({{"schema_version", 1}, {"code", "usage"}, {"message", error.what()}})
+             << '\n';
     else
       model.root.exit(error, output, errors);
     return 2;
@@ -587,7 +593,7 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
       retained_state = error.retained_state;
     return fail(error.exit_code, error.code, error.what());
   } catch (const std::exception& error) {
-    return fail(1, "OPERATION_FAILED", error.what());
+    return fail(1, "operation_failed", error.what());
   }
 }
 } // namespace libtmux::workspace::cli

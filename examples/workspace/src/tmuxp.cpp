@@ -48,6 +48,13 @@ std::optional<std::string> unknown_key(const YAML::Node& node,
 std::string unsupported_key_message(const std::string& key) {
   return "unsupported key: " + key + " (prefix a custom key with \"x-\" to keep it)";
 }
+// S14: `unsupported_key` is its own error code, distinct from every other
+// malformed-document `invalid_workspace`.
+libtmux::unexpected_t<ParseError> fail_unsupported_key(std::string where,
+                                                       const std::string& key) {
+  return libtmux::unexpected(
+      ParseError{std::move(where), unsupported_key_message(key), true});
+}
 
 libtmux::expected<bool, ParseError>
 read_boolean(const YAML::Node& node, const std::string& where, bool fallback = false) {
@@ -81,7 +88,7 @@ libtmux::expected<Command, ParseError> read_command(const YAML::Node& node,
   static constexpr std::string_view kCommandKeys[]{"cmd", "enter", "sleep_before",
                                                    "sleep_after", "suppress_history"};
   if (const auto unknown = unknown_key(node, kCommandKeys)) {
-    return fail(where, unsupported_key_message(*unknown));
+    return fail_unsupported_key(where, *unknown);
   }
   const YAML::Node text = node["cmd"];
   if (require_text && (!text || !text.IsScalar())) {
@@ -242,7 +249,7 @@ libtmux::expected<Pane, ParseError> read_pane(const YAML::Node& node,
         "focus",         "environment",      "enter", "sleep_before",
         "sleep_after",   "suppress_history", "shell"};
     if (const auto unknown = unknown_key(node, kPaneKeys)) {
-      return fail(where, unsupported_key_message(*unknown));
+      return fail_unsupported_key(where, *unknown);
     }
     pane.start_directory = directory_of(node);
     const auto focus = read_boolean(node["focus"], where + ".focus");
@@ -297,7 +304,7 @@ libtmux::expected<Window, ParseError> read_window(const YAML::Node& node,
       "environment",     "window_index", "options_after",        "window_shell",
       "suppress_history"};
   if (const auto unknown = unknown_key(node, kWindowKeys)) {
-    return fail(where, unsupported_key_message(*unknown));
+    return fail_unsupported_key(where, *unknown);
   }
   Window window;
   if (const YAML::Node name = node["window_name"]; name && name.IsScalar()) {
@@ -401,7 +408,7 @@ libtmux::expected<Workspace, ParseError> parse_tmuxp(std::string_view document) 
       "windows",      "shell_command_before", "environment",
       "options",      "global_options",       "suppress_history"};
   if (const auto unknown = unknown_key(root, kDocumentKeys)) {
-    return fail("", unsupported_key_message(*unknown));
+    return fail_unsupported_key("", *unknown);
   }
   const YAML::Node name = root["session_name"];
   if (!name || !name.IsScalar() || name.as<std::string>().empty()) {
