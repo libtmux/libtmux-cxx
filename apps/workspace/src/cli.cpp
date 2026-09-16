@@ -186,7 +186,7 @@ public:
   }
   Model() {
     root.require_subcommand(0, 1);
-    root.set_version_flag("-V,--version", LIBTMUX_WORKSPACE_VERSION);
+    root.set_version_flag("-V,--version", "tmux-workspace " LIBTMUX_WORKSPACE_VERSION);
     choice(root, "--color", "Colour policy: auto, always or never",
            {"auto", "always", "never"})
         ->default_str("auto");
@@ -551,7 +551,9 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
       } else
         output << encoded(result) << '\n';
     } else if (request.json)
-      output << encoded(result, 2) << '\n';
+      // Compact: a machine reads this, and five of the seven libtmux
+      // workspace ports already agree on one line per record.
+      output << encoded(result) << '\n';
     else
       output << human_result(request, result, colour_enabled(request, output));
     if (request.command == "load") {
