@@ -144,6 +144,16 @@ IDs. An explicit first-window index must name a free slot in that session.
 Directories resolve against the configuration and parent directories. Plugins
 and custom builders remain unsupported and are rejected.
 
+A document key outside the supported subset is refused by name; a key
+prefixed `x-`, at any level, is the exception -- it is accepted, ignored, and
+(unlike every other key) left untouched by `convert`. A refusal for any other
+key names the `x-` prefix as the way to keep a custom one. `<<: *anchor` and
+`<<: [*a, *b]` YAML merge keys resolve at every mapping level; an earlier
+merge source and an explicit key both win over a later or merged one, in that
+order. A window naming no `layout` is tiled, and its first pane is focused by
+default; tmuxp instead stacks halving splits and focuses the last pane. Both
+are deliberate differences, not configurable.
+
 Conversion preserves unknown document fields. Human conversion previews by
 default; `--yes` saves beside the source, and `--save-to` names a destination.
 Import translates supported Teamocil and tmuxinator settings and refuses
