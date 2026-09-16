@@ -1273,18 +1273,25 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
             check_interruption();
             if (update.phase == BuildPhase::waiting)
               return std::nullopt;
-            const auto& window = plan.workspace.windows.at(update.window_index);
-            const auto phase =
-                update.phase == BuildPhase::window_started     ? "window-started"
+            const bool is_window = update.phase == BuildPhase::window_started ||
+                                   update.phase == BuildPhase::window_completed;
+            const auto name =
+                update.phase == BuildPhase::window_started     ? "window-created"
                 : update.phase == BuildPhase::window_completed ? "window-completed"
-                : update.phase == BuildPhase::pane_started     ? "pane-started"
+                : update.phase == BuildPhase::pane_started     ? "pane-created"
                                                                : "pane-completed";
-            event("build-progress", {{"input_index", index},
-                                     {"phase", phase},
-                                     {"window_name", window.name},
-                                     {"window_index", update.window_index + 1},
-                                     {"pane_index", update.pane_index + 1},
-                                     {"pane_total", window.panes.size()}});
+            const auto& window = plan.workspace.windows.at(update.window_index);
+            Json fields{{"input_index", index},
+                        {"session_id", update.session_id},
+                        {"window_id", update.window_id},
+                        {"window_index", update.window_index + 1},
+                        {"window_name", window.name}};
+            if (!is_window) {
+              fields["pane_id"] = update.pane_id;
+              fields["pane_index"] = update.pane_index + 1;
+              fields["pane_total"] = window.panes.size();
+            }
+            event(name, std::move(fields));
             return std::nullopt;
           } catch (const Failure& error) {
             observer_error = error;
