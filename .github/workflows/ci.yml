@@ -361,7 +361,10 @@ jobs:
             throw "the Windows package unexpectedly provided libtmux::testing"
           }
           $reported = $output -join "`n"
-          $normalized = $reported -replace '\s+', ' '
+          # CMake writes its own status lines to the same merged stream, and one
+          # can land between two halves of the diagnostic. Drop them before
+          # matching; the diagnostic is a FATAL_ERROR and never starts with --.
+          $normalized = (($output | Where-Object { "$_" -notmatch '^\s*--' }) -join "`n") -replace '\s+', ' '
           $expected = "the libtmux::testing component is POSIX-only and is unavailable in Windows packages"
           if (-not $normalized.Contains($expected)) {
             throw "missing testing-component diagnostic:`n$reported"
