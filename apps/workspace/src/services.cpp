@@ -64,9 +64,9 @@ std::string expand(std::string value) {
   return value;
 }
 // A positive whole number from the environment, or nullopt when unset.
-// Anything else (letters, zero, negative, fractional) is a usage error: S1
-// says so explicitly, where tmuxp's own `shutil.get_terminal_size` silently
-// treats a bad COLUMNS/LINES as absent.
+// Anything else (letters, zero, negative, fractional) is a usage error here,
+// where tmuxp's own `shutil.get_terminal_size` silently treats a bad
+// COLUMNS/LINES as absent.
 std::optional<int> sized_env(const char* name) {
   const auto value = environment(name);
   if (value.empty())
@@ -78,7 +78,7 @@ std::optional<int> sized_env(const char* name) {
     throw Failure{2, "usage", std::string{name} + " must be a positive whole number"};
   return static_cast<int>(parsed);
 }
-// S1: the size a newly built session is given while no client is attached,
+// The size a newly built session is given while no client is attached,
 // matching tmuxp's own `shutil.get_terminal_size(fallback=(columns, rows))`
 // so cxx and `uvx tmuxp` build identical layouts from the same terminal.
 // nullopt/nullopt means "pass no -x/-y", which is what a disabled detection
@@ -139,11 +139,11 @@ std::string human_text(const std::string& value) {
   return visible_controls(std::string_view{quoted}.substr(1, quoted.size() - 2));
 }
 // A document-level ParseError has no path (`where` is empty); joining it
-// with ": " regardless produced "Error: : unsupported key: ..." (S15/B3).
+// with ": " regardless produced "Error: : unsupported key: ...".
 std::string parse_error_message(const workspace::ParseError& error) {
   return error.where.empty() ? error.reason : error.where + ": " + error.reason;
 }
-// S14: a refused key is its own `unsupported_key` code, not the general
+// A refused key is its own `unsupported_key` code, not the general
 // `invalid_workspace` every other malformed document gets.
 const char* parse_error_code(const workspace::ParseError& error) {
   return error.unsupported_key ? "unsupported_key" : "invalid_workspace";
@@ -160,7 +160,7 @@ Json from_yaml(const YAML::Node& node, int depth = 0) {
     return array;
   }
   if (node.IsMap()) {
-    // S5: `<<: *anchor` or `<<: [*a, *b]` merges that mapping's (or those
+    // `<<: *anchor` or `<<: [*a, *b]` merges that mapping's (or those
     // mappings', earlier winning) keys into this one; an explicit key here
     // always overrides a merged one. A quoted `"<<"` is an ordinary key, not
     // a merge directive.
@@ -384,7 +384,7 @@ std::optional<Json> record(const WorkspaceFile& file, bool full) {
     result["config"] = config;
   return result;
 }
-// S7: expand $VAR, ${VAR} and a leading ~ in command text from the loading
+// Expand $VAR, ${VAR} and a leading ~ in command text from the loading
 // process's environment, matching tmuxp. Handles every shape a command list
 // can take: a bare string, a list of strings, a list of {cmd: ...} mappings,
 // or (shell_command_before, after tmuxp's own normalisation) a mapping
@@ -597,7 +597,7 @@ Server start_endpoint(const Request& request, Bootstrap& bootstrap) {
     } catch (Failure& spawn) {
       // run_child()'s own "process_failed" is generic (it also spawns
       // EDITOR, tmuxp, before_script); here it specifically means tmux
-      // itself could not be started (S14: tmux_unavailable).
+      // itself could not be started.
       if (spawn.code == "process_failed")
         spawn.code = "tmux_unavailable";
       throw;
@@ -709,7 +709,7 @@ Json capture(const Request& request) {
   }
   return document;
 }
-// S4: a string scalar a YAML 1.1 (PyYAML/tmuxp) or 1.2 resolver would read
+// A string scalar a YAML 1.1 (PyYAML/tmuxp) or 1.2 resolver would read
 // back as bool, null or a number must stay quoted. Rather than reproduce
 // both resolvers' grammars (`08`, `0x1F`, `1e3`, `1_000`, `1:30`, ...), quote
 // anything that could plausibly start one: empty, a bool/null word in any

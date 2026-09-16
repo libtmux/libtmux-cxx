@@ -33,9 +33,9 @@ std::optional<std::string> unknown_key(const YAML::Node& node,
       return "a key is not a name";
     }
     const auto key = entry.first.as<std::string>();
-    // S6: a key starting with "x-", at any level, is inert: accepted,
-    // ignored here (so absent from the built workspace), preserved by
-    // `convert` (which reads documents through from_yaml, not this parser).
+    // A key starting with "x-", at any level, is inert: accepted, ignored
+    // here (so absent from the built workspace), preserved by `convert`
+    // (which reads documents through from_yaml, not this parser).
     if (key.starts_with("x-")) {
       continue;
     }
@@ -48,7 +48,7 @@ std::optional<std::string> unknown_key(const YAML::Node& node,
 std::string unsupported_key_message(const std::string& key) {
   return "unsupported key: " + key + " (prefix a custom key with \"x-\" to keep it)";
 }
-// S14: `unsupported_key` is its own error code, distinct from every other
+// `unsupported_key` is its own error code, distinct from every other
 // malformed-document `invalid_workspace`.
 libtmux::unexpected_t<ParseError> fail_unsupported_key(std::string where,
                                                        const std::string& key) {

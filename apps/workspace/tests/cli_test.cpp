@@ -764,7 +764,7 @@ TEST(WorkspaceCli, VersionNamesTheToolAndJsonOutputIsOneCompactLine) {
 
 TEST(WorkspaceCli, ListingGroupsDirectoriesAndIncludesFullDocuments) {
   Files files;
-  // Only one global directory is ever active (B0); exercise the legacy
+  // Only one global directory is ever active; exercise the legacy
   // ~/.tmuxp one by clearing the higher-precedence candidates Files() sets.
   ::unsetenv("TMUXP_CONFIGDIR");
   ::unsetenv("XDG_CONFIG_HOME");
@@ -1043,10 +1043,10 @@ TEST(WorkspaceCli, ImportUsesNonNullAliasesAndRefusesConflicts) {
   }
 }
 
-// S6: a key starting with "x-", at any level, is inert -- accepted, ignored
+// A key starting with "x-", at any level, is inert -- accepted, ignored
 // at load, and its refusal message (for every other unknown key) suggests
-// the prefix. B3 also covers the empty `where` a document-level refusal
-// left in "Error: : unsupported key: ...".
+// the prefix. Also covers the empty `where` a document-level refusal used
+// to leave in "Error: : unsupported key: ...".
 TEST(WorkspaceCli, ParseTmuxpIgnoresExtensionKeysAtEveryLevel) {
   const auto* text = R"({
     "session_name": "x-test",
@@ -1090,9 +1090,11 @@ TEST(WorkspaceCli, LoadRefusalOfATopLevelKeyIsOneCleanSentence) {
   EXPECT_NE(refused.err.find("x-"), std::string::npos) << refused.err;
 }
 
-// E3/S14: every port's error `code` was different for the same condition.
-// These four are the spec's minimum test, in cxx's own lower snake_case
-// vocabulary; every stderr error record also carries "schema_version":1.
+// Every port's machine error `code` for the same condition used to be
+// different. These four conditions -- a missing workspace file, a malformed
+// document, a refused key and a freeze target that doesn't exist -- now
+// report the shared lower snake_case vocabulary, and every stderr error
+// record carries "schema_version":1.
 TEST(WorkspaceCliTmux, ErrorCodesMatchTheSharedLowerSnakeCaseVocabulary) {
   Files files;
   auto fixture = libtmux::test::ScopedTmuxServer::start(
@@ -1127,8 +1129,13 @@ TEST(WorkspaceCliTmux, ErrorCodesMatchTheSharedLowerSnakeCaseVocabulary) {
   record = Json::parse(frozen.err);
   EXPECT_EQ(record.at("schema_version"), 1);
   EXPECT_EQ(record.at("code"), "session_not_found");
+}
 
-  // The remaining six columns of S14's full table, not only its minimum test.
+// The remaining conditions each get their own server: chaining several tmux
+// mutations onto one server before reaching a spawn-failure case
+// (before_script) was unreliable in CI.
+TEST(WorkspaceCliTmux, RemainingErrorCodesMatchTheSharedVocabulary) {
+  Files files;
   std::ofstream{"ok.yaml"} << "session_name: ok\nwindows: [{panes: [echo]}]\n";
   std::ofstream{"tf.yaml"}
       << "session_name: cf\nwindows:\n  - window_name: w\n    options:\n"
@@ -1136,48 +1143,69 @@ TEST(WorkspaceCliTmux, ErrorCodesMatchTheSharedLowerSnakeCaseVocabulary) {
   std::ofstream{"sf.yaml"}
       << "session_name: cs\nbefore_script: /bin/false\nwindows: [{panes: [echo]}]\n";
 
-  const auto tmux_failed = invoke({"load", "tf.yaml", "-d", "-S", socket, "--json"});
-  EXPECT_NE(tmux_failed.code, 0);
-  record = Json::parse(tmux_failed.err);
-  EXPECT_EQ(record.at("schema_version"), 1);
-  EXPECT_EQ(record.at("code"), "tmux_failed");
+  {
+    auto fixture = libtmux::test::ScopedTmuxServer::start(
+        {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-codes-tf")});
+    ASSERT_TRUE(fixture.has_value()) << fixture.error();
+    const auto tmux_failed = invoke(
+        {"load", "tf.yaml", "-d", "-S", fixture->socket_path().string(), "--json"});
+    EXPECT_NE(tmux_failed.code, 0);
+    const auto record = Json::parse(tmux_failed.err);
+    EXPECT_EQ(record.at("schema_version"), 1);
+    EXPECT_EQ(record.at("code"), "tmux_failed");
+  }
+  {
+    auto fixture = libtmux::test::ScopedTmuxServer::start(
+        {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-codes-sf")});
+    ASSERT_TRUE(fixture.has_value()) << fixture.error();
+    const auto script_failed = invoke(
+        {"load", "sf.yaml", "-d", "-S", fixture->socket_path().string(), "--json"});
+    EXPECT_NE(script_failed.code, 0);
+    const auto record = Json::parse(script_failed.err);
+    EXPECT_EQ(record.at("schema_version"), 1);
+    EXPECT_EQ(record.at("code"), "script_failed");
+  }
+  {
+    auto fixture = libtmux::test::ScopedTmuxServer::start(
+        {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-codes-de")});
+    ASSERT_TRUE(fixture.has_value()) << fixture.error();
+    const auto socket = fixture->socket_path().string();
+    ASSERT_EQ(invoke({"load", "ok.yaml", "-d", "-S", socket, "--json"}).code, 0);
+    std::ofstream{"exists.yaml"} << "";
+    const auto destination_exists = invoke(
+        {"freeze", "ok", "-S", socket, "--json", "--save-to", "exists.yaml"});
+    EXPECT_NE(destination_exists.code, 0);
+    const auto record = Json::parse(destination_exists.err);
+    EXPECT_EQ(record.at("schema_version"), 1);
+    EXPECT_EQ(record.at("code"), "destination_exists");
 
-  const auto script_failed = invoke({"load", "sf.yaml", "-d", "-S", socket, "--json"});
-  EXPECT_NE(script_failed.code, 0);
-  record = Json::parse(script_failed.err);
-  EXPECT_EQ(record.at("schema_version"), 1);
-  EXPECT_EQ(record.at("code"), "script_failed");
-
-  ASSERT_EQ(invoke({"load", "ok.yaml", "-d", "-S", socket, "--json"}).code, 0);
-  std::ofstream{"exists.yaml"} << "";
-  const auto destination_exists = invoke(
-      {"freeze", "ok", "-S", socket, "--json", "--save-to", "exists.yaml"});
-  EXPECT_NE(destination_exists.code, 0);
-  record = Json::parse(destination_exists.err);
-  EXPECT_EQ(record.at("schema_version"), 1);
-  EXPECT_EQ(record.at("code"), "destination_exists");
-
-  const auto usage = invoke({"load", "ok.yaml", "-S", socket, "--json"});
-  EXPECT_EQ(usage.code, 2);
-  record = Json::parse(usage.err);
-  EXPECT_EQ(record.at("schema_version"), 1);
-  EXPECT_EQ(record.at("code"), "usage");
-
-  // tmux_unavailable: a socket with no live server, and no tmux on PATH to
-  // start a fresh one -- unlike the others, this needs a cold-start attempt.
-  const auto cold_socket = (fixture->socket_path().parent_path() / "cold").string();
-  const auto empty_path = std::filesystem::temp_directory_path() / "cxx-ws-empty-path";
-  std::filesystem::create_directories(empty_path);
-  libtmux::test::EnvironmentGuard path{"PATH", empty_path.string()};
-  const auto tmux_unavailable =
-      invoke({"load", "ok.yaml", "-d", "-S", cold_socket, "--json"});
-  EXPECT_NE(tmux_unavailable.code, 0);
-  record = Json::parse(tmux_unavailable.err);
-  EXPECT_EQ(record.at("schema_version"), 1);
-  EXPECT_EQ(record.at("code"), "tmux_unavailable");
+    const auto usage = invoke({"load", "ok.yaml", "-S", socket, "--json"});
+    EXPECT_EQ(usage.code, 2);
+    const auto usage_record = Json::parse(usage.err);
+    EXPECT_EQ(usage_record.at("schema_version"), 1);
+    EXPECT_EQ(usage_record.at("code"), "usage");
+  }
+  {
+    // A socket with no live server, and no tmux on PATH to start a fresh
+    // one, takes the cold-start path rather than an ordinary command.
+    auto fixture = libtmux::test::ScopedTmuxServer::start(
+        {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-codes-tu")});
+    ASSERT_TRUE(fixture.has_value()) << fixture.error();
+    const auto cold_socket = (fixture->socket_path().parent_path() / "cold").string();
+    const auto empty_path =
+        std::filesystem::temp_directory_path() / "cxx-ws-empty-path";
+    std::filesystem::create_directories(empty_path);
+    libtmux::test::EnvironmentGuard path{"PATH", empty_path.string()};
+    const auto tmux_unavailable =
+        invoke({"load", "ok.yaml", "-d", "-S", cold_socket, "--json"});
+    EXPECT_NE(tmux_unavailable.code, 0);
+    const auto record = Json::parse(tmux_unavailable.err);
+    EXPECT_EQ(record.at("schema_version"), 1);
+    EXPECT_EQ(record.at("code"), "tmux_unavailable");
+  }
 }
 
-// B2: `<<: *anchor` or `<<: [*a, *b]` merges that mapping's keys, in order,
+// `<<: *anchor` or `<<: [*a, *b]` merges that mapping's keys, in order,
 // with explicit keys overriding merged ones.
 TEST(WorkspaceCli, ConvertResolvesYamlMergeKeys) {
   Files files;
@@ -1225,10 +1253,10 @@ TEST(WorkspaceCli, ConvertNamesTheDestinationAfterTheEncodingItWrites) {
   }
 }
 
-// B0: tmuxp has exactly one active global workspace directory (the first
-// that exists of $TMUXP_CONFIGDIR, $XDG_CONFIG_HOME/tmuxp, then legacy
-// ~/.tmuxp); a name that collides must resolve from the active one, and a
-// name that exists only in an inactive directory must not be found.
+// tmuxp has exactly one active global workspace directory (the first that
+// exists of $TMUXP_CONFIGDIR, $XDG_CONFIG_HOME/tmuxp, then legacy ~/.tmuxp);
+// a name that collides must resolve from the active one, and a name that
+// exists only in an inactive directory must not be found.
 TEST(WorkspaceCli, EditByNamePrefersActiveWorkspaceDirectoryOverLegacy) {
   Files files;
   ::unsetenv("TMUXP_CONFIGDIR");
@@ -1291,12 +1319,12 @@ TEST(WorkspaceCli, EditorLaunchFailureEndsItsNdjsonOperation) {
   EXPECT_EQ(Json::parse(result.err).at("code"), "process_failed");
 }
 
-// A1/A2: a session built with no explicit size sits at tmux's `default-size`
+// A session built with no explicit size sits at tmux's `default-size`
 // (80x24) until a client attaches, so every window is laid out wrong for the
 // terminal the user is looking at, and only the window a client happens to
 // focus first is ever corrected. `load` must size the session to the
-// terminal (S1) up front, so every window it builds — not only the focused
-// one — already has that size before any client exists.
+// terminal up front, so every window it builds -- not only the focused
+// one -- already has that size before any client exists.
 TEST(WorkspaceCliTmux, LoadSizesEveryWindowToTheTerminalNotToDefaultSize) {
   Files files;
   auto fixture = libtmux::test::ScopedTmuxServer::start(
@@ -1309,7 +1337,7 @@ TEST(WorkspaceCliTmux, LoadSizesEveryWindowToTheTerminalNotToDefaultSize) {
                                 "  - window_name: two\n    panes: [':']\n";
   {
     // The test harness never gives `run()` a real std::cout, so terminal
-    // detection is always off here; COLUMNS/LINES stand in for it (S1).
+    // detection is always off here; COLUMNS/LINES stand in for it.
     libtmux::test::EnvironmentGuard columns{"COLUMNS", "160"};
     libtmux::test::EnvironmentGuard lines{"LINES", "48"};
     const auto result = invoke(
@@ -1402,12 +1430,8 @@ TEST(WorkspaceCliTmux, ImportedWorkspacesKeepCommandsFocusAndOptions) {
   EXPECT_EQ(single->size(), 1U);
 }
 
-// B1/S4: a string scalar a YAML 1.1 (PyYAML/tmuxp) or 1.2 resolver would
-// read back as bool, null or a number must stay quoted when cxx writes YAML,
-// or the value comes back corrupted (a window named "yes" reloads as the
-// boolean true, "1.0" as a float, ...).
-// B4/S7: match tmuxp -- expand $VAR, ${VAR} and a leading ~ in command text
-// from the *loading process's* environment before sending it, rather than
+// Match tmuxp -- expand $VAR, ${VAR} and a leading ~ in command text from
+// the *loading process's* environment before sending it, rather than
 // leaving the literal text for the pane's own (differently-environed) shell
 // to resolve later. QA_LOADER_ONLY is set only on this test process, never
 // passed into the session/window `environment:`, so the pane's shell cannot
@@ -1445,6 +1469,10 @@ TEST(WorkspaceCliTmux, LoadExpandsShellVariablesFromTheLoadingProcessEnvironment
   EXPECT_EQ(captured.find("$QA_LOADER_ONLY"), std::string::npos) << captured;
 }
 
+// A string scalar a YAML 1.1 (PyYAML/tmuxp) or 1.2 resolver would read back
+// as bool, null or a number must stay quoted when cxx writes YAML, or the
+// value comes back corrupted (a window named "yes" reloads as the boolean
+// true, "1.0" as a float, ...).
 TEST(WorkspaceCliTmux, ConvertToYamlQuotesScalarLookingWindowNames) {
   Files files;
   auto fixture = libtmux::test::ScopedTmuxServer::start(
@@ -1827,7 +1855,7 @@ TEST(WorkspaceCliTmux, AppendKeepsItsBorrowedSessionAndReportsRetainedWindows) {
   EXPECT_TRUE(missing.out.empty());
 }
 
-// S15: human output is for humans. A cold-start failure retains an
+// Human output is for humans. A cold-start failure retains an
 // unverified bootstrap session as machine data (--json's errors[0] carries
 // it as retained_state); human mode must not print that record as raw JSON.
 // This exercises execute_impl()'s own per-error diagnostic (already

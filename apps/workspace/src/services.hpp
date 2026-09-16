@@ -29,9 +29,10 @@ struct Request {
   std::map<std::string, std::vector<std::string>> values;
   std::vector<std::string> shell_flags{};
   bool json{}, ndjson{}, terminal_allowed{};
-  // Whether the process's real stdout is a terminal (S1 session sizing).
-  // False for a redirected or captured stream, which is also what every
-  // test harness gives `run()`, so size detection is deterministic there.
+  // Whether the process's real stdout is a terminal, used to size a newly
+  // built session to it. False for a redirected or captured stream, which is
+  // also what every test harness gives `run()`, so size detection is
+  // deterministic there.
   bool stdout_terminal{};
   bool machine() const { return json || ndjson; }
   bool flag(const std::string& key) const { return values.contains(key); }
