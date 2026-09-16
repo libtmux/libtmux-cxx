@@ -99,10 +99,7 @@ TEST(WorkspaceBuilder, PanesLandInTheOrderTheyWereDescribed) {
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
 
-  // Four panes with no layout is the most ordinary workspace anyone writes.
-  // Each split must come off the pane created just before it; splitting the
-  // window's original pane every time inserts each new pane directly after
-  // that source and comes out reversed after the first: A, D, C, B.
+  // No layout: the most ordinary workspace anyone writes.
   const workspace::Workspace description{
       .session_name = "ordered",
       .windows = {{.name = "plain",
@@ -455,8 +452,7 @@ TEST(WorkspaceBuilder, ABuildFailureReportsOnlyTheDiagnosisSentence) {
       {.socket_namespace = libtmux::test::SocketNamespace::consumer("ws")});
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
-  // A window too small for a second pane makes tmux refuse the split, the
-  // way it also refuses one that would collide with a saved layout's sizing.
+  // Too small for a second pane: tmux refuses the split.
   ASSERT_TRUE(server.set_global_option("default-size", "2x2").has_value());
 
   const workspace::Workspace description{
@@ -465,9 +461,7 @@ TEST(WorkspaceBuilder, ABuildFailureReportsOnlyTheDiagnosisSentence) {
   ASSERT_FALSE(built.has_value());
   EXPECT_NE(built.error().reason.find("no space for a new pane"), std::string::npos)
       << built.error().reason;
-  // The command line a refused split failed with includes, among other
-  // things, the internal escaping format string used to parse tmux's reply:
-  // debugging detail with no place in a message a user reads.
+  // No leaked command line or escaping format string.
   EXPECT_EQ(built.error().reason.find("(running:"), std::string::npos)
       << built.error().reason;
   EXPECT_EQ(built.error().reason.find("#{"), std::string::npos) << built.error().reason;

@@ -264,10 +264,7 @@ TEST(WorkspaceCli, ShellRefusesIncompatibleRuntimeBeforeExecution) {
 TEST(WorkspaceCli, ShellHonoursTmuxWorkspacePythonOverTmuxp) {
   Files files;
   const auto interpreter = files.directory / "python fixture";
-  // A fake interpreter standing in for one with tmuxp installed: recognise
-  // the version probe by its trailing `--version`, and otherwise record the
-  // exact argv this process was launched with, ahead of the regular tmuxp
-  // arguments the shell command appends.
+  // Recognise the version probe, else record argv.
   std::ofstream{interpreter} << "#!/bin/sh\n"
                                 "if [ \"$6\" = --version ]; then\n"
                                 "  printf 'tmuxp 1.74.0, libtmux fixture\\n'; exit 0\n"
@@ -276,8 +273,7 @@ TEST(WorkspaceCli, ShellHonoursTmuxWorkspacePythonOverTmuxp) {
                                 "exit 0\n";
   ASSERT_EQ(::chmod(interpreter.c_str(), 0700), 0);
   libtmux::test::EnvironmentGuard python{"TMUX_WORKSPACE_PYTHON", interpreter.string()};
-  // A TMUX_WORKSPACE_TMUXP that would fail outright, to prove the
-  // interpreter is what actually ran rather than this being ignored.
+  // Would fail outright if used, proving the interpreter is what ran.
   libtmux::test::EnvironmentGuard tmuxp{"TMUX_WORKSPACE_TMUXP",
                                         (files.directory / "absent").string()};
   const auto result = invoke({"shell", "-c", "print(1)", "--json"});
@@ -1330,11 +1326,7 @@ TEST(WorkspaceCliTmux, CaptureTreatsAnyOrdinaryShellAsTheDefaultOne) {
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
   ASSERT_TRUE(server.has_value());
-  // On macOS /bin/sh is bash, so a plain pane's pane_current_command reads
-  // "bash" while default-shell's basename reads "sh" -- comparing only
-  // against that basename reports a shell tmux itself started as an
-  // explicit command. default-command reproduces the same mismatch here:
-  // default-shell names one ordinary shell, the pane actually runs another.
+  // default-command reproduces macOS's /bin/sh-is-bash mismatch on Linux.
   ASSERT_TRUE(server->set_global_option("default-shell", "/bin/sh").has_value());
   ASSERT_TRUE(server->set_global_option("default-command", "/bin/bash -i").has_value());
   const auto session = server->new_session("capture-mismatch");
@@ -1379,10 +1371,7 @@ TEST(WorkspaceCliTmux, FreezeSavesBlockStyleYaml) {
   ASSERT_TRUE(std::filesystem::exists(destination));
   std::ifstream saved{destination};
   const std::string bytes{std::istreambuf_iterator<char>{saved}, {}};
-  // `YAML::Load` on the JSON text `capture()` builds records flow style on
-  // every map and sequence it parses, and the emitter otherwise carries that
-  // through: a frozen workspace exists to be read and edited, which one
-  // JSON-shaped line is not.
+  // Block style, not one JSON-shaped line.
   EXPECT_NE(bytes.find("session_name: capture-block\n"), std::string::npos) << bytes;
   EXPECT_NE(bytes.find("options:\n"), std::string::npos) << bytes;
   EXPECT_NE(bytes.find("windows:\n"), std::string::npos) << bytes;
@@ -2063,11 +2052,8 @@ public:
                                std::to_string(errno)};
     interrupted_ = true;
   }
-  // A real terminal delivers Ctrl-C to the whole foreground process group,
-  // not just the process reading the keystroke. `setsid()` in the fork above
-  // made this child its own process group leader, so its negated pid reaches
-  // it and every tmux child it has spawned, the way an interactive user's
-  // interrupt does and `interrupt()` above does not.
+  // Signals the whole process group, the way a real Ctrl-C does and
+  // interrupt() above does not.
   void interrupt_group() {
     if (::kill(-process_, SIGINT) != 0)
       throw std::runtime_error{"cannot interrupt progress CLI group: " +
@@ -2242,11 +2228,7 @@ TEST(WorkspaceCliTmux, GroupInterruptNeverReportsSuccessOrLeaksARawCommand) {
   const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
   ASSERT_TRUE(server.has_value());
 
-  // A group-wide interrupt (what a real Ctrl-C sends) can kill the tmux
-  // child a build step is waiting on before this process's own
-  // check_interruption() call ever observes the signal. Enough windows keep
-  // that race live past the "ready" pane, so most attempts land the signal
-  // while a later window is still being built rather than after it finishes.
+  // Many windows keep the race live past the "ready" pane.
   std::ostringstream config;
   config << "session_name: raced\nwindows:\n- window_name: w0\n  panes:\n"
          << "  - shell_command:\n    - cmd: 'touch "
