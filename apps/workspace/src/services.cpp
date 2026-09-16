@@ -1483,6 +1483,12 @@ std::string human_result(const Request& request, const Json& result, bool colour
     if (!request.flag("quiet"))
       output << role("32", "Saved") << ' '
              << role("36", result.at("destination").get<std::string>()) << '\n';
+  } else if (request.command == "debug-info") {
+    // Human mode never emits JSON; `--json` is what keeps the object.
+    for (const auto& [key, value] : result.items())
+      output << role("1;35", key) << ": "
+             << role("36", value.is_string() ? value.get<std::string>() : value.dump())
+             << '\n';
   } else
     output << encoded(result, 2) << '\n';
   return output.str();

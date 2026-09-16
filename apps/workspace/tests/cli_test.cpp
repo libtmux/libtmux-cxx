@@ -695,6 +695,31 @@ TEST(WorkspaceCli, FileServicesKeepTypesAndUseNativeWholeWordMatching) {
   EXPECT_EQ(Json::parse(debug.out).at("port"), "cxx");
 }
 
+TEST(WorkspaceCli, VersionNamesTheToolAndJsonOutputIsOneCompactLine) {
+  const auto version = invoke({"--version"});
+  EXPECT_EQ(version.code, 0);
+  EXPECT_TRUE(version.out.starts_with("tmux-workspace ")) << version.out;
+  EXPECT_GT(version.out.size(), std::string{"tmux-workspace \n"}.size()) << version.out;
+
+  Files files;
+  std::ofstream{"dev.yaml"} << "session_name: developer\nwindows: [{}]\n";
+  const auto converted = invoke({"convert", "dev.yaml", "--json"});
+  ASSERT_EQ(converted.code, 0) << converted.err;
+  // One machine record per line: a trailing newline and nothing else.
+  EXPECT_EQ(converted.out.find('\n'), converted.out.size() - 1) << converted.out;
+
+  // Human mode never emits JSON; `--json` is what keeps the object.
+  const auto human = invoke({"--color", "never", "debug-info"});
+  ASSERT_EQ(human.code, 0) << human.err;
+  EXPECT_FALSE(Json::accept(human.out)) << human.out;
+  EXPECT_NE(human.out.find("port: cxx\n"), std::string::npos) << human.out;
+
+  const auto machine = invoke({"debug-info", "--json"});
+  ASSERT_EQ(machine.code, 0) << machine.err;
+  EXPECT_EQ(Json::parse(machine.out).at("port"), "cxx");
+  EXPECT_EQ(machine.out.find('\n'), machine.out.size() - 1) << machine.out;
+}
+
 TEST(WorkspaceCli, ListingGroupsDirectoriesAndIncludesFullDocuments) {
   Files files;
   std::filesystem::create_directory(".tmuxp");
