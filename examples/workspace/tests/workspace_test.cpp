@@ -94,6 +94,50 @@ TEST(WorkspaceBuilder, RunsEachPaneCommandInThePaneItDescribed) {
   }
 }
 
+TEST(WorkspaceBuilder, PanesLandInTheOrderTheyWereDescribed) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+
+  // Four panes with no layout is the most ordinary workspace anyone writes.
+  // Each split must come off the pane created just before it; splitting the
+  // window's original pane every time inserts each new pane directly after
+  // that source and comes out reversed after the first: A, D, C, B.
+  const workspace::Workspace description{
+      .session_name = "ordered",
+      .windows = {{.name = "plain",
+                   .panes = {{.shell_commands = {{.text = "printf 'MARK-A\\n'"}}},
+                             {.shell_commands = {{.text = "printf 'MARK-B\\n'"}}},
+                             {.shell_commands = {{.text = "printf 'MARK-C\\n'"}}},
+                             {.shell_commands = {{.text = "printf 'MARK-D\\n'"}}}}}}};
+  const auto built = workspace::build(server, description);
+  ASSERT_TRUE(built.has_value()) << built.error().reason;
+
+  const auto windows = built->windows();
+  ASSERT_TRUE(windows.has_value()) << windows.error().diagnostic;
+  ASSERT_EQ(windows->size(), 1U);
+  const auto panes = windows->front().panes();
+  ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
+  ASSERT_EQ(panes->size(), 4U);
+
+  const std::vector<std::string> expected = {"MARK-A", "MARK-B", "MARK-C", "MARK-D"};
+  for (std::size_t index = 0; index < panes->size(); ++index) {
+    std::string captured;
+    for (int attempt = 0; attempt < 200; ++attempt) {
+      const auto text = (*panes)[index].capture();
+      ASSERT_TRUE(text.has_value()) << text.error().diagnostic;
+      captured = *text;
+      if (captured.find("MARK-") != std::string::npos) {
+        break;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds{25});
+    }
+    EXPECT_NE(captured.find(expected[index]), std::string::npos)
+        << "pane " << index << " expected " << expected[index]
+        << " but captured: " << captured;
+  }
+}
+
 TEST(WorkspaceBuilder, VariablesAndAnIndexReachTheRunningServer) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
