@@ -1106,29 +1106,29 @@ TEST(WorkspaceCliTmux, ErrorCodesMatchTheSharedLowerSnakeCaseVocabulary) {
   EXPECT_NE(missing.code, 0);
   EXPECT_TRUE(missing.out.empty());
   auto record = Json::parse(missing.err);
-  EXPECT_EQ(record.at("schema_version"), 1);
-  EXPECT_EQ(record.at("code"), "workspace_not_found");
+  EXPECT_EQ(record.at("schema_version"), 1) << record.dump();
+  EXPECT_EQ(record.at("code"), "workspace_not_found") << record.dump();
 
   std::ofstream{"malformed.yaml"} << "a: [\n";
   const auto malformed =
       invoke({"load", "malformed.yaml", "-d", "-S", socket, "--json"});
   EXPECT_NE(malformed.code, 0);
   record = Json::parse(malformed.err);
-  EXPECT_EQ(record.at("schema_version"), 1);
-  EXPECT_EQ(record.at("code"), "invalid_workspace");
+  EXPECT_EQ(record.at("schema_version"), 1) << record.dump();
+  EXPECT_EQ(record.at("code"), "invalid_workspace") << record.dump();
 
   std::ofstream{"bogus.yaml"} << "session_name: s\nbogus: 1\nwindows: [{}]\n";
   const auto bogus = invoke({"load", "bogus.yaml", "-d", "-S", socket, "--json"});
   EXPECT_NE(bogus.code, 0);
   record = Json::parse(bogus.err);
-  EXPECT_EQ(record.at("schema_version"), 1);
-  EXPECT_EQ(record.at("code"), "unsupported_key");
+  EXPECT_EQ(record.at("schema_version"), 1) << record.dump();
+  EXPECT_EQ(record.at("code"), "unsupported_key") << record.dump();
 
   const auto frozen = invoke({"freeze", "nosuch", "-S", socket, "--json"});
   EXPECT_NE(frozen.code, 0);
   record = Json::parse(frozen.err);
-  EXPECT_EQ(record.at("schema_version"), 1);
-  EXPECT_EQ(record.at("code"), "session_not_found");
+  EXPECT_EQ(record.at("schema_version"), 1) << record.dump();
+  EXPECT_EQ(record.at("code"), "session_not_found") << record.dump();
 }
 
 // The remaining conditions each get their own server: chaining several tmux
@@ -1145,25 +1145,25 @@ TEST(WorkspaceCliTmux, RemainingErrorCodesMatchTheSharedVocabulary) {
 
   {
     auto fixture = libtmux::test::ScopedTmuxServer::start(
-        {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-codes-tf")});
-    ASSERT_TRUE(fixture.has_value()) << fixture.error();
-    const auto tmux_failed = invoke(
-        {"load", "tf.yaml", "-d", "-S", fixture->socket_path().string(), "--json"});
-    EXPECT_NE(tmux_failed.code, 0);
-    const auto record = Json::parse(tmux_failed.err);
-    EXPECT_EQ(record.at("schema_version"), 1);
-    EXPECT_EQ(record.at("code"), "tmux_failed");
-  }
-  {
-    auto fixture = libtmux::test::ScopedTmuxServer::start(
         {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-codes-sf")});
     ASSERT_TRUE(fixture.has_value()) << fixture.error();
     const auto script_failed = invoke(
         {"load", "sf.yaml", "-d", "-S", fixture->socket_path().string(), "--json"});
-    EXPECT_NE(script_failed.code, 0);
+    ASSERT_NE(script_failed.code, 0) << script_failed.out << script_failed.err;
     const auto record = Json::parse(script_failed.err);
-    EXPECT_EQ(record.at("schema_version"), 1);
-    EXPECT_EQ(record.at("code"), "script_failed");
+    EXPECT_EQ(record.at("schema_version"), 1) << record.dump();
+    EXPECT_EQ(record.at("code"), "script_failed") << record.dump();
+  }
+  {
+    auto fixture = libtmux::test::ScopedTmuxServer::start(
+        {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-codes-tf")});
+    ASSERT_TRUE(fixture.has_value()) << fixture.error();
+    const auto tmux_failed = invoke(
+        {"load", "tf.yaml", "-d", "-S", fixture->socket_path().string(), "--json"});
+    ASSERT_NE(tmux_failed.code, 0) << tmux_failed.out << tmux_failed.err;
+    const auto record = Json::parse(tmux_failed.err);
+    EXPECT_EQ(record.at("schema_version"), 1) << record.dump();
+    EXPECT_EQ(record.at("code"), "tmux_failed") << record.dump();
   }
   {
     auto fixture = libtmux::test::ScopedTmuxServer::start(
@@ -1174,16 +1174,17 @@ TEST(WorkspaceCliTmux, RemainingErrorCodesMatchTheSharedVocabulary) {
     std::ofstream{"exists.yaml"} << "";
     const auto destination_exists = invoke(
         {"freeze", "ok", "-S", socket, "--json", "--save-to", "exists.yaml"});
-    EXPECT_NE(destination_exists.code, 0);
+    ASSERT_NE(destination_exists.code, 0)
+        << destination_exists.out << destination_exists.err;
     const auto record = Json::parse(destination_exists.err);
-    EXPECT_EQ(record.at("schema_version"), 1);
-    EXPECT_EQ(record.at("code"), "destination_exists");
+    EXPECT_EQ(record.at("schema_version"), 1) << record.dump();
+    EXPECT_EQ(record.at("code"), "destination_exists") << record.dump();
 
     const auto usage = invoke({"load", "ok.yaml", "-S", socket, "--json"});
-    EXPECT_EQ(usage.code, 2);
+    ASSERT_EQ(usage.code, 2) << usage.out << usage.err;
     const auto usage_record = Json::parse(usage.err);
-    EXPECT_EQ(usage_record.at("schema_version"), 1);
-    EXPECT_EQ(usage_record.at("code"), "usage");
+    EXPECT_EQ(usage_record.at("schema_version"), 1) << usage_record.dump();
+    EXPECT_EQ(usage_record.at("code"), "usage") << usage_record.dump();
   }
   {
     // A socket with no live server, and no tmux on PATH to start a fresh
@@ -1233,6 +1234,29 @@ TEST(WorkspaceCli, ConvertResolvesYamlMergeKeys) {
   // `panes` (present on the mapping itself) always wins over either.
   EXPECT_EQ(merged.at("window_name"), "one");
   EXPECT_EQ(merged.at("panes"), Json::array({"echo three"}));
+
+  // A merge source that itself merges (chained defaults) is ordinary YAML;
+  // the source must be resolved before its keys are copied, or its own
+  // literal "<<" leaks into the result and gets refused downstream.
+  std::ofstream{"merge-chain.yaml"}
+      << "session_name: merge-chain\nwindows:\n"
+         "  - &base\n    window_name: base\n    panes: [echo base]\n"
+         "  - &mid\n    <<: *base\n    window_name: mid\n"
+         "  - <<: *mid\n    window_name: chained\n";
+  const auto chained = invoke({"convert", "merge-chain.yaml", "--json"});
+  ASSERT_EQ(chained.code, 0) << chained.err;
+  const auto chain = Json::parse(chained.out).at("windows");
+  ASSERT_EQ(chain.size(), 3U);
+  EXPECT_FALSE(chain[1].contains("<<"));
+  EXPECT_EQ(chain[1].at("panes"), Json::array({"echo base"}));
+  EXPECT_FALSE(chain[2].contains("<<"));
+  EXPECT_EQ(chain[2].at("window_name"), "chained");
+  EXPECT_EQ(chain[2].at("panes"), Json::array({"echo base"}));
+
+  const auto parsed = libtmux::workspace::parse_tmuxp(chained.out);
+  ASSERT_TRUE(parsed.has_value()) << parsed.error().where << ": " << parsed.error().reason;
+  ASSERT_EQ(parsed->windows.size(), 3U);
+  EXPECT_EQ(parsed->windows[2].name, "chained");
 }
 
 TEST(WorkspaceCli, ConvertNamesTheDestinationAfterTheEncodingItWrites) {

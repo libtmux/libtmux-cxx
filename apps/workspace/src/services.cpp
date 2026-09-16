@@ -189,13 +189,15 @@ Json from_yaml(const YAML::Node& node, int depth = 0) {
     for (const auto& source : merge_sources) {
       if (!source.IsMap())
         throw Failure{1, "invalid_workspace", "<< merges a mapping or a list of mappings"};
-      for (const auto& merged : source) {
-        if (!merged.first.IsScalar())
-          throw Failure{1, "invalid_workspace", "mapping keys must be strings"};
-        const auto key = merged.first.Scalar();
+      // Resolve the source itself first: a merge source that is itself
+      // merging (chained defaults) is ordinary YAML, and its own literal
+      // "<<" must not leak into this mapping's result.
+      const Json resolved = from_yaml(source, depth + 1);
+      if (!resolved.is_object())
+        throw Failure{1, "invalid_workspace", "<< merges a mapping or a list of mappings"};
+      for (const auto& [key, value] : resolved.items())
         if (!object.contains(key))
-          object[key] = from_yaml(merged.second, depth + 1);
-      }
+          object[key] = value;
     }
     for (const auto& [key, value] : explicit_entries)
       object[key] = from_yaml(value, depth + 1);
