@@ -1238,6 +1238,47 @@ TEST(WorkspaceCliTmux, ImportedWorkspacesKeepCommandsFocusAndOptions) {
   EXPECT_EQ(single->size(), 1U);
 }
 
+// B1/S4: a string scalar a YAML 1.1 (PyYAML/tmuxp) or 1.2 resolver would
+// read back as bool, null or a number must stay quoted when cxx writes YAML,
+// or the value comes back corrupted (a window named "yes" reloads as the
+// boolean true, "1.0" as a float, ...).
+TEST(WorkspaceCliTmux, ConvertToYamlQuotesScalarLookingWindowNames) {
+  Files files;
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-yamlq")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value());
+  std::ofstream{"names.yaml"}
+      << "session_name: names-test\nwindows:\n"
+         "  - window_name: \"yes\"\n    panes: [':']\n"
+         "  - window_name: \"1.0\"\n    panes: [':']\n"
+         "  - window_name: \"08\"\n    panes: [':']\n"
+         "  - window_name: \"off\"\n    panes: [':']\n";
+  const auto converted = invoke({"convert", "names.yaml", "--json"});
+  ASSERT_EQ(converted.code, 0) << converted.err;
+  const auto saved = invoke({"convert", "--save-to", "roundtrip.yaml",
+                             "--workspace-format", "yaml", "--yes", "--force",
+                             "names.yaml"});
+  ASSERT_EQ(saved.code, 0) << saved.err;
+  std::ifstream written{"roundtrip.yaml"};
+  const std::string text{std::istreambuf_iterator<char>{written}, {}};
+  for (const auto* quoted : {"\"yes\"", "\"1.0\"", "\"08\"", "\"off\""})
+    EXPECT_NE(text.find(quoted), std::string::npos) << text;
+
+  const auto loaded = invoke({"load", "roundtrip.yaml", "-d", "-S",
+                              fixture->socket_path().string(), "--json"});
+  ASSERT_EQ(loaded.code, 0) << loaded.err << text;
+  const auto session = server->session("=names-test:");
+  ASSERT_TRUE(session.has_value());
+  const auto windows = session->windows();
+  ASSERT_TRUE(windows.has_value());
+  ASSERT_EQ(windows->size(), 4U);
+  const std::vector<std::string> expected{"yes", "1.0", "08", "off"};
+  for (std::size_t index = 0; index < expected.size(); ++index)
+    EXPECT_EQ(std::string{(*windows)[index].name()}, expected[index]);
+}
+
 TEST(WorkspaceCliTmux, NativeLoadCaptureAndConversionRoundTrip) {
   auto fixture = libtmux::test::ScopedTmuxServer::start(
       {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli")});

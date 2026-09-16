@@ -619,24 +619,62 @@ Json capture(const Request& request) {
   }
   return document;
 }
-// YAML::Load tags every node with the flow style it parsed from the JSON
-// text; the emitter honours that over its own block default.
-void force_block_style(YAML::Node node) {
-  if (!node.IsMap() && !node.IsSequence())
-    return;
-  node.SetStyle(YAML::EmitterStyle::Block);
-  if (node.IsMap())
-    for (auto entry : node)
-      force_block_style(entry.second);
-  else
-    for (auto entry : node)
-      force_block_style(entry);
+// S4: a string scalar a YAML 1.1 (PyYAML/tmuxp) or 1.2 resolver would read
+// back as bool, null or a number must stay quoted. Rather than reproduce
+// both resolvers' grammars (`08`, `0x1F`, `1e3`, `1_000`, `1:30`, ...), quote
+// anything that could plausibly start one: empty, a bool/null word in any
+// case, or a leading digit/sign/dot/tilde. Over-quoting a string that did not
+// need it is harmless; under-quoting corrupts the value.
+bool needs_quoting(const std::string& text) {
+  if (text.empty())
+    return true;
+  const auto first = static_cast<unsigned char>(text.front());
+  if (std::isdigit(first) != 0 || first == '+' || first == '-' || first == '.' ||
+      first == '~')
+    return true;
+  std::string lower(text.size(), '\0');
+  std::ranges::transform(text, lower.begin(), [](unsigned char c) {
+    return static_cast<char>(std::tolower(c));
+  });
+  static const std::set<std::string> words{"y",  "n",   "yes", "no",  "true",
+                                            "false", "on", "off", "null"};
+  return words.contains(lower);
+}
+// A YAML::Node's per-scalar style cannot force quoting (YAML::EmitterStyle
+// only has Default/Block/Flow); only the streaming Emitter's manipulators
+// (YAML::DoubleQuoted) do, and only for the one value that follows them. So
+// this drives the Emitter directly rather than building a Node tree.
+void emit_yaml(YAML::Emitter& output, const Json& value) {
+  if (value.is_null())
+    output << YAML::Null;
+  else if (value.is_boolean())
+    output << value.get<bool>();
+  else if (value.is_number_integer() || value.is_number_unsigned())
+    output << value.get<long long>();
+  else if (value.is_number_float())
+    output << value.get<double>();
+  else if (value.is_string()) {
+    const auto& text = value.get_ref<const std::string&>();
+    if (needs_quoting(text))
+      output << YAML::DoubleQuoted;
+    output << text;
+  } else if (value.is_array()) {
+    output << YAML::BeginSeq;
+    for (const auto& item : value)
+      emit_yaml(output, item);
+    output << YAML::EndSeq;
+  } else {
+    output << YAML::BeginMap;
+    for (auto entry = value.begin(); entry != value.end(); ++entry) {
+      output << YAML::Key << entry.key() << YAML::Value;
+      emit_yaml(output, entry.value());
+    }
+    output << YAML::EndMap;
+  }
 }
 std::string yaml(const Json& document) {
   YAML::Emitter output;
-  YAML::Node root = YAML::Load(document.dump());
-  force_block_style(root);
-  output << root;
+  emit_yaml(output, document);
   if (!output.good())
     throw Failure{1, "ENCODE_FAILED", output.GetLastError()};
   return std::string{output.c_str()} + "\n";
