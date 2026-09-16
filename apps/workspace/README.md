@@ -300,6 +300,11 @@ path with `TMUX_WORKSPACE_TMUXP`. The value is one executable path, including
 spaces; command strings and interpreter arguments are not accepted. Install
 optional shell backends in that executable's Python environment.
 
+`TMUX_WORKSPACE_PYTHON` selects the interpreter tmuxp runs under instead,
+matching the environment variable the rest of libtmux's workspace ports use
+for the same purpose; it takes precedence over `TMUX_WORKSPACE_TMUXP` when
+both are set. Install tmuxp into that interpreter's environment.
+
 Inspect a loaded session with its native Python objects:
 
 ```console
