@@ -65,6 +65,12 @@ class Mutation:
     presets : tuple[str, ...], optional
         Build presets where this mutation has a target and test. Empty means
         every preset.
+    python_test : str | None, optional
+        A dotted ``unittest`` test id (module, or module.Class.method) for a
+        guard that lives under ``tools/`` rather than in C++. When set, `target`
+        and `executable` are unused: there is nothing to build, and the
+        interpreter reads `path` fresh on every run, so the fingerprint that
+        proves a C++ mutation reached its binary has nothing to check here.
     """
 
     mutation_id: str
@@ -76,6 +82,7 @@ class Mutation:
     executable: str | None = None
     test_regex: str | None = None
     presets: tuple[str, ...] = ()
+    python_test: str | None = None
 
     def applies_to(self, preset: str) -> bool:
         """Return whether this mutation belongs to the selected build."""
@@ -217,6 +224,55 @@ def _fingerprint(build_root: pathlib.Path, preset: str, target: str) -> str | No
     return None
 
 
+def _run_python_mutation(
+    mutation: Mutation,
+    source: pathlib.Path,
+    execute: t.Callable[[list[str]], subprocess.CompletedProcess[bytes]],
+) -> Outcome:
+    """Break a guard with no compiler between the edit and the test.
+
+    A Python source file is read fresh by the interpreter on every run, so
+    the C++ path's build-and-fingerprint dance has nothing to prove here: the
+    mutation either reaches `mutation.python_test` or the file was not found.
+
+    Parameters
+    ----------
+    mutation : Mutation
+        What to break. `python_test` must be set.
+    source : pathlib.Path
+        The already-resolved file to edit.
+    execute : Callable
+        Subprocess runner, shared with the CMake path so tests can fake it.
+
+    Returns
+    -------
+    Outcome
+        Verdict and, where it matters, why.
+    """
+    assert mutation.python_test is not None
+    test_command = ["python3", "-m", "unittest", mutation.python_test]
+    baseline = execute(test_command)
+    if baseline.returncode != 0:
+        return Outcome(mutation, "not a result", "the selected test already fails")
+    with _mutated(source, mutation.find, mutation.replace) as applied:
+        if not applied:
+            return Outcome(
+                mutation, "not a result", "the text to replace is absent or repeated"
+            )
+        # The C++ path's build step doubles as a syntax check; a mutation that
+        # leaves invalid Python behind must fail the same way, not read as a
+        # kill nobody earned.
+        compiled = execute(["python3", "-m", "py_compile", str(source)])
+        if compiled.returncode != 0:
+            return Outcome(mutation, "not a result", "the mutation did not parse")
+        tested = execute(test_command)
+    if tested.returncode == 0:
+        return Outcome(mutation, "survived", mutation.guards)
+    if execute(test_command).returncode != 0:
+        return Outcome(mutation, "not a result", "the selected test did not recover")
+    return Outcome(mutation, "killed")
+
+
 def run(
     mutation: Mutation,
     repository: pathlib.Path,
@@ -261,6 +317,8 @@ def run(
     source = repository / mutation.path
     if not source.is_file():
         return Outcome(mutation, "not a result", f"no such file: {mutation.path}")
+    if mutation.python_test is not None:
+        return _run_python_mutation(mutation, source, execute)
     # From a clean build, because the previous mutation left its own binary
     # in the tree: comparing against that would call a real change no change
     # whenever two runs mutate the same place. Ninja makes this a no-op when

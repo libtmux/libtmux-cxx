@@ -272,6 +272,141 @@ class MutationRunnerTest(unittest.TestCase):
             self.assertEqual(executable.read_bytes(), b"restored")
             self.assertEqual(source.read_text(encoding="utf-8"), "guard = true;\n")
 
+    def test_python_mutation_kills_without_a_build(self) -> None:
+        """Run a Python guard directly; no CMake step sits between edit and test."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "guard.py"
+            source.write_text("guard = True\n", encoding="utf-8")
+            commands: list[list[str]] = []
+            unittest_runs = 0
+
+            def execute(argv: list[str]) -> subprocess.CompletedProcess[bytes]:
+                nonlocal unittest_runs
+                commands.append(argv)
+                if argv[2] == "py_compile":
+                    return subprocess.CompletedProcess(argv, 0, b"", b"")
+                unittest_runs += 1
+                return subprocess.CompletedProcess(
+                    argv, 1 if unittest_runs == 2 else 0, b"", b""
+                )
+
+            outcome = run(
+                Mutation(
+                    mutation_id="python-guard",
+                    path="guard.py",
+                    find="True",
+                    replace="False",
+                    target="unused",
+                    guards="the guard",
+                    python_test="tools.mutate.guard_test",
+                ),
+                root,
+                "cxx-dev",
+                runner=execute,
+            )
+
+            self.assertEqual(outcome.verdict, "killed")
+            self.assertEqual(source.read_text(encoding="utf-8"), "guard = True\n")
+            self.assertTrue(all(command[0] != "cmake" for command in commands))
+
+    def test_python_mutation_survivor_is_reported(self) -> None:
+        """Report a Python mutation nothing noticed, with its guard text."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "guard.py"
+            source.write_text("guard = True\n", encoding="utf-8")
+
+            def execute(argv: list[str]) -> subprocess.CompletedProcess[bytes]:
+                return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+            outcome = run(
+                Mutation(
+                    mutation_id="python-guard",
+                    path="guard.py",
+                    find="True",
+                    replace="False",
+                    target="unused",
+                    guards="the guard nothing caught",
+                    python_test="tools.mutate.guard_test",
+                ),
+                root,
+                "cxx-dev",
+                runner=execute,
+            )
+
+            self.assertEqual(outcome.verdict, "survived")
+            self.assertEqual(outcome.detail, "the guard nothing caught")
+
+    def test_python_mutation_red_baseline_is_not_a_kill(self) -> None:
+        """Refuse a verdict when the selected Python test was already failing."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "guard.py"
+            source.write_text("guard = True\n", encoding="utf-8")
+
+            def execute(argv: list[str]) -> subprocess.CompletedProcess[bytes]:
+                return subprocess.CompletedProcess(argv, 1, b"failed", b"")
+
+            outcome = run(
+                Mutation(
+                    mutation_id="python-guard",
+                    path="guard.py",
+                    find="True",
+                    replace="False",
+                    target="unused",
+                    guards="the guard",
+                    python_test="tools.mutate.guard_test",
+                ),
+                root,
+                "cxx-dev",
+                runner=execute,
+            )
+
+            self.assertEqual(outcome.verdict, "not a result")
+            self.assertEqual(outcome.detail, "the selected test already fails")
+            self.assertEqual(source.read_text(encoding="utf-8"), "guard = True\n")
+
+    def test_python_mutation_that_does_not_parse_is_not_a_kill(self) -> None:
+        """A mutation nobody could even run is not a result, not a kill.
+
+        The C++ path's build step doubles as a syntax check; a Python mutation
+        needs its own, or a mutation that leaves invalid text behind would read
+        as killed for a reason nobody intended.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "guard.py"
+            source.write_text("guard = True\n", encoding="utf-8")
+            unittest_runs = 0
+
+            def execute(argv: list[str]) -> subprocess.CompletedProcess[bytes]:
+                nonlocal unittest_runs
+                if argv[2] == "py_compile":
+                    return subprocess.CompletedProcess(argv, 1, b"", b"SyntaxError")
+                unittest_runs += 1
+                return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+            outcome = run(
+                Mutation(
+                    mutation_id="python-guard",
+                    path="guard.py",
+                    find="True",
+                    replace="((",
+                    target="unused",
+                    guards="the guard",
+                    python_test="tools.mutate.guard_test",
+                ),
+                root,
+                "cxx-dev",
+                runner=execute,
+            )
+
+            self.assertEqual(outcome.verdict, "not a result")
+            self.assertEqual(outcome.detail, "the mutation did not parse")
+            self.assertEqual(unittest_runs, 1)  # only the baseline ran
+            self.assertEqual(source.read_text(encoding="utf-8"), "guard = True\n")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -683,4 +683,146 @@ CATALOGUE: t.Final = (
         guards="a formatted failure names how far the command got, which is "
         "what says whether repeating it is safe",
     ),
+    # These two entries hang rather than fail cleanly when removed. No extra
+    # timeout is needed: `libtmux_server_contract_test` and
+    # `libtmux_operation_state_test` already carry a per-test CMake `TIMEOUT`
+    # (tests/CMakeLists.txt), so ctest reports the hang as `***Timeout`, a
+    # failure like any other.
+    #
+    # Not entered: the empty-notification-batch spin (no clean assertion for a
+    # CPU-spin) and the `at_socket_path`/`startable_at_socket_path` overloads,
+    # already proven at compile time by `tests/compile/valid_uses.cpp`.
+    Mutation(
+        mutation_id="readiness-wait-drain",
+        path="src/async.cpp",
+        find="        FinishReadinessWaits finish_readiness_waits{*this};",
+        replace="        static_cast<void>(0);",
+        target="libtmux_server_contract_test",
+        test_regex=(
+            r"^libtmux[.]server_contract[.]ServerContract[.]"
+            r"AThrowingCloseStillWakesABlockedWaiter$"
+        ),
+        guards="close() wakes and waits out every blocked wait_ready() caller "
+        "before letting ~State run, even when a step it wraps throws",
+    ),
+    Mutation(
+        mutation_id="completion-queue-finish-wakes-waiter",
+        path="src/completion_queue.cpp",
+        find="    core->finished = true;",
+        replace="    static_cast<void>(core);",
+        target="libtmux_operation_state_test",
+        test_regex=(
+            r"^libtmux[.]operation_state[.]CompletionQueue[.]"
+            r"FinishWakesARunOneWaiterWithNoReadyRecord$"
+        ),
+        guards="finish() wakes a run_one() caller blocked with no ready record, "
+        "not only wait_ready()'s own predicate",
+    ),
+    Mutation(
+        mutation_id="resume-clears-mute-and-pause",
+        path="src/connection.cpp",
+        find=(
+            "  ControlCommand refresh{\n"
+            '      {"refresh-client", "-A", std::string{pane} + '
+            '(deliver ? ":on" : ":off")}};\n'
+            "  if (deliver) {\n"
+            "    // tmux tracks muted and paused output separately; resume "
+            "clears both.\n"
+            '    refresh.argv.emplace_back("-A");\n'
+            '    refresh.argv.emplace_back(std::string{pane} + ":continue");\n'
+            "  }\n"
+            "  request.group.push_back(std::move(refresh));\n"
+        ),
+        replace=(
+            "  request.group.push_back(ControlCommand{\n"
+            '      {"refresh-client", "-A", std::string{pane} + '
+            '(deliver ? ":continue" : ":off")}});\n'
+        ),
+        target="libtmux_control_integration_test",
+        test_regex=(
+            r"^libtmux[.]control[.]integration[.]ControlModeConnection[.]"
+            r"MutesOnePaneAndRefusesToWidenASilentConnection$"
+        ),
+        guards="resuming delivery clears tmux's separate pause flag as well as "
+        "mute, so output paused before the mute is not left stuck silent",
+    ),
+    Mutation(
+        mutation_id="cardinality-forward-range-peek",
+        path="include/libtmux/cardinality.hpp",
+        find=(
+            "  if constexpr (std::ranges::forward_range<Range>) {\n"
+            "    auto second = iterator;\n"
+            "    if (++second != last) {\n"
+            "      return unexpected(CardinalityError::several_matched);\n"
+            "    }\n"
+            "    return std::ranges::range_value_t<Range>(*iterator);\n"
+            "  } else {\n"
+            "    std::ranges::range_value_t<Range> only(*iterator);\n"
+            "    if (++iterator != last) {\n"
+            "      return unexpected(CardinalityError::several_matched);\n"
+            "    }\n"
+            "    return only;\n"
+            "  }\n"
+        ),
+        replace=(
+            "  std::ranges::range_value_t<Range> only(*iterator);\n"
+            "  if (++iterator != last) {\n"
+            "    return unexpected(CardinalityError::several_matched);\n"
+            "  }\n"
+            "  return only;\n"
+        ),
+        target="libtmux_cardinality_test",
+        test_regex=(
+            r"^libtmux[.]cardinality[.]Cardinality[.]"
+            r"SeveralMatchedLeavesAMovingRangeUntouched$"
+        ),
+        guards="a forward range rules out a second element before the first is "
+        "moved out, so a moving range's first element survives a "
+        "several_matched error",
+    ),
+    Mutation(
+        mutation_id="api-index-depth-tracking",
+        path="tools/docs/api_index.py",
+        find=(
+            "def _function_symbol(signature: str) -> str | None:\n"
+            '    """Return the callable name from a declaration-like prefix."""\n'
+            "    code = _code(signature)\n"
+            "    depths = []\n"
+            "    depth = 0\n"
+            "    for char in code:\n"
+            "        depths.append(depth)\n"
+            '        if char in "([{":\n'
+            "            depth += 1\n"
+            '        elif char in ")]}":\n'
+            "            depth = max(0, depth - 1)\n"
+            "    operators = [\n"
+            "        match for match in OPERATOR_NAME.finditer(code) "
+            "if depths[match.start()] == 0\n"
+            "    ]\n"
+            "    if operators:\n"
+            '        return "operator" + operators[-1].group("name").strip()\n'
+            "    names = [\n"
+            "        match for match in FUNCTION_NAME.finditer(code) "
+            "if depths[match.start()] == 0\n"
+            "    ]\n"
+            "    if not names:\n"
+        ),
+        replace=(
+            "def _function_symbol(signature: str) -> str | None:\n"
+            '    """Return the callable name from a declaration-like prefix."""\n'
+            "    operators = list(OPERATOR_NAME.finditer(signature))\n"
+            "    if operators:\n"
+            '        return "operator" + operators[-1].group("name").strip()\n'
+            "    names = list(FUNCTION_NAME.finditer(signature))\n"
+            "    if not names:\n"
+        ),
+        target="tools.docs.api_index",
+        guards="a callable's name is read at bracket depth zero, so a default "
+        "argument that calls another function cannot steal the enclosing "
+        "method's index entry",
+        python_test=(
+            "tools.docs.test_api_index.ApiIndexTest."
+            "test_default_argument_calls_are_not_method_names"
+        ),
+    ),
 )

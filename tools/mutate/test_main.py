@@ -150,6 +150,23 @@ class MutationMainTest(unittest.TestCase):
         run_mutation.assert_not_called()
         rebuild.assert_not_called()
 
+    def test_new_guard_mutations_match_the_current_source(self) -> None:
+        """Keep this round's five new-guard entries bound to real source."""
+        ids = {
+            "readiness-wait-drain",
+            "completion-queue-finish-wakes-waiter",
+            "resume-clears-mute-and-pause",
+            "cardinality-forward-range-peek",
+            "api-index-depth-tracking",
+        }
+        for mutation_id in ids:
+            mutation, source = self.mutation_source(mutation_id)
+            self.assertEqual(
+                source.count(mutation.find),
+                1,
+                f"{mutation_id} lost its anchor in {mutation.path}",
+            )
+
     def test_mcp_mutations_build_the_protocol_test(self) -> None:
         """Build the CTest executable as well as its separately named server."""
         mutations = {
