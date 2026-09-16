@@ -373,12 +373,40 @@ std::optional<Json> record(const WorkspaceFile& file, bool full) {
     result["config"] = config;
   return result;
 }
+// S7: expand $VAR, ${VAR} and a leading ~ in command text from the loading
+// process's environment, matching tmuxp. Handles every shape a command list
+// can take: a bare string, a list of strings, a list of {cmd: ...} mappings,
+// or (shell_command_before, after tmuxp's own normalisation) a mapping
+// wrapping one of those under "shell_command".
+void expand_commands(Json& value) {
+  if (value.is_string()) {
+    value = expand(value.get<std::string>());
+    return;
+  }
+  if (value.is_object() && value.contains("shell_command")) {
+    expand_commands(value["shell_command"]);
+    return;
+  }
+  if (!value.is_array())
+    return;
+  for (auto& item : value) {
+    if (item.is_string())
+      item = expand(item.get<std::string>());
+    else if (item.is_object() && item.value("cmd", Json{}).is_string())
+      item["cmd"] = expand(item["cmd"].get<std::string>());
+  }
+}
 void normalise(Json& node, const fs::path& base, const fs::path& parent = {}) {
   if (!node.is_object())
     return;
   for (const auto* key : {"session_name", "window_name"})
     if (node.contains(key) && node[key].is_string())
       node[key] = expand(node[key].get<std::string>());
+  if (node.contains("before_script") && node["before_script"].is_string())
+    node["before_script"] = expand(node["before_script"].get<std::string>());
+  for (const auto* key : {"shell_command", "shell_command_before"})
+    if (node.contains(key))
+      expand_commands(node[key]);
   if (!node.contains("start_directory") && node.contains("root")) {
     node["start_directory"] = node["root"];
     node.erase("root");
@@ -409,8 +437,14 @@ void normalise(Json& node, const fs::path& base, const fs::path& parent = {}) {
   for (const auto* key : {"windows", "panes"}) {
     if (!node.contains(key) || !node[key].is_array())
       continue;
-    for (auto& child : node[key])
-      normalise(child, base, directory);
+    // A pane may be a bare command string rather than a mapping; normalise()
+    // only recurses into mappings, so expand it here directly.
+    for (auto& child : node[key]) {
+      if (std::string_view{key} == "panes" && child.is_string())
+        child = expand(child.get<std::string>());
+      else
+        normalise(child, base, directory);
+    }
   }
 }
 Server endpoint(const Request& request) {
