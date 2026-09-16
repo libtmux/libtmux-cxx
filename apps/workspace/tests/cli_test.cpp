@@ -259,6 +259,50 @@ TEST(WorkspaceCli, ShellRefusesIncompatibleRuntimeBeforeExecution) {
   EXPECT_EQ(Json::parse(unavailable.err).at("code"), "COMPATIBILITY_RUNTIME");
 }
 
+TEST(WorkspaceCli, ShellHonoursTmuxWorkspacePythonOverTmuxp) {
+  Files files;
+  const auto interpreter = files.directory / "python fixture";
+  // A fake interpreter standing in for one with tmuxp installed: recognise
+  // the version probe by its trailing `--version`, and otherwise record the
+  // exact argv this process was launched with, ahead of the regular tmuxp
+  // arguments the shell command appends.
+  std::ofstream{interpreter} << "#!/bin/sh\n"
+                                "if [ \"$6\" = --version ]; then\n"
+                                "  printf 'tmuxp 1.74.0, libtmux fixture\\n'; exit 0\n"
+                                "fi\n"
+                                "printf '%s\\0' \"$@\" > arguments\n"
+                                "exit 0\n";
+  ASSERT_EQ(::chmod(interpreter.c_str(), 0700), 0);
+  libtmux::test::EnvironmentGuard python{"TMUX_WORKSPACE_PYTHON", interpreter.string()};
+  // A TMUX_WORKSPACE_TMUXP that would fail outright, to prove the
+  // interpreter is what actually ran rather than this being ignored.
+  libtmux::test::EnvironmentGuard tmuxp{"TMUX_WORKSPACE_TMUXP",
+                                        (files.directory / "absent").string()};
+  const auto result = invoke({"shell", "-c", "print(1)", "--json"});
+  ASSERT_EQ(result.code, 0) << result.err;
+  std::ifstream input{"arguments", std::ios::binary};
+  std::vector<std::string> args;
+  for (std::string argument; std::getline(input, argument, '\0');)
+    args.push_back(std::move(argument));
+  ASSERT_GE(args.size(), 3U) << result.err;
+  EXPECT_EQ(args[0], "-u");
+  EXPECT_EQ(args[1], "-c");
+  EXPECT_NE(args[2].find("tmuxp.cli"), std::string::npos) << args[2];
+  EXPECT_NE(std::ranges::find(args, "-c=print(1)"), args.end());
+}
+
+TEST(WorkspaceCli, ShellReportsBothVariablesWhenThePythonInterpreterIsMissing) {
+  Files files;
+  libtmux::test::EnvironmentGuard python{
+      "TMUX_WORKSPACE_PYTHON", (files.directory / "no-such-interpreter").string()};
+  const auto result = invoke({"shell", "-c", "print(1)", "--json"});
+  EXPECT_EQ(result.code, 1);
+  const auto error = Json::parse(result.err);
+  EXPECT_EQ(error.at("code"), "COMPATIBILITY_RUNTIME");
+  const auto& message = error.at("message").get_ref<const std::string&>();
+  EXPECT_NE(message.find("TMUX_WORKSPACE_PYTHON"), std::string::npos) << message;
+}
+
 TEST(WorkspaceCli, ShellRetainsOutputLimitFailure) {
   Files files;
   const auto runtime = files.directory / "large runtime";

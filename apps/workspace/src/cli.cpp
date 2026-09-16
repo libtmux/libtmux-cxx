@@ -259,6 +259,9 @@ public:
     root.add_subcommand("debug-info", "Show runtime and tmux diagnostics");
     auto* shell =
         root.add_subcommand("shell", "Open a version-checked Python tmuxp shell");
+    shell->footer("TMUX_WORKSPACE_PYTHON selects the interpreter tmuxp runs under;\n"
+                  "TMUX_WORKSPACE_TMUXP instead names the tmuxp executable directly.\n"
+                  "The interpreter takes precedence when both are set.");
     shell->add_option("session", "Session name or ID");
     shell->add_option("window", "Window name or index");
     sockets(*shell);

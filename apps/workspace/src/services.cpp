@@ -1016,24 +1016,43 @@ void validate(const Request& request) {
 }
 static Execution execute_impl(const Request& request, const EventSink& event) {
   if (request.command == "shell") {
-    auto runtime = environment("TMUX_WORKSPACE_TMUXP");
-    if (runtime.empty())
-      runtime = "tmuxp";
+    // TMUX_WORKSPACE_PYTHON picks the interpreter tmuxp runs under, the way
+    // the other six libtmux workspace ports let it; TMUX_WORKSPACE_TMUXP
+    // instead names the tmuxp console script directly. The interpreter wins
+    // when both are set: it says which Python's tmuxp, not just which
+    // executable.
+    std::vector<std::string> runtime;
+    const auto interpreter = environment("TMUX_WORKSPACE_PYTHON");
+    if (!interpreter.empty()) {
+      // tmuxp has no `__main__`, so `-m tmuxp` refuses to run it; call its
+      // CLI entry point the way the interpreter's own console script does.
+      runtime = {interpreter, "-u", "-c",
+                 "from tmuxp.cli import cli; import sys; cli(sys.argv[1:])"};
+    } else {
+      auto executable = environment("TMUX_WORKSPACE_TMUXP");
+      if (executable.empty())
+        executable = "tmuxp";
+      runtime = {executable};
+    }
     ChildOutput version;
     try {
-      version = run_child({runtime, "--color", "never", "--version"});
+      auto probe = runtime;
+      probe.insert(probe.end(), {"--color", "never", "--version"});
+      version = run_child(probe);
     } catch (const Failure&) {
       throw Failure{1, "COMPATIBILITY_RUNTIME",
-                    "shell requires tmuxp 1.74.0; install it or set "
-                    "TMUX_WORKSPACE_TMUXP to its executable"};
+                    "shell requires tmuxp 1.74.0; install it, set "
+                    "TMUX_WORKSPACE_PYTHON to an interpreter with it installed, "
+                    "or set TMUX_WORKSPACE_TMUXP to its executable"};
     }
     if (version.code >= 128)
       throw Failure{version.code, "INTERRUPTED", "shell version check interrupted"};
     if (version.code != 0 || !version.out.starts_with("tmuxp 1.74.0, libtmux "))
       throw Failure{1, "COMPATIBILITY_RUNTIME", "shell requires tmuxp 1.74.0"};
-    std::vector<std::string> arguments{
-        runtime, "--color",
-        request.machine() ? "never" : request.value("color", "auto")};
+    std::vector<std::string> arguments = runtime;
+    arguments.insert(
+        arguments.end(),
+        {"--color", request.machine() ? "never" : request.value("color", "auto")});
     if (request.flag("log-level")) {
       arguments.push_back("--log-level");
       arguments.push_back(request.value("log-level"));
