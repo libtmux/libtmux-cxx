@@ -1916,8 +1916,7 @@ TEST(WorkspaceCli, ProgressPreservesRedirectedBytesAndExpandsNativeCounters) {
   progress.event("script-output",
                  {{"stream", "stderr"}, {"text", "older\r\nmiddle\r\nlast\r\n"}});
   err.str("");
-  progress.event("build-progress", {{"phase", "pane-completed"},
-                                    {"window_name", "work"},
+  progress.event("pane-completed", {{"window_name", "work"},
                                     {"window_index", 1},
                                     {"pane_index", 1},
                                     {"pane_total", 2}});
@@ -2245,6 +2244,49 @@ TEST(WorkspaceCliTmux, GroupInterruptNeverReportsSuccessOrLeaksARawCommand) {
   }
 }
 
+TEST(WorkspaceCliTmux, LoadNdjsonEmitsTypedWindowAndPaneEvents) {
+  Files files;
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-nd")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  std::ofstream{"config.yaml"} << "session_name: typed\nwindows:\n"
+                                  "- window_name: w0\n  panes: [{}, {}]\n"
+                                  "- window_name: w1\n  panes: [{}]\n";
+  const auto result = invoke(
+      {"load", "config.yaml", "-d", "-S", fixture->socket_path().string(), "--ndjson"});
+  ASSERT_EQ(result.code, 0) << result.err;
+  std::istringstream lines{result.out};
+  std::vector<std::string> events;
+  Json window_created, pane_created;
+  for (std::string line; std::getline(lines, line);) {
+    const auto record = Json::parse(line);
+    const auto name = record.at("event").get<std::string>();
+    events.push_back(name);
+    if (name == "window-created" && window_created.is_null())
+      window_created = record;
+    if (name == "pane-created" && pane_created.is_null())
+      pane_created = record;
+  }
+  // SPEC 2's fixed vocabulary replaces the untyped events cxx used to send.
+  EXPECT_EQ(std::ranges::count(events, "build-progress"), 0);
+  for (const auto* required :
+       {"window-created", "window-completed", "pane-created", "pane-completed"})
+    EXPECT_NE(std::ranges::find(events, required), events.end()) << required;
+  ASSERT_FALSE(window_created.is_null());
+  for (const auto* field : {"input_index", "session_id", "window_id", "window_index"})
+    EXPECT_TRUE(window_created.contains(field)) << field;
+  EXPECT_TRUE(window_created.at("window_id").get<std::string>().starts_with('@'))
+      << window_created;
+  ASSERT_FALSE(pane_created.is_null());
+  for (const auto* field :
+       {"input_index", "session_id", "window_id", "pane_id", "pane_index"})
+    EXPECT_TRUE(pane_created.contains(field)) << field;
+  EXPECT_TRUE(pane_created.at("pane_id").get<std::string>().starts_with('%'))
+      << pane_created;
+  EXPECT_TRUE(pane_created.at("session_id").get<std::string>().starts_with('$'))
+      << pane_created;
+}
+
 TEST(WorkspaceCliTmux, ProgressSinkFailureReportsBorrowedWindowsAndOriginalStatus) {
   Files files;
   auto fixture = libtmux::test::ScopedTmuxServer::start(
@@ -2276,8 +2318,8 @@ TEST(WorkspaceCliTmux, ProgressSinkFailureReportsBorrowedWindowsAndOriginalStatu
     bool refused{};
     const auto result =
         libtmux::workspace::cli::execute(request, [&](const auto& event,
-                                                      const auto& data) {
-          if (event == "build-progress" && data.at("phase") == "pane-completed") {
+                                                      const auto& /* data */) {
+          if (event == "pane-completed") {
             refused = true;
             throw libtmux::workspace::cli::Failure{77, "TEST_SINK_CLOSED",
                                                    "progress consumer closed"};

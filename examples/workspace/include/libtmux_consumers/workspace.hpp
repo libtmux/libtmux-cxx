@@ -128,6 +128,12 @@ struct BuildEvent {
   BuildPhase phase;
   std::size_t window_index;
   std::size_t pane_index;
+  // Populated for window_started, window_completed, pane_started and
+  // pane_completed, which name what now exists; empty for waiting, which
+  // reports progress toward something that may not yet.
+  std::string session_id{};
+  std::string window_id{};
+  std::string pane_id{};
 };
 // A refusal uses owned-session rollback or reports retained borrowed windows.
 using BuildObserver = std::function<std::optional<std::string>(const BuildEvent&)>;
@@ -221,12 +227,14 @@ build_windows(const Server& server, const Workspace& description,
     }
     return libtmux::unexpected(BuildError{index, std::move(reason)});
   };
-  const auto notify = [&](BuildPhase phase, std::size_t window,
-                          std::size_t pane) -> std::optional<BuildError> {
+  const auto notify = [&](BuildPhase phase, std::size_t window, std::size_t pane,
+                          std::string session_id = {}, std::string window_id = {},
+                          std::string pane_id = {}) -> std::optional<BuildError> {
     if (!observer)
       return std::nullopt;
     try {
-      if (auto reason = observer({phase, window, pane}))
+      if (auto reason = observer({phase, window, pane, std::move(session_id),
+                                  std::move(window_id), std::move(pane_id)}))
         return fail(window, std::move(*reason)).error();
     } catch (const std::exception& error) {
       return fail(window, error.what()).error();
@@ -411,7 +419,8 @@ build_windows(const Server& server, const Workspace& description,
   for (std::size_t index = 0; index < description.windows.size(); ++index) {
     const Window& described = description.windows[index];
     const auto& panes = created_panes[index];
-    if (auto error = notify(BuildPhase::window_started, index, 0))
+    if (auto error = notify(BuildPhase::window_started, index, 0,
+                            std::string{built->id()}, std::string{windows[index].id()}))
       return libtmux::unexpected(std::move(*error));
     // The layout is applied before anything runs, so a command that reacts to
     // its pane's size sees the size it will keep.
@@ -423,7 +432,9 @@ build_windows(const Server& server, const Workspace& description,
     }
     for (std::size_t pane = 0; pane < described.panes.size(); ++pane) {
       const libtmux::Pane& target = panes[pane];
-      if (auto error = notify(BuildPhase::pane_started, index, pane))
+      if (auto error =
+              notify(BuildPhase::pane_started, index, pane, std::string{built->id()},
+                     std::string{windows[index].id()}, std::string{target.id()}))
         return libtmux::unexpected(std::move(*error));
       for (const Command& command : described.panes[pane].shell_commands) {
         if (auto error = notify(BuildPhase::waiting, index, pane))
@@ -461,7 +472,9 @@ build_windows(const Server& server, const Workspace& description,
           return fail(index, selected.error().diagnostic);
         }
       }
-      if (auto error = notify(BuildPhase::pane_completed, index, pane))
+      if (auto error =
+              notify(BuildPhase::pane_completed, index, pane, std::string{built->id()},
+                     std::string{windows[index].id()}, std::string{target.id()}))
         return libtmux::unexpected(std::move(*error));
     }
     for (const auto& [option, value] : described.options_after) {
@@ -472,7 +485,8 @@ build_windows(const Server& server, const Workspace& description,
       }
     }
     if (auto error =
-            notify(BuildPhase::window_completed, index, described.panes.size() - 1))
+            notify(BuildPhase::window_completed, index, described.panes.size() - 1,
+                   std::string{built->id()}, std::string{windows[index].id()}))
       return libtmux::unexpected(std::move(*error));
   }
 

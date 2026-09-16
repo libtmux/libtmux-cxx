@@ -282,18 +282,20 @@ void Progress::event(const std::string& name, const Json& data) {
     window_.clear();
     tail_.assign(1, "");
     carriage_return_ = false;
-  } else if (name == "build-progress") {
+  } else if (name == "window-created" || name == "window-completed" ||
+             name == "pane-created" || name == "pane-completed") {
     window_ = data.at("window_name");
     window_index_ = data.at("window_index");
-    pane_index_ = data.at("pane_index");
-    panes_ = data.at("pane_total");
-    const auto& phase = data.at("phase");
-    if (phase == "window-started")
+    if (name == "pane-created" || name == "pane-completed") {
+      pane_index_ = data.at("pane_index");
+      panes_ = data.at("pane_total");
+    }
+    if (name == "window-created")
       panes_done_ = 0;
-    else if (phase == "pane-completed") {
+    else if (name == "pane-completed") {
       ++panes_done_;
       ++session_done_;
-    } else if (phase == "window-completed")
+    } else if (name == "window-completed")
       ++windows_done_;
   } else if (name == "workspace-completed") {
     windows_done_ = windows_;
