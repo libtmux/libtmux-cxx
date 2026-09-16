@@ -2160,7 +2160,7 @@ Position within its session, which `base-index` is free to start anywhere.
 ```cpp
 [[nodiscard]] std::string_view layout() const noexcept;
 ```
-tmux's own layout description, which `select-layout` accepts back.
+An opaque token: hand it back to `select_layout` exactly as received, and do not parse its shape. tmux 3.8+ reports JSON here for a non-control client, and keeps the classic layout string for a control client unless it has set `CLIENT_CONTROL_NEWLAYOUTS`. `select-layout` accepts either form on every version this library supports, so a caller that only round-trips the value never needs to know which one it got.
 
 <a id="libtmux-entities-hpp-window-zoomed"></a>
 #### `Window::zoomed`

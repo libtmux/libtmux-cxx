@@ -96,6 +96,35 @@ TEST(WindowLayout, NextAndPreviousStepThroughTmuxsArrangements) {
   EXPECT_EQ(geometry(*window), named);
 }
 
+// The value `layout()` returns is opaque by contract (see its declaration):
+// nothing in this library parses it, only hands it back. This is the check
+// that would have caught tmux 3.8 changing its shape (classic grammar before
+// 3.8, JSON after for a non-control client) had the round trip ever broken -
+// it passes on every version this library supports because `select-layout`
+// accepts either form back.
+TEST(WindowLayout, SavedLayoutRoundTripsThroughSelectLayout) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  auto session = server.session(fixture->session_name());
+  ASSERT_TRUE(session.has_value()) << session.error().diagnostic;
+  ASSERT_EQ(panes_under(*session, "main-vertical").size(), 4U);
+  auto window = session->active_window();
+  ASSERT_TRUE(window.has_value()) << window.error().diagnostic;
+
+  const auto saved = window->layout();
+  ASSERT_FALSE(saved.empty());
+  const auto before = geometry(*window);
+
+  // Switch away first, so restoring the saved value is the only thing that
+  // could put the panes back where they were.
+  ASSERT_TRUE(window->select_layout("even-horizontal").has_value());
+  EXPECT_NE(geometry(*window), before);
+
+  ASSERT_TRUE(window->select_layout(saved).has_value());
+  EXPECT_EQ(geometry(*window), before);
+}
+
 TEST(WindowLayout, RotateMovesThePanesAndLeavesTheCells) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
