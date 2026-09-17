@@ -218,6 +218,54 @@ class MutationRunnerTest(unittest.TestCase):
             self.assertEqual(outcome.detail, "the selected tests already fail")
             self.assertEqual(source.read_text(encoding="utf-8"), "guard = true;\n")
 
+    def test_a_baseline_that_skips_itself_is_not_survived(self) -> None:
+        """Do not read a GTEST_SKIP() baseline as a passing, evaluable test.
+
+        Its own guarding test exits 0 whether it ran and passed or skipped
+        itself before an assertion -- indistinguishable by return code alone.
+        A version-gated guard would otherwise report "survived" on any
+        preset whose tmux does not meet its floor, which is not evidence
+        the guard stopped working; it is evidence nothing here could tell.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / "guard.cpp"
+            source.write_text("guard = true;\n", encoding="utf-8")
+            executable = root / "build" / "cxx-dev" / "guard_test"
+            executable.parent.mkdir(parents=True)
+            executable.write_bytes(b"before")
+
+            def execute(argv: list[str]) -> subprocess.CompletedProcess[bytes]:
+                if argv[0] == "cmake":
+                    return subprocess.CompletedProcess(argv, 0, b"", b"")
+                if "--show-only=json-v1" in argv:
+                    listing = json.dumps({"tests": [{"name": "guard"}]}).encode()
+                    return subprocess.CompletedProcess(argv, 0, listing, b"")
+                summary = (
+                    b"1/1 Test #1: guard ...***Skipped   0.03 sec\n"
+                    b"The following tests did not run:\n"
+                    b"\t1 - guard (Skipped)\n"
+                )
+                return subprocess.CompletedProcess(argv, 0, summary, b"")
+
+            outcome = run(
+                Mutation(
+                    mutation_id="version-gated-guard",
+                    path="guard.cpp",
+                    find="true",
+                    replace="false",
+                    target="guard_test",
+                    guards="a guard that needs a newer tmux than this preset has",
+                    test_regex=r"^guard$",
+                ),
+                root,
+                "cxx-dev",
+                runner=execute,
+            )
+
+            self.assertEqual(outcome.verdict, "skipped here")
+            self.assertEqual(source.read_text(encoding="utf-8"), "guard = true;\n")
+
     def test_run_forces_a_rebuild_when_a_restoration_misses_the_binary(self) -> None:
         """Never return leaving the mutated binary in the tree.
 
