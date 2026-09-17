@@ -160,11 +160,17 @@ std::string rendered_command(const CommandRequest& command) {
   constexpr std::size_t maximum = 300U;
   const std::vector<std::string_view> parts = sensitive_parts(command);
   std::string rendered;
+  // A `-F` argument's value is a machine format string, backslash-escaped
+  // for tmux and often long - naming it as `<format>` reads better in a
+  // diagnostic than dumping the whole escaped thing.
+  bool previous_was_format_flag = false;
   for (const CommandArgument& argument : command.arguments()) {
     if (!rendered.empty()) {
       rendered.push_back(' ');
     }
-    rendered += redacted_text(argument.value(), parts);
+    rendered += previous_was_format_flag ? std::string{"<format>"}
+                                         : redacted_text(argument.value(), parts);
+    previous_was_format_flag = argument.value() == "-F";
     if (rendered.size() > maximum) {
       rendered.resize(utf8_safe_cut(rendered, maximum));
       rendered += "...";
@@ -554,7 +560,8 @@ SubprocessBackend::build_request(const CommandRequest& command,
   return request;
 }
 
-expected<void, CommandFailure> SubprocessBackend::publish_started_endpoint() const {
+expected<void, CommandFailure>
+SubprocessBackend::publish_started_endpoint(std::string_view start_stderr) const {
   auto endpoint = bind_socket_endpoint(connection_);
   if (!endpoint.has_value()) {
     return unexpected(CommandFailure{
@@ -565,12 +572,20 @@ expected<void, CommandFailure> SubprocessBackend::publish_started_endpoint() con
                       std::move(endpoint.error())});
   }
   if (endpoint->missing || endpoint->identity.empty()) {
-    return unexpected(CommandFailure{
-        .kind = FailureKind::missing,
-        .delivery = DeliveryStatus::replied,
-        .exit_code = 0,
-        .diagnostic =
-            "tmux started but its exact endpoint was not available to retain"});
+    // tmux can print its own reason (e.g. "error creating <path>: No such
+    // file or directory" for a `-S` selector under a missing parent
+    // directory) and still exit 0 - the same stderr-but-exit-0 quirk guarded
+    // against elsewhere in this file. Surface it instead of a causeless
+    // message when tmux gave one.
+    std::string diagnostic =
+        "tmux started but its exact endpoint was not available to retain";
+    if (!start_stderr.empty()) {
+      diagnostic += ": " + std::string{start_stderr};
+    }
+    return unexpected(CommandFailure{.kind = FailureKind::missing,
+                                     .delivery = DeliveryStatus::replied,
+                                     .exit_code = 0,
+                                     .diagnostic = std::move(diagnostic)});
   }
 
   auto published = std::make_shared<const PublishedEndpoint>(PublishedEndpoint{
@@ -633,6 +648,17 @@ SubprocessBackend::run_scoped(const CommandRequest& command,
                                    .diagnostic = std::move(reply.error().diagnostic)});
   }
 
+  // Captured before the reply's bytes are consumed below: a successful
+  // (exit 0) first-start command still discards its stdout-only text, and
+  // publish_started_endpoint's own diagnostic is the only place this stderr
+  // is still wanted.
+  std::string start_stderr =
+      publishes_started_endpoint ? text(reply->stderr_bytes) : std::string{};
+  while (!start_stderr.empty() &&
+         (start_stderr.back() == '\n' || start_stderr.back() == '\r')) {
+    start_stderr.pop_back();
+  }
+
   auto interpreted =
       publishes_started_endpoint
           ? interpret_unobserved(command, allowed_bytes, *std::move(reply))
@@ -644,7 +670,7 @@ SubprocessBackend::run_scoped(const CommandRequest& command,
     observe(command, &interpreted.error());
     return interpreted;
   }
-  if (auto published = publish_started_endpoint(); !published.has_value()) {
+  if (auto published = publish_started_endpoint(start_stderr); !published.has_value()) {
     return reported(std::move(published.error()));
   }
   observe(command, nullptr);
@@ -718,6 +744,19 @@ SubprocessBackend::interpret_reply(const CommandRequest& command,
     while (!diagnostic.empty() &&
            (diagnostic.back() == '\n' || diagnostic.back() == '\r')) {
       diagnostic.pop_back();
+    }
+    // tmux was invoked with the private hard-link alias `pin_under`
+    // substitutes for `-S`, so a message tmux builds from its own
+    // arguments (e.g. "no server running on <socket>") names that alias
+    // rather than the path the operator configured. Name theirs.
+    const std::string_view alias = socket_path();
+    const std::string_view operator_path = selected_socket_path();
+    if (!alias.empty() && !operator_path.empty() && alias != operator_path) {
+      std::size_t position = diagnostic.find(alias);
+      while (position != std::string::npos) {
+        diagnostic.replace(position, alias.size(), operator_path);
+        position = diagnostic.find(alias, position + operator_path.size());
+      }
     }
     // And which command it was: on its own, "can't find session: work" leaves
     // the reader to work out where in their program it came from.

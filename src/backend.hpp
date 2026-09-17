@@ -344,7 +344,12 @@ private:
     return started_endpoint_;
   }
 
-  [[nodiscard]] expected<void, CommandFailure> publish_started_endpoint() const;
+  // `start_stderr` is the first-start command's own stderr, captured by the
+  // caller before this reply's text is discarded: tmux can exit 0 with
+  // nothing bound (e.g. `-S` under a parent directory that does not exist)
+  // and the only account of why is what it wrote there.
+  [[nodiscard]] expected<void, CommandFailure>
+  publish_started_endpoint(std::string_view start_stderr) const;
 
   std::vector<std::string> connection_;
   // Captured once, at construction. Keeping the alias alive keeps the inode

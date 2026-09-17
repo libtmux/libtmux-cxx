@@ -279,6 +279,32 @@ TEST(ServerIdentity, ConcurrentFirstStartPinsTheOriginalServer) {
   EXPECT_TRUE(*aliased);
 }
 
+// A `-S` selector under a parent directory that does not exist yet is a
+// shape tmux itself cannot self-heal (unlike `-L`/no-selector, which get
+// its own `tmux-<uid>/` auto-mkdir).
+// Raw tmux prints "error creating <path> (No such file or directory)" to
+// stderr and still exits 0, so the failure is invisible unless that stderr
+// is read - the same quirk `StartableAtSocketNameSucceedsUnderAFreshTmuxTmpdir`
+// guards for the auto-mkdir path. The previous message here gave no reason
+// at all.
+TEST(ServerIdentity, StartableAtSocketPathUnderAMissingParentSurfacesTmuxsOwnReason) {
+  auto scratch = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(scratch.has_value()) << scratch.error();
+  const std::filesystem::path selected =
+      scratch->tmux_tmpdir() / "not-yet-created" / "mysock";
+
+  auto opened = Server::startable_at_socket_path(selected.string(),
+                                                 std::filesystem::path{"/dev/null"});
+  ASSERT_TRUE(opened.has_value()) << opened.error().diagnostic;
+  ServerCleanup cleanup{*opened};
+
+  const auto created = opened->new_session("first");
+  ASSERT_FALSE(created.has_value());
+  EXPECT_FALSE(opened->is_alive());
+  EXPECT_NE(created.error().diagnostic.find("error creating"), std::string::npos)
+      << created.error().diagnostic;
+}
+
 // The two servers really do use the same ids, which is what makes every
 // refusal below load-bearing rather than theoretical.
 TEST(ServerIdentity, TwoServersNumberTheirObjectsTheSameWay) {
@@ -394,6 +420,39 @@ TEST(ServerIdentity, TwoHandlesOnOneSocketDescribeTheSameObjects) {
   const auto other = second.new_session("elsewhere");
   ASSERT_TRUE(other.has_value()) << other.error().diagnostic;
   EXPECT_TRUE(windows->front().link_to(*other).has_value());
+}
+
+// Every command is dispatched through the private hard-link alias
+// `pin_under` substitutes for the socket selector (the `sockaddr_un`
+// length workaround), so a message tmux builds
+// from its own invocation - "no server running on <socket>" - names that
+// alias rather than the path the operator configured. Kill the server out
+// from under a live handle so the next command's failure is tmux's own,
+// genuinely mentioning a socket path, then check which path it names.
+TEST(ServerIdentity, ADeadServerDiagnosticNamesTheOperatorsSocketNotTheAlias) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const std::string operator_path = fixture->socket_path().string();
+
+  // Forces the alias to be pinned before the server dies, matching ordinary
+  // use: a handle used at all before its server disappears.
+  const auto before = server.sessions();
+  ASSERT_TRUE(before.has_value()) << before.error().diagnostic;
+
+  ASSERT_TRUE(server.kill().has_value());
+  const auto stopped_by = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+  while (fixture->is_alive() && std::chrono::steady_clock::now() < stopped_by) {
+    std::this_thread::sleep_for(std::chrono::milliseconds{1});
+  }
+  ASSERT_FALSE(fixture->is_alive());
+
+  const auto after = server.sessions();
+  ASSERT_FALSE(after.has_value());
+  EXPECT_NE(after.error().diagnostic.find(operator_path), std::string::npos)
+      << after.error().diagnostic;
+  EXPECT_EQ(after.error().diagnostic.find("/.libtmux-"), std::string::npos)
+      << after.error().diagnostic;
 }
 
 TEST(ServerIdentity, RestartAtTheSameSocketIsANewServer) {
