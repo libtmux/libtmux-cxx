@@ -130,7 +130,7 @@ TEST(ValueSemantics, EntitiesKeyTheOrdinaryContainers) {
 TEST(ValueSemantics, AnEntityPrintsAsSomethingAReaderRecognises) {
   const auto recorded = libtmux::Snapshot::from_recording(
       Pane::kFields,
-      "%4␞nvim␞1␞@2␞$1␞0␞editor␞991␞/dev/pts/7␞/tmp␞80␞24␞0␞0␞1␞0␞1␞1␞0␞\n");
+      "%4␞nvim␞1␞@2␞$1␞0␞editor␞991␞/dev/pts/7␞/tmp␞80␞24␞0␞0␞1␞0␞1␞1␞0␞0␞0␞\n");
   ASSERT_NE(recorded, nullptr);
 
   std::ostringstream out;

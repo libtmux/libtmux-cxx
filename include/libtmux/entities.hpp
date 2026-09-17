@@ -438,12 +438,15 @@ public:
     return detail::to_number(value(7));
   }
   // An opaque token: hand it back to `select_layout` exactly as received,
-  // and do not parse its shape. tmux 3.8+ reports JSON here for a
-  // non-control client, and keeps the classic layout string for a control
-  // client unless it has set `CLIENT_CONTROL_NEWLAYOUTS`. `select-layout`
-  // accepts either form on every version this library supports, so a
-  // caller that only round-trips the value never needs to know which one
-  // it got.
+  // and do not parse its shape. tmux 3.8+ reports JSON here for a plain
+  // client, and keeps the classic layout string for a control client
+  // unless that client has asked tmux for JSON with `refresh-client -f
+  // new-layouts` — which `Connection::connect` sends on every connection,
+  // so control mode through this library gets JSON on 3.8+ too.
+  //
+  // A version's own `layout()` output round-trips through its own
+  // `select_layout` on that version; see that method's comment for what
+  // "round-trips" promises and what it does not.
   [[nodiscard]] std::string_view layout() const noexcept { return value(8); }
   [[nodiscard]] bool zoomed() const noexcept { return detail::to_flag(value(9)); }
   [[nodiscard]] bool bell() const noexcept { return detail::to_flag(value(10)); }
@@ -489,9 +492,21 @@ public:
   [[nodiscard]] expected<Pane, CommandFailure> split(SplitOptions options) const;
   [[nodiscard]] expected<void, CommandFailure> rename(std::string_view name) const;
 
-  // Rearrange the panes. tmux names five layouts and also accepts the layout
-  // description `layout()` returns, which is how a saved arrangement is
-  // restored exactly.
+  // Rearrange the panes. tmux names five layouts, plus two mirrored ones on
+  // tmux 3.5+, and also accepts the layout description `layout()` returns.
+  //
+  // Restoring one exactly — the same pane back at the same position, not
+  // only the same shape — holds on tmux 3.8+, where the saved string is
+  // JSON and carries each pane's id. On tmux 3.7 and earlier the classic
+  // layout string restores the shape but can rotate which pane lands in
+  // which cell (measured against raw tmux; not a choice this library
+  // makes). A JSON layout is refused before 3.8, and a mirrored preset
+  // before 3.5.
+  //
+  // Anything not shaped like one of those — a leading `-`, a name tmux
+  // does not know, or an incomplete layout string — is refused before
+  // reaching tmux rather than passed through: on tmux 3.3 and 3.3a, that
+  // shape crashes the server outright rather than being refused.
   [[nodiscard]] expected<void, CommandFailure>
   select_layout(std::string_view layout) const;
   [[nodiscard]] expected<void, CommandFailure> resize(long long width,
@@ -578,7 +593,8 @@ public:
       std::string_view{"pane_dead"},    std::string_view{"pane_in_mode"},
       std::string_view{"pane_at_top"},  std::string_view{"pane_at_bottom"},
       std::string_view{"pane_at_left"}, std::string_view{"pane_at_right"},
-      std::string_view{"pane_pipe"}};
+      std::string_view{"pane_pipe"},    std::string_view{"pane_left"},
+      std::string_view{"pane_top"}};
 
   Pane(std::shared_ptr<const Snapshot> snapshot, std::size_t row) noexcept
       : Row{std::move(snapshot), row} {}
@@ -614,6 +630,11 @@ public:
   [[nodiscard]] bool at_right() const noexcept { return detail::to_flag(value(17)); }
   // Whether this pane's output is currently being copied to a command.
   [[nodiscard]] bool piping() const noexcept { return detail::to_flag(value(18)); }
+  // Position within the window, in cells from its top-left corner — the
+  // geometry `select_layout`'s saved arrangement places panes at.
+  [[nodiscard]] long long left() const noexcept { return detail::to_number(value(19)); }
+  // Its counterpart along the other axis.
+  [[nodiscard]] long long top() const noexcept { return detail::to_number(value(20)); }
   // The owning psmux route carried by Windows live snapshots. Empty on POSIX
   // and in recordings made from the backward-compatible `kFields` schema.
   [[nodiscard]] std::string_view session_name() const noexcept {
@@ -665,6 +686,16 @@ public:
   [[nodiscard]] expected<void, CommandFailure> set_width(long long width) const;
   [[nodiscard]] expected<void, CommandFailure> set_height(long long height) const;
   [[nodiscard]] expected<void, CommandFailure> swap_with(const Pane& other) const;
+
+  // Toggle whether this pane's window is zoomed onto it — the whole window
+  // given over to one pane, full size. Zoom is window state, which
+  // `Window::zoomed()` reads; naming a pane here is how tmux picks which one
+  // to give the window to.
+  //
+  // Only the zoom-in direction reads this pane: a window already zoomed
+  // unzooms on any target, this pane included, and stays on whichever pane
+  // it was zoomed onto (measured against raw tmux).
+  [[nodiscard]] expected<void, CommandFailure> toggle_zoom() const;
 
   // Take this pane out into a window of its own, which is returned. If it is
   // already the window's only pane, return that window without moving it.

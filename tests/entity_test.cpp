@@ -375,6 +375,196 @@ TEST(Entity, PanesAreArrangedByLayoutAndSize) {
   EXPECT_FALSE(panes->front().set_width(0).has_value());
 }
 
+TEST(Entity, SelectLayoutRefusesALeadingDashInsteadOfRunningItAsAFlag) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const Session session = only_session(server);
+
+  const auto window = session.new_window("layout-guard");
+  ASSERT_TRUE(window.has_value()) << window.error().diagnostic;
+  ASSERT_TRUE(window->split().has_value());
+  ASSERT_TRUE(window->split().has_value());
+
+  ASSERT_TRUE(window->select_layout("tiled").has_value());
+  const auto tiled = window->refresh();
+  ASSERT_TRUE(tiled.has_value()) << tiled.error().diagnostic;
+  const std::string tiled_layout{tiled->layout()};
+
+  ASSERT_TRUE(window->select_layout("main-vertical").has_value());
+  const auto arranged = window->refresh();
+  ASSERT_TRUE(arranged.has_value()) << arranged.error().diagnostic;
+  const std::string main_vertical_layout{arranged->layout()};
+  ASSERT_NE(main_vertical_layout, tiled_layout);
+
+  // Unguarded, tmux reads a leading "-o" as its own undo flag rather than a
+  // layout value, and quietly reverts to the layout applied before this one.
+  const auto undone = window->select_layout("-o");
+  ASSERT_FALSE(undone.has_value());
+  EXPECT_EQ(undone.error().kind, FailureKind::validation);
+
+  const auto after = window->refresh();
+  ASSERT_TRUE(after.has_value()) << after.error().diagnostic;
+  EXPECT_EQ(std::string{after->layout()}, main_vertical_layout)
+      << "\"-o\" ran as tmux's undo flag instead of being refused as an "
+         "invalid layout";
+}
+
+TEST(Entity, SelectLayoutRefusesAnUnrecognisedValueWithoutCrashingTheServer) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const Session session = only_session(server);
+
+  const auto window = session.new_window("layout-crash-guard");
+  ASSERT_TRUE(window.has_value()) << window.error().diagnostic;
+  ASSERT_TRUE(window->split().has_value());
+
+  // Not shaped like a preset, a saved layout, or JSON. Raw tmux 3.3 and
+  // 3.3a crash their server outright for exactly this input instead of
+  // refusing it; every other supported version refuses it cleanly. Either
+  // way, this is refused before dispatch, so the server survives here
+  // regardless of which version this runs against.
+  const auto refused = window->select_layout("garbage");
+  ASSERT_FALSE(refused.has_value());
+  EXPECT_EQ(refused.error().kind, FailureKind::validation);
+  EXPECT_EQ(refused.error().delivery, libtmux::DeliveryStatus::not_started);
+
+  EXPECT_TRUE(server.is_alive());
+  const auto still_there = window->refresh();
+  ASSERT_TRUE(still_there.has_value()) << still_there.error().diagnostic;
+}
+
+TEST(Entity, SelectLayoutGatesMirroredPresetsAndJsonByVersion) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const auto version = server.tmux_version();
+  ASSERT_TRUE(version.has_value()) << version.error().diagnostic;
+  const Session session = only_session(server);
+
+  const auto window = session.new_window("layout-version-gate");
+  ASSERT_TRUE(window.has_value()) << window.error().diagnostic;
+  ASSERT_TRUE(window->split().has_value());
+
+  const auto mirrored = window->select_layout("main-vertical-mirrored");
+  if (*version < libtmux::Version{.major = 3, .minor = 5}) {
+    ASSERT_FALSE(mirrored.has_value());
+    EXPECT_EQ(mirrored.error().kind, FailureKind::validation);
+  } else {
+    EXPECT_TRUE(mirrored.has_value()) << mirrored.error().diagnostic;
+  }
+  EXPECT_TRUE(server.is_alive());
+
+  const auto json_attempt =
+      window->select_layout(R"({"V":2,"L":{"t":"p","w":1,"h":1,"x":0,"y":0,"i":0}})");
+  if (*version < libtmux::Version{.major = 3, .minor = 8}) {
+    ASSERT_FALSE(json_attempt.has_value());
+    EXPECT_EQ(json_attempt.error().kind, FailureKind::validation);
+  } else if (!json_attempt.has_value()) {
+    // Past the version gate: whatever this shape of JSON gets from tmux is
+    // tmux's own refusal, not this method's.
+    EXPECT_NE(json_attempt.error().kind, FailureKind::validation);
+  }
+  EXPECT_TRUE(server.is_alive());
+}
+
+// `layout_set_lookup` (layout-set.c) is a prefix match in tmux itself: `tile`
+// and `even-h` apply cleanly on every supported version, never reaching the
+// layout-string parser 3.3/3.3a crashes on.
+TEST(Entity, SelectLayoutAcceptsAUniquePresetPrefix) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const Session session = only_session(server);
+
+  const auto window = session.new_window("layout-prefix");
+  ASSERT_TRUE(window.has_value()) << window.error().diagnostic;
+  ASSERT_TRUE(window->split().has_value());
+  ASSERT_TRUE(window->split().has_value());
+
+  ASSERT_TRUE(window->select_layout("tiled").has_value());
+  const auto tiled = window->refresh();
+  ASSERT_TRUE(tiled.has_value()) << tiled.error().diagnostic;
+  const std::string tiled_layout{tiled->layout()};
+
+  ASSERT_TRUE(window->select_layout("main-vertical").has_value());
+  const auto arranged = window->refresh();
+  ASSERT_TRUE(arranged.has_value()) << arranged.error().diagnostic;
+  ASSERT_NE(std::string{arranged->layout()}, tiled_layout);
+
+  // "tile" and "even-h" are each a unique prefix of exactly one preset
+  // name ("tiled", "even-horizontal") - neither is ambiguous, and neither
+  // is a preset name tmux does not know.
+  const auto tile_prefix = window->select_layout("tile");
+  ASSERT_TRUE(tile_prefix.has_value()) << tile_prefix.error().diagnostic;
+  const auto after_tile = window->refresh();
+  ASSERT_TRUE(after_tile.has_value()) << after_tile.error().diagnostic;
+  EXPECT_EQ(std::string{after_tile->layout()}, tiled_layout);
+
+  const auto even_h_prefix = window->select_layout("even-h");
+  ASSERT_TRUE(even_h_prefix.has_value()) << even_h_prefix.error().diagnostic;
+  const auto after_even_h = window->refresh();
+  ASSERT_TRUE(after_even_h.has_value()) << after_even_h.error().diagnostic;
+  EXPECT_NE(std::string{after_even_h->layout()}, tiled_layout);
+
+  EXPECT_TRUE(server.is_alive());
+}
+
+// The other half of D3: a prefix ambiguous among the presets it could name
+// is refused, naming what it could mean, rather than silently picking one
+// or claiming tmux does not know it.
+TEST(Entity, SelectLayoutRefusesAnAmbiguousPresetPrefixNamingCandidates) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const Session session = only_session(server);
+
+  const auto window = session.new_window("layout-ambiguous-prefix");
+  ASSERT_TRUE(window.has_value()) << window.error().diagnostic;
+  ASSERT_TRUE(window->split().has_value());
+
+  // "even-" is a prefix of both "even-horizontal" and "even-vertical" on
+  // every supported version - unconditionally ambiguous, never a name tmux
+  // itself would resolve.
+  const auto refused = window->select_layout("even-");
+  ASSERT_FALSE(refused.has_value());
+  EXPECT_EQ(refused.error().kind, FailureKind::validation);
+  EXPECT_EQ(refused.error().delivery, libtmux::DeliveryStatus::not_started);
+  EXPECT_NE(refused.error().diagnostic.find("even-horizontal"), std::string::npos)
+      << refused.error().diagnostic;
+  EXPECT_NE(refused.error().diagnostic.find("even-vertical"), std::string::npos)
+      << refused.error().diagnostic;
+
+  EXPECT_TRUE(server.is_alive());
+}
+
+TEST(Entity, ToggleZoomZoomsAndUnzoomsAPane) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const Session session = only_session(server);
+
+  const auto window = session.new_window("zoom-guard");
+  ASSERT_TRUE(window.has_value()) << window.error().diagnostic;
+  const auto other = window->split();
+  ASSERT_TRUE(other.has_value()) << other.error().diagnostic;
+
+  const auto before = window->refresh();
+  ASSERT_TRUE(before.has_value()) << before.error().diagnostic;
+  EXPECT_FALSE(before->zoomed());
+
+  ASSERT_TRUE(other->toggle_zoom().has_value());
+  const auto zoomed = window->refresh();
+  ASSERT_TRUE(zoomed.has_value()) << zoomed.error().diagnostic;
+  EXPECT_TRUE(zoomed->zoomed());
+
+  ASSERT_TRUE(other->toggle_zoom().has_value());
+  const auto unzoomed = window->refresh();
+  ASSERT_TRUE(unzoomed.has_value()) << unzoomed.error().diagnostic;
+  EXPECT_FALSE(unzoomed->zoomed());
+}
+
 TEST(Entity, AWindowMovesToAnIndexInItsOwnSession) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
@@ -795,10 +985,12 @@ TEST(Entity, ARecordedSnapshotFiltersButCannotAct) {
     return line + "\n";
   };
   const std::string output =
-      recording({"%0", "nvim", "1", "@0", "$0", "0", "editor", "4210", "/dev/pts/3",
-                 "/home/user", "80", "24", "0", "0", "1", "0", "1", "1", "0"}) +
-      recording({"%1", "zsh", "0", "@0", "$0", "1", "shell", "4211", "/dev/pts/4",
-                 "/home/user", "80", "24", "0", "0", "0", "1", "1", "1", "1"});
+      recording({"%0",   "nvim",       "1",          "@0", "$0", "0", "editor",
+                 "4210", "/dev/pts/3", "/home/user", "80", "24", "0", "0",
+                 "1",    "0",          "1",          "1",  "0",  "0", "0"}) +
+      recording({"%1",   "zsh",        "0",          "@0", "$0", "1",  "shell",
+                 "4211", "/dev/pts/4", "/home/user", "80", "24", "0",  "0",
+                 "0",    "1",          "1",          "1",  "1",  "40", "0"});
 
   const auto recorded = libtmux::Snapshot::from_recording(Pane::kFields, output);
   ASSERT_NE(recorded, nullptr);
@@ -812,7 +1004,13 @@ TEST(Entity, ARecordedSnapshotFiltersButCannotAct) {
   EXPECT_TRUE(editing.at_top());
   EXPECT_FALSE(editing.at_bottom());
   EXPECT_FALSE(editing.piping());
+  EXPECT_EQ(editing.left(), 0);
+  EXPECT_EQ(editing.top(), 0);
   EXPECT_TRUE(editing.session_name().empty());
+
+  const Pane shell{recorded, 1};
+  EXPECT_EQ(shell.left(), 40);
+  EXPECT_EQ(shell.top(), 0);
   EXPECT_TRUE((pane::command.starts_with("nv") && pane::active)(editing));
 
   const auto killed = editing.kill();

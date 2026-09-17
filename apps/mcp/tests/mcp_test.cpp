@@ -1544,6 +1544,41 @@ TEST(McpToolsTmux, CreatesAWindowAndTypesIntoItsPane) {
   }));
 }
 
+TEST(McpToolsTmux, SelectLayoutRefusesALeadingDashInsteadOfRunningItAsAFlag) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  auto windows = server.windows();
+  ASSERT_TRUE(windows.has_value()) << windows.error().diagnostic;
+  ASSERT_EQ(windows->size(), 1U);
+  const auto window = windows->front();
+  ASSERT_TRUE(window.split().has_value());
+  ASSERT_TRUE(window.split().has_value());
+  ASSERT_TRUE(window.select_layout("tiled").has_value());
+  ASSERT_TRUE(window.select_layout("main-vertical").has_value());
+  const auto before = server.window(window.id());
+  ASSERT_TRUE(before.has_value()) << before.error().diagnostic;
+  const std::string main_vertical_layout{before->layout()};
+  const std::string window_id{window.id()};
+
+  const auto tools = all_tools();
+  // Unguarded, tmux reads a leading "-o" as its own undo flag rather than a
+  // layout value; an agent-facing tool must be at least as defensive as the
+  // library's own client-side checks.
+  const auto refused = tools.call(server, "select_layout",
+                                  Arguments{{"windowId", window_id}, {"layout", "-o"}});
+  ASSERT_FALSE(refused.has_value());
+  EXPECT_TRUE(refused.error().caller_error);
+
+  const auto inspected =
+      tools.call(server, "get_window_info", Arguments{{"windowId", window_id}});
+  ASSERT_TRUE(inspected.has_value()) << inspected.error().message;
+  const auto& reported =
+      std::get<StructuredValue::Object>(inspected->structured.at("window").value);
+  EXPECT_EQ(std::get<std::string>(reported.at("layout").value), main_vertical_layout)
+      << "\"-o\" ran as tmux's undo flag instead of being refused";
+}
+
 TEST(McpToolsTmux, LiteralizesTmuxFormatBearingStateOnce) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();

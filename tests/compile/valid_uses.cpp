@@ -29,7 +29,7 @@ static_assert(static_cast<int>(libtmux::SocketError::name_has_separator) == 1);
 static_assert(static_cast<int>(libtmux::SocketError::path_too_long) == 2);
 static_assert(static_cast<int>(libtmux::SocketError::path_unsupported) == 3);
 static_assert(libtmux::Window::kFields.size() == 13U);
-static_assert(libtmux::Pane::kFields.size() == 19U);
+static_assert(libtmux::Pane::kFields.size() == 21U);
 
 std::vector<libtmux::Window> listed();
 
