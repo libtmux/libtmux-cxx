@@ -11,6 +11,47 @@
 
 #include <libtmux/libtmux.hpp>
 
+// The value this example records for one pane field, by name. A name it does
+// not know answers "0", which reads as an empty string, a zero, or a false
+// flag depending on the field -- so a field added to the entity needs no edit
+// here unless the filter below is meant to see it.
+constexpr std::string_view recorded_pane_value(std::string_view field) {
+  if (field == "pane_id") {
+    return "%0";
+  }
+  if (field == "pane_current_command") {
+    return "nvim";
+  }
+  if (field == "pane_active") {
+    return "1";
+  }
+  if (field == "window_id") {
+    return "@0";
+  }
+  if (field == "session_id") {
+    return "$0";
+  }
+  if (field == "pane_title") {
+    return "editor";
+  }
+  if (field == "pane_pid") {
+    return "4210";
+  }
+  if (field == "pane_tty") {
+    return "/dev/pts/3";
+  }
+  if (field == "pane_current_path") {
+    return "/home";
+  }
+  if (field == "pane_width") {
+    return "80";
+  }
+  if (field == "pane_height") {
+    return "24";
+  }
+  return "0";
+}
+
 int main() {
   const auto version = libtmux::parse_version("tmux 3.7a");
   if (!version.has_value() || !libtmux::is_supported(*version)) {
@@ -20,24 +61,21 @@ int main() {
 
   // A filter over recorded output, which reaches no tmux at all.
   //
-  // One value per field of `Pane::kFields`, in that order. The assertion below
-  // is the point: a field added to the entity leaves this row one column short,
-  // and `from_recording` would answer with nothing at run time in a program
-  // whose whole job is to be built. Better to not compile.
-  static constexpr std::array kRecordedPane{
-      std::string_view{"%0"},         std::string_view{"nvim"},
-      std::string_view{"1"},          std::string_view{"@0"},
-      std::string_view{"$0"},         std::string_view{"0"},
-      std::string_view{"editor"},     std::string_view{"4210"},
-      std::string_view{"/dev/pts/3"}, std::string_view{"/home"},
-      std::string_view{"80"},         std::string_view{"24"},
-      std::string_view{"0"},          std::string_view{"0"},
-      std::string_view{"1"},          std::string_view{"0"},
-      std::string_view{"1"},          std::string_view{"1"},
-      std::string_view{"0"},          std::string_view{"0"},
-      std::string_view{"0"}};
-  static_assert(kRecordedPane.size() == libtmux::Pane::kFields.size(),
-                "one recorded value per pane field, in the order kFields lists them");
+  // One value per field of `Pane::kFields`, derived from the field names
+  // rather than written out in their order. Two lanes build this same file
+  // against different header sets -- the compile lane against this checkout,
+  // the registry lane against the last released port, which vcpkg resolves
+  // through `versions/` -- so a fixed row can only ever match one of them:
+  // adding a pane field breaks the first, and matching the new count breaks
+  // the second until a release is cut. Deriving it builds against both, and
+  // a field this does not name records "0", which every field reads.
+  static constexpr auto kRecordedPane = [] {
+    std::array<std::string_view, libtmux::Pane::kFields.size()> values{};
+    for (std::size_t index = 0; index < values.size(); ++index) {
+      values[index] = recorded_pane_value(libtmux::Pane::kFields[index]);
+    }
+    return values;
+  }();
 
   std::string row;
   for (const std::string_view value : kRecordedPane) {
