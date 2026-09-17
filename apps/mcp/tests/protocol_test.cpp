@@ -707,7 +707,13 @@ TEST_F(McpProtocol, ReturnsCurrentStructuredAndCompatibleTextContent) {
   EXPECT_EQ(result["structuredContent"]["sessions"][0]["name"], "mcp");
 }
 
-TEST_F(McpProtocol, SeparatesCallerErrorsFromTmuxRefusals) {
+// A request naming a tool that does not exist, or an argument a tool does
+// not declare, never reaches a tool at all, and stays a JSON-RPC protocol
+// fault. Once a request reaches a real tool with arguments it recognises,
+// every refusal from there - a missing required argument the registry
+// itself checks, and tmux refusing a pane that is not there - is a result
+// the caller reads, not a protocol fault.
+TEST_F(McpProtocol, ReportsToolAndRegistryRefusalsAsResultsNotProtocolFaults) {
   const auto messages = converse_ready(
       socket(),
       {call("capture_pane", json::object(), 1), call("no_such_tool", json::object(), 2),
@@ -721,7 +727,8 @@ TEST_F(McpProtocol, SeparatesCallerErrorsFromTmuxRefusals) {
   ASSERT_NE(unknown, nullptr);
   ASSERT_NE(refused, nullptr);
   ASSERT_NE(misspelt, nullptr);
-  EXPECT_EQ((*missing)["error"]["code"], -32602);
+  EXPECT_FALSE(missing->contains("error"));
+  EXPECT_TRUE((*missing)["result"]["isError"].get<bool>());
   EXPECT_EQ((*unknown)["error"]["code"], -32602);
   EXPECT_EQ((*misspelt)["error"]["code"], -32602);
   EXPECT_TRUE((*refused)["result"]["isError"].get<bool>());
@@ -780,8 +787,8 @@ TEST_F(McpProtocol, EnforcesNestedSendKeysBatchCodePointLimits) {
   for (const int id : {2, 4}) {
     const json* rejected = response(messages, id);
     ASSERT_NE(rejected, nullptr);
-    ASSERT_TRUE(rejected->contains("error")) << rejected->dump();
-    EXPECT_EQ((*rejected)["error"]["code"], -32602) << rejected->dump();
+    EXPECT_FALSE(rejected->contains("error")) << rejected->dump();
+    EXPECT_TRUE((*rejected)["result"]["isError"].get<bool>()) << rejected->dump();
   }
 }
 
@@ -872,7 +879,8 @@ TEST_F(McpProtocol, ValidatesEveryNamedKeyBeforeSending) {
   ASSERT_NE(sent, nullptr);
   ASSERT_NE(invalid, nullptr);
   EXPECT_FALSE((*sent)["result"]["isError"].get<bool>());
-  EXPECT_EQ((*invalid)["error"]["code"], -32602);
+  EXPECT_FALSE(invalid->contains("error"));
+  EXPECT_TRUE((*invalid)["result"]["isError"].get<bool>());
 }
 
 TEST_F(McpProtocol, RunShellCommandWaitsForItsOwnValidCompletionRecord) {
@@ -1453,8 +1461,8 @@ TEST_F(McpProtocol, KeepsEmptyPasteBufferFreeAndEnterTargetOnly) {
 
   const json missing =
       invoke("paste_text", {{"paneId", source.id()}, {"enter", false}}, 0);
-  ASSERT_TRUE(missing.contains("error")) << missing.dump();
-  EXPECT_EQ(missing["error"]["code"], -32602);
+  EXPECT_FALSE(missing.contains("error")) << missing.dump();
+  EXPECT_TRUE(missing["result"]["isError"].get<bool>()) << missing.dump();
 
   ASSERT_TRUE(server
                   .run({"set-hook", "-g", "after-set-buffer",
@@ -2014,7 +2022,8 @@ TEST_F(McpProtocol, ExpandsOnlyBoundedValidatedVariableNames) {
   const json& values = (*expanded)["result"]["structuredContent"]["values"];
   EXPECT_TRUE(values.contains("pane_id"));
   EXPECT_TRUE(values.contains("pane_title"));
-  EXPECT_EQ((*rejected)["error"]["code"], -32602);
+  EXPECT_FALSE(rejected->contains("error")) << rejected->dump();
+  EXPECT_TRUE((*rejected)["result"]["isError"].get<bool>()) << rejected->dump();
 }
 
 TEST_F(McpProtocol, WaitsThroughControlOutputAndSearchesTheResult) {
@@ -2689,16 +2698,26 @@ TEST(McpProtocolCli, Reports2025NovemberInputErrorsAsToolResults) {
   EXPECT_EQ((*unknown)["error"]["code"], -32602);
 }
 
-TEST(McpProtocolCli, ReportsOlderLegacyInputErrorsAsInvalidParams) {
+// A tool that ran and refused is a result the caller reads, on every legacy
+// version - not only the latest one - while a call naming a tool that does
+// not exist never reaches a tool at all, and stays a protocol fault on
+// every version.
+TEST(McpProtocolCli, ReportsToolExecutionFailuresAsResultsOnEveryLegacyVersion) {
   for (const std::string_view version : {"2025-06-18", "2025-03-26", "2024-11-05"}) {
     const auto messages =
         converse_with({"--socket-name", "libtmux-cxx-mcp-old-input-no-dispatch"},
                       libtmux::test::current_environment(),
                       {initialize_request(version), initialized_notification(),
-                       call("capture_pane", json::object(), 1)});
-    const json* reply = response(messages, 1);
-    ASSERT_NE(reply, nullptr) << version;
-    EXPECT_EQ((*reply)["error"]["code"], -32602) << version;
+                       call("capture_pane", json::object(), 1),
+                       call("no_such_tool", json::object(), 2)});
+    const json* missing_argument = response(messages, 1);
+    ASSERT_NE(missing_argument, nullptr) << version;
+    EXPECT_FALSE(missing_argument->contains("error")) << version;
+    EXPECT_TRUE((*missing_argument)["result"]["isError"].get<bool>()) << version;
+
+    const json* unknown = response(messages, 2);
+    ASSERT_NE(unknown, nullptr) << version;
+    EXPECT_EQ((*unknown)["error"]["code"], -32602) << version;
   }
 }
 
@@ -3121,9 +3140,9 @@ TEST(McpProtocolCli, PublishesStaticEffectiveCapabilitiesInBothEras) {
   ASSERT_TRUE((*synchronized).contains("amplifiesFutureInput"));
   EXPECT_TRUE((*synchronized)["amplifiesFutureInput"].get<bool>());
   EXPECT_EQ((*synchronized)["description"],
-            "Change tmux state; no client-supplied executable input. Set the "
-            "inherited window synchronize-panes default; pane-level overrides "
-            "determine effective synchronized input membership.");
+            "Set the inherited window synchronize-panes default; pane-level "
+            "overrides determine effective synchronized input membership. "
+            "Change tmux state; no client-supplied executable input.");
   for (const json& tool : document["tools"]) {
     ASSERT_TRUE(tool.contains("amplifiesFutureInput")) << tool["name"];
     EXPECT_EQ(tool["amplifiesFutureInput"].get<bool>(),
