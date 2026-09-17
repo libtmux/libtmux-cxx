@@ -137,6 +137,25 @@ std::optional<std::string> psmux_session(const std::vector<std::string>& connect
 
 } // namespace
 
+namespace {
+
+// Back up over a UTF-8 continuation byte (`10xxxxxx`) so a fixed byte budget
+// never cuts a multi-byte character in half. At most three steps, since no
+// valid UTF-8 sequence is longer than four bytes; a longer run of
+// continuation bytes is not valid UTF-8 to begin with, and this still bounds
+// how much the cut moves for it.
+std::size_t utf8_safe_cut(std::string_view text, std::size_t maximum) {
+  std::size_t cut = maximum;
+  for (std::size_t back = 0;
+       cut > 0 && back < 3U && (static_cast<unsigned char>(text[cut]) & 0xC0U) == 0x80U;
+       ++back) {
+    --cut;
+  }
+  return cut;
+}
+
+} // namespace
+
 std::string rendered_command(const CommandRequest& command) {
   constexpr std::size_t maximum = 300U;
   const std::vector<std::string_view> parts = sensitive_parts(command);
@@ -147,7 +166,7 @@ std::string rendered_command(const CommandRequest& command) {
     }
     rendered += redacted_text(argument.value(), parts);
     if (rendered.size() > maximum) {
-      rendered.resize(maximum);
+      rendered.resize(utf8_safe_cut(rendered, maximum));
       rendered += "...";
       break;
     }

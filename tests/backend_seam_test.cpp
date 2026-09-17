@@ -1009,6 +1009,18 @@ TEST(BackendSeam, AnInvalidEmptySensitiveRangeFailsClosed) {
   EXPECT_EQ(rendered.find("must-stay-private"), std::string::npos) << rendered;
 }
 
+// U+241E is 3 bytes (`\xE2\x90\x9E`); placed at 298 ASCII bytes in, its
+// middle byte sits exactly on the 300-byte truncation cutoff.
+TEST(BackendSeam, TruncationStaysOnAUtf8Boundary) {
+  const std::string marker{"\xE2\x90\x9E"};
+  libtmux::CommandRequest command{std::string(298U, 'a') + marker +
+                                  std::string(20U, 'b')};
+
+  const std::string rendered = libtmux::detail::rendered_command(command);
+
+  EXPECT_EQ(rendered, std::string(298U, 'a') + "...") << rendered;
+}
+
 TEST(BackendSeam, UnreadableKeyTablesFailBeforeDispatch) {
   auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{});
   const Server server = libtmux::detail::server_over(backend);
