@@ -34,6 +34,7 @@ int main() {
       std::string_view{"0"},          std::string_view{"0"},
       std::string_view{"1"},          std::string_view{"0"},
       std::string_view{"1"},          std::string_view{"1"},
+      std::string_view{"0"},          std::string_view{"0"},
       std::string_view{"0"}};
   static_assert(kRecordedPane.size() == libtmux::Pane::kFields.size(),
                 "one recorded value per pane field, in the order kFields lists them");
