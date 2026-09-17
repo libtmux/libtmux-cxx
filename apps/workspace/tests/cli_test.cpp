@@ -2226,8 +2226,9 @@ TEST(WorkspaceCliTmux, FailedScriptEventsRetainEffectsAndKnownStatus) {
       EXPECT_EQ(result.at("results")[0].at("session_id"), retained->id());
       EXPECT_EQ(result.at("results")[1].at("input_index"), 1);
       EXPECT_EQ(result.at("results")[1].at("reused"), appending);
-      if (appending)
+      if (appending) {
         EXPECT_EQ(result.at("results")[1].at("session_id"), borrowed->id());
+      }
       const auto& problem = result.at("errors")[0];
       if (rejected_event == "script-completed") {
         EXPECT_TRUE(problem.contains("script_output"));
