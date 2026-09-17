@@ -584,7 +584,9 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
     if (error.get_exit_code() == 0)
       return model.root.exit(error, output, errors);
     if (request.machine())
-      errors << encoded({{"schema_version", 1}, {"code", "usage"}, {"message", error.what()}})
+      errors << encoded({{"schema_version", 1},
+                         {"code", "usage"},
+                         {"message", error.what()}})
              << '\n';
     else
       model.root.exit(error, output, errors);

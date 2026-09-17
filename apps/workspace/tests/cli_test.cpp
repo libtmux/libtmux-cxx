@@ -1058,7 +1058,8 @@ TEST(WorkspaceCli, ParseTmuxpIgnoresExtensionKeysAtEveryLevel) {
     ]
   })";
   const auto parsed = libtmux::workspace::parse_tmuxp(text);
-  ASSERT_TRUE(parsed.has_value()) << parsed.error().where << ": " << parsed.error().reason;
+  ASSERT_TRUE(parsed.has_value())
+      << parsed.error().where << ": " << parsed.error().reason;
   EXPECT_EQ(parsed->session_name, "x-test");
   ASSERT_EQ(parsed->windows.size(), 1U);
   EXPECT_EQ(parsed->windows[0].name, "a");
@@ -1067,7 +1068,8 @@ TEST(WorkspaceCli, ParseTmuxpIgnoresExtensionKeysAtEveryLevel) {
       R"({"session_name":"s","bogus":1,"windows":[{"panes":[":"]}]})");
   ASSERT_FALSE(refused.has_value());
   EXPECT_EQ(refused.error().where, "");
-  EXPECT_NE(refused.error().reason.find("x-"), std::string::npos) << refused.error().reason;
+  EXPECT_NE(refused.error().reason.find("x-"), std::string::npos)
+      << refused.error().reason;
 }
 
 TEST(WorkspaceCli, ConvertPreservesExtensionKeysUnread) {
@@ -1086,7 +1088,8 @@ TEST(WorkspaceCli, LoadRefusalOfATopLevelKeyIsOneCleanSentence) {
   const auto refused = invoke({"load", "bogus.yaml", "-d"});
   EXPECT_NE(refused.code, 0);
   EXPECT_EQ(refused.err.find("Error: :"), std::string::npos) << refused.err;
-  EXPECT_NE(refused.err.find("unsupported key: bogus"), std::string::npos) << refused.err;
+  EXPECT_NE(refused.err.find("unsupported key: bogus"), std::string::npos)
+      << refused.err;
   EXPECT_NE(refused.err.find("x-"), std::string::npos) << refused.err;
 }
 
@@ -1172,8 +1175,8 @@ TEST(WorkspaceCliTmux, RemainingErrorCodesMatchTheSharedVocabulary) {
     const auto socket = fixture->socket_path().string();
     ASSERT_EQ(invoke({"load", "ok.yaml", "-d", "-S", socket, "--json"}).code, 0);
     std::ofstream{"exists.yaml"} << "";
-    const auto destination_exists = invoke(
-        {"freeze", "ok", "-S", socket, "--json", "--save-to", "exists.yaml"});
+    const auto destination_exists =
+        invoke({"freeze", "ok", "-S", socket, "--json", "--save-to", "exists.yaml"});
     ASSERT_NE(destination_exists.code, 0)
         << destination_exists.out << destination_exists.err;
     const auto record = Json::parse(destination_exists.err);
@@ -1210,16 +1213,16 @@ TEST(WorkspaceCliTmux, RemainingErrorCodesMatchTheSharedVocabulary) {
 // with explicit keys overriding merged ones.
 TEST(WorkspaceCli, ConvertResolvesYamlMergeKeys) {
   Files files;
-  std::ofstream{"merge.yaml"}
-      << "session_name: merge-test\nwindows:\n"
-         "  - &base\n    window_name: a\n    panes: [echo a]\n"
-         "  - <<: *base\n    window_name: b\n";
+  std::ofstream{"merge.yaml"} << "session_name: merge-test\nwindows:\n"
+                                 "  - &base\n    window_name: a\n    panes: [echo a]\n"
+                                 "  - <<: *base\n    window_name: b\n";
   const auto converted = invoke({"convert", "merge.yaml", "--json"});
   ASSERT_EQ(converted.code, 0) << converted.err;
   const auto document = Json::parse(converted.out);
   ASSERT_EQ(document.at("windows").size(), 2U);
   EXPECT_EQ(document.at("windows")[1].at("window_name"), "b");
-  EXPECT_EQ(document.at("windows")[1].at("panes"), document.at("windows")[0].at("panes"));
+  EXPECT_EQ(document.at("windows")[1].at("panes"),
+            document.at("windows")[0].at("panes"));
   EXPECT_FALSE(document.at("windows")[1].contains("<<"));
 
   std::ofstream{"merge-list.yaml"}
@@ -1254,7 +1257,8 @@ TEST(WorkspaceCli, ConvertResolvesYamlMergeKeys) {
   EXPECT_EQ(chain[2].at("panes"), Json::array({"echo base"}));
 
   const auto parsed = libtmux::workspace::parse_tmuxp(chained.out);
-  ASSERT_TRUE(parsed.has_value()) << parsed.error().where << ": " << parsed.error().reason;
+  ASSERT_TRUE(parsed.has_value())
+      << parsed.error().where << ": " << parsed.error().reason;
   ASSERT_EQ(parsed->windows.size(), 3U);
   EXPECT_EQ(parsed->windows[2].name, "chained");
 }
@@ -1468,8 +1472,9 @@ TEST(WorkspaceCliTmux, LoadExpandsShellVariablesFromTheLoadingProcessEnvironment
   const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
   ASSERT_TRUE(server.has_value());
   libtmux::test::EnvironmentGuard loader{"QA_LOADER_ONLY", "fromloader"};
-  std::ofstream{"expand.yaml"} << "session_name: expand-test\nwindows:\n"
-                                  "  - panes:\n      - echo \"marker=$QA_LOADER_ONLY\"\n";
+  std::ofstream{"expand.yaml"}
+      << "session_name: expand-test\nwindows:\n"
+         "  - panes:\n      - echo \"marker=$QA_LOADER_ONLY\"\n";
   const auto result = invoke(
       {"load", "expand.yaml", "-d", "-S", fixture->socket_path().string(), "--json"});
   ASSERT_EQ(result.code, 0) << result.err;
@@ -1504,17 +1509,16 @@ TEST(WorkspaceCliTmux, ConvertToYamlQuotesScalarLookingWindowNames) {
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
   ASSERT_TRUE(server.has_value());
-  std::ofstream{"names.yaml"}
-      << "session_name: names-test\nwindows:\n"
-         "  - window_name: \"yes\"\n    panes: [':']\n"
-         "  - window_name: \"1.0\"\n    panes: [':']\n"
-         "  - window_name: \"08\"\n    panes: [':']\n"
-         "  - window_name: \"off\"\n    panes: [':']\n";
+  std::ofstream{"names.yaml"} << "session_name: names-test\nwindows:\n"
+                                 "  - window_name: \"yes\"\n    panes: [':']\n"
+                                 "  - window_name: \"1.0\"\n    panes: [':']\n"
+                                 "  - window_name: \"08\"\n    panes: [':']\n"
+                                 "  - window_name: \"off\"\n    panes: [':']\n";
   const auto converted = invoke({"convert", "names.yaml", "--json"});
   ASSERT_EQ(converted.code, 0) << converted.err;
-  const auto saved = invoke({"convert", "--save-to", "roundtrip.yaml",
-                             "--workspace-format", "yaml", "--yes", "--force",
-                             "names.yaml"});
+  const auto saved =
+      invoke({"convert", "--save-to", "roundtrip.yaml", "--workspace-format", "yaml",
+              "--yes", "--force", "names.yaml"});
   ASSERT_EQ(saved.code, 0) << saved.err;
   std::ifstream written{"roundtrip.yaml"};
   const std::string text{std::istreambuf_iterator<char>{written}, {}};
@@ -1895,7 +1899,8 @@ TEST(WorkspaceCliTmux, HumanErrorNeverPrintsRetainedStateAsJson) {
       {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-humanerr")});
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   std::ofstream{"ok.yaml"} << "session_name: ok\nwindows: [{panes: [echo]}]\n";
-  const auto cold_socket = (fixture->socket_path().parent_path() / "cold-human").string();
+  const auto cold_socket =
+      (fixture->socket_path().parent_path() / "cold-human").string();
   const auto empty_path =
       std::filesystem::temp_directory_path() / "cxx-ws-empty-path-human";
   std::filesystem::create_directories(empty_path);
