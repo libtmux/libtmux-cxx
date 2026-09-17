@@ -825,4 +825,141 @@ CATALOGUE: t.Final = (
             "test_default_argument_calls_are_not_method_names"
         ),
     ),
+    Mutation(
+        mutation_id="select-layout-rejects-unrecognised-value",
+        path="src/entities.cpp",
+        find="  if (!is_universal_layout_preset(layout) && "
+        "!looks_like_classic_layout(layout)) {",
+        replace="  static_cast<void>(is_universal_layout_preset(layout));\n"
+        "  static_cast<void>(looks_like_classic_layout(layout));\n"
+        "  if (false) {",
+        target="libtmux_entity_test",
+        test_regex=(
+            r"^libtmux[.]entity[.]Entity[.]"
+            r"SelectLayoutRefusesAnUnrecognisedValueWithoutCrashingTheServer$"
+        ),
+        guards="a layout value that is not a known preset, not shaped like a "
+        "saved layout, and not (version-gated) JSON is refused before "
+        "dispatch, rather than passed to tmux, which crashes its server "
+        "outright on exactly that input on tmux 3.3 and 3.3a",
+    ),
+    Mutation(
+        mutation_id="subscription-changed-typed-ids",
+        path="src/control.cpp",
+        find="  if (parsed.kind == NotificationKind::subscription_changed) {\n"
+        "    constexpr std::size_t argument_count = 6U;\n"
+        "    const auto fields = leading_fields(line, argument_count);\n"
+        "    if (fields.size() < argument_count) {\n"
+        "      return parsed;\n"
+        "    }\n"
+        "    place_argument(parsed, fields[2]);\n"
+        "    place_argument(parsed, fields[3]);\n"
+        "    place_argument(parsed, fields[5]);\n",
+        replace="  if (parsed.kind == NotificationKind::subscription_changed) {\n"
+        "    constexpr std::size_t argument_count = 6U;\n"
+        "    const auto fields = leading_fields(line, argument_count);\n"
+        "    if (fields.size() < argument_count) {\n"
+        "      return parsed;\n"
+        "    }\n",
+        target="libtmux_control_parser_test",
+        test_regex=(
+            r"^libtmux[.]control[.]parser[.]NotificationParse[.]"
+            r"TypesTheIdsInASubscriptionChangedNotification$"
+        ),
+        guards="a %subscription-changed notification's own session, window and "
+        "pane ids land in the typed fields the doc comment promises, rather "
+        "than staying empty because the subscription's free-form name is "
+        "the first argument",
+    ),
+    Mutation(
+        mutation_id="rendered-command-utf8-boundary",
+        path="src/backend.cpp",
+        find="      rendered.resize(utf8_safe_cut(rendered, maximum));",
+        replace="      rendered.resize(maximum);\n"
+        "      static_cast<void>(utf8_safe_cut(rendered, maximum));",
+        target="libtmux_backend_seam_test",
+        test_regex=r"^libtmux[.]backend_seam$",
+        guards="a diagnostic truncated at the byte budget backs up to a UTF-8 "
+        "character boundary instead of cutting one in half",
+    ),
+    Mutation(
+        mutation_id="connect-requests-json-layouts",
+        path="src/connection.cpp",
+        find='    ControlRequest layout_request;\n'
+        "    layout_request.group.push_back(\n"
+        '        ControlCommand{{"refresh-client", "-f", "new-layouts"}});',
+        replace="    ControlRequest layout_request;\n"
+        "    static_cast<void>(layout_request);",
+        target="libtmux_control_integration_test",
+        test_regex=(
+            r"^libtmux[.]control[.]integration[.]ControlModeConnection[.]"
+            r"LayoutChangePayloadAgreesWithAPlainSnapshotOn38Plus$"
+        ),
+        guards="Connection::connect asks tmux for JSON layouts, so a "
+        "%layout-change this connection reads agrees with a plain Server "
+        "snapshot's window_layout on tmux 3.8+ instead of carrying the "
+        "classic, index-based form",
+    ),
+    Mutation(
+        mutation_id="pane-toggle-zoom-sends-flag",
+        path="src/entities.cpp",
+        find='  return effect(run({"resize-pane", "-Z", "-t", pane_target(*this)}));',
+        replace='  return effect(run({"resize-pane", "-t", pane_target(*this)}));',
+        target="libtmux_entity_test",
+        test_regex=r"^libtmux[.]entity[.]Entity[.]ToggleZoomZoomsAndUnzoomsAPane$",
+        guards="toggling zoom sends resize-pane's -Z flag rather than a bare "
+        "resize-pane that changes nothing",
+    ),
+    Mutation(
+        mutation_id="layout-contains-pane-needle",
+        path="src/control.cpp",
+        find='  const std::string needle = "\\"I\\":\\"" + std::string{pane_id} + "\\"";',
+        replace='  const std::string needle = "\\"J\\":\\"" + std::string{pane_id} + "\\"";',
+        target="libtmux_control_parser_test",
+        test_regex=(
+            r"^libtmux[.]control[.]parser[.]LayoutContainsPane[.]"
+            r"AnswersFromJsonAndDeclinesFromClassic$"
+        ),
+        guards="layout_contains_pane looks for the JSON layout's own pane-id "
+        "key, so it does not report every pane absent from a real layout",
+    ),
+    Mutation(
+        mutation_id="startable-keeps-bootstrap-selector",
+        path="src/backend.cpp",
+        find="    endpoint->connection = selector;",
+        replace='    endpoint->connection = {"-S", *resolved};',
+        target="libtmux_server_identity_test",
+        test_regex=(
+            r"^libtmux[.]server[.]identity[.]ServerIdentity[.]"
+            r"StartableAtSocketNameSucceedsUnderAFreshTmuxTmpdir$"
+        ),
+        guards="a startable server's first command keeps the caller's own "
+        "-L/default selector, so tmux creates the tmux-<uid> directory a "
+        "fresh socket lives under; pinning that first command to a bare "
+        "-S <path> of our own skips the step that creates it",
+    ),
+    Mutation(
+        mutation_id="wait-for-text-defers-active-row-match",
+        path="apps/mcp/src/wait_for_text.cpp",
+        find="  if (*matched && !matches_only_the_active_row(initial_capture, wanted)) {\n"
+        "    return wait_output(WaitAnswer{.matched = true,",
+        replace="  if (*matched) {\n"
+        "    return wait_output(WaitAnswer{.matched = true,",
+        target="mcp_tools_test",
+        test_regex=r"^consumer[.]mcp[.]real-tmux$",
+        guards="wait_for_text does not report a match confined to the pane's "
+        "active row, which is a caller's own just-submitted command echoed "
+        "back rather than output the shell produced by running it (D10)",
+    ),
+    Mutation(
+        mutation_id="wait-for-text-timeout-checks-for-the-match",
+        path="apps/mcp/src/wait_for_text.cpp",
+        find="  if (!wanted.empty() && text.find(wanted) != std::string::npos) {",
+        replace="  if (false && !wanted.empty() && text.find(wanted) != std::string::npos) {",
+        target="mcp_tools_test",
+        test_regex=r"^consumer[.]mcp[.]real-tmux$",
+        guards="a wait that would time out with the wanted text still sitting "
+        "in its last capture reports a deferred match instead, so a Timeout "
+        "result never carries the match it claims not to have found (D10)",
+    ),
 )
