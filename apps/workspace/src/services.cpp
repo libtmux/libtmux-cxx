@@ -1539,8 +1539,14 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
                 script_error.emplace(
                     child.code >= 128 ? child.code : 1, "script_failed",
                     "before_script exited with status " + std::to_string(child.code));
-              event("script-completed",
-                    {{"input_index", index}, {"script_output", script_output}});
+              // child_status/truncated match go's script-completed fields, so
+              // a consumer reads the child's status without digging into the
+              // nested script_output object; script_output is kept for the
+              // full capture (stdout/stderr/encoding).
+              event("script-completed", {{"input_index", index},
+                                         {"child_status", child.code},
+                                         {"truncated", child.truncated},
+                                         {"script_output", script_output}});
               if (script_error)
                 return script_error->what();
             } catch (const Failure& error) {
