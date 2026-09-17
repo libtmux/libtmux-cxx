@@ -228,6 +228,11 @@ public:
   // indistinguishable from being signalled — a caller would carry on as
   // though the other side had spoken. This reports that as a failure
   // instead, which is the reason to prefer it over running the command.
+  //
+  // Omitting `timeout` waits with no deadline: if the channel is never
+  // signalled, this call never returns. Waiting is the whole point of the
+  // request, so that is deliberate rather than a gap — pass a timeout to
+  // bound it.
   [[nodiscard]] expected<void, CommandFailure>
   wait_for(std::string_view channel,
            std::optional<std::chrono::milliseconds> timeout = {}) const;
