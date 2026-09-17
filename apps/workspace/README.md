@@ -338,11 +338,13 @@ the last flag wins. An empty `-c` still executes without entering a console.
 Interactive mode requires a controlling terminal identified by a standard
 descriptor. Machine modes require `-c`.
 
-With `-c`, human output streams directly; JSON captures stdout, stderr and exit
-status under `script_output`. NDJSON flushes `script-output` records with
+With `-c`, human output streams directly; JSON reports `child_status`, `stdout`,
+`stderr`, `encoding` and `truncated` at the top level -- matching the other
+libtmux workspace ports -- and keeps the same capture nested under
+`script_output`. NDJSON flushes `script-output` records with
 `stream` and `text`, then a completed or failed result. Captured output includes
 the reference runtime's own messages. Each stream is limited to 1 MiB;
-overflow stops the child group and reports `OUTPUT_LIMIT` with bounded capture.
+overflow stops the child group and reports `output_limit` with bounded capture.
 SIGINT or SIGTERM sent to the workspace process cancels its owned child group
 and preserves the signal exit status. Interactive exit restores terminal
 settings and foreground ownership. Shell execution has no fixed deadline.
