@@ -311,7 +311,7 @@ tmux scopes window and pane listings to the current session unless asked for eve
 ```cpp
 [[nodiscard]] expected<void, CommandFailure> wait_for(std::string_view channel, std::optional<std::chrono::milliseconds> timeout = {}) const;
 ```
-Block until someone signals this channel, or the deadline passes.  tmux latches a signal: one sent while nobody is waiting satisfies the next wait rather than being lost. That makes signal-before-wait safe, and it also means a stale signal can release a later waiter, so a channel is worth naming for one exchange rather than reusing.  A server that dies under a waiter makes tmux exit zero, which is indistinguishable from being signalled — a caller would carry on as though the other side had spoken. This reports that as a failure instead, which is the reason to prefer it over running the command.
+Block until someone signals this channel, or the deadline passes.  tmux latches a signal: one sent while nobody is waiting satisfies the next wait rather than being lost. That makes signal-before-wait safe, and it also means a stale signal can release a later waiter, so a channel is worth naming for one exchange rather than reusing.  A server that dies under a waiter makes tmux exit zero, which is indistinguishable from being signalled — a caller would carry on as though the other side had spoken. This reports that as a failure instead, which is the reason to prefer it over running the command.  Omitting `timeout` waits with no deadline: if the channel is never signalled, this call never returns. Waiting is the whole point of the request, so that is deliberate rather than a gap — pass a timeout to bound it.
 
 <a id="libtmux-server-hpp-server-signal"></a>
 #### `Server::signal`
@@ -1297,6 +1297,8 @@ The tmux object hierarchy.  A Session, Window, Pane or Client is one row of a sn
   - [`Pane::at_left`](#libtmux-entities-hpp-pane-at-left)
   - [`Pane::at_right`](#libtmux-entities-hpp-pane-at-right)
   - [`Pane::piping`](#libtmux-entities-hpp-pane-piping)
+  - [`Pane::left`](#libtmux-entities-hpp-pane-left)
+  - [`Pane::top`](#libtmux-entities-hpp-pane-top)
   - [`Pane::session_name`](#libtmux-entities-hpp-pane-session-name)
   - [`Pane::operator==`](#libtmux-entities-hpp-pane-operator)
   - [`Pane::window`](#libtmux-entities-hpp-pane-window)
@@ -1310,6 +1312,7 @@ The tmux object hierarchy.  A Session, Window, Pane or Client is one row of a sn
   - [`Pane::set_width`](#libtmux-entities-hpp-pane-set-width)
   - [`Pane::set_height`](#libtmux-entities-hpp-pane-set-height)
   - [`Pane::swap_with`](#libtmux-entities-hpp-pane-swap-with)
+  - [`Pane::toggle_zoom`](#libtmux-entities-hpp-pane-toggle-zoom)
   - [`Pane::break_out`](#libtmux-entities-hpp-pane-break-out)
   - [`Pane::join`](#libtmux-entities-hpp-pane-join)
   - [`Pane::enter_copy_mode`](#libtmux-entities-hpp-pane-enter-copy-mode)
@@ -2160,7 +2163,7 @@ Position within its session, which `base-index` is free to start anywhere.
 ```cpp
 [[nodiscard]] std::string_view layout() const noexcept;
 ```
-An opaque token: hand it back to `select_layout` exactly as received, and do not parse its shape. tmux 3.8+ reports JSON here for a non-control client, and keeps the classic layout string for a control client unless it has set `CLIENT_CONTROL_NEWLAYOUTS`. `select-layout` accepts either form on every version this library supports, so a caller that only round-trips the value never needs to know which one it got.
+An opaque token: hand it back to `select_layout` exactly as received, and do not parse its shape. tmux 3.8+ reports JSON here for a plain client, and keeps the classic layout string for a control client unless that client has asked tmux for JSON with `refresh-client -f new-layouts` — which `Connection::connect` sends on every connection, so control mode through this library gets JSON on 3.8+ too.  A version's own `layout()` output round-trips through its own `select_layout` on that version; see that method's comment for what "round-trips" promises and what it does not.
 
 <a id="libtmux-entities-hpp-window-zoomed"></a>
 #### `Window::zoomed`
@@ -2270,7 +2273,7 @@ How to address this window, and the reason a window id alone will not do.  The s
 ```cpp
 [[nodiscard]] expected<void, CommandFailure> select_layout(std::string_view layout) const;
 ```
-Rearrange the panes. tmux names five layouts and also accepts the layout description `layout()` returns, which is how a saved arrangement is restored exactly.
+Rearrange the panes. tmux names five layouts, plus two mirrored ones on tmux 3.5+, and also accepts the layout description `layout()` returns.  Restoring one exactly — the same pane back at the same position, not only the same shape — holds on tmux 3.8+, where the saved string is JSON and carries each pane's id. On tmux 3.7 and earlier the classic layout string restores the shape but can rotate which pane lands in which cell (measured against raw tmux; not a choice this library makes). A JSON layout is refused before 3.8, and a mirrored preset before 3.5.  Anything not shaped like one of those — a leading `-`, a name tmux does not know, or an incomplete layout string — is refused before reaching tmux rather than passed through: on tmux 3.3 and 3.3a, that shape crashes the server outright rather than being refused.
 
 <a id="libtmux-entities-hpp-window-resize"></a>
 #### `Window::resize`
@@ -2431,7 +2434,7 @@ static constexpr std::string_view kSessionNameField{"session_name"};
 #### `Pane::kFields`
 
 ```cpp
-static constexpr std::array kFields{ std::string_view{"pane_id"}, std::string_view{"pane_current_command"}, std::string_view{"pane_active"}, std::string_view{"window_id"}, std::string_view{"session_id"}, std::string_view{"pane_index"}, std::string_view{"pane_title"}, std::string_view{"pane_pid"}, std::string_view{"pane_tty"}, std::string_view{"pane_current_path"}, std::string_view{"pane_width"}, std::string_view{"pane_height"}, std::string_view{"pane_dead"}, std::string_view{"pane_in_mode"}, std::string_view{"pane_at_top"}, std::string_view{"pane_at_bottom"}, std::string_view{"pane_at_left"}, std::string_view{"pane_at_right"}, std::string_view{"pane_pipe"}};
+static constexpr std::array kFields{ std::string_view{"pane_id"}, std::string_view{"pane_current_command"}, std::string_view{"pane_active"}, std::string_view{"window_id"}, std::string_view{"session_id"}, std::string_view{"pane_index"}, std::string_view{"pane_title"}, std::string_view{"pane_pid"}, std::string_view{"pane_tty"}, std::string_view{"pane_current_path"}, std::string_view{"pane_width"}, std::string_view{"pane_height"}, std::string_view{"pane_dead"}, std::string_view{"pane_in_mode"}, std::string_view{"pane_at_top"}, std::string_view{"pane_at_bottom"}, std::string_view{"pane_at_left"}, std::string_view{"pane_at_right"}, std::string_view{"pane_pipe"}, std::string_view{"pane_left"}, std::string_view{"pane_top"}};
 ```
 
 <a id="libtmux-entities-hpp-pane-pane"></a>
@@ -2592,6 +2595,22 @@ Copy mode and its relatives, in which sent keys move the cursor rather than reac
 ```
 Whether this pane's output is currently being copied to a command.
 
+<a id="libtmux-entities-hpp-pane-left"></a>
+#### `Pane::left`
+
+```cpp
+[[nodiscard]] long long left() const noexcept;
+```
+Position within the window, in cells from its top-left corner — the geometry `select_layout`'s saved arrangement places panes at.
+
+<a id="libtmux-entities-hpp-pane-top"></a>
+#### `Pane::top`
+
+```cpp
+[[nodiscard]] long long top() const noexcept;
+```
+Its counterpart along the other axis.
+
 <a id="libtmux-entities-hpp-pane-session-name"></a>
 #### `Pane::session_name`
 
@@ -2688,6 +2707,14 @@ The visible contents, as tmux printed them. `capture_lines` frames it into lines
 ```cpp
 [[nodiscard]] expected<void, CommandFailure> swap_with(const Pane& other) const;
 ```
+
+<a id="libtmux-entities-hpp-pane-toggle-zoom"></a>
+#### `Pane::toggle_zoom`
+
+```cpp
+[[nodiscard]] expected<void, CommandFailure> toggle_zoom() const;
+```
+Toggle whether this pane's window is zoomed onto it — the whole window given over to one pane, full size. Zoom is window state, which `Window::zoomed()` reads; naming a pane here is how tmux picks which one to give the window to.  Only the zoom-in direction reads this pane: a window already zoomed unzooms on any target, this pane included, and stays on whichever pane it was zoomed onto (measured against raw tmux).
 
 <a id="libtmux-entities-hpp-pane-break-out"></a>
 #### `Pane::break_out`
@@ -5772,7 +5799,7 @@ A descriptor that is readable exactly when a take would return something.  For a
 ```cpp
 expected<void, ProtocolError> set_pane_output(std::string_view pane, bool deliver, std::chrono::steady_clock::time_point deadline);
 ```
-Stop or resume `%output` for one pane, on a connection that asked for it.  The direction is not symmetrical, because tmux is not: a connection that started without `pane_output` cannot be made to listen to anything, and muting is the only per-pane control it offers. So this narrows what a listening connection receives; it cannot widen a silent one.  Resuming clears both mute and pause, starting at tmux's current output offset. Output already discarded by tmux is not replayed.
+Stop or resume `%output` for one pane, on a connection that asked for it.  The direction is not symmetrical, because tmux is not: a connection that started without `pane_output` cannot be made to listen to anything, and muting is the only per-pane control it offers. So this narrows what a listening connection receives; it cannot widen a silent one.  Resuming clears both mute and pause, starting at tmux's current output offset. What a caller sees for output produced while muted differs by tmux version, and is not this library's choice either way:  - Before tmux 3.7, muting stops delivery to this connection only. What the pane printed while muted is lost — resuming never replays it. - On tmux 3.7+, muting stops tmux from reading the pane's pty at all. The pane freezes for every attached client and tool, not only this connection, and what it printed while muted arrives as a backlog on resume (measured against raw tmux, both directions).
 
 <a id="libtmux-control-hpp-connection-mute-pane-output"></a>
 #### `Connection::mute_pane_output`
@@ -5904,6 +5931,7 @@ Events tmux emits outside guarded control reply blocks.  Most are protocol notif
   - [`to_string`](#libtmux-notification-hpp-free-symbols-to-string)
   - [`parse`](#libtmux-notification-hpp-free-symbols-parse)
   - [`parse`](#libtmux-notification-hpp-free-symbols-parse-2)
+  - [`layout_contains_pane`](#libtmux-notification-hpp-free-symbols-layout-contains-pane)
 
 <a id="libtmux-notification-hpp-notification"></a>
 ### `Notification`
@@ -6010,7 +6038,7 @@ enum class NotificationKind : std::uint8_t;
 <a id="libtmux-notification-hpp-parsednotification"></a>
 ### `ParsedNotification`
 
-A notification's arguments, as views into the notification it was read from.  tmux types its arguments by prefix — `$0` a session, `@1` a window, `%2` a pane — so each lands in the field it belongs to and the others stay empty. `payload` is the pane bytes of an output notification, already unescaped; it is empty for every other kind.  Everything here borrows. The notification must outlive it, which is why there is no overload taking a temporary.
+A notification's arguments, as views into the notification it was read from.  tmux types its arguments by prefix — `$0` a session, `@1` a window, `%2` a pane — so each lands in the field it belongs to and the others stay empty. `payload` is the pane bytes of an output notification, already unescaped; it is empty for every other kind.  `subscription_changed` is the one kind whose first argument is never an id: it is the subscription's own name (chosen by whoever called `refresh-client -B`), so `text` holds that name and the changed value together — `"<name> : <value>"` — once `session`/`window`/`pane` have taken the ids around them.  Everything here borrows. The notification must outlive it, which is why there is no overload taking a temporary.
 
 ```cpp
 struct ParsedNotification;
@@ -6179,6 +6207,14 @@ Events evicted before this watch took them, excluding events consumed by other c
 ```cpp
 ParsedNotification parse(Notification&&) = delete;
 ```
+
+<a id="libtmux-notification-hpp-free-symbols-layout-contains-pane"></a>
+#### `layout_contains_pane`
+
+```cpp
+[[nodiscard]] std::optional<bool> layout_contains_pane(std::string_view layout_change_text, std::string_view pane_id);
+```
+Whether `pane_id` (`%N`) is still part of a window's arrangement, reading a `layout_change` notification's own `text` — `window_layout` followed by `window_visible_layout` and the window's flags (control-notify.c) — for its first, whitespace-delimited token.  tmux gives no notification dedicated to a pane leaving its window; a `%layout-change` naming the pane gone is the only signal there is. This answers only from the JSON layout (3.8+, and only for a connection that requested it — see `Window::layout()`), which carries each pane's stable id. The classic layout string encodes each pane's position by index instead, which the removal of any other pane in the window renumbers, so this returns `std::nullopt` there rather than guessing: killing the observed pane is the one case a caller most wants an honest answer for, and a stale index is exactly where a guess would be wrong.
 
 <a id="libtmux-batch-hpp"></a>
 ## `libtmux/batch.hpp`
