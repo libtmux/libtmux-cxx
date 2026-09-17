@@ -271,7 +271,16 @@ public:
   // listening connection receives; it cannot widen a silent one.
   //
   // Resuming clears both mute and pause, starting at tmux's current output
-  // offset. Output already discarded by tmux is not replayed.
+  // offset. What a caller sees for output produced while muted differs by
+  // tmux version, and is not this library's choice either way:
+  //
+  //   - Before tmux 3.7, muting stops delivery to this connection only.
+  //     What the pane printed while muted is lost — resuming never replays
+  //     it.
+  //   - On tmux 3.7+, muting stops tmux from reading the pane's pty at all.
+  //     The pane freezes for every attached client and tool, not only this
+  //     connection, and what it printed while muted arrives as a backlog on
+  //     resume (measured against raw tmux, both directions).
   expected<void, ProtocolError>
   set_pane_output(std::string_view pane, bool deliver,
                   std::chrono::steady_clock::time_point deadline);

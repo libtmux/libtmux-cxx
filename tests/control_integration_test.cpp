@@ -567,6 +567,117 @@ TEST(ControlModeConnection, AliasExpansionKeepsEveryReplyAndTheNextRequestAligne
   EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
 }
 
+// `Connection::connect` requests JSON layouts so a snapshot read through a
+// plain `Server` and a `%layout-change` read from this control connection
+// agree, on tmux 3.8+, instead of one being JSON and the other the classic
+// form.
+TEST(ControlModeConnection, LayoutChangePayloadAgreesWithAPlainSnapshotOn38Plus) {
+  auto fixture = start_server(unique_name("control-layout-json"));
+  ASSERT_TRUE(fixture.has_value()) << (fixture.has_value() ? "" : fixture.error());
+  auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+  const auto version = server->tmux_version();
+  ASSERT_TRUE(version.has_value()) << version.error().diagnostic;
+  if (*version < libtmux::Version{.major = 3, .minor = 8}) {
+    GTEST_SKIP() << "the JSON layout form this compares needs tmux 3.8+";
+  }
+
+  auto connected = connect_to(*fixture);
+  ASSERT_TRUE(connected.has_value())
+      << (connected.has_value() ? "" : connected.error().message);
+  auto connection = std::move(*connected);
+
+  auto panes = server->panes();
+  ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
+  ASSERT_EQ(panes->size(), 1U);
+  ASSERT_TRUE(panes->front().split().has_value());
+
+  const auto deadline = std::chrono::steady_clock::now() + 2s;
+  std::optional<std::string> layout_change_text;
+  while (!layout_change_text.has_value() &&
+         std::chrono::steady_clock::now() < deadline) {
+    for (const auto& notification : connection.wait_for_notifications(deadline)) {
+      const auto parsed = libtmux::parse(notification);
+      if (parsed.kind == libtmux::NotificationKind::layout_change) {
+        layout_change_text = std::string{parsed.text};
+      }
+    }
+  }
+  ASSERT_TRUE(layout_change_text.has_value())
+      << "no %layout-change arrived after split";
+  const auto space = layout_change_text->find(' ');
+  ASSERT_NE(space, std::string::npos);
+  const std::string notified_layout = layout_change_text->substr(0, space);
+
+  auto windows = server->windows();
+  ASSERT_TRUE(windows.has_value()) << windows.error().diagnostic;
+  ASSERT_EQ(windows->size(), 1U);
+  const std::string snapshot_layout{windows->front().layout()};
+
+  EXPECT_TRUE(notified_layout.starts_with(R"({"V":)"))
+      << "control connection did not receive JSON: " << notified_layout;
+  EXPECT_EQ(notified_layout, snapshot_layout);
+
+  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+}
+
+// tmux gives no notification dedicated to a pane leaving its window: the
+// only signal is the window's own `%layout-change`. This proves the
+// signal `layout_contains_pane` reads is really there, end to end, for a
+// pane this connection was watching and tmux then removed.
+TEST(ControlModeConnection, LayoutContainsPaneAnswersAfterTheObservedPaneIsKilled) {
+  auto fixture = start_server(unique_name("control-pane-lost"));
+  ASSERT_TRUE(fixture.has_value()) << (fixture.has_value() ? "" : fixture.error());
+  auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+  const auto version = server->tmux_version();
+  ASSERT_TRUE(version.has_value()) << version.error().diagnostic;
+  if (*version < libtmux::Version{.major = 3, .minor = 8}) {
+    GTEST_SKIP() << "the JSON layout this answers from needs tmux 3.8+";
+  }
+
+  auto connected = connect_to(*fixture);
+  ASSERT_TRUE(connected.has_value())
+      << (connected.has_value() ? "" : connected.error().message);
+  auto connection = std::move(*connected);
+
+  auto panes = server->panes();
+  ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
+  ASSERT_EQ(panes->size(), 1U);
+  const std::string kept{panes->front().id()};
+  const auto split = panes->front().split();
+  ASSERT_TRUE(split.has_value()) << split.error().diagnostic;
+  const std::string doomed{split->id()};
+
+  // Drain the split's own layout-change before killing the pane, so the one
+  // this test reads is unambiguously the one the kill caused.
+  static_cast<void>(
+      connection.wait_for_notifications(std::chrono::steady_clock::now() + 300ms));
+
+  ASSERT_TRUE(split->kill().has_value());
+
+  const auto deadline = std::chrono::steady_clock::now() + 2s;
+  std::optional<std::string> layout_change_text;
+  while (!layout_change_text.has_value() &&
+         std::chrono::steady_clock::now() < deadline) {
+    for (const auto& notification : connection.wait_for_notifications(deadline)) {
+      const auto parsed = libtmux::parse(notification);
+      if (parsed.kind == libtmux::NotificationKind::layout_change) {
+        layout_change_text = std::string{parsed.text};
+      }
+    }
+  }
+  ASSERT_TRUE(layout_change_text.has_value())
+      << "no %layout-change arrived after the kill";
+
+  EXPECT_EQ(libtmux::layout_contains_pane(*layout_change_text, kept),
+            std::optional<bool>{true});
+  EXPECT_EQ(libtmux::layout_contains_pane(*layout_change_text, doomed),
+            std::optional<bool>{false});
+
+  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+}
+
 TEST(ControlModeConnection, InsertedReplyStaysWithItsConcurrentRequest) {
   auto server = start_server(unique_name("control-explicit-replies"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());

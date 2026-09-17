@@ -468,4 +468,15 @@ ParsedNotification parse(const Notification& notification) {
   return parsed;
 }
 
+std::optional<bool> layout_contains_pane(std::string_view layout_change_text,
+                                         std::string_view pane_id) {
+  const auto space = layout_change_text.find(' ');
+  const std::string_view layout = layout_change_text.substr(0, space);
+  if (pane_id.empty() || !layout.starts_with(R"({"V":)")) {
+    return std::nullopt;
+  }
+  const std::string needle = "\"I\":\"" + std::string{pane_id} + "\"";
+  return layout.find(needle) != std::string_view::npos;
+}
+
 LIBTMUX_NAMESPACE_END

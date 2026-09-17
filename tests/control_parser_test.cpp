@@ -488,3 +488,25 @@ TEST(NotificationParse, ReportsAnUnknownNameWithoutLosingIt) {
   EXPECT_EQ(parsed.window, "@9");
   EXPECT_EQ(libtmux::to_string(libtmux::NotificationKind::unknown), "unknown");
 }
+
+// The only signal tmux emits for a pane leaving its window's arrangement: a
+// `%layout-change` naming the window, not the pane. `layout_contains_pane`
+// turns that into a typed answer for a JSON layout, and an honest "cannot
+// tell" for the classic one.
+TEST(LayoutContainsPane, AnswersFromJsonAndDeclinesFromClassic) {
+  constexpr std::string_view layout_change_text =
+      R"({"V":2,"L":{"t":"h","w":80,"h":24,"x":0,"y":0,)"
+      R"("c":[{"t":"p","w":40,"h":24,"x":0,"y":0,"i":0,"I":"%0"},)"
+      R"({"t":"p","w":39,"h":24,"x":41,"y":0,"a":true,"i":1,"I":"%1"}]}} )"
+      R"({"V":2,"L":{"t":"p","w":80,"h":24,"x":0,"y":0,"i":0,"I":"%0"}} *)";
+
+  EXPECT_EQ(libtmux::layout_contains_pane(layout_change_text, "%0"),
+            std::optional<bool>{true});
+  EXPECT_EQ(libtmux::layout_contains_pane(layout_change_text, "%1"),
+            std::optional<bool>{true});
+  EXPECT_EQ(libtmux::layout_contains_pane(layout_change_text, "%2"),
+            std::optional<bool>{false});
+
+  constexpr std::string_view classic_text = "b25d,80x24,0,0,0 1 *";
+  EXPECT_EQ(libtmux::layout_contains_pane(classic_text, "%0"), std::nullopt);
+}
