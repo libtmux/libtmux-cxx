@@ -193,6 +193,14 @@ TEST(WorkspaceCli, ShellPreservesArgumentsStreamsAndChildStatus) {
   EXPECT_EQ(value.at("status"), "error");
   EXPECT_EQ(value.at("script_output").at("stdout"), "shell output");
   EXPECT_EQ(value.at("script_output").at("stderr"), "shell diagnostic");
+  // child_status/stdout/stderr/encoding/truncated at the top level, not only
+  // nested under script_output -- matching dotnet/go/java/rs/ts, so a
+  // consumer written against those five also works on cxx.
+  EXPECT_EQ(value.at("child_status"), 7);
+  EXPECT_EQ(value.at("stdout"), "shell output");
+  EXPECT_EQ(value.at("stderr"), "shell diagnostic");
+  EXPECT_EQ(value.at("truncated"), false);
+  EXPECT_EQ(value.at("encoding"), "utf-8-with-replacement");
   std::ifstream input{"arguments", std::ios::binary};
   std::vector<std::string> args;
   for (std::string argument; std::getline(input, argument, '\0');)

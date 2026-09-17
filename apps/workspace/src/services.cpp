@@ -1288,6 +1288,18 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
       result["errors"].push_back({{"code", error.code}, {"message", error.what()}});
     }
     result["status"] = result.at("exit_code") == 0 ? "ok" : "error";
+    // child_status/stdout/stderr/encoding/truncated at the top level, not
+    // only nested under script_output: dotnet, go, java, rs and ts all
+    // report these names directly, so a consumer written against those five
+    // also works here. script_output is kept for callers that already read
+    // it; error_handler_t::replace (encoded()'s own dump policy) is what
+    // "utf-8-with-replacement" describes -- invalid bytes in the captured
+    // text become U+FFFD, they are not rejected.
+    result["child_status"] = result.at("script_output").at("exit_code");
+    result["stdout"] = result.at("script_output").at("stdout");
+    result["stderr"] = result.at("script_output").at("stderr");
+    result["truncated"] = result.at("script_output").at("truncated");
+    result["encoding"] = "utf-8-with-replacement";
     return {.value = std::move(result)};
   }
   if (request.command == "edit") {
