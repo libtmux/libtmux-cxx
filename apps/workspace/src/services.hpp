@@ -50,6 +50,10 @@ using EventSink = std::function<void(const std::string&, Json)>;
 struct Execution {
   Json value;
   std::function<void()> handoff{};
+  // The process exit code for "load", carried here rather than in `value`
+  // (its --json/--ndjson envelope has no top-level exit_code). Unused by
+  // every other command, which still reports its status through `value`.
+  int exit_code{};
 };
 struct ChildOutput {
   int code;

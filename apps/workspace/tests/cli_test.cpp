@@ -1093,11 +1093,7 @@ TEST(WorkspaceCli, LoadRefusalOfATopLevelKeyIsOneCleanSentence) {
   EXPECT_NE(refused.err.find("x-"), std::string::npos) << refused.err;
 }
 
-// Every port's machine error `code` for the same condition used to be
-// different. These four conditions -- a missing workspace file, a malformed
-// document, a refused key and a freeze target that doesn't exist -- now
-// report the shared lower snake_case vocabulary, and every stderr error
-// record carries "schema_version":1.
+// Every stderr error record carries "schema_version":1.
 TEST(WorkspaceCliTmux, ErrorCodesMatchTheSharedLowerSnakeCaseVocabulary) {
   Files files;
   auto fixture = libtmux::test::ScopedTmuxServer::start(
@@ -1132,81 +1128,114 @@ TEST(WorkspaceCliTmux, ErrorCodesMatchTheSharedLowerSnakeCaseVocabulary) {
   record = Json::parse(frozen.err);
   EXPECT_EQ(record.at("schema_version"), 1) << record.dump();
   EXPECT_EQ(record.at("code"), "session_not_found") << record.dump();
-}
 
-// The remaining conditions each get their own server: chaining several tmux
-// mutations onto one server before reaching a spawn-failure case
-// (before_script) was unreliable in CI.
-TEST(WorkspaceCliTmux, RemainingErrorCodesMatchTheSharedVocabulary) {
-  Files files;
   std::ofstream{"ok.yaml"} << "session_name: ok\nwindows: [{panes: [echo]}]\n";
   std::ofstream{"tf.yaml"}
       << "session_name: cf\nwindows:\n  - window_name: w\n    options:\n"
          "      no-such-option-xyz: 1\n    panes: [echo]\n";
+  // A portable failing command: /bin/false does not exist on macOS (it is
+  // /usr/bin/false there), so `sh` interpreting a written script is used
+  // everywhere else in this file for exactly this reason.
+  std::ofstream{"fail.sh"} << "exit 1\n";
   std::ofstream{"sf.yaml"}
-      << "session_name: cs\nbefore_script: /bin/false\nwindows: [{panes: [echo]}]\n";
+      << "session_name: cs\nbefore_script: sh fail.sh\nwindows: [{panes: [echo]}]\n";
+  // A before_script naming a command that cannot be started at all (not
+  // found, not executable) is a before_script failure, not a generic
+  // process error -- this is what actually broke on macOS, where the
+  // literal path /bin/false does not exist.
+  std::ofstream{"sm.yaml"} << "session_name: cm\nbefore_script: "
+                              "./no-such-script-anywhere\nwindows: [{panes: [echo]}]\n";
 
-  {
-    auto fixture = libtmux::test::ScopedTmuxServer::start(
-        {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-codes-sf")});
-    ASSERT_TRUE(fixture.has_value()) << fixture.error();
-    const auto script_failed = invoke(
-        {"load", "sf.yaml", "-d", "-S", fixture->socket_path().string(), "--json"});
-    ASSERT_NE(script_failed.code, 0) << script_failed.out << script_failed.err;
-    const auto record = Json::parse(script_failed.err);
-    EXPECT_EQ(record.at("schema_version"), 1) << record.dump();
-    EXPECT_EQ(record.at("code"), "script_failed") << record.dump();
-  }
-  {
-    auto fixture = libtmux::test::ScopedTmuxServer::start(
-        {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-codes-tf")});
-    ASSERT_TRUE(fixture.has_value()) << fixture.error();
-    const auto tmux_failed = invoke(
-        {"load", "tf.yaml", "-d", "-S", fixture->socket_path().string(), "--json"});
-    ASSERT_NE(tmux_failed.code, 0) << tmux_failed.out << tmux_failed.err;
-    const auto record = Json::parse(tmux_failed.err);
-    EXPECT_EQ(record.at("schema_version"), 1) << record.dump();
-    EXPECT_EQ(record.at("code"), "tmux_failed") << record.dump();
-  }
-  {
-    auto fixture = libtmux::test::ScopedTmuxServer::start(
-        {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-codes-de")});
-    ASSERT_TRUE(fixture.has_value()) << fixture.error();
-    const auto socket = fixture->socket_path().string();
-    ASSERT_EQ(invoke({"load", "ok.yaml", "-d", "-S", socket, "--json"}).code, 0);
-    std::ofstream{"exists.yaml"} << "";
-    const auto destination_exists =
-        invoke({"freeze", "ok", "-S", socket, "--json", "--save-to", "exists.yaml"});
-    ASSERT_NE(destination_exists.code, 0)
-        << destination_exists.out << destination_exists.err;
-    const auto record = Json::parse(destination_exists.err);
-    EXPECT_EQ(record.at("schema_version"), 1) << record.dump();
-    EXPECT_EQ(record.at("code"), "destination_exists") << record.dump();
+  const auto tmux_failed = invoke({"load", "tf.yaml", "-d", "-S", socket, "--json"});
+  ASSERT_NE(tmux_failed.code, 0) << tmux_failed.out << tmux_failed.err;
+  record = Json::parse(tmux_failed.err);
+  EXPECT_EQ(record.at("schema_version"), 1) << record.dump();
+  EXPECT_EQ(record.at("code"), "tmux_failed") << record.dump();
 
-    const auto usage = invoke({"load", "ok.yaml", "-S", socket, "--json"});
-    ASSERT_EQ(usage.code, 2) << usage.out << usage.err;
-    const auto usage_record = Json::parse(usage.err);
-    EXPECT_EQ(usage_record.at("schema_version"), 1) << usage_record.dump();
-    EXPECT_EQ(usage_record.at("code"), "usage") << usage_record.dump();
-  }
-  {
-    // A socket with no live server, and no tmux on PATH to start a fresh
-    // one, takes the cold-start path rather than an ordinary command.
-    auto fixture = libtmux::test::ScopedTmuxServer::start(
-        {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-codes-tu")});
-    ASSERT_TRUE(fixture.has_value()) << fixture.error();
-    const auto cold_socket = (fixture->socket_path().parent_path() / "cold").string();
-    const auto empty_path =
-        std::filesystem::temp_directory_path() / "cxx-ws-empty-path";
-    std::filesystem::create_directories(empty_path);
-    libtmux::test::EnvironmentGuard path{"PATH", empty_path.string()};
-    const auto tmux_unavailable =
-        invoke({"load", "ok.yaml", "-d", "-S", cold_socket, "--json"});
-    EXPECT_NE(tmux_unavailable.code, 0);
-    const auto record = Json::parse(tmux_unavailable.err);
-    EXPECT_EQ(record.at("schema_version"), 1);
-    EXPECT_EQ(record.at("code"), "tmux_unavailable");
-  }
+  const auto script_failed = invoke({"load", "sf.yaml", "-d", "-S", socket, "--json"});
+  ASSERT_NE(script_failed.code, 0) << script_failed.out << script_failed.err;
+  record = Json::parse(script_failed.err);
+  EXPECT_EQ(record.at("schema_version"), 1) << record.dump();
+  EXPECT_EQ(record.at("code"), "script_failed") << record.dump();
+
+  const auto missing_script = invoke({"load", "sm.yaml", "-d", "-S", socket, "--json"});
+  ASSERT_NE(missing_script.code, 0) << missing_script.out << missing_script.err;
+  record = Json::parse(missing_script.err);
+  EXPECT_EQ(record.at("schema_version"), 1) << record.dump();
+  EXPECT_EQ(record.at("code"), "script_failed") << record.dump();
+
+  ASSERT_EQ(invoke({"load", "ok.yaml", "-d", "-S", socket, "--json"}).code, 0);
+  std::ofstream{"exists.yaml"} << "";
+  const auto destination_exists =
+      invoke({"freeze", "ok", "-S", socket, "--json", "--save-to", "exists.yaml"});
+  ASSERT_NE(destination_exists.code, 0)
+      << destination_exists.out << destination_exists.err;
+  record = Json::parse(destination_exists.err);
+  EXPECT_EQ(record.at("schema_version"), 1) << record.dump();
+  EXPECT_EQ(record.at("code"), "destination_exists") << record.dump();
+
+  const auto usage = invoke({"load", "ok.yaml", "-S", socket, "--json"});
+  ASSERT_EQ(usage.code, 2) << usage.out << usage.err;
+  record = Json::parse(usage.err);
+  EXPECT_EQ(record.at("schema_version"), 1) << record.dump();
+  EXPECT_EQ(record.at("code"), "usage") << record.dump();
+
+  // A socket with no live server, and no tmux on PATH to start a fresh one,
+  // takes the cold-start path rather than an ordinary command. The empty
+  // directory lives under Files' own tree so its destructor removes it,
+  // rather than under the shared system temp directory, which nothing here
+  // owns and nothing would clean up.
+  const auto cold_socket = (fixture->socket_path().parent_path() / "cold").string();
+  const auto empty_path = files.directory / "empty-path";
+  std::filesystem::create_directories(empty_path);
+  libtmux::test::EnvironmentGuard path{"PATH", empty_path.string()};
+  const auto tmux_unavailable =
+      invoke({"load", "ok.yaml", "-d", "-S", cold_socket, "--json"});
+  EXPECT_NE(tmux_unavailable.code, 0);
+  record = Json::parse(tmux_unavailable.err);
+  EXPECT_EQ(record.at("schema_version"), 1) << record.dump();
+  EXPECT_EQ(record.at("code"), "tmux_unavailable") << record.dump();
+}
+
+// results[] carries one record per input the load attempted, failed inputs
+// included -- not only the inputs that succeeded -- with at least input,
+// input_index, session_id, session_name and reused. Covers both a
+// before_script that starts and exits non-zero, and one that cannot be
+// started at all (missing or not executable).
+TEST(WorkspaceCliTmux, LoadResultsIncludeAFailedInputsRecord) {
+  Files files;
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-codes-r")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto socket = fixture->socket_path().string();
+  const auto server = libtmux::Server::at_socket_path(socket);
+  ASSERT_TRUE(server.has_value());
+  std::ofstream{"fail.sh"} << "exit 1\n";
+
+  std::ofstream{"sf.yaml"}
+      << "session_name: cs\nbefore_script: sh fail.sh\nwindows: [{panes: [echo]}]\n";
+  const auto exits_nonzero = invoke({"load", "sf.yaml", "-d", "-S", socket, "--json"});
+  ASSERT_NE(exits_nonzero.code, 0) << exits_nonzero.out << exits_nonzero.err;
+  auto summary = Json::parse(exits_nonzero.out);
+  EXPECT_EQ(summary.at("status"), "error") << summary.dump();
+  ASSERT_EQ(summary.at("results").size(), 1U) << summary.dump();
+  const auto& failed_result = summary.at("results")[0];
+  EXPECT_EQ(failed_result.at("input_index"), 0);
+  EXPECT_EQ(failed_result.at("session_name"), "cs");
+  EXPECT_EQ(failed_result.at("reused"), false);
+  EXPECT_TRUE(failed_result.at("session_id").is_string()) << failed_result.dump();
+  EXPECT_TRUE(failed_result.contains("input"));
+  EXPECT_FALSE(server->session("=cs:").has_value());
+
+  std::ofstream{"sm.yaml"} << "session_name: cm\nbefore_script: "
+                              "./no-such-script-anywhere\nwindows: [{panes: [echo]}]\n";
+  const auto cannot_start = invoke({"load", "sm.yaml", "-d", "-S", socket, "--json"});
+  ASSERT_NE(cannot_start.code, 0) << cannot_start.out << cannot_start.err;
+  summary = Json::parse(cannot_start.out);
+  EXPECT_EQ(summary.at("status"), "error") << summary.dump();
+  ASSERT_EQ(summary.at("results").size(), 1U) << summary.dump();
+  EXPECT_EQ(summary.at("results")[0].at("session_name"), "cm");
+  EXPECT_EQ(summary.at("results")[0].at("reused"), false);
 }
 
 // `<<: *anchor` or `<<: [*a, *b]` merges that mapping's keys, in order,
@@ -1522,18 +1551,31 @@ TEST(WorkspaceCliTmux, ConvertToYamlQuotesScalarLookingWindowNames) {
   ASSERT_EQ(saved.code, 0) << saved.err;
   std::ifstream written{"roundtrip.yaml"};
   const std::string text{std::istreambuf_iterator<char>{written}, {}};
+  // Quoting is checked against the written document alone -- it never
+  // reaches tmux -- so "1.0" stays in this set even though tmux 3.7
+  // specifically (WINDOW_NAME_FORBID ":.", reverted by later 3.7.x releases)
+  // refuses any window name containing '.', which the load step below would
+  // hit.
   for (const auto* quoted : {"\"yes\"", "\"1.0\"", "\"08\"", "\"off\""})
     EXPECT_NE(text.find(quoted), std::string::npos) << text;
 
-  const auto loaded = invoke({"load", "roundtrip.yaml", "-d", "-S",
+  std::ofstream{"loadable.yaml"} << "session_name: names-test\nwindows:\n"
+                                    "  - window_name: \"yes\"\n    panes: [':']\n"
+                                    "  - window_name: \"08\"\n    panes: [':']\n"
+                                    "  - window_name: \"off\"\n    panes: [':']\n";
+  const auto load_saved =
+      invoke({"convert", "--save-to", "load-roundtrip.yaml", "--workspace-format",
+              "yaml", "--yes", "--force", "loadable.yaml"});
+  ASSERT_EQ(load_saved.code, 0) << load_saved.err;
+  const auto loaded = invoke({"load", "load-roundtrip.yaml", "-d", "-S",
                               fixture->socket_path().string(), "--json"});
-  ASSERT_EQ(loaded.code, 0) << loaded.err << text;
+  ASSERT_EQ(loaded.code, 0) << loaded.err;
   const auto session = server->session("=names-test:");
   ASSERT_TRUE(session.has_value());
   const auto windows = session->windows();
   ASSERT_TRUE(windows.has_value());
-  ASSERT_EQ(windows->size(), 4U);
-  const std::vector<std::string> expected{"yes", "1.0", "08", "off"};
+  ASSERT_EQ(windows->size(), 3U);
+  const std::vector<std::string> expected{"yes", "08", "off"};
   for (std::size_t index = 0; index < expected.size(); ++index)
     EXPECT_EQ(std::string{(*windows)[index].name()}, expected[index]);
 }
@@ -1559,6 +1601,19 @@ TEST(WorkspaceCliTmux, NativeLoadCaptureAndConversionRoundTrip) {
   const auto summary = Json::parse(loaded.out);
   EXPECT_EQ(summary.at("status"), "ok");
   EXPECT_EQ(summary.at("results").size(), 1U);
+  // The envelope carries only schema_version, command, status, results and
+  // errors; the process exit code travels out of band, not in this document.
+  std::vector<std::string> keys;
+  for (auto entry = summary.begin(); entry != summary.end(); ++entry)
+    keys.push_back(entry.key());
+  std::ranges::sort(keys);
+  EXPECT_EQ(keys, (std::vector<std::string>{"command", "errors", "results",
+                                            "schema_version", "status"}))
+      << summary.dump();
+  EXPECT_EQ(summary.at("results")[0].at("action"), "created");
+  EXPECT_EQ(summary.at("results")[0].at("reused"), false);
+  for (const auto* field : {"input", "input_index", "session_id", "session_name"})
+    EXPECT_TRUE(summary.at("results")[0].contains(field)) << field;
   const auto captured = invoke(
       {"freeze", "cli-created", "-S", fixture->socket_path().string(), "--json"});
   ASSERT_EQ(captured.code, 0) << captured.err;
@@ -1581,6 +1636,10 @@ TEST(WorkspaceCliTmux, NativeLoadCaptureAndConversionRoundTrip) {
   while (std::getline(lines, line)) {
     const auto event = Json::parse(line);
     EXPECT_EQ(event.at("sequence"), ++sequence);
+    if (event.at("event") == "completed") {
+      EXPECT_EQ(event.at("results")[0].at("action"), "reused");
+      EXPECT_EQ(event.at("results")[0].at("reused"), true);
+    }
     completed += event.at("event") == "completed" ? 1 : 0;
   }
   EXPECT_EQ(completed, 1);
@@ -1901,8 +1960,9 @@ TEST(WorkspaceCliTmux, HumanErrorNeverPrintsRetainedStateAsJson) {
   std::ofstream{"ok.yaml"} << "session_name: ok\nwindows: [{panes: [echo]}]\n";
   const auto cold_socket =
       (fixture->socket_path().parent_path() / "cold-human").string();
-  const auto empty_path =
-      std::filesystem::temp_directory_path() / "cxx-ws-empty-path-human";
+  // Under Files' own tree, so its destructor removes it; the shared system
+  // temp directory has no owner to clean this up.
+  const auto empty_path = files.directory / "empty-path-human";
   std::filesystem::create_directories(empty_path);
   libtmux::test::EnvironmentGuard path{"PATH", empty_path.string()};
   const auto failed = invoke({"load", "ok.yaml", "-d", "-S", cold_socket});
@@ -2026,22 +2086,28 @@ TEST(WorkspaceCliTmux, FailedEventDeliveryRetainsCompletedSessionAccounting) {
         .ndjson = true};
     Json result;
     bool rejected{};
+    int exit_code = 0;
     try {
-      result = libtmux::workspace::cli::execute(
-                   request,
-                   [&](const std::string& event, const libtmux::workspace::cli::Json&) {
-                     if (event == "session-created") {
-                       rejected = true;
-                       if (closed)
-                         throw libtmux::workspace::cli::Failure{1, "output_closed",
-                                                                "event sink closed"};
-                       throw std::runtime_error{"event sink failed"};
-                     }
-                   })
-                   .value;
+      // workspace-completed, not session-created: session-created now fires
+      // before any window is built, so rejecting it rolls the build back
+      // (matching every other mid-build event) rather than leaving a
+      // completed session for a broken sink to fail to report.
+      const auto execution = libtmux::workspace::cli::execute(
+          request, [&](const std::string& event, const libtmux::workspace::cli::Json&) {
+            if (event == "workspace-completed") {
+              rejected = true;
+              if (closed)
+                throw libtmux::workspace::cli::Failure{1, "output_closed",
+                                                       "event sink closed"};
+              throw std::runtime_error{"event sink failed"};
+            }
+          });
+      result = execution.value;
+      exit_code = execution.exit_code;
     } catch (const libtmux::workspace::cli::Failure& error) {
       EXPECT_EQ(error.exit_code, 1);
       result = error.retained_state;
+      exit_code = error.exit_code;
     }
     EXPECT_TRUE(rejected);
     const auto retained = server->session("=" + name + ":");
@@ -2051,7 +2117,7 @@ TEST(WorkspaceCliTmux, FailedEventDeliveryRetainsCompletedSessionAccounting) {
     EXPECT_EQ(sessions->size(), previous->size() + 1);
     ASSERT_TRUE(result.is_object()) << "completed-session accounting was lost";
     EXPECT_EQ(result.at("status"), "partial");
-    EXPECT_EQ(result.at("exit_code"), 1);
+    EXPECT_EQ(exit_code, 1);
     ASSERT_EQ(result.at("results").size(), 1U);
     EXPECT_EQ(result.at("results")[0].at("session_id"), retained->id());
     EXPECT_EQ(result.at("errors")[0].at("code"),
@@ -2103,25 +2169,29 @@ TEST(WorkspaceCliTmux, FailedScriptEventsRetainEffectsAndKnownStatus) {
           .ndjson = true};
       bool rejected{}, later_started{};
       Json result;
+      // load's own exit code travels on Execution, not in its envelope, so
+      // it is captured alongside .value rather than read back from it.
+      int exit_code = 0;
       try {
-        result = libtmux::workspace::cli::execute(
-                     request,
-                     [&](const std::string& event,
-                         const libtmux::workspace::cli::Json& value) {
-                       if (event == "workspace-started" && value.at("input_index") == 2)
-                         later_started = true;
-                       if (event == rejected_event) {
-                         rejected = true;
-                         if (event == "script-completed") {
-                           EXPECT_EQ(value.at("script_output").at("exit_code"), 143);
-                         }
-                         throw libtmux::workspace::cli::Failure{
-                             1, "output_closed", "script event sink closed"};
-                       }
-                     })
-                     .value;
+        const auto execution = libtmux::workspace::cli::execute(
+            request,
+            [&](const std::string& event, const libtmux::workspace::cli::Json& value) {
+              if (event == "workspace-started" && value.at("input_index") == 2)
+                later_started = true;
+              if (event == rejected_event) {
+                rejected = true;
+                if (event == "script-completed") {
+                  EXPECT_EQ(value.at("script_output").at("exit_code"), 143);
+                }
+                throw libtmux::workspace::cli::Failure{1, "output_closed",
+                                                       "script event sink closed"};
+              }
+            });
+        result = execution.value;
+        exit_code = execution.exit_code;
       } catch (const libtmux::workspace::cli::Failure& error) {
         result = error.retained_state;
+        exit_code = error.exit_code;
       }
       EXPECT_TRUE(rejected);
       EXPECT_FALSE(later_started);
@@ -2149,9 +2219,15 @@ TEST(WorkspaceCliTmux, FailedScriptEventsRetainEffectsAndKnownStatus) {
       if (!result.is_object())
         continue;
       EXPECT_EQ(result.at("status"), "partial");
-      EXPECT_EQ(result.at("exit_code"), rejected_event == "script-completed" ? 143 : 1);
-      ASSERT_EQ(result.at("results").size(), 1U);
+      EXPECT_EQ(exit_code, rejected_event == "script-completed" ? 143 : 1);
+      // results[0] is the completed first input; results[1] is the failed
+      // second one -- one record per attempted input, failed included.
+      ASSERT_EQ(result.at("results").size(), 2U);
       EXPECT_EQ(result.at("results")[0].at("session_id"), retained->id());
+      EXPECT_EQ(result.at("results")[1].at("input_index"), 1);
+      EXPECT_EQ(result.at("results")[1].at("reused"), appending);
+      if (appending)
+        EXPECT_EQ(result.at("results")[1].at("session_id"), borrowed->id());
       const auto& problem = result.at("errors")[0];
       if (rejected_event == "script-completed") {
         EXPECT_TRUE(problem.contains("script_output"));
@@ -2210,8 +2286,9 @@ TEST(WorkspaceCliTmux, FailedPublicationRetainsSessionsAndPrimaryStatus) {
   libtmux::test::EnvironmentGuard tmux{"TMUX", fixture->socket_path().string() + "," +
                                                    *pid + ",0"};
   libtmux::test::EnvironmentGuard current_pane{"TMUX_PANE", pane->id()};
+  std::ofstream{"fail.sh"} << "exit 1\n";
   std::ofstream{"output.yaml"}
-      << "session_name: append\nbefore_script: /bin/false\nwindows: [{}]\n";
+      << "session_name: append\nbefore_script: sh fail.sh\nwindows: [{}]\n";
   FailedFlush buffer;
   std::ostream broken{&buffer};
   std::istringstream input;
@@ -2228,7 +2305,12 @@ TEST(WorkspaceCliTmux, FailedPublicationRetainsSessionsAndPrimaryStatus) {
     last = Json::parse(line);
   const auto state = last.at("retained_state");
   EXPECT_EQ(state.at("status"), "partial");
-  EXPECT_TRUE(state.at("results").empty());
+  // One record for the attempted (failed) input, per input the load
+  // attempted -- its session is the borrowed one, still alive since a
+  // failed append never rolls back what it did not create.
+  ASSERT_EQ(state.at("results").size(), 1U);
+  EXPECT_EQ(state.at("results")[0].at("session_id"), borrowed->id());
+  EXPECT_EQ(state.at("results")[0].at("reused"), true);
   EXPECT_EQ(state.at("errors")[0].at("retained_state").at("session_id"),
             borrowed->id());
   EXPECT_TRUE(server->session(borrowed->id()).has_value());
@@ -2701,6 +2783,19 @@ TEST(WorkspaceCliTmux, LoadNdjsonEmitsTypedWindowAndPaneEvents) {
   for (const auto* required :
        {"window-created", "window-completed", "pane-created", "pane-completed"})
     EXPECT_NE(std::ranges::find(events, required), events.end()) << required;
+  // session-created carries the new session's id before any window exists,
+  // so it must follow workspace-started directly, not the whole build.
+  std::string order;
+  for (const auto& name : events)
+    order += name + " ";
+  const auto started = std::ranges::find(events, "workspace-started");
+  const auto created = std::ranges::find(events, "session-created");
+  const auto first_window = std::ranges::find(events, "window-created");
+  ASSERT_NE(started, events.end()) << order;
+  ASSERT_NE(created, events.end()) << order;
+  ASSERT_NE(first_window, events.end()) << order;
+  EXPECT_EQ(std::next(started), created) << order;
+  EXPECT_LT(created, first_window) << order;
   ASSERT_FALSE(window_created.is_null());
   for (const auto* field : {"input_index", "session_id", "window_id", "window_index"})
     EXPECT_TRUE(window_created.contains(field)) << field;
@@ -2745,18 +2840,18 @@ TEST(WorkspaceCliTmux, ProgressSinkFailureReportsBorrowedWindowsAndOriginalStatu
                    {append ? "append" : "d", {"true"}}},
         .ndjson = true};
     bool refused{};
-    const auto result =
-        libtmux::workspace::cli::execute(request, [&](const auto& event,
-                                                      const auto& /* data */) {
+    const auto execution = libtmux::workspace::cli::execute(
+        request, [&](const auto& event, const auto& /* data */) {
           if (event == "pane-completed") {
             refused = true;
             throw libtmux::workspace::cli::Failure{77, "TEST_SINK_CLOSED",
                                                    "progress consumer closed"};
           }
-        }).value;
+        });
+    const auto& result = execution.value;
     ASSERT_TRUE(refused);
     ASSERT_EQ(result.at("errors").size(), 1U);
-    EXPECT_EQ(result.at("exit_code"), 77);
+    EXPECT_EQ(execution.exit_code, 77);
     EXPECT_EQ(result.at("errors")[0].at("code"), "TEST_SINK_CLOSED");
     EXPECT_FALSE(server->session("=observed:"));
     const auto after = borrowed->windows();

@@ -416,8 +416,12 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
       progress->finish();
     diagnostics.diagnostic(code, message);
     try {
-      if ((request.command == "load" || request.command == "shell") &&
-          execution.value.is_object()) {
+      // load's exit code travels on Execution, not in its envelope; shell's
+      // envelope still carries its own top-level exit_code.
+      if (request.command == "load" && execution.value.is_object()) {
+        if (execution.exit_code != 0)
+          status = execution.exit_code;
+      } else if (request.command == "shell" && execution.value.is_object()) {
         const auto primary = execution.value.at("exit_code").get<int>();
         if (primary != 0)
           status = primary;
@@ -578,7 +582,8 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
         execution.handoff();
     }
     if (process_command && output && errors)
-      return result.at("exit_code").get<int>();
+      return request.command == "load" ? execution.exit_code
+                                       : result.at("exit_code").get<int>();
     return output && !failed ? 0 : 1;
   } catch (const CLI::ParseError& error) {
     if (error.get_exit_code() == 0)

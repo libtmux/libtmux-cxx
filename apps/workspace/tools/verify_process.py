@@ -950,8 +950,14 @@ def failed_log_file(binary, root, env, mode):
         assert len(windows) == (2 if borrowed or failed else 3), windows
         if output:
             result = json.loads(output)
-            assert result["exit_code"] == (143 if failed else 0)
-            assert len(result["results"]) == (1 if failed else 2)
+            # load's envelope no longer carries a top-level exit_code; the
+            # process's own exit status (already asserted above) is the
+            # only place it travels.
+            assert process.returncode == (143 if failed else 0)
+            # results[] carries one record per attempted input, the failed
+            # one included -- its session existed (before_script runs after
+            # session creation) even when the load as a whole failed.
+            assert len(result["results"]) == 2
             script = result["errors" if failed else "results"][-1]["script_output"]
             if mode != "cancel":
                 assert script["stdout"] == "x" * 8192
@@ -968,7 +974,7 @@ def failed_log_file(binary, root, env, mode):
                     for record in records
                     if "retained_state" in record
                 )
-                assert len(retained["results"]) == (1 if failed else 2)
+                assert len(retained["results"]) == 2
         log = (root / "operation.log").read_bytes()
         assert (
             len(log) == 2048 and json.loads(log.splitlines()[0])["event"] == "started"

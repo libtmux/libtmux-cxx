@@ -270,7 +270,13 @@ def before_scripts(binary, root, env, prefix, append_env):
                     item["code"] == "output_closed" for item in diagnostics
                 ), error
                 retained = diagnostics[-1]["retained_state"]
-                assert retained["status"] == "error" and not retained["results"], error
+                assert retained["status"] == "error", error
+                # results[] now carries one record per attempted input, the
+                # failed one included -- its session existed (before_script
+                # runs after session creation) even though the owned build
+                # then rolled it back.
+                assert len(retained["results"]) == 1, error
+                assert retained["results"][0]["input_index"] == 0, error
                 assert retained["errors"][0]["failed_stage"] == "before-script", error
             else:
                 records = (

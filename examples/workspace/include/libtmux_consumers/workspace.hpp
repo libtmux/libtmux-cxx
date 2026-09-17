@@ -118,6 +118,7 @@ struct BuildError {
 using BeforeBuild = std::function<std::optional<std::string>(const libtmux::Session&)>;
 
 enum class BuildPhase {
+  session_started,
   window_started,
   pane_started,
   pane_completed,
@@ -128,7 +129,7 @@ struct BuildEvent {
   BuildPhase phase;
   std::size_t window_index;
   std::size_t pane_index;
-  // Populated for the four named phases; empty for waiting.
+  // Populated for the five named phases; empty for waiting.
   std::string session_id{};
   std::string window_id{};
   std::string pane_id{};
@@ -260,6 +261,11 @@ build_windows(const Server& server, const Workspace& description,
     } while (std::chrono::steady_clock::now() < until);
     return notify(BuildPhase::waiting, window, pane);
   };
+  // Reported as soon as the session exists -- before before_script, before
+  // any window -- so a caller that only needs the new session's id is not
+  // left waiting for the whole build.
+  if (auto error = notify(BuildPhase::session_started, 0, 0, std::string{built->id()}))
+    return libtmux::unexpected(std::move(*error));
   if (auto error = notify(BuildPhase::waiting, 0, 0))
     return libtmux::unexpected(std::move(*error));
   if (before) {

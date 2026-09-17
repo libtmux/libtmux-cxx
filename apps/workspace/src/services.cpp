@@ -1421,6 +1421,10 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
     const bool appending = request.flag("append") && !request.flag("d");
     bool retained_changes{};
     int failure_status{1};
+    // Distinct from results.size(): a failed input now also gets a results[]
+    // record, so "did anything succeed" needs its own count for the
+    // ok/error/partial decision below.
+    std::size_t succeeded{};
     const bool interactive = !request.flag("d") && !appending;
     std::optional<Session> selected;
     std::optional<Client> caller;
@@ -1457,12 +1461,30 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
                                     {"window_total", plan.workspace.windows.size()},
                                     {"session_pane_total", total_panes}});
         std::optional<Failure> observer_error;
+        // Captured so a failed build can still report the session it
+        // attempted, even though the session itself may since have
+        // been rolled back.
+        std::string attempted_session_id;
         const BuildObserver observer =
             [&](const BuildEvent& update) -> std::optional<std::string> {
           try {
             check_interruption();
             if (update.phase == BuildPhase::waiting)
               return std::nullopt;
+            if (update.phase == BuildPhase::session_started) {
+              // Reported the moment the session exists, directly after
+              // workspace-started and before any window; skipped for a
+              // borrowed (appended) session, which was not created here.
+              attempted_session_id = update.session_id;
+              if (!borrowed)
+                event("session-created", {{"input_index", index},
+                                          {"input", private_path(plan.path)},
+                                          {"session_id", update.session_id},
+                                          {"session_name", plan.workspace.session_name},
+                                          {"action", "created"},
+                                          {"reused", false}});
+              return std::nullopt;
+            }
             const bool is_window = update.phase == BuildPhase::window_started ||
                                    update.phase == BuildPhase::window_completed;
             const auto name =
@@ -1522,8 +1544,15 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
               if (script_error)
                 return script_error->what();
             } catch (const Failure& error) {
-              if (!script_error)
+              if (!script_error) {
                 script_error = error;
+                // A before_script that cannot even be started (missing, not
+                // executable) is a before_script failure -- matching
+                // tmuxp's BeforeLoadScriptNotExists -- not run_child()'s
+                // generic process_failed.
+                if (script_error->code == "process_failed")
+                  script_error->code = "script_failed";
+              }
               if (script_output.is_null())
                 script_output = error.child_output;
               return script_error->what();
@@ -1567,22 +1596,43 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
                                          {"settings_may_have_changed", true}};
           }
           errors.push_back(std::move(problem));
+          // One record per attempted input, failed inputs included: its
+          // session may already be gone (an owned build rolls back on
+          // failure), but the id an in-progress build reported and this
+          // input's own document are still known. Json(string) rather than
+          // Json{string}: the brace form is nlohmann's initializer-list
+          // constructor, which turns a single string into a one-element
+          // array instead of a string value.
+          Json failed_result{
+              {"input", private_path(plan.path)},
+              {"input_index", index},
+              {"session_id",
+               attempted_session_id.empty() ? Json{} : Json(attempted_session_id)},
+              {"session_name", plan.workspace.session_name},
+              {"reused", static_cast<bool>(borrowed) || static_cast<bool>(existing)},
+              {"action", borrowed   ? "appended"
+                         : existing ? "reused"
+                                    : "created"}};
+          results.push_back(std::move(failed_result));
           break;
         }
-        Json result{{"input", private_path(plan.path)},
-                    {"input_index", index},
-                    {"session_id", built->id()},
-                    {"session_name", built->name()},
-                    {"action", borrowed   ? "appended"
-                               : existing ? "reused"
-                                          : "created"}};
+        Json result{
+            {"input", private_path(plan.path)},
+            {"input_index", index},
+            {"session_id", built->id()},
+            {"session_name", built->name()},
+            {"reused", static_cast<bool>(borrowed) || static_cast<bool>(existing)},
+            {"action", borrowed   ? "appended"
+                       : existing ? "reused"
+                                  : "created"}};
         if (!script_output.is_null())
           result["script_output"] = script_output;
         results.push_back(result);
+        ++succeeded;
         if (index + 1 == plans.size())
           selected = *built;
-        if (!existing)
-          event("session-created", result);
+        // session-created already fired from the build observer, directly
+        // after workspace-started, for a session created here.
         event("workspace-completed", result);
       }
     } catch (const Failure& error) {
@@ -1608,14 +1658,21 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
                           {"message", cleaned.error().diagnostic},
                           {"failed_stage", "cleanup"}});
     }
-    const auto status = errors.empty()                         ? "ok"
-                        : results.empty() && !retained_changes ? "error"
-                                                               : "partial";
-    Json summary{
-        {"schema_version", 1}, {"command", "load"},
-        {"status", status},    {"exit_code", errors.empty() ? 0 : failure_status},
-        {"results", results},  {"errors", errors}};
-    Execution execution{.value = std::move(summary)};
+    // A failed input still gets a results[] record, so whether anything
+    // succeeded needs its own counter rather than results.empty().
+    const auto status = errors.empty()                        ? "ok"
+                        : succeeded == 0 && !retained_changes ? "error"
+                                                              : "partial";
+    // The envelope carries only schema_version, command, status, results and
+    // errors; the process exit code travels out of band on Execution, not in
+    // the document a --json/--ndjson consumer reads.
+    Json summary{{"schema_version", 1},
+                 {"command", "load"},
+                 {"status", status},
+                 {"results", results},
+                 {"errors", errors}};
+    Execution execution{.value = std::move(summary),
+                        .exit_code = errors.empty() ? 0 : failure_status};
     if (interactive && errors.empty() && selected) {
       try {
         execution.handoff = load_handoff(*selected, std::move(caller));
@@ -1687,10 +1744,20 @@ std::string human_result(const Request& request, const Json& result, bool colour
         write(row, {}, {});
     }
   } else if (request.command == "load") {
-    for (const auto& item : result.at("results"))
+    // results[] now carries one record per attempted input, failed ones
+    // included; the human summary line is only for what actually built, so
+    // skip any input_index that also has an errors[] entry.
+    std::set<std::size_t> failed_inputs;
+    for (const auto& problem : result.at("errors"))
+      if (problem.contains("input_index"))
+        failed_inputs.insert(problem.at("input_index").get<std::size_t>());
+    for (const auto& item : result.at("results")) {
+      if (failed_inputs.contains(item.at("input_index").get<std::size_t>()))
+        continue;
       output << role("32", item.at("action").get<std::string>()) << ' '
              << role("1;35", item.at("session_name").get<std::string>()) << ' '
              << role("2", item.at("session_id").get<std::string>()) << '\n';
+    }
   } else if (result.contains("destination")) {
     if (!request.flag("quiet"))
       output << role("32", "Saved") << ' '
