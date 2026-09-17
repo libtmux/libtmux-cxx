@@ -261,6 +261,41 @@ build_windows(const Server& server, const Workspace& description,
     } while (std::chrono::steady_clock::now() < until);
     return notify(BuildPhase::waiting, window, pane);
   };
+  // A freshly spawned pane echoes a command typed into it before its shell has
+  // drawn a prompt, and the shell then redraws the prompt over it, so the
+  // command appears twice. Wait for the cursor to leave the origin, which is
+  // where a pane starts and where its shell leaves it until the prompt is
+  // drawn. The window's layout is still settling at that point (applied once
+  // for the whole window, ahead of every pane in it), and a resize the shell
+  // answers with its own redraw looks identical to the initial draw, so the
+  // position also has to hold steady for a few polls before it counts as
+  // settled. Give up and send anyway past the deadline, as tmuxp does.
+  const auto ready = [&](std::size_t window, std::size_t pane,
+                         const libtmux::Pane& target) -> std::optional<BuildError> {
+    const auto until =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds{2000};
+    std::string settled;
+    int streak{};
+    do {
+      if (auto error = notify(BuildPhase::waiting, window, pane))
+        return error;
+      const auto cursor = target.expand("#{cursor_x},#{cursor_y}");
+      if (!cursor)
+        return std::nullopt;
+      if (*cursor == "0,0") {
+        settled.clear();
+        streak = 0;
+      } else if (*cursor == settled) {
+        if (++streak >= 3)
+          return std::nullopt;
+      } else {
+        settled = *cursor;
+        streak = 1;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds{50});
+    } while (std::chrono::steady_clock::now() < until);
+    return std::nullopt;
+  };
   // Reported as soon as the session exists -- before before_script, before
   // any window -- so a caller that only needs the new session's id is not
   // left waiting for the whole build.
@@ -439,6 +474,13 @@ build_windows(const Server& server, const Workspace& description,
               notify(BuildPhase::pane_started, index, pane, std::string{built->id()},
                      std::string{windows[index].id()}, std::string{target.id()}))
         return libtmux::unexpected(std::move(*error));
+      // A pane whose shell is replaced by a launcher command never draws an
+      // interactive prompt, so there is nothing to wait for.
+      if (!described.panes[pane].shell_commands.empty() &&
+          shell(described, described.panes[pane]).empty()) {
+        if (auto error = ready(index, pane, target))
+          return libtmux::unexpected(std::move(*error));
+      }
       for (const Command& command : described.panes[pane].shell_commands) {
         if (auto error = notify(BuildPhase::waiting, index, pane))
           return libtmux::unexpected(std::move(*error));
