@@ -899,7 +899,7 @@ CATALOGUE: t.Final = (
     Mutation(
         mutation_id="connect-requests-json-layouts",
         path="src/connection.cpp",
-        find='    ControlRequest layout_request;\n'
+        find="    ControlRequest layout_request;\n"
         "    layout_request.group.push_back(\n"
         '        ControlCommand{{"refresh-client", "-f", "new-layouts"}});',
         replace="    ControlRequest layout_request;\n"
@@ -928,8 +928,10 @@ CATALOGUE: t.Final = (
     Mutation(
         mutation_id="layout-contains-pane-needle",
         path="src/control.cpp",
-        find='  const std::string needle = "\\"I\\":\\"" + std::string{pane_id} + "\\"";',
-        replace='  const std::string needle = "\\"J\\":\\"" + std::string{pane_id} + "\\"";',
+        find='  const std::string needle = "\\"I\\":\\"" + std::string{pane_id} + '
+        '"\\"";',
+        replace='  const std::string needle = "\\"J\\":\\"" + std::string{pane_id} + '
+        '"\\"";',
         target="libtmux_control_parser_test",
         test_regex=(
             r"^libtmux[.]control[.]parser[.]LayoutContainsPane[.]"
@@ -956,10 +958,10 @@ CATALOGUE: t.Final = (
     Mutation(
         mutation_id="wait-for-text-defers-active-row-match",
         path="apps/mcp/src/wait_for_text.cpp",
-        find="  if (*matched && !matches_only_the_active_row(initial_capture, wanted)) {\n"
+        find="  if (*matched && "
+        "!matches_only_the_active_row(initial_capture, wanted)) {\n"
         "    return wait_output(WaitAnswer{.matched = true,",
-        replace="  if (*matched) {\n"
-        "    return wait_output(WaitAnswer{.matched = true,",
+        replace="  if (*matched) {\n    return wait_output(WaitAnswer{.matched = true,",
         target="mcp_tools_test",
         test_regex=r"^consumer[.]mcp[.]real-tmux$",
         guards="wait_for_text does not report a match confined to the pane's "
@@ -970,7 +972,8 @@ CATALOGUE: t.Final = (
         mutation_id="wait-for-text-timeout-checks-for-the-match",
         path="apps/mcp/src/wait_for_text.cpp",
         find="  if (!wanted.empty() && text.find(wanted) != std::string::npos) {",
-        replace="  if (false && !wanted.empty() && text.find(wanted) != std::string::npos) {",
+        replace="  if (false && !wanted.empty() && "
+        "text.find(wanted) != std::string::npos) {",
         target="mcp_tools_test",
         test_regex=r"^consumer[.]mcp[.]real-tmux$",
         guards="a wait that would time out with the wanted text still sitting "
@@ -980,12 +983,12 @@ CATALOGUE: t.Final = (
     Mutation(
         mutation_id="wait-for-text-capture-joins-wrapped-lines",
         path="apps/mcp/src/wait_for_text.cpp",
-        find='  return run_before_deadline(server, {"capture-pane", "-p", "-J", "-t", target.pane_id},',
-        replace='  return run_before_deadline(server, {"capture-pane", "-p", "-t", target.pane_id},',
+        find="  return run_before_deadline(server, "
+        '{"capture-pane", "-p", "-J", "-t", target.pane_id},',
+        replace="  return run_before_deadline(server, "
+        '{"capture-pane", "-p", "-t", target.pane_id},',
         target="mcp_tools_test",
-        test_regex=(
-            r"^consumer[.]mcp[.]real-tmux$"
-        ),
+        test_regex=(r"^consumer[.]mcp[.]real-tmux$"),
         guards="wait_for_text's capture rejoins a line tmux only wrapped for "
         "display (-J), so a wanted string straddling the pane's width still "
         "matches instead of being split by an inserted line break — found "
