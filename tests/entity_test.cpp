@@ -511,9 +511,9 @@ TEST(Entity, SelectLayoutAcceptsAUniquePresetPrefix) {
   EXPECT_TRUE(server.is_alive());
 }
 
-// The other half of D3: a prefix ambiguous among the presets it could name
-// is refused, naming what it could mean, rather than silently picking one
-// or claiming tmux does not know it.
+// The other half: a prefix ambiguous among the presets it could name is
+// refused, naming what it could mean, rather than silently picking one or
+// claiming tmux does not know it.
 TEST(Entity, SelectLayoutRefusesAnAmbiguousPresetPrefixNamingCandidates) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
@@ -536,6 +536,48 @@ TEST(Entity, SelectLayoutRefusesAnAmbiguousPresetPrefixNamingCandidates) {
   EXPECT_NE(refused.error().diagnostic.find("even-vertical"), std::string::npos)
       << refused.error().diagnostic;
 
+  EXPECT_TRUE(server.is_alive());
+}
+
+// Below the version that adds the mirrored pair, "main-v"/"main-h" are
+// unambiguous prefixes (apply on 3.3a, 3.4); at or after it they are ambiguous
+// and refused (3.5 on).
+TEST(Entity, SelectLayoutPrefixAmbiguityTracksTheMirroredPresetFloor) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const auto version = server.tmux_version();
+  ASSERT_TRUE(version.has_value()) << version.error().diagnostic;
+  const Session session = only_session(server);
+
+  const auto window = session.new_window("layout-mirrored-floor");
+  ASSERT_TRUE(window.has_value()) << window.error().diagnostic;
+  ASSERT_TRUE(window->split().has_value());
+
+  const auto main_vertical_prefix = window->select_layout("main-v");
+  const auto main_horizontal_prefix = window->select_layout("main-h");
+  if (*version < libtmux::Version{.major = 3, .minor = 5}) {
+    ASSERT_TRUE(main_vertical_prefix.has_value())
+        << main_vertical_prefix.error().diagnostic;
+    ASSERT_TRUE(main_horizontal_prefix.has_value())
+        << main_horizontal_prefix.error().diagnostic;
+  } else {
+    ASSERT_FALSE(main_vertical_prefix.has_value());
+    EXPECT_EQ(main_vertical_prefix.error().kind, FailureKind::validation);
+    EXPECT_NE(main_vertical_prefix.error().diagnostic.find("main-vertical"),
+              std::string::npos)
+        << main_vertical_prefix.error().diagnostic;
+    EXPECT_NE(main_vertical_prefix.error().diagnostic.find("main-vertical-mirrored"),
+              std::string::npos)
+        << main_vertical_prefix.error().diagnostic;
+
+    ASSERT_FALSE(main_horizontal_prefix.has_value());
+    EXPECT_EQ(main_horizontal_prefix.error().kind, FailureKind::validation);
+    EXPECT_NE(
+        main_horizontal_prefix.error().diagnostic.find("main-horizontal-mirrored"),
+        std::string::npos)
+        << main_horizontal_prefix.error().diagnostic;
+  }
   EXPECT_TRUE(server.is_alive());
 }
 
