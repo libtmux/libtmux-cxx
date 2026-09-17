@@ -34,6 +34,10 @@ struct Request {
   // also what every test harness gives `run()`, so size detection is
   // deterministic there.
   bool stdout_terminal{};
+  // Whether the process's real stdin is a terminal a confirmation prompt can
+  // read from. False for every test harness, which substitutes its own
+  // input stream.
+  bool stdin_terminal{};
   bool machine() const { return json || ndjson; }
   bool flag(const std::string& key) const { return values.contains(key); }
   std::string value(const std::string& key, std::string fallback = {}) const {
@@ -47,6 +51,9 @@ struct Request {
   }
 };
 using EventSink = std::function<void(const std::string&, Json)>;
+// Shows a confirmation prompt and returns the typed line, unmodified; an
+// empty result (including a null callback) means "answer the default".
+using PromptSink = std::function<std::string(std::string_view)>;
 struct Execution {
   Json value;
   std::function<void()> handoff{};
@@ -79,7 +86,8 @@ std::vector<std::string> split_command(const std::string& value);
 ChildOutput run_child(const std::vector<std::string>& arguments,
                       ChildOptions options = {});
 void require_terminal();
-Execution execute(const Request& request, const EventSink& event);
+Execution execute(const Request& request, const EventSink& event,
+                  const PromptSink& prompt = {});
 Execution with_interrupts(const std::function<Execution()>& operation);
 void check_interruption();
 std::string encoded(const Json& value, int indent = -1);
