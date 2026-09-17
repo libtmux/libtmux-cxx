@@ -1968,7 +1968,9 @@ TEST(WorkspaceCliTmux, AppendKeepsItsBorrowedSessionAndReportsRetainedWindows) {
   const auto cold = fixture->socket_path().parent_path() / "foreign.sock";
   const auto refused =
       invoke({"load", file.string(), "--append", "-S", cold.string(), "--json"});
-  EXPECT_EQ(refused.code, 1);
+  ASSERT_EQ(refused.code, 2) << refused.out << refused.err;
+  const auto foreign_record = Json::parse(refused.err);
+  EXPECT_EQ(foreign_record.at("code"), "usage") << foreign_record.dump();
   EXPECT_FALSE(std::filesystem::exists(cold));
   EXPECT_TRUE(original_window->panes().has_value());
   {
@@ -1985,6 +1987,153 @@ TEST(WorkspaceCliTmux, AppendKeepsItsBorrowedSessionAndReportsRetainedWindows) {
   const auto missing = invoke({"load", file.string(), "--append", "--json"});
   EXPECT_EQ(missing.code, 2);
   EXPECT_TRUE(missing.out.empty());
+}
+
+// An interactive load, inside tmux, answers three separate questions
+// depending on what it finds. Each is asked with the PromptSink injected
+// below rather than a real terminal, and there is no attached client on the
+// fixture's server, so an answer that switches or attaches reaches a
+// deterministic, client-specific failure instead -- proof the interactive
+// path (not the detached or append one) was taken.
+TEST(WorkspaceCliTmux, PromptedLoadRoutesEachAnswerToItsOwnPath) {
+  using libtmux::workspace::cli::execute;
+  using libtmux::workspace::cli::Failure;
+  using libtmux::workspace::cli::PromptSink;
+  using libtmux::workspace::cli::Request;
+  Files files;
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-prompt")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value());
+  const auto home = server->session(fixture->session_name());
+  ASSERT_TRUE(home.has_value());
+  const auto pane = home->active_pane();
+  ASSERT_TRUE(pane.has_value());
+  const auto pid = pane->expand("#{pid}");
+  ASSERT_TRUE(pid.has_value());
+  libtmux::test::EnvironmentGuard tmux{"TMUX", fixture->socket_path().string() + "," +
+                                                   *pid + ",0"};
+  libtmux::test::EnvironmentGuard current_pane{"TMUX_PANE", pane->id()};
+  const auto noop = [](const std::string&, const libtmux::workspace::cli::Json&) {};
+  const auto run = [&](const Request& request, const PromptSink& prompt) {
+    try {
+      return execute(request, noop, prompt);
+    } catch (const Failure& error) {
+      ADD_FAILURE() << "unexpected exception: " << error.what();
+      throw;
+    }
+  };
+
+  // New session, inside tmux: switch (y), detached (n) or append (a).
+  for (const std::string answer : {"y", "n", "a"}) {
+    SCOPED_TRACE(answer);
+    const auto file =
+        fixture->socket_path().parent_path() / ("new-" + answer + ".yaml");
+    std::ofstream{file} << "session_name: promptnew-" << answer << "\nwindows: [{}]\n";
+    std::vector<std::string> seen;
+    const Request request{.command = "load",
+                          .importer = {},
+                          .values = {{"workspace-file", {file.string()}},
+                                     {"S", {fixture->socket_path().string()}}}};
+    const auto execution = run(request, [&](std::string_view message) {
+      seen.emplace_back(message);
+      return answer;
+    });
+    ASSERT_EQ(seen.size(), 1U);
+    EXPECT_EQ(seen[0], "Already inside tmux: switch (y), load detached (n), or "
+                       "append (a)? [y/n/a]");
+    if (answer == "n") {
+      EXPECT_EQ(execution.exit_code, 0) << execution.value.dump();
+      ASSERT_EQ(execution.value.at("results").size(), 1U);
+      EXPECT_EQ(execution.value.at("results")[0].at("action"), "created");
+      EXPECT_TRUE(server->session("=promptnew-n:").has_value());
+      EXPECT_FALSE(execution.handoff);
+    } else if (answer == "a") {
+      EXPECT_EQ(execution.exit_code, 0) << execution.value.dump();
+      ASSERT_EQ(execution.value.at("results").size(), 1U);
+      EXPECT_EQ(execution.value.at("results")[0].at("action"), "appended");
+      EXPECT_EQ(execution.value.at("results")[0].at("session_name"),
+                fixture->session_name());
+      EXPECT_FALSE(server->session("=promptnew-a:").has_value());
+    } else {
+      // No attached client views the fixture's pane, so the switch this
+      // answer asks for fails identifiably rather than silently detaching.
+      EXPECT_EQ(execution.exit_code, 2) << execution.value.dump();
+      ASSERT_EQ(execution.value.at("errors").size(), 1U);
+      EXPECT_EQ(execution.value.at("errors")[0].at("code"), "client_context");
+      EXPECT_TRUE(execution.value.at("results").empty());
+    }
+  }
+
+  // An existing session asks only "already running. Attach?", never the
+  // new-session question, and "no" changes nothing.
+  const auto existing = server->new_session("prompt-existing");
+  ASSERT_TRUE(existing.has_value());
+  const auto before_windows = existing->windows();
+  ASSERT_TRUE(before_windows.has_value());
+  for (const std::string answer : {"y", "n"}) {
+    SCOPED_TRACE(answer);
+    const auto file =
+        fixture->socket_path().parent_path() / ("exists-" + answer + ".yaml");
+    std::ofstream{file}
+        << "session_name: prompt-existing\nwindows: [{window_name: extra}]\n";
+    std::vector<std::string> seen;
+    const Request request{.command = "load",
+                          .importer = {},
+                          .values = {{"workspace-file", {file.string()}},
+                                     {"S", {fixture->socket_path().string()}}}};
+    const auto execution = run(request, [&](std::string_view message) {
+      seen.emplace_back(message);
+      return answer;
+    });
+    ASSERT_EQ(seen.size(), 1U);
+    EXPECT_EQ(seen[0], "prompt-existing is already running. Attach? [Y/n]");
+    if (answer == "n") {
+      EXPECT_EQ(execution.exit_code, 0) << execution.value.dump();
+      EXPECT_TRUE(execution.value.at("results").empty());
+      EXPECT_TRUE(execution.value.at("errors").empty());
+      EXPECT_FALSE(execution.handoff);
+    } else {
+      EXPECT_EQ(execution.exit_code, 2) << execution.value.dump();
+      ASSERT_EQ(execution.value.at("errors").size(), 1U);
+      EXPECT_EQ(execution.value.at("errors")[0].at("code"), "client_context");
+    }
+    const auto after_windows = existing->windows();
+    ASSERT_TRUE(after_windows.has_value());
+    EXPECT_EQ(after_windows->size(), before_windows->size());
+  }
+
+  // --yes and --json each answer every question without ever asking one.
+  std::ofstream{"yesflag.yaml"} << "session_name: prompt-existing\nwindows: [{}]\n";
+  {
+    std::size_t asked{};
+    const Request request{.command = "load",
+                          .importer = {},
+                          .values = {{"workspace-file", {"yesflag.yaml"}},
+                                     {"S", {fixture->socket_path().string()}},
+                                     {"yes", {"true"}}}};
+    run(request, [&](std::string_view) {
+      ++asked;
+      return "y";
+    });
+    EXPECT_EQ(asked, 0U);
+  }
+  {
+    // Bypasses validate(), which would otherwise refuse this combination
+    // outright: execute_impl() must not rely on that outer guard alone.
+    std::size_t asked{};
+    const Request request{.command = "load",
+                          .importer = {},
+                          .values = {{"workspace-file", {"yesflag.yaml"}},
+                                     {"S", {fixture->socket_path().string()}}},
+                          .ndjson = true};
+    run(request, [&](std::string_view) {
+      ++asked;
+      return "y";
+    });
+    EXPECT_EQ(asked, 0U);
+  }
 }
 
 // Human output is for humans. A cold-start failure retains an

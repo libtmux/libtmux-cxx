@@ -491,7 +491,8 @@ libtmux::Pane current_pane(const Server& server, const std::string& code) {
     throw Failure{1, code, "TMUX identifies a different server process"};
   const auto selected = server.pane(environment("TMUX_PANE"));
   if (!selected || selected->connection_identity() != pane->connection_identity())
-    throw Failure{1, code, "selected server differs from the current pane's server"};
+    throw Failure{2, "usage",
+                  "selected server differs from the current pane's server; use -d"};
   return *selected;
 }
 Session append_target(const Server& server) {
@@ -527,16 +528,17 @@ Client current_client(const Server& server, std::string_view pane,
                   "no terminal client views this pane; use load -d"};
   return *selected;
 }
-std::function<void()> load_handoff(Session session, std::optional<Client> caller) {
+std::function<void()> load_handoff(Session session, std::optional<Client> caller,
+                                   bool switch_without_client = false) {
   std::optional<AttachCommand> command;
-  if (!caller) {
+  if (!caller && !switch_without_client) {
     const auto prepared = session.attach_command();
     if (!prepared)
       throw Failure{1, "attach_failed", prepared.error().diagnostic};
     command = *prepared;
   }
   return [session = std::move(session), caller = std::move(caller),
-          command = std::move(command)] {
+          command = std::move(command), switch_without_client] {
     if (caller) {
       const auto server = caller->server();
       if (!server)
@@ -550,6 +552,16 @@ std::function<void()> load_handoff(Session session, std::optional<Client> caller
                       "the invoking client changed; loaded sessions remain"};
       // tmux targets a client name; it cannot atomically check this incarnation.
       const auto switched = current.switch_to(session);
+      if (!switched)
+        throw Failure{1, "switch_failed", switched.error().diagnostic};
+    } else if (switch_without_client) {
+      // No pane identifies which client to target (a run-shell key binding
+      // sets TMUX but not TMUX_PANE): let tmux pick its most recent one.
+      const auto server = session.server();
+      if (!server)
+        throw Failure{1, "client_context", server.error().diagnostic};
+      const auto switched =
+          server->run({"switch-client", "-t", std::string{session.id()}});
       if (!switched)
         throw Failure{1, "switch_failed", switched.error().diagnostic};
     } else {
@@ -1177,12 +1189,16 @@ void validate(const Request& request) {
     if (!request.flag("append")) {
       if (request.machine())
         throw Failure{2, "usage", "machine output requires load -d or --append"};
-      if (!request.terminal_allowed)
-        throw Failure{2, "usage",
-                      "load requires a foreground controlling terminal; use -d"};
-      require_terminal();
+      // Inside tmux an attached load ends in switch-client, which needs no
+      // terminal; only outside tmux does it still attach a real client.
+      if (environment("TMUX").empty()) {
+        if (!request.terminal_allowed)
+          throw Failure{2, "usage",
+                        "load requires a foreground controlling terminal; use -d"};
+        require_terminal();
+      }
     }
-    if (request.flag("append") || !environment("TMUX").empty()) {
+    if (request.flag("append")) {
       const auto pane = environment("TMUX_PANE");
       const auto context = environment("TMUX");
       const auto last = context.find_last_of(',');
@@ -1205,7 +1221,8 @@ void validate(const Request& request) {
     throw Failure{2, "usage",
                   "interactive shell requires a foreground terminal; use -c"};
 }
-static Execution execute_impl(const Request& request, const EventSink& event) {
+static Execution execute_impl(const Request& request, const EventSink& event,
+                              const PromptSink& prompt) {
   if (request.command == "shell") {
     // TMUX_WORKSPACE_PYTHON selects the interpreter and wins over
     // TMUX_WORKSPACE_TMUXP's executable path; tmuxp has no `__main__`, so
@@ -1430,14 +1447,15 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
     Json results = Json::array(), errors = Json::array();
     event("started", {{"inputs", plans.size()}});
     Bootstrap bootstrap;
-    const bool appending = request.flag("append") && !request.flag("d");
+    bool appending = request.flag("append") && !request.flag("d");
     bool retained_changes{};
     int failure_status{1};
     // Distinct from results.size(): a failed input now also gets a results[]
     // record, so "did anything succeed" needs its own count for the
     // ok/error/partial decision below.
     std::size_t succeeded{};
-    const bool interactive = !request.flag("d") && !appending;
+    bool interactive = !request.flag("d") && !appending;
+    bool switch_without_client{};
     std::optional<Session> selected;
     std::optional<Client> caller;
     std::string stage{"startup"};
@@ -1449,12 +1467,55 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
           throw Failure{1, "invalid_workspace",
                         "windows[" + std::to_string(error->window_index) +
                             "].layout: " + error->reason};
+      // Interactive, unforced: ask before moving the user, never in machine
+      // mode and never without a terminal to answer from.
+      if (interactive && !request.flag("yes") && !request.machine() && !plans.empty()) {
+        const auto& target_name = plans.back().workspace.session_name;
+        if (server.session("=" + target_name + ":")) {
+          const auto typed =
+              prompt ? prompt(target_name + " is already running. Attach? [Y/n]") : "";
+          const char answer =
+              typed.empty() ? 'y' : static_cast<char>(std::tolower(typed.front()));
+          if (answer != 'y')
+            return {.value = {{"schema_version", 1},
+                              {"command", "load"},
+                              {"status", "ok"},
+                              {"results", Json::array()},
+                              {"errors", Json::array()}},
+                    .exit_code = 0};
+        } else if (!environment("TMUX").empty()) {
+          const auto typed =
+              prompt ? prompt("Already inside tmux: switch (y), load detached (n), or "
+                              "append (a)? [y/n/a]")
+                     : "";
+          const char answer =
+              typed.empty() ? 'y' : static_cast<char>(std::tolower(typed.front()));
+          if (answer == 'n')
+            interactive = false;
+          else if (answer == 'a') {
+            appending = true;
+            interactive = false;
+          }
+        }
+      }
       std::optional<Session> borrowed;
       if (appending)
         borrowed = append_target(server);
       else if (interactive && !environment("TMUX").empty()) {
-        const auto pane = current_pane(server, "client_context");
-        caller = current_client(server, pane.id(), pane.window_id());
+        if (!environment("TMUX_PANE").empty()) {
+          const auto pane = current_pane(server, "client_context");
+          caller = current_client(server, pane.id(), pane.window_id());
+        } else {
+          // No controlling pane to name a client from (a run-shell key
+          // binding sets TMUX but not TMUX_PANE): confirm this is still the
+          // server TMUX names, then let tmux pick its most recent client.
+          const auto inherited = Server::from_env();
+          if (!inherited || inherited->socket_path() != server.socket_path())
+            throw Failure{
+                2, "usage",
+                "selected server differs from the current pane's server; use -d"};
+          switch_without_client = true;
+        }
       } else if (!server.is_alive())
         server = start_endpoint(request, bootstrap);
       stage = "load";
@@ -1693,7 +1754,8 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
                         .exit_code = errors.empty() ? 0 : failure_status};
     if (interactive && errors.empty() && selected) {
       try {
-        execution.handoff = load_handoff(*selected, std::move(caller));
+        execution.handoff =
+            load_handoff(*selected, std::move(caller), switch_without_client);
       } catch (Failure& error) {
         error.retained_state = std::move(execution.value);
         throw;
@@ -1703,10 +1765,11 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
   }
   throw Failure{1, "feature_unavailable", "command is not implemented"};
 }
-Execution execute(const Request& request, const EventSink& event) {
+Execution execute(const Request& request, const EventSink& event,
+                  const PromptSink& prompt) {
   if (request.command == "load" || request.command == "shell")
-    return with_interrupts([&] { return execute_impl(request, event); });
-  return execute_impl(request, event);
+    return with_interrupts([&] { return execute_impl(request, event, prompt); });
+  return execute_impl(request, event, prompt);
 }
 
 std::string human_result(const Request& request, const Json& result, bool colour) {
@@ -1772,6 +1835,13 @@ std::string human_result(const Request& request, const Json& result, bool colour
     for (const auto& item : result.at("results")) {
       if (failed_inputs.contains(item.at("input_index").get<std::size_t>()))
         continue;
+      // Appending names the session that received the windows, not a session
+      // this input created or reused, so it carries no session_id.
+      if (item.at("action") == "appended") {
+        output << role("32", "Appended") << ' '
+               << role("1;35", item.at("session_name").get<std::string>()) << '\n';
+        continue;
+      }
       output << role("32", item.at("action").get<std::string>()) << ' '
              << role("1;35", item.at("session_name").get<std::string>()) << ' '
              << role("2", item.at("session_id").get<std::string>()) << '\n';

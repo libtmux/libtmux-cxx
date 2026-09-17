@@ -397,6 +397,7 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
   request.terminal_allowed = &input == &std::cin;
 #ifndef _WIN32
   request.stdout_terminal = &output == &std::cout && ::isatty(STDOUT_FILENO) != 0;
+  request.stdin_terminal = request.terminal_allowed && ::isatty(STDIN_FILENO) != 0;
 #endif
   for (const auto& arg : arguments) {
     if (arg == "--")
@@ -509,9 +510,19 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
       if (!output)
         throw Failure{1, "output_closed", "output stream closed"};
     };
+    const PromptSink prompt = [&](std::string_view message) -> std::string {
+      if (!request.stdin_terminal)
+        return {};
+      output << message << ' ';
+      output.flush();
+      std::string line;
+      if (!std::getline(input, line))
+        return {};
+      return line;
+    };
     const auto operation = [&] {
       try {
-        auto result = execute(request, emit);
+        auto result = execute(request, emit, prompt);
         progress->finish(result.value.is_object() && result.value.contains("status") &&
                          result.value.at("status") != "ok");
         return result;

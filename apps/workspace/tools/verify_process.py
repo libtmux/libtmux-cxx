@@ -444,16 +444,23 @@ def terminal_switch(binary, root, env, mode):
     )
     (root / "last.yaml").write_text("session_name: destination\nwindows: [{}]\n")
     runner = root / "run.sh"
-    arguments = [binary, "load", "first.json", "last.yaml", "-S", command[2]]
+    # This harness exercises client-switching mechanics, not the interactive
+    # prompt (which has its own coverage): -y keeps every mode's load from
+    # blocking on "destination is already running. Attach?".
+    arguments = [binary, "load", "first.json", "last.yaml", "-S", command[2], "-y"]
     if mode == "independent-detached":
         arguments.append("-d")
     if mode == "independent-append":
         arguments.append("--append")
     foreign = ["tmux", "-S", socket_path(root, "foreign.sock")]
     if mode == "foreign":
-        arguments[-1] = foreign[2]
+        arguments[arguments.index(command[2])] = foreign[2]
     if mode == "stale":
         arguments = ["env", "TMUX=" + command[2] + ",0,0", *arguments]
+    if mode == "runshell":
+        # A run-shell key binding sets TMUX but never TMUX_PANE: no pane
+        # names a client, so the switch must pick the server's own.
+        arguments = ["env", "-u", "TMUX_PANE", *arguments]
     runner.write_text(
         "cd " + shlex.quote(str(root)) + "\n"
         "while ! test -f start; do sleep .01; done\n"
@@ -724,8 +731,8 @@ def terminal_switch(binary, root, env, mode):
                 ), observed
             return {"status": "PASS", "mode": mode, **observed}
         refused = mode in {"ambiguous", "control", "foreign", "stale"}
-        expected = 2 if mode in {"ambiguous", "control", "changed"} else 0
-        if mode in {"foreign", "stale", "replaced"}:
+        expected = 2 if mode in {"ambiguous", "control", "changed", "foreign"} else 0
+        if mode in {"stale", "replaced"}:
             expected = 1
         assert code == expected, (code, output, error)
         sessions = (
@@ -1076,6 +1083,7 @@ def main():
                     "replaced",
                     "foreign",
                     "stale",
+                    "runshell",
                     "independent",
                     "independent-detached",
                     "independent-append",
