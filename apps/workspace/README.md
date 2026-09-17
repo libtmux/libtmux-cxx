@@ -29,6 +29,35 @@ $ build/cxx-dev/apps/workspace/tmux-workspace --help
 $ build/cxx-dev/apps/workspace/tmux-workspace --command-tree
 ```
 
+## A workspace
+
+Save this as `example.yaml`: session `example` with an `editor` window split
+`main-vertical` between `$EDITOR .` and `pytest -q`, and a `docs` window whose
+pane starts in `docs` and runs `mkdocs serve`.
+
+```yaml
+session_name: example
+windows:
+  - window_name: editor
+    layout: main-vertical
+    panes:
+      - $EDITOR .
+      - pytest -q
+  - window_name: docs
+    panes:
+      - start_directory: docs
+        shell_command: mkdocs serve
+```
+
+Load it on a named socket without attaching:
+
+```console
+$ tmux-workspace load example.yaml \
+    -d \
+    -L workspace-example \
+    --json
+```
+
 ## Inspect a workspace through MCP
 
 Loaded workspaces are ordinary tmux sessions. The separate
