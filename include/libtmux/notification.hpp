@@ -69,6 +69,12 @@ enum class NotificationKind : std::uint8_t {
 // `payload` is the pane bytes of an output notification, already unescaped;
 // it is empty for every other kind.
 //
+// `subscription_changed` is the one kind whose first argument is never an
+// id: it is the subscription's own name (chosen by whoever called
+// `refresh-client -B`), so `text` holds that name and the changed value
+// together — `"<name> : <value>"` — once `session`/`window`/`pane` have
+// taken the ids around them.
+//
 // Everything here borrows. The notification must outlive it, which is why
 // there is no overload taking a temporary.
 struct ParsedNotification {

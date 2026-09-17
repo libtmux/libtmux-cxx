@@ -400,6 +400,36 @@ TEST(NotificationParse, PutsEachIdInTheFieldItsPrefixNames) {
   EXPECT_TRUE(pane_parsed.session.empty());
 }
 
+// tmux's grammar for this one (control.c) is fixed-position rather than
+// id-then-text: `%subscription-changed <name> <session> <window-or-'-'>
+// <index-or-'-'> <pane-or-'-'> : <value>`. Its own subscription name is
+// never an id, so the generic id-scan below would stop right there and
+// never place the ids that follow it — the defect this pins.
+TEST(NotificationParse, TypesTheIdsInASubscriptionChangedNotification) {
+  const auto session_scope =
+      notification_of("%subscription-changed subwin $0 - - - : 3");
+  const auto session_parsed = libtmux::parse(session_scope);
+  EXPECT_EQ(session_parsed.kind, libtmux::NotificationKind::subscription_changed);
+  EXPECT_EQ(session_parsed.session, "$0");
+  EXPECT_TRUE(session_parsed.window.empty());
+  EXPECT_TRUE(session_parsed.pane.empty());
+  EXPECT_EQ(session_parsed.text, "subwin $0 - - - : 3");
+
+  const auto window_scope =
+      notification_of("%subscription-changed winsub $0 @1 0 - : value");
+  const auto window_parsed = libtmux::parse(window_scope);
+  EXPECT_EQ(window_parsed.session, "$0");
+  EXPECT_EQ(window_parsed.window, "@1");
+  EXPECT_TRUE(window_parsed.pane.empty());
+
+  const auto pane_scope =
+      notification_of("%subscription-changed panesub $0 @1 0 %2 : value");
+  const auto pane_parsed = libtmux::parse(pane_scope);
+  EXPECT_EQ(pane_parsed.session, "$0");
+  EXPECT_EQ(pane_parsed.window, "@1");
+  EXPECT_EQ(pane_parsed.pane, "%2");
+}
+
 TEST(NotificationParse, KeepsFreeTextWholeIncludingItsSpaces) {
   const auto held = notification_of("%window-renamed @3 a name with spaces");
   const auto parsed = libtmux::parse(held);
