@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <charconv>
 #include <cstdint>
+#include <deque>
 #include <filesystem>
 #include <map>
 #include <mutex>
@@ -93,6 +94,30 @@ identities(const PaneInputEndpointIdentity& endpoint, std::uint64_t server_pid,
   std::ranges::sort(answer);
   return answer;
 }
+
+struct PendingInputKey {
+  std::string socket_path;
+  std::string pane_id;
+
+  auto operator<=>(const PendingInputKey&) const = default;
+};
+
+// One process-wide table, matching `registry()`'s own lifetime pattern: this
+// is a same-process hint, so it does not need per-server scoping.
+struct PendingInputLedger {
+  std::mutex mutex;
+  std::map<PendingInputKey, std::deque<std::string>> entries;
+};
+
+[[nodiscard]] PendingInputLedger& pending_input_ledger() {
+  static PendingInputLedger* const process_ledger = new PendingInputLedger;
+  return *process_ledger;
+}
+
+// Enough to cover the multi-op sequences `send_keys_batch` and a
+// `paste_text`-then-more-`paste_text` build-up produce, without an unbounded
+// per-pane history.
+inline constexpr std::size_t kPendingInputHistoryLimit = 8U;
 
 [[nodiscard]] ToolError invalid_reservation() {
   return ToolError{false, "pane input reservation identity is invalid"};
@@ -229,6 +254,33 @@ reserve_pane_input(std::string_view endpoint, std::uint64_t server_pid,
   }
   return PaneInputLease{
       std::make_unique<PaneInputLease::Impl>(owner, std::move(wanted), token, kind)};
+}
+
+void remember_pane_input(std::string_view socket_path, std::string_view pane_id,
+                         std::string text) {
+  if (text.empty()) {
+    return;
+  }
+  PendingInputLedger& ledger = pending_input_ledger();
+  std::lock_guard lock{ledger.mutex};
+  std::deque<std::string>& history =
+      ledger.entries[PendingInputKey{std::string{socket_path}, std::string{pane_id}}];
+  history.push_back(std::move(text));
+  while (history.size() > kPendingInputHistoryLimit) {
+    history.pop_front();
+  }
+}
+
+std::vector<std::string> remembered_pane_input(std::string_view socket_path,
+                                               std::string_view pane_id) {
+  PendingInputLedger& ledger = pending_input_ledger();
+  std::lock_guard lock{ledger.mutex};
+  const auto found = ledger.entries.find(
+      PendingInputKey{std::string{socket_path}, std::string{pane_id}});
+  if (found == ledger.entries.end()) {
+    return {};
+  }
+  return {found->second.begin(), found->second.end()};
 }
 
 } // namespace libtmux::mcp::detail

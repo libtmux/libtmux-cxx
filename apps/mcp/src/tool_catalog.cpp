@@ -1038,15 +1038,58 @@ retain_run_until_proven_complete(PaneInputLease lease, Server server, Pane pane,
   }
 }
 
-StructuredValue session_value(const Session& session) {
-  return StructuredValue::Object{
-      {"attached", session.attached()},
-      {"client_count", session.client_count()},
-      {"id", session.id()},
-      {"name", session.name()},
-      {"path", session.path()},
-      {"window_count", session.window_count()},
-  };
+// `#{session_attached}` counts every attached
+// client, including this process's own `wait_for_text` control connection.
+// Only queried when tmux's own raw count found somebody - a session nobody
+// has touched costs no extra round trip - and only the pids this process
+// itself is not currently observing through count as really attached.
+StructuredValue::Object attached_state(const Server& server, const Session& session) {
+  const long long raw_count = session.client_count();
+  if (raw_count == 0) {
+    return StructuredValue::Object{{"attached", false}, {"client_count", 0LL}};
+  }
+  const auto clients = server.run(
+      {"list-clients", "-t", std::string{session.id()}, "-F", "#{client_pid}"});
+  if (!clients.has_value()) {
+    // A failed query is not evidence nobody is attached; fall back to
+    // tmux's own raw count rather than report a confident-looking zero.
+    return StructuredValue::Object{{"attached", session.attached()},
+                                   {"client_count", raw_count}};
+  }
+  long long external = 0;
+  std::size_t start = 0;
+  const std::string& text = *clients;
+  while (start <= text.size()) {
+    const auto newline = text.find('\n', start);
+    const std::string_view line =
+        newline == std::string::npos
+            ? std::string_view{text}.substr(start)
+            : std::string_view{text}.substr(start, newline - start);
+    if (!line.empty()) {
+      std::int64_t pid = 0;
+      const auto [parsed, error] =
+          std::from_chars(line.data(), line.data() + line.size(), pid);
+      if (error == std::errc{} && parsed == line.data() + line.size() &&
+          !is_own_observation_client(pid)) {
+        ++external;
+      }
+    }
+    if (newline == std::string::npos) {
+      break;
+    }
+    start = newline + 1U;
+  }
+  return StructuredValue::Object{{"attached", external != 0},
+                                 {"client_count", external}};
+}
+
+StructuredValue session_value(const Server& server, const Session& session) {
+  StructuredValue::Object result = attached_state(server, session);
+  result.emplace("id", session.id());
+  result.emplace("name", session.name());
+  result.emplace("path", session.path());
+  result.emplace("window_count", session.window_count());
+  return StructuredValue{std::move(result)};
 }
 
 StructuredValue window_value(const Window& window) {
@@ -1348,13 +1391,17 @@ make_tool(std::string name, std::string title, Toolset toolset, ProcessReach rea
                       .annotations = annotations,
                       .schema = {.input = {}, .output = output_shape},
                       .handler = std::move(handler)};
-  tool.description = std::string{
+  // The tool's own sentence leads, so a client showing only the first
+  // sentence shows what is unique about this tool; the shared authority
+  // disclosure follows rather than opens.
+  tool.description = std::string{description};
+  const std::string_view opener =
       detail::controlled_opener(tool.toolset, tool.authority.process_reach,
-                                tool.authority.output_classes, tool.authority.effects)};
-  if (!description.empty()) {
+                                tool.authority.output_classes, tool.authority.effects);
+  if (!tool.description.empty()) {
     tool.description.push_back(' ');
-    tool.description.append(description);
   }
+  tool.description.append(opener);
   for (Field& item : fields) {
     tool.authority.input_sinks.emplace(item.parameter.name, std::move(item.sinks));
     tool.schema.input.push_back(std::move(item.parameter));
@@ -1546,7 +1593,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
   }
   StructuredValue::Array rows;
   for (const Session& session : *sessions) {
-    rows.push_back(detail::session_value(session));
+    rows.push_back(detail::session_value(server, session));
   }
   return detail::output({{"sessions", StructuredValue{std::move(rows)}}});
 }
@@ -1645,13 +1692,19 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
       [](const Server& server, const Arguments&, const CallContext&) -> ToolResult {
         const bool running = server.is_alive();
         StructuredValue::Object result{{"running", running}};
-        const auto version = server.tmux_version();
+        // tmux's own `-V` spelling, not a reconstruction from the parsed
+        // Version: the parsed form cannot round-trip a letter revision
+        // (`3.7c`) back from its ordinal, and a psmux build's third numeric
+        // component occupies the same field a tmux revision letter does.
+        const auto version = server.run({"-V"});
         if (version.has_value()) {
-          std::string text = version->unbounded ? std::string{"master"}
-                                                : std::to_string(version->major) + "." +
-                                                      std::to_string(version->minor);
-          if (version->revision != 0U) {
-            text += "." + std::to_string(version->revision);
+          std::string text = *version;
+          while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) {
+            text.pop_back();
+          }
+          constexpr std::string_view prefix = "tmux ";
+          if (text.starts_with(prefix)) {
+            text.erase(0, prefix.size());
           }
           result.emplace("version", std::move(text));
         }
@@ -1676,7 +1729,8 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
          const CallContext&) -> ToolResult {
         const auto session = server.session(required(arguments, "session"));
         return session.has_value()
-                   ? detail::output({{"session", detail::session_value(*session)}})
+                   ? detail::output(
+                         {{"session", detail::session_value(server, *session)}})
                    : failure(session.error());
       },
       "Return one session by stable ID or name.");
@@ -1889,12 +1943,14 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
                  field("timeout_ms", "Bounded wait in milliseconds.", InputSink::none,
                        false, ArgumentType::integer, 1, 60000)},
                 OutputShape::wait, detail::wait_for_text,
-                "Poll within one deadline and report a match or timeout. A match "
-                "confined to the pane's last row is deferred rather than reported, "
-                "since that is where a just-submitted command still echoes before "
-                "the shell has run it; a `mode` ending in \"-unconfirmed\" means the "
-                "deadline passed before anything settled that, not that the search "
-                "was wrong."));
+                "Poll within one deadline and report a match or timeout. `matched` is "
+                "never set for text whose only occurrence is this server's own "
+                "not-yet-run input - confined to the pane's last row, or the literal "
+                "text a prior send_keys/send_keys_batch/paste_text/run_shell_command "
+                "call wrote to this pane - however that text has since been redrawn; "
+                "`matched_at_entry` reports separately whether it was already visible "
+                "when the wait began. A `mode` ending in \"-unconfirmed\" means such "
+                "text was still present, unconfirmed, at the deadline."));
 
   add(make_tool(
       "get_tmux_variables", "Get tmux variables", Toolset::inspect, ProcessReach::none,
@@ -2623,6 +2679,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
           }
           return failure(sent.error());
         }
+        detail::remember_pane_input(server.socket_path(), pane->id(), payload->text);
         const auto deadline =
             std::chrono::steady_clock::now() +
             std::chrono::milliseconds{integer(arguments, "timeoutMs", 30000)};
@@ -2791,6 +2848,10 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
                       error = sent.error().diagnostic;
                     } else {
                       resolved = pane_target_ids(final->configured_pane_ids);
+                      if (boolean(operation, "literal")) {
+                        detail::remember_pane_input(server.socket_path(), pane->id(),
+                                                    required(operation, "keys"));
+                      }
                     }
                   }
                 }
@@ -2848,7 +2909,8 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
           return libtmux::unexpected(reserved.error());
         }
         detail::PaneInputLease lease = std::move(*reserved);
-        std::string payload = required(arguments, "text");
+        const std::string typed_text = required(arguments, "text");
+        std::string payload = typed_text;
         if (boolean(arguments, "enter")) {
           payload.push_back('\n');
         }
@@ -2899,6 +2961,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
           return libtmux::unexpected(
               ToolError{false, "paste completed; " + cleanup->message});
         }
+        detail::remember_pane_input(server.socket_path(), pane->id(), typed_text);
         return changed("pane_id", pane->id());
       },
       "Require the target pane to be live and outside human-owned mode, then stage "
