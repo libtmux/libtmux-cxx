@@ -515,8 +515,8 @@ build(const Server& server, const Workspace& description,
       const BeforeBuild& before = {}, const BuildObserver& observer = {},
       std::optional<int> width = std::nullopt,
       std::optional<int> height = std::nullopt) {
-  return detail::build_windows(server, description, std::nullopt, before, observer, width,
-                               height);
+  return detail::build_windows(server, description, std::nullopt, before, observer,
+                               width, height);
 }
 
 // Add windows to a borrowed session. Failure retains that session, applied

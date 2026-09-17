@@ -83,7 +83,8 @@ std::optional<int> sized_env(const char* name) {
 // so cxx and `uvx tmuxp` build identical layouts from the same terminal.
 // nullopt/nullopt means "pass no -x/-y", which is what a disabled detection
 // and tmux's own `default-size` mean.
-std::pair<std::optional<int>, std::optional<int>> session_dimensions(bool stdout_terminal) {
+std::pair<std::optional<int>, std::optional<int>>
+session_dimensions(bool stdout_terminal) {
   const auto detect = environment("TMUXP_DETECT_TERMINAL_SIZE");
   if (!detect.empty() && detect != "1")
     return {std::nullopt, std::nullopt};
@@ -91,9 +92,9 @@ std::pair<std::optional<int>, std::optional<int>> session_dimensions(bool stdout
   auto rows = sized_env("LINES");
   if (!columns || !rows) {
     struct winsize size {};
-    const bool have_terminal =
-        stdout_terminal && ::ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0 &&
-        size.ws_col > 0 && size.ws_row > 0;
+    const bool have_terminal = stdout_terminal &&
+                               ::ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0 &&
+                               size.ws_col > 0 && size.ws_row > 0;
     if (have_terminal) {
       if (!columns)
         columns = size.ws_col;
@@ -188,13 +189,15 @@ Json from_yaml(const YAML::Node& node, int depth = 0) {
     }
     for (const auto& source : merge_sources) {
       if (!source.IsMap())
-        throw Failure{1, "invalid_workspace", "<< merges a mapping or a list of mappings"};
+        throw Failure{1, "invalid_workspace",
+                      "<< merges a mapping or a list of mappings"};
       // Resolve the source itself first: a merge source that is itself
       // merging (chained defaults) is ordinary YAML, and its own literal
       // "<<" must not leak into this mapping's result.
       const Json resolved = from_yaml(source, depth + 1);
       if (!resolved.is_object())
-        throw Failure{1, "invalid_workspace", "<< merges a mapping or a list of mappings"};
+        throw Failure{1, "invalid_workspace",
+                      "<< merges a mapping or a list of mappings"};
       for (const auto& [key, value] : resolved.items())
         if (!object.contains(key))
           object[key] = value;
@@ -728,8 +731,8 @@ bool needs_quoting(const std::string& text) {
   std::ranges::transform(text, lower.begin(), [](unsigned char c) {
     return static_cast<char>(std::tolower(c));
   });
-  static const std::set<std::string> words{"y",  "n",   "yes", "no",  "true",
-                                            "false", "on", "off", "null"};
+  static const std::set<std::string> words{"y",     "n",  "yes", "no",  "true",
+                                           "false", "on", "off", "null"};
   return words.contains(lower);
 }
 // A YAML::Node's per-scalar style cannot force quoting (YAML::EmitterStyle
@@ -881,7 +884,8 @@ Json import_command_group(const Json& value, std::string_view separator,
   if (value.is_null() || value.is_string())
     return value;
   if (!value.is_array())
-    throw Failure{1, "invalid_workspace", where + " must be a command or command array"};
+    throw Failure{1, "invalid_workspace",
+                  where + " must be a command or command array"};
   std::string result;
   for (std::size_t i = 0; i < value.size(); ++i) {
     if (!value[i].is_string())
@@ -1028,7 +1032,8 @@ Json imported(Json source, const std::string& kind, const fs::path& path) {
     result["windows"].push_back(std::move(window));
   }
   if (const auto parsed = workspace::parse_tmuxp(result.dump()); !parsed)
-    throw Failure{1, parse_error_code(parsed.error()), kind + ": " + parse_error_message(parsed.error())};
+    throw Failure{1, parse_error_code(parsed.error()),
+                  kind + ": " + parse_error_message(parsed.error())};
   return result;
 }
 struct Pattern {
@@ -1375,7 +1380,8 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
       std::vector<std::string> script;
       if (document.contains("before_script") && !document["before_script"].is_null()) {
         if (!document["before_script"].is_string())
-          throw Failure{1, "invalid_workspace", "before_script must be a command string"};
+          throw Failure{1, "invalid_workspace",
+                        "before_script must be a command string"};
         const auto command = document["before_script"].get<std::string>();
         if (!command.empty()) {
           try {
@@ -1395,7 +1401,8 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
         document["session_name"] = request.value("s");
       const auto workspace = parse_tmuxp(document.dump());
       if (!workspace)
-        throw Failure{1, parse_error_code(workspace.error()), parse_error_message(workspace.error())};
+        throw Failure{1, parse_error_code(workspace.error()),
+                      parse_error_message(workspace.error())};
       if (!libtmux::session_target(workspace->session_name))
         throw Failure{1, "invalid_workspace", "session name cannot address itself"};
       std::string directory;
@@ -1435,7 +1442,8 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
       } else if (!server.is_alive())
         server = start_endpoint(request, bootstrap);
       stage = "load";
-      const auto [session_width, session_height] = session_dimensions(request.stdout_terminal);
+      const auto [session_width, session_height] =
+          session_dimensions(request.stdout_terminal);
       for (std::size_t index = 0; index < plans.size(); ++index) {
         active_input = index;
         const auto& plan = plans[index];
@@ -1527,7 +1535,7 @@ static Execution execute_impl(const Request& request, const EventSink& event) {
         auto built = borrowed   ? append(*borrowed, plan.workspace, before, observer)
                      : existing ? libtmux::expected<Session, BuildError>{*existing}
                                 : build(server, plan.workspace, before, observer,
-                                       session_width, session_height);
+                                        session_width, session_height);
         if (!built) {
           if (!script_error && observer_error)
             script_error = observer_error;
