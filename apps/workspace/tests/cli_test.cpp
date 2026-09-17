@@ -683,6 +683,43 @@ TEST(WorkspaceCliTmux, BeforeScriptsRetainOutputAndRespectSessionOwnership) {
   EXPECT_TRUE(pane->expand("#{pane_id}").has_value());
 }
 
+// script-completed carries child_status and truncated directly, matching
+// go, so a consumer reads the child's status without digging into the
+// nested script_output object. Covers both a clean exit and a nonzero one.
+TEST(WorkspaceCliTmux, ScriptCompletedCarriesChildStatusAndTruncated) {
+  Files files;
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-scriptc")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  for (const bool fails : {false, true}) {
+    SCOPED_TRACE(fails);
+    std::ofstream{"before.sh"} << "printf out\n" << (fails ? "exit 3\n" : "exit 0\n");
+    std::ofstream{"script.yaml"}
+        << "session_name: " << (fails ? "scriptc-failed" : "scriptc-ok")
+        << "\nbefore_script: sh before.sh\nwindows: [{}]\n";
+    const libtmux::workspace::cli::Request request{
+        .command = "load",
+        .importer = {},
+        .values = {{"workspace-file", {"script.yaml"}},
+                   {"d", {"true"}},
+                   {"S", {fixture->socket_path().string()}}},
+        .ndjson = true};
+    Json completed;
+    const auto execution = libtmux::workspace::cli::execute(
+        request,
+        [&](const std::string& event, const libtmux::workspace::cli::Json& value) {
+          if (event == "script-completed")
+            completed = value;
+        });
+    ASSERT_TRUE(completed.is_object()) << "script-completed was never observed";
+    EXPECT_EQ(completed.at("child_status"), fails ? 3 : 0);
+    EXPECT_EQ(completed.at("truncated"), false);
+    ASSERT_TRUE(completed.contains("script_output"));
+    EXPECT_EQ(completed.at("script_output").at("stdout"), "out");
+    EXPECT_EQ(completed.at("script_output").at("exit_code"), fails ? 3 : 0);
+  }
+}
+
 TEST(WorkspaceCli, FileServicesKeepTypesAndUseNativeWholeWordMatching) {
   Files files;
   std::ofstream{"dev.yaml"}
