@@ -81,9 +81,49 @@ using WaitCommandResult = libtmux::expected<std::optional<std::string>, ToolErro
   return ToolError{false, "request cancelled"};
 }
 
-[[nodiscard]] WaitAnswer wait_timed_out(const WaitDeadline& deadline, std::string mode,
+// Whether every occurrence of `wanted` in a capture is confined to its
+// final, non-blank row. `capture-pane -p` pads its output to the pane's
+// full height, so the "last line" a caller's own just-submitted command
+// still occupies — echoed there before the shell has run it and moved on
+// — is the last row that is not blank padding, not the literal last byte.
+[[nodiscard]] bool matches_only_the_active_row(std::string_view text,
+                                               std::string_view wanted) {
+  std::string_view settled = text;
+  while (!settled.empty() && settled.back() == '\n') {
+    settled.remove_suffix(1);
+  }
+  const auto last_newline = settled.find_last_of('\n');
+  const std::string_view active_row = last_newline == std::string_view::npos
+                                          ? settled
+                                          : settled.substr(last_newline + 1);
+  const std::string_view above_it = last_newline == std::string_view::npos
+                                        ? std::string_view{}
+                                        : settled.substr(0, last_newline);
+  return active_row.find(wanted) != std::string_view::npos &&
+         above_it.find(wanted) == std::string_view::npos;
+}
+
+// Every caller below defers a match confined to the active row rather than
+// reporting it — treating it exactly like "no match yet" and falling
+// through to the next capture. That alone would let a deferred match still
+// be sitting in `text` when the deadline finally passes, so this is where
+// every timeout is built, and it reports that one as a match instead of a
+// Timeout result that itself contains the match. `wanted` is searched for
+// plainly here, not through `bounded_contains`: the caller already spent
+// its matching-work budget confirming this capture is a genuine,
+// un-deferred answer, and metering a second search over the same bounded
+// text is not the check this is for.
+[[nodiscard]] WaitAnswer wait_timed_out(const WaitDeadline& deadline,
+                                        std::string_view wanted, std::string mode,
                                         std::string pane_id = {},
                                         std::string text = {}) {
+  if (!wanted.empty() && text.find(wanted) != std::string::npos) {
+    return WaitAnswer{.matched = true,
+                      .elapsed_ms = deadline.elapsed(),
+                      .mode = mode + "-unconfirmed",
+                      .pane_id = std::move(pane_id),
+                      .text = std::move(text)};
+  }
   return WaitAnswer{.timed_out = true,
                     .elapsed_ms = deadline.elapsed(),
                     .mode = std::move(mode),
@@ -195,17 +235,19 @@ poll_for_text(const Server& server, const WaitTarget& target, std::string_view w
       return libtmux::unexpected(captured.error());
     }
     if (!captured->has_value()) {
-      return wait_timed_out(deadline, std::move(mode), target.pane_id, std::move(last));
+      return wait_timed_out(deadline, wanted, std::move(mode), target.pane_id,
+                            std::move(last));
     }
     last = *std::move(*captured);
     if (deadline.expired()) {
-      return wait_timed_out(deadline, std::move(mode), target.pane_id, std::move(last));
+      return wait_timed_out(deadline, wanted, std::move(mode), target.pane_id,
+                            std::move(last));
     }
     const auto matched = bounded_contains(last, wanted, remaining_match_work);
     if (!matched.has_value()) {
       return libtmux::unexpected(matched.error());
     }
-    if (*matched) {
+    if (*matched && !matches_only_the_active_row(last, wanted)) {
       return WaitAnswer{.matched = true,
                         .elapsed_ms = deadline.elapsed(),
                         .mode = std::move(mode),
@@ -221,7 +263,8 @@ poll_for_text(const Server& server, const WaitTarget& target, std::string_view w
       std::this_thread::sleep_for(std::min(*remaining, std::chrono::milliseconds{50}));
     }
   }
-  return wait_timed_out(deadline, std::move(mode), target.pane_id, std::move(last));
+  return wait_timed_out(deadline, wanted, std::move(mode), target.pane_id,
+                        std::move(last));
 }
 
 [[nodiscard]] libtmux::expected<WaitAnswer, ToolError>
@@ -244,7 +287,7 @@ stream_for_text(const Server& server, const WaitTarget& target, std::string_view
   }
   const auto remaining = deadline.remaining();
   if (!remaining.has_value()) {
-    return wait_timed_out(deadline, "capture-before-control", target.pane_id,
+    return wait_timed_out(deadline, wanted, "capture-before-control", target.pane_id,
                           std::move(initial_capture));
   }
 
@@ -271,20 +314,20 @@ stream_for_text(const Server& server, const WaitTarget& target, std::string_view
     return libtmux::unexpected(after_connect.error());
   }
   if (!after_connect->has_value()) {
-    return wait_timed_out(deadline, "capture-after-control-connect", target.pane_id,
-                          std::move(initial_capture));
+    return wait_timed_out(deadline, wanted, "capture-after-control-connect",
+                          target.pane_id, std::move(initial_capture));
   }
   initial_capture = *std::move(*after_connect);
   if (deadline.expired()) {
-    return wait_timed_out(deadline, "capture-after-control-connect", target.pane_id,
-                          std::move(initial_capture));
+    return wait_timed_out(deadline, wanted, "capture-after-control-connect",
+                          target.pane_id, std::move(initial_capture));
   }
   const auto matched_after_connect =
       bounded_contains(initial_capture, wanted, remaining_match_work);
   if (!matched_after_connect.has_value()) {
     return libtmux::unexpected(matched_after_connect.error());
   }
-  if (*matched_after_connect) {
+  if (*matched_after_connect && !matches_only_the_active_row(initial_capture, wanted)) {
     return WaitAnswer{.matched = true,
                       .elapsed_ms = deadline.elapsed(),
                       .mode = "capture-after-control-connect",
@@ -325,12 +368,12 @@ stream_for_text(const Server& server, const WaitTarget& target, std::string_view
         return libtmux::unexpected(captured.error());
       }
       if (!captured->has_value()) {
-        return wait_timed_out(deadline, "control-output", target.pane_id,
+        return wait_timed_out(deadline, wanted, "control-output", target.pane_id,
                               std::move(initial_capture));
       }
       initial_capture = *std::move(*captured);
       if (deadline.expired()) {
-        return wait_timed_out(deadline, "control-output", target.pane_id,
+        return wait_timed_out(deadline, wanted, "control-output", target.pane_id,
                               std::move(initial_capture));
       }
       const auto matched =
@@ -338,7 +381,7 @@ stream_for_text(const Server& server, const WaitTarget& target, std::string_view
       if (!matched.has_value()) {
         return libtmux::unexpected(matched.error());
       }
-      if (*matched) {
+      if (*matched && !matches_only_the_active_row(initial_capture, wanted)) {
         return WaitAnswer{.matched = true,
                           .elapsed_ms = deadline.elapsed(),
                           .mode = "control-output",
@@ -351,7 +394,7 @@ stream_for_text(const Server& server, const WaitTarget& target, std::string_view
       next_progress = std::chrono::steady_clock::now() + std::chrono::seconds{1};
     }
   }
-  return wait_timed_out(deadline, "control-output", target.pane_id,
+  return wait_timed_out(deadline, wanted, "control-output", target.pane_id,
                         std::move(initial_capture));
 }
 
@@ -382,7 +425,7 @@ ToolResult wait_for_text(const Server& server, const Arguments& arguments,
   const std::string& wanted = *argument(arguments, "text");
   std::size_t remaining_match_work = 8U * 1024U * 1024U;
   if (!target->has_value()) {
-    return wait_output(wait_timed_out(deadline, "pane-lookup"));
+    return wait_output(wait_timed_out(deadline, wanted, "pane-lookup"));
   }
   auto captured = capture_before_deadline(server, **target, deadline, context);
   if (!captured.has_value()) {
@@ -390,18 +433,21 @@ ToolResult wait_for_text(const Server& server, const Arguments& arguments,
   }
   if (!captured->has_value()) {
     return wait_output(
-        wait_timed_out(deadline, "capture-at-entry", (*target)->pane_id));
+        wait_timed_out(deadline, wanted, "capture-at-entry", (*target)->pane_id));
   }
   std::string initial_capture = *std::move(*captured);
   if (deadline.expired()) {
-    return wait_output(wait_timed_out(deadline, "capture-at-entry", (*target)->pane_id,
-                                      std::move(initial_capture)));
+    return wait_output(wait_timed_out(deadline, wanted, "capture-at-entry",
+                                      (*target)->pane_id, std::move(initial_capture)));
   }
   const auto matched = bounded_contains(initial_capture, wanted, remaining_match_work);
   if (!matched.has_value()) {
     return libtmux::unexpected(matched.error());
   }
-  if (*matched) {
+  // A match confined to the pane's active row is a caller's own
+  // just-submitted command echoed back, not yet run — see
+  // matches_only_the_active_row.
+  if (*matched && !matches_only_the_active_row(initial_capture, wanted)) {
     return wait_output(WaitAnswer{.matched = true,
                                   .elapsed_ms = deadline.elapsed(),
                                   .mode = "capture-at-entry",

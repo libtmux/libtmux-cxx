@@ -1889,7 +1889,12 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
                  field("timeout_ms", "Bounded wait in milliseconds.", InputSink::none,
                        false, ArgumentType::integer, 1, 60000)},
                 OutputShape::wait, detail::wait_for_text,
-                "Poll within one deadline and report a match or timeout."));
+                "Poll within one deadline and report a match or timeout. A match "
+                "confined to the pane's last row is deferred rather than reported, "
+                "since that is where a just-submitted command still echoes before "
+                "the shell has run it; a `mode` ending in \"-unconfirmed\" means the "
+                "deadline passed before anything settled that, not that the search "
+                "was wrong."));
 
   add(make_tool(
       "get_tmux_variables", "Get tmux variables", Toolset::inspect, ProcessReach::none,

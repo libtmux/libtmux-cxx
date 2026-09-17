@@ -1579,6 +1579,84 @@ TEST(McpToolsTmux, SelectLayoutRefusesALeadingDashInsteadOfRunningItAsAFlag) {
       << "\"-o\" ran as tmux's undo flag instead of being refused";
 }
 
+// An agent's ordinary paste_text-then-Enter-then-wait_for_text sequence
+// must not report a match against the keystrokes it just typed (the
+// command's own echo) rather than against output the shell produced by
+// running them.
+//
+// A plain `echo <marker>` is not enough to prove this: three separate MCP
+// round trips already give a shell time to run it and print a fresh prompt
+// before `wait_for_text` ever looks, so its first capture is often already
+// confirmed output rather than the echo this is testing for. `sleep`
+// guarantees the capture-at-entry check lands while only the echo — the
+// literal command line, marker included — is on screen.
+TEST(McpToolsTmux, WaitForTextAfterSendKeysDoesNotMatchTheEchoedCommandLine) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  auto panes = server.panes();
+  ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
+  ASSERT_FALSE(panes->empty());
+  const std::string pane_id{panes->front().id()};
+  const auto tools = all_tools();
+
+  const std::string marker{"MCPMARKER-D10-42"};
+  const auto typed =
+      tools.call(server, "paste_text",
+                 Arguments{{"paneId", pane_id}, {"text", "sleep 1; echo " + marker}});
+  ASSERT_TRUE(typed.has_value()) << typed.error().message;
+  const auto submitted = tools.call(server, "send_keys",
+                                    Arguments{{"paneId", pane_id}, {"keys", "Enter"}});
+  ASSERT_TRUE(submitted.has_value()) << submitted.error().message;
+
+  const auto waited = tools.call(
+      server, "wait_for_text",
+      Arguments{{"target", pane_id}, {"text", marker}, {"timeout_ms", "8000"}});
+  ASSERT_TRUE(waited.has_value()) << waited.error().message;
+  EXPECT_TRUE(std::get<bool>(waited->structured.at("matched").value));
+  EXPECT_FALSE(std::get<bool>(waited->structured.at("timed_out").value));
+  const std::string mode = string_field(*waited, "mode");
+  EXPECT_NE(mode, "capture-at-entry")
+      << "matched the pane's already-visible content (the typed command line "
+         "included) rather than output the shell produced by running it. text="
+      << string_field(*waited, "text");
+  EXPECT_NE(mode, "capture-after-control-connect") << string_field(*waited, "text");
+}
+
+// The other shape this same guard has to close off: a Timeout result whose
+// own text carries the match it claims not to have found. Typed but never
+// submitted,
+// the marker sits on the pane's one and only row for as long as the wait
+// runs, so nothing ever confirms it — proving a short-timeout wait still
+// answers with a tell rather than a self-contradicting timeout.
+TEST(McpToolsTmux, WaitForTextNeverReportsATimeoutThatCarriesTheMatch) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  auto panes = server.panes();
+  ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
+  ASSERT_FALSE(panes->empty());
+  const std::string pane_id{panes->front().id()};
+  const auto tools = all_tools();
+
+  const std::string marker{"MCPMARKER-D10-UNSUBMITTED"};
+  const auto typed = tools.call(server, "paste_text",
+                                Arguments{{"paneId", pane_id}, {"text", marker}});
+  ASSERT_TRUE(typed.has_value()) << typed.error().message;
+
+  const auto waited = tools.call(
+      server, "wait_for_text",
+      Arguments{{"target", pane_id}, {"text", marker}, {"timeout_ms", "300"}});
+  ASSERT_TRUE(waited.has_value()) << waited.error().message;
+  const std::string text = string_field(*waited, "text");
+  EXPECT_FALSE(std::get<bool>(waited->structured.at("timed_out").value))
+      << "reported a timeout, but its own text=\"" << text
+      << "\" contains the marker it claims not to have found";
+  EXPECT_TRUE(std::get<bool>(waited->structured.at("matched").value));
+  EXPECT_TRUE(string_field(*waited, "mode").ends_with("-unconfirmed"))
+      << string_field(*waited, "mode");
+}
+
 TEST(McpToolsTmux, LiteralizesTmuxFormatBearingStateOnce) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
