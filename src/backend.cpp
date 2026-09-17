@@ -278,7 +278,15 @@ SubprocessBackend::open_startable(std::vector<std::string> connection,
           .exit_code = 0,
           .diagnostic = "the startable tmux socket path could not be resolved"});
     }
-    endpoint->connection = {"-S", *resolved};
+    // Keep the caller's own selector, not a `-S <resolved path>` of our own:
+    // tmux only creates the missing `tmux-<uid>` directory a socket lives
+    // under when *it* resolves the path (no `-S`, or `-L`), and does not
+    // when handed one by `-S`. Forcing `-S` here made the first command
+    // this backend ever ran — the `start-server`/`new-session` that has to
+    // create that directory — the one command guaranteed to skip the step
+    // that creates it. tmux's own client then reports "error creating
+    // <path>" on stderr but still exits 0, so nothing here saw it fail.
+    endpoint->connection = selector;
     endpoint->socket_path = *resolved;
     endpoint->identity = "pending:" + *resolved;
     endpoint->alias.reset();

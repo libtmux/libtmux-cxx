@@ -12,6 +12,14 @@
 #include <thread>
 #include <unordered_set>
 
+#if !defined(_WIN32)
+#include <cerrno>
+#include <cstring>
+// mkdtemp is POSIX and glibc declares it in <stdlib.h>; <cstdlib>
+// promises only the std:: names.
+#include <stdlib.h>
+#endif
+
 #include <gtest/gtest.h>
 
 #include "libtmux/cardinality.hpp"
@@ -177,6 +185,40 @@ INSTANTIATE_TEST_SUITE_P(AllSelectors, StartableServerIdentity,
                                          StartableSelector::name,
                                          StartableSelector::default_),
                          selector_name);
+
+#if !defined(_WIN32)
+// PublishesTheCreatedServersExactIdentity above points TMUX_TMPDIR at an
+// owner ScopedTmuxServer's own directory, whose startup already created
+// `tmux-<uid>/` as a side effect — masking the defect this proves fixed:
+// `startable_at_*` pinned its very first command, the one that has to
+// create that directory, to `-S <resolved path>`. tmux only creates a
+// missing `tmux-<uid>/` when it resolves the path itself (no selector, or
+// `-L`); handed one directly with `-S`, it prints "error creating ..." on
+// stderr and still exits 0, so nothing upstream saw it fail. This points
+// TMUX_TMPDIR at a directory nothing has touched, so `tmux-<uid>/` is
+// missing exactly as it would be for a first run.
+TEST(ServerIdentity, StartableAtSocketNameSucceedsUnderAFreshTmuxTmpdir) {
+  std::error_code parent_error;
+  const auto parent =
+      std::filesystem::canonical(std::filesystem::temp_directory_path(), parent_error);
+  ASSERT_FALSE(parent_error) << parent_error.message();
+  auto pattern = (parent / "libtmux-cxx-fresh-XXXXXX").string();
+  ASSERT_NE(::mkdtemp(pattern.data()), nullptr) << std::strerror(errno);
+  const std::filesystem::path fresh_tmpdir{pattern};
+  const libtmux::test::EnvironmentGuard tmpdir{"TMUX_TMPDIR", fresh_tmpdir.string()};
+
+  auto opened = Server::startable_at_socket_name("cxx12-fresh",
+                                                 std::filesystem::path{"/dev/null"});
+  ASSERT_TRUE(opened.has_value()) << opened.error().diagnostic;
+  ServerCleanup cleanup{*opened};
+
+  const auto created = opened->new_session("fresh-tmpdir-session");
+  ASSERT_TRUE(created.has_value()) << created.error().diagnostic;
+
+  std::error_code removed;
+  std::filesystem::remove_all(fresh_tmpdir, removed);
+}
+#endif
 
 TEST(ServerIdentity, ConcurrentFirstStartPinsTheOriginalServer) {
   auto owner = libtmux::test::ScopedTmuxServer::start();
