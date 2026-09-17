@@ -215,7 +215,8 @@ class MutationRunnerTest(unittest.TestCase):
             )
 
             self.assertEqual(outcome.verdict, "not a result")
-            self.assertEqual(outcome.detail, "the selected tests already fail")
+            self.assertIn("the selected tests already fail", outcome.detail)
+            self.assertIn("failed", outcome.detail)
             self.assertEqual(source.read_text(encoding="utf-8"), "guard = true;\n")
 
     def test_recovery_failure_keeps_the_test_diagnostic(self) -> None:
