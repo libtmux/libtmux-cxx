@@ -567,6 +567,71 @@ TEST(ControlModeConnection, AliasExpansionKeepsEveryReplyAndTheNextRequestAligne
   EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
 }
 
+// The request itself, on every supported release.
+//
+// Below tmux 3.8 asking for `new-layouts` has no observable effect -- an
+// unrecognised client flag is skipped silently, and `#{client_flags}` never
+// mentions it -- so the test below can only check the *consequence* on 3.8+,
+// and skips everywhere else. That leaves the request unguarded on the versions
+// this project mostly runs against. This watches the request instead of its
+// consequence: the connection runs tmux through a wrapper that copies what the
+// library writes on stdin into a file, which works the same on 3.2a and on a
+// development build.
+TEST(ControlModeConnection, ConnectAsksForJsonLayoutsOnEveryVersion) {
+  auto fixture = start_server(unique_name("control-layout-request"));
+  ASSERT_TRUE(fixture.has_value()) << (fixture.has_value() ? "" : fixture.error());
+
+  const auto directory =
+      std::filesystem::temp_directory_path() / unique_name("libtmux-cxx-record");
+  std::error_code directory_error;
+  std::filesystem::create_directories(directory, directory_error);
+  ASSERT_FALSE(directory_error) << directory_error.message();
+  const auto record = directory / "written";
+  const auto wrapper = directory / "tmux";
+  {
+    std::ofstream script{wrapper};
+    ASSERT_TRUE(script.is_open());
+    script << "#!/bin/sh\n"
+           << "exec tee -a " << record << " | exec " << LIBTMUX_CONTROL_TMUX_PATH
+           << " \"$@\"\n";
+  }
+  std::filesystem::permissions(wrapper, std::filesystem::perms::owner_all,
+                               directory_error);
+  ASSERT_FALSE(directory_error) << directory_error.message();
+
+  auto connected =
+      Connection::connect({.tmux_binary = wrapper,
+                           .socket_path = fixture->socket_path(),
+                           .session_name = std::string{fixture->session_name()},
+                           .startup_timeout = 5s,
+                           .shutdown_timeout = 2s});
+  ASSERT_TRUE(connected.has_value())
+      << (connected.has_value() ? "" : connected.error().message);
+  EXPECT_TRUE(connected->shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+
+  std::ifstream written{record};
+  ASSERT_TRUE(written.is_open()) << "the wrapper recorded nothing at " << record;
+  const std::string sent{std::istreambuf_iterator<char>{written},
+                         std::istreambuf_iterator<char>{}};
+  // The library writes each argument as octal escapes, so tmux's own parser
+  // takes it literally; the bytes on the wire are `\162\145...`, not the word.
+  std::string decoded;
+  for (std::size_t index = 0; index < sent.size();) {
+    if (sent[index] == '\\' && index + 3 < sent.size()) {
+      decoded.push_back(
+          static_cast<char>(std::stoi(sent.substr(index + 1, 3), nullptr, 8)));
+      index += 4;
+      continue;
+    }
+    decoded.push_back(sent[index]);
+    ++index;
+  }
+  EXPECT_NE(decoded.find("refresh-client -f new-layouts"), std::string::npos)
+      << "connect never asked tmux for JSON layouts; it wrote: " << decoded;
+
+  std::filesystem::remove_all(directory, directory_error);
+}
+
 // `Connection::connect` requests JSON layouts so a snapshot read through a
 // plain `Server` and a `%layout-change` read from this control connection
 // agree, on tmux 3.8+, instead of one being JSON and the other the classic

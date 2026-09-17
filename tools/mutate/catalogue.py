@@ -882,20 +882,16 @@ CATALOGUE: t.Final = (
         guards="a diagnostic truncated at the byte budget backs up to a UTF-8 "
         "character boundary instead of cutting one in half",
     ),
-    # This guard's only observable effect is JSON vs. the classic layout
-    # form, which tmux itself does not distinguish below 3.8: sending
-    # `refresh-client -f new-layouts` to 3.2a through 3.7c returns the same
-    # empty, error-free reply as not sending it at all (verified by hand on
-    # 3.2a, 3.7c and next-3.9), and neither version's `#{client_flags}`
-    # records that it was asked for. So the guarding test below correctly
-    # GTEST_SKIPs itself below tmux 3.8 - and ctest reports a skip as a pass,
-    # not a distinct status - which means this mutation is expected to read
-    # "survived" on any default-preset run whose resolved tmux is older than
-    # 3.8 (this repository's own CI mutation job installs Ubuntu's packaged
-    # tmux, currently well below that floor). Verify this one by hand
-    # against a tmux 3.8+ binary instead: `python3 -m tools.mutate --id
-    # connect-requests-json-layouts` with that tmux first on PATH reports
-    # "killed".
+    # The consequence of this guard -- JSON rather than the classic layout form
+    # -- is invisible below tmux 3.8: 3.2a through 3.7c answer
+    # `refresh-client -f new-layouts` exactly as they answer not sending it,
+    # and neither records it in `#{client_flags}` (verified by hand on 3.2a,
+    # 3.7c and next-3.9). The test that compares the two forms therefore skips
+    # itself below 3.8, and ctest reports a skip as a pass, so pointing this
+    # mutation at that test left it surviving on every run whose tmux is older
+    # -- including this repository's own CI job, which installs Ubuntu's
+    # packaged tmux. The guard below watches the request instead of its
+    # consequence, which every version can answer.
     Mutation(
         mutation_id="connect-requests-json-layouts",
         path="src/connection.cpp",
@@ -907,13 +903,12 @@ CATALOGUE: t.Final = (
         target="libtmux_control_integration_test",
         test_regex=(
             r"^libtmux[.]control[.]integration[.]ControlModeConnection[.]"
-            r"LayoutChangePayloadAgreesWithAPlainSnapshotOn38Plus$"
+            r"ConnectAsksForJsonLayoutsOnEveryVersion$"
         ),
         guards="Connection::connect asks tmux for JSON layouts, so a "
         "%layout-change this connection reads agrees with a plain Server "
         "snapshot's window_layout on tmux 3.8+ instead of carrying the "
-        "classic, index-based form. Needs tmux 3.8+ on PATH to kill; see "
-        "the comment above.",
+        "classic, index-based form.",
     ),
     Mutation(
         mutation_id="pane-toggle-zoom-sends-flag",
