@@ -1625,10 +1625,19 @@ TEST(McpToolsTmux, WaitForTextAfterSendKeysDoesNotMatchTheEchoedCommandLine) {
 
 // The other shape this same guard has to close off: a Timeout result whose
 // own text carries the match it claims not to have found. Typed but never
-// submitted,
-// the marker sits on the pane's one and only row for as long as the wait
-// runs, so nothing ever confirms it — proving a short-timeout wait still
-// answers with a tell rather than a self-contradicting timeout.
+// submitted, the marker sits on the pane's one and only row for as long as
+// the wait runs, so nothing ever confirms it — proving a short-timeout wait
+// still answers with a tell rather than a self-contradicting timeout.
+//
+// The marker is padded past the pane's 80-column width (ScopedTmuxServer's
+// default, unset by this test) so it wraps onto a second physical row by
+// itself, regardless of any prompt in front of it — a shell prompt long
+// enough to push an unpadded marker across that same boundary is what broke
+// this on a macOS CI runner with a long hostname; capture-pane needs `-J`
+// (rejoin what tmux only wrapped for display) or a search spanning the
+// wrap point never finds it. Padding here rather than relying on the
+// runner's own prompt length makes the wrap - and this proof - the same on
+// every platform.
 TEST(McpToolsTmux, WaitForTextNeverReportsATimeoutThatCarriesTheMatch) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
@@ -1639,7 +1648,7 @@ TEST(McpToolsTmux, WaitForTextNeverReportsATimeoutThatCarriesTheMatch) {
   const std::string pane_id{panes->front().id()};
   const auto tools = all_tools();
 
-  const std::string marker{"MCPMARKER-D10-UNSUBMITTED"};
+  const std::string marker{"MCPMARKER-D10-UNSUBMITTED-" + std::string(80U, 'X')};
   const auto typed = tools.call(server, "paste_text",
                                 Arguments{{"paneId", pane_id}, {"text", marker}});
   ASSERT_TRUE(typed.has_value()) << typed.error().message;

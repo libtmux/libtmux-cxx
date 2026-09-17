@@ -882,6 +882,20 @@ CATALOGUE: t.Final = (
         guards="a diagnostic truncated at the byte budget backs up to a UTF-8 "
         "character boundary instead of cutting one in half",
     ),
+    # This guard's only observable effect is JSON vs. the classic layout
+    # form, which tmux itself does not distinguish below 3.8: sending
+    # `refresh-client -f new-layouts` to 3.2a through 3.7c returns the same
+    # empty, error-free reply as not sending it at all (verified by hand on
+    # 3.2a, 3.7c and next-3.9), and neither version's `#{client_flags}`
+    # records that it was asked for. So the guarding test below correctly
+    # GTEST_SKIPs itself below tmux 3.8 - and ctest reports a skip as a pass,
+    # not a distinct status - which means this mutation is expected to read
+    # "survived" on any default-preset run whose resolved tmux is older than
+    # 3.8 (this repository's own CI mutation job installs Ubuntu's packaged
+    # tmux, currently well below that floor). Verify this one by hand
+    # against a tmux 3.8+ binary instead: `python3 -m tools.mutate --id
+    # connect-requests-json-layouts` with that tmux first on PATH reports
+    # "killed".
     Mutation(
         mutation_id="connect-requests-json-layouts",
         path="src/connection.cpp",
@@ -898,7 +912,8 @@ CATALOGUE: t.Final = (
         guards="Connection::connect asks tmux for JSON layouts, so a "
         "%layout-change this connection reads agrees with a plain Server "
         "snapshot's window_layout on tmux 3.8+ instead of carrying the "
-        "classic, index-based form",
+        "classic, index-based form. Needs tmux 3.8+ on PATH to kill; see "
+        "the comment above.",
     ),
     Mutation(
         mutation_id="pane-toggle-zoom-sends-flag",
@@ -949,7 +964,7 @@ CATALOGUE: t.Final = (
         test_regex=r"^consumer[.]mcp[.]real-tmux$",
         guards="wait_for_text does not report a match confined to the pane's "
         "active row, which is a caller's own just-submitted command echoed "
-        "back rather than output the shell produced by running it (D10)",
+        "back rather than output the shell produced by running it",
     ),
     Mutation(
         mutation_id="wait-for-text-timeout-checks-for-the-match",
@@ -960,6 +975,20 @@ CATALOGUE: t.Final = (
         test_regex=r"^consumer[.]mcp[.]real-tmux$",
         guards="a wait that would time out with the wanted text still sitting "
         "in its last capture reports a deferred match instead, so a Timeout "
-        "result never carries the match it claims not to have found (D10)",
+        "result never carries the match it claims not to have found",
+    ),
+    Mutation(
+        mutation_id="wait-for-text-capture-joins-wrapped-lines",
+        path="apps/mcp/src/wait_for_text.cpp",
+        find='  return run_before_deadline(server, {"capture-pane", "-p", "-J", "-t", target.pane_id},',
+        replace='  return run_before_deadline(server, {"capture-pane", "-p", "-t", target.pane_id},',
+        target="mcp_tools_test",
+        test_regex=(
+            r"^consumer[.]mcp[.]real-tmux$"
+        ),
+        guards="wait_for_text's capture rejoins a line tmux only wrapped for "
+        "display (-J), so a wanted string straddling the pane's width still "
+        "matches instead of being split by an inserted line break — found "
+        "when a long CI hostname pushed a short prompt past 80 columns",
     ),
 )

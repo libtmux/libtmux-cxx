@@ -185,7 +185,14 @@ resolve_wait_target(const Server& server, std::string_view target,
                                                         const WaitTarget& target,
                                                         const WaitDeadline& deadline,
                                                         const CallContext& context) {
-  return run_before_deadline(server, {"capture-pane", "-p", "-t", target.pane_id},
+  // `-J`: without it, tmux reports a soft-wrapped line — one logical line
+  // that ran past the pane's width — as separate lines split at the wrap
+  // column, with no marker that the break is not a real one. A `wanted`
+  // string straddling that column then never matches, in both the search
+  // below and matches_only_the_active_row's, because the two say the same
+  // thing about a promise this capture makes: what looks like one row on
+  // screen is one line in the text searched for it.
+  return run_before_deadline(server, {"capture-pane", "-p", "-J", "-t", target.pane_id},
                              deadline, context);
 }
 
