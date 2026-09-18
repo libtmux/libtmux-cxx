@@ -1061,6 +1061,57 @@ TEST(Entity, ARecordedSnapshotFiltersButCannotAct) {
   EXPECT_EQ(killed.error().delivery, libtmux::DeliveryStatus::not_started);
 }
 
+// A recording is whatever field list its author passed, and a released schema
+// is one of them: `pane_left` and `pane_top` were added after 0.1.0-alpha.8,
+// so every recording written against that release names nineteen fields while
+// this header names twenty-one. Reading one must answer, not run off the row.
+//
+// Under a sanitizer this is the whole test: an unbounded positional read
+// reports a heap-buffer-overflow inside `Row::value` rather than failing an
+// expectation.
+TEST(Entity, ARecordingOfAnOlderSchemaReadsItsAbsentFieldsAsZero) {
+  static constexpr std::array kReleasedPaneFields{
+      std::string_view{"pane_id"},      std::string_view{"pane_current_command"},
+      std::string_view{"pane_active"},  std::string_view{"window_id"},
+      std::string_view{"session_id"},   std::string_view{"pane_index"},
+      std::string_view{"pane_title"},   std::string_view{"pane_pid"},
+      std::string_view{"pane_tty"},     std::string_view{"pane_current_path"},
+      std::string_view{"pane_width"},   std::string_view{"pane_height"},
+      std::string_view{"pane_dead"},    std::string_view{"pane_in_mode"},
+      std::string_view{"pane_at_top"},  std::string_view{"pane_at_bottom"},
+      std::string_view{"pane_at_left"}, std::string_view{"pane_at_right"},
+      std::string_view{"pane_pipe"}};
+  static_assert(kReleasedPaneFields.size() < Pane::kFields.size(),
+                "this test is about a recording naming fewer fields than the "
+                "entity does; make it one short again if a field was removed");
+
+  std::string output;
+  for (const std::string_view value :
+       {"%0", "nvim", "1", "@0", "$0", "0", "editor", "4210", "/dev/pts/3", "/home",
+        "80", "24", "0", "0", "1", "0", "1", "1", "0"}) {
+    output += value;
+    output += libtmux::kFormatSeparator;
+  }
+  output += "\n";
+
+  const auto recorded = libtmux::Snapshot::from_recording(kReleasedPaneFields, output);
+  ASSERT_NE(recorded, nullptr);
+
+  const Pane pane{recorded, 0};
+  EXPECT_EQ(pane.id(), "%0");
+  EXPECT_EQ(pane.command(), "nvim");
+  EXPECT_EQ(pane.width(), 80);
+  EXPECT_TRUE(pane.piping() == false);
+  // Named by this header, absent from the recording.
+  EXPECT_EQ(pane.left(), 0);
+  EXPECT_EQ(pane.top(), 0);
+
+  // The row index is the caller's too, and out of range is not a row.
+  const Pane absent{recorded, 7};
+  EXPECT_TRUE(absent.id().empty());
+  EXPECT_EQ(absent.left(), 0);
+}
+
 TEST(Entity, ANewSessionComesBackAsASession) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();

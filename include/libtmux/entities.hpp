@@ -204,14 +204,24 @@ public:
       : snapshot_{std::move(snapshot)}, row_{row} {}
 
 protected:
+  // Absent reads as empty, which every field decodes as its own zero.
+  //
+  // The bound is not defensive programming: `from_recording` takes whatever
+  // field list a caller passes, and entity constructors are public, so a
+  // recording made against an older schema — one field list shorter than the
+  // entity now names — is an ordinary value a caller can hold. Indexing it
+  // unchecked read past the row, which the by-name overload below never did.
   [[nodiscard]] std::string_view value(std::size_t index) const noexcept {
-    return snapshot_->rows()[row_][index];
+    const auto& rows = snapshot_->rows();
+    if (row_ >= rows.size()) {
+      return {};
+    }
+    const auto& row = rows[row_];
+    return index < row.size() ? row[index] : std::string_view{};
   }
 
   [[nodiscard]] std::string_view value(std::string_view field) const noexcept {
-    const std::size_t index = snapshot_->index_of(field);
-    const auto& row = snapshot_->rows()[row_];
-    return index < row.size() ? row[index] : std::string_view{};
+    return value(snapshot_->index_of(field));
   }
 
   [[nodiscard]] const std::shared_ptr<const Backend>& backend() const noexcept {
