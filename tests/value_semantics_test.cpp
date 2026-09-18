@@ -5,6 +5,7 @@
 // past a failure, and name that failure — and each of them is part of the
 // surface that cannot change once the package is published.
 
+#include <algorithm>
 #include <concepts>
 #include <cstddef>
 #include <format>
@@ -12,6 +13,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
@@ -229,6 +231,78 @@ TEST(ValueSemantics, AFailureComposesAndCanBeNamed) {
   }
   EXPECT_FALSE(libtmux::to_string(libtmux::CardinalityError::several_matched).empty());
   EXPECT_FALSE(libtmux::to_string(libtmux::SocketError::path_too_long).empty());
+}
+
+// Reading a field and filtering on it are one contract, not two.
+//
+// Nothing tied them together, so seven pane accessors and one window accessor
+// had no handle beside them: `pane.left()` read, `pane::left` did not exist,
+// and the gap showed up as a filter a caller simply could not write rather
+// than as anything that failed. Timestamps had no handle at all.
+//
+// Keyed on `kFields` because that array is what a new field is added to. Add
+// one, forget the handle, and this names the field that lost its half.
+TEST(ValueSemantics, EveryEntityFieldIsReachableFromAFilter) {
+  const auto unreachable = [](const std::vector<std::string_view>& handled,
+                              const auto& fields) {
+    std::string absent;
+    for (const std::string_view field : fields) {
+      if (std::ranges::find(handled, field) == handled.end()) {
+        absent += absent.empty() ? "" : ", ";
+        absent += field;
+      }
+    }
+    return absent;
+  };
+
+  namespace session = libtmux::session;
+  namespace window = libtmux::window;
+  namespace pane = libtmux::pane;
+  namespace client = libtmux::client;
+
+  EXPECT_EQ(unreachable({session::id.field.name, session::name.field.name,
+                         session::attached.field.name, session::path.field.name,
+                         session::group.field.name, session::grouped.field.name,
+                         session::client_count.field.name,
+                         session::window_count.field.name, session::created.field.name},
+                        libtmux::Session::kFields),
+            "")
+      << "namespace session has no handle for these";
+
+  EXPECT_EQ(unreachable({window::id.field.name, window::name.field.name,
+                         window::active.field.name, window::session_id.field.name,
+                         window::layout.field.name, window::zoomed.field.name,
+                         window::bell.field.name, window::activity.field.name,
+                         window::index.field.name, window::pane_count.field.name,
+                         window::width.field.name, window::height.field.name,
+                         window::linked_sessions.field.name},
+                        libtmux::Window::kFields),
+            "")
+      << "namespace window has no handle for these";
+
+  EXPECT_EQ(unreachable({pane::id.field.name,         pane::command.field.name,
+                         pane::active.field.name,     pane::window_id.field.name,
+                         pane::session_id.field.name, pane::title.field.name,
+                         pane::tty.field.name,        pane::path.field.name,
+                         pane::dead.field.name,       pane::in_mode.field.name,
+                         pane::index.field.name,      pane::pid.field.name,
+                         pane::width.field.name,      pane::height.field.name,
+                         pane::at_top.field.name,     pane::at_bottom.field.name,
+                         pane::at_left.field.name,    pane::at_right.field.name,
+                         pane::piping.field.name,     pane::left.field.name,
+                         pane::top.field.name},
+                        libtmux::Pane::kFields),
+            "")
+      << "namespace pane has no handle for these";
+
+  EXPECT_EQ(unreachable({client::name.field.name, client::session_name.field.name,
+                         client::read_only.field.name, client::tty.field.name,
+                         client::terminal.field.name, client::control_mode.field.name,
+                         client::width.field.name, client::height.field.name,
+                         client::created.field.name, client::last_activity.field.name},
+                        libtmux::Client::kFields),
+            "")
+      << "namespace client has no handle for these";
 }
 
 TEST(ValueSemantics, CapabilitiesReportWhetherControlCanBeOpened) {

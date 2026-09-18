@@ -965,6 +965,13 @@ inline constexpr NumberFieldHandle<Session> client_count{
     {Session::kFields[2], [](const Session& row) { return row.client_count(); }}};
 inline constexpr NumberFieldHandle<Session> window_count{
     {Session::kFields[3], [](const Session& row) { return row.window_count(); }}};
+// tmux renders a timestamp as epoch seconds, which is what a filter compares
+// and what `-f` would compare on the server. The accessor beside this one
+// answers `sys_seconds` because that is what a caller wants to hold.
+inline constexpr NumberFieldHandle<Session> created{
+    {Session::kFields[5], [](const Session& row) {
+       return static_cast<long long>(row.created().time_since_epoch().count());
+     }}};
 
 } // namespace session
 
@@ -996,6 +1003,8 @@ inline constexpr NumberFieldHandle<Window> width{
     {Window::kFields[6], [](const Window& row) { return row.width(); }}};
 inline constexpr NumberFieldHandle<Window> height{
     {Window::kFields[7], [](const Window& row) { return row.height(); }}};
+inline constexpr NumberFieldHandle<Window> linked_sessions{
+    {Window::kFields[12], [](const Window& row) { return row.linked_sessions(); }}};
 
 } // namespace window
 
@@ -1031,6 +1040,20 @@ inline constexpr NumberFieldHandle<Pane> width{
     {Pane::kFields[10], [](const Pane& row) { return row.width(); }}};
 inline constexpr NumberFieldHandle<Pane> height{
     {Pane::kFields[11], [](const Pane& row) { return row.height(); }}};
+inline constexpr BoolFieldHandle<Pane> at_top{
+    {Pane::kFields[14], [](const Pane& row) { return row.at_top(); }}};
+inline constexpr BoolFieldHandle<Pane> at_bottom{
+    {Pane::kFields[15], [](const Pane& row) { return row.at_bottom(); }}};
+inline constexpr BoolFieldHandle<Pane> at_left{
+    {Pane::kFields[16], [](const Pane& row) { return row.at_left(); }}};
+inline constexpr BoolFieldHandle<Pane> at_right{
+    {Pane::kFields[17], [](const Pane& row) { return row.at_right(); }}};
+inline constexpr BoolFieldHandle<Pane> piping{
+    {Pane::kFields[18], [](const Pane& row) { return row.piping(); }}};
+inline constexpr NumberFieldHandle<Pane> left{
+    {Pane::kFields[19], [](const Pane& row) { return row.left(); }}};
+inline constexpr NumberFieldHandle<Pane> top{
+    {Pane::kFields[20], [](const Pane& row) { return row.top(); }}};
 
 } // namespace pane
 
@@ -1052,6 +1075,14 @@ inline constexpr NumberFieldHandle<Client> width{
     {Client::kFields[4], [](const Client& row) { return row.width(); }}};
 inline constexpr NumberFieldHandle<Client> height{
     {Client::kFields[5], [](const Client& row) { return row.height(); }}};
+inline constexpr NumberFieldHandle<Client> created{
+    {Client::kFields[6], [](const Client& row) {
+       return static_cast<long long>(row.created().time_since_epoch().count());
+     }}};
+inline constexpr NumberFieldHandle<Client> last_activity{
+    {Client::kFields[7], [](const Client& row) {
+       return static_cast<long long>(row.last_activity().time_since_epoch().count());
+     }}};
 
 } // namespace client
 

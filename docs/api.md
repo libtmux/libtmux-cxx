@@ -1410,6 +1410,7 @@ The tmux object hierarchy.  A Session, Window, Pane or Client is one row of a sn
   - [`session::grouped`](#libtmux-entities-hpp-free-symbols-session-grouped)
   - [`session::client_count`](#libtmux-entities-hpp-free-symbols-session-client-count)
   - [`session::window_count`](#libtmux-entities-hpp-free-symbols-session-window-count)
+  - [`session::created`](#libtmux-entities-hpp-free-symbols-session-created)
   - [`window::id`](#libtmux-entities-hpp-free-symbols-window-id)
   - [`window::name`](#libtmux-entities-hpp-free-symbols-window-name)
   - [`window::active`](#libtmux-entities-hpp-free-symbols-window-active)
@@ -1423,6 +1424,7 @@ The tmux object hierarchy.  A Session, Window, Pane or Client is one row of a sn
   - [`window::pane_count`](#libtmux-entities-hpp-free-symbols-window-pane-count)
   - [`window::width`](#libtmux-entities-hpp-free-symbols-window-width)
   - [`window::height`](#libtmux-entities-hpp-free-symbols-window-height)
+  - [`window::linked_sessions`](#libtmux-entities-hpp-free-symbols-window-linked-sessions)
   - [`pane::id`](#libtmux-entities-hpp-free-symbols-pane-id)
   - [`pane::command`](#libtmux-entities-hpp-free-symbols-pane-command)
   - [`pane::active`](#libtmux-entities-hpp-free-symbols-pane-active)
@@ -1438,6 +1440,13 @@ The tmux object hierarchy.  A Session, Window, Pane or Client is one row of a sn
   - [`pane::pid`](#libtmux-entities-hpp-free-symbols-pane-pid)
   - [`pane::width`](#libtmux-entities-hpp-free-symbols-pane-width)
   - [`pane::height`](#libtmux-entities-hpp-free-symbols-pane-height)
+  - [`pane::at_top`](#libtmux-entities-hpp-free-symbols-pane-at-top)
+  - [`pane::at_bottom`](#libtmux-entities-hpp-free-symbols-pane-at-bottom)
+  - [`pane::at_left`](#libtmux-entities-hpp-free-symbols-pane-at-left)
+  - [`pane::at_right`](#libtmux-entities-hpp-free-symbols-pane-at-right)
+  - [`pane::piping`](#libtmux-entities-hpp-free-symbols-pane-piping)
+  - [`pane::left`](#libtmux-entities-hpp-free-symbols-pane-left)
+  - [`pane::top`](#libtmux-entities-hpp-free-symbols-pane-top)
   - [`client::name`](#libtmux-entities-hpp-free-symbols-client-name)
   - [`client::session_name`](#libtmux-entities-hpp-free-symbols-client-session-name)
   - [`client::read_only`](#libtmux-entities-hpp-free-symbols-client-read-only)
@@ -1446,6 +1455,8 @@ The tmux object hierarchy.  A Session, Window, Pane or Client is one row of a sn
   - [`client::control_mode`](#libtmux-entities-hpp-free-symbols-client-control-mode)
   - [`client::width`](#libtmux-entities-hpp-free-symbols-client-width)
   - [`client::height`](#libtmux-entities-hpp-free-symbols-client-height)
+  - [`client::created`](#libtmux-entities-hpp-free-symbols-client-created)
+  - [`client::last_activity`](#libtmux-entities-hpp-free-symbols-client-last-activity)
 
 <a id="libtmux-entities-hpp-splitoptions"></a>
 ### `SplitOptions`
@@ -2738,7 +2749,7 @@ Move this pane into another window, splitting it. The other half of `break_out`:
 ```cpp
 [[nodiscard]] expected<void, CommandFailure> enter_copy_mode() const;
 ```
-Forget the scrollback, which is the only way to bound a pane's memory without restarting what is running in it. Put this pane into copy mode, where its contents can be scrolled and selected rather than typed into.  Needs no attached client: the mode is pane state, which `in_mode` reports. Entering twice is harmless.
+Put this pane into copy mode, where its contents can be scrolled and selected rather than typed into.  Needs no attached client: the mode is pane state, which `in_mode` reports. Entering twice is harmless.
 
 <a id="libtmux-entities-hpp-pane-leave-mode"></a>
 #### `Pane::leave_mode`
@@ -2793,6 +2804,7 @@ Start the pane's command again.  tmux refuses a pane whose process is still runn
 ```cpp
 [[nodiscard]] expected<void, CommandFailure> clear_history() const;
 ```
+Forget the scrollback, which is the only way to bound a pane's memory without restarting what is running in it.
 
 <a id="libtmux-entities-hpp-pane-expand"></a>
 #### `Pane::expand`
@@ -3423,6 +3435,14 @@ inline constexpr NumberFieldHandle<Session> client_count{ {Session::kFields[2], 
 inline constexpr NumberFieldHandle<Session> window_count{ {Session::kFields[3], [](const Session& row) { /* implementation omitted */ }}};
 ```
 
+<a id="libtmux-entities-hpp-free-symbols-session-created"></a>
+#### `session::created`
+
+```cpp
+inline constexpr NumberFieldHandle<Session> created{ {Session::kFields[5], [](const Session& row) { /* implementation omitted */ }}};
+```
+tmux renders a timestamp as epoch seconds, which is what a filter compares and what `-f` would compare on the server. The accessor beside this one answers `sys_seconds` because that is what a caller wants to hold.
+
 <a id="libtmux-entities-hpp-free-symbols-window-id"></a>
 #### `window::id`
 
@@ -3512,6 +3532,13 @@ inline constexpr NumberFieldHandle<Window> width{ {Window::kFields[6], [](const 
 
 ```cpp
 inline constexpr NumberFieldHandle<Window> height{ {Window::kFields[7], [](const Window& row) { /* implementation omitted */ }}};
+```
+
+<a id="libtmux-entities-hpp-free-symbols-window-linked-sessions"></a>
+#### `window::linked_sessions`
+
+```cpp
+inline constexpr NumberFieldHandle<Window> linked_sessions{ {Window::kFields[12], [](const Window& row) { /* implementation omitted */ }}};
 ```
 
 <a id="libtmux-entities-hpp-free-symbols-pane-id"></a>
@@ -3619,6 +3646,55 @@ inline constexpr NumberFieldHandle<Pane> width{ {Pane::kFields[10], [](const Pan
 inline constexpr NumberFieldHandle<Pane> height{ {Pane::kFields[11], [](const Pane& row) { /* implementation omitted */ }}};
 ```
 
+<a id="libtmux-entities-hpp-free-symbols-pane-at-top"></a>
+#### `pane::at_top`
+
+```cpp
+inline constexpr BoolFieldHandle<Pane> at_top{ {Pane::kFields[14], [](const Pane& row) { /* implementation omitted */ }}};
+```
+
+<a id="libtmux-entities-hpp-free-symbols-pane-at-bottom"></a>
+#### `pane::at_bottom`
+
+```cpp
+inline constexpr BoolFieldHandle<Pane> at_bottom{ {Pane::kFields[15], [](const Pane& row) { /* implementation omitted */ }}};
+```
+
+<a id="libtmux-entities-hpp-free-symbols-pane-at-left"></a>
+#### `pane::at_left`
+
+```cpp
+inline constexpr BoolFieldHandle<Pane> at_left{ {Pane::kFields[16], [](const Pane& row) { /* implementation omitted */ }}};
+```
+
+<a id="libtmux-entities-hpp-free-symbols-pane-at-right"></a>
+#### `pane::at_right`
+
+```cpp
+inline constexpr BoolFieldHandle<Pane> at_right{ {Pane::kFields[17], [](const Pane& row) { /* implementation omitted */ }}};
+```
+
+<a id="libtmux-entities-hpp-free-symbols-pane-piping"></a>
+#### `pane::piping`
+
+```cpp
+inline constexpr BoolFieldHandle<Pane> piping{ {Pane::kFields[18], [](const Pane& row) { /* implementation omitted */ }}};
+```
+
+<a id="libtmux-entities-hpp-free-symbols-pane-left"></a>
+#### `pane::left`
+
+```cpp
+inline constexpr NumberFieldHandle<Pane> left{ {Pane::kFields[19], [](const Pane& row) { /* implementation omitted */ }}};
+```
+
+<a id="libtmux-entities-hpp-free-symbols-pane-top"></a>
+#### `pane::top`
+
+```cpp
+inline constexpr NumberFieldHandle<Pane> top{ {Pane::kFields[20], [](const Pane& row) { /* implementation omitted */ }}};
+```
+
 <a id="libtmux-entities-hpp-free-symbols-client-name"></a>
 #### `client::name`
 
@@ -3673,6 +3749,20 @@ inline constexpr NumberFieldHandle<Client> width{ {Client::kFields[4], [](const 
 
 ```cpp
 inline constexpr NumberFieldHandle<Client> height{ {Client::kFields[5], [](const Client& row) { /* implementation omitted */ }}};
+```
+
+<a id="libtmux-entities-hpp-free-symbols-client-created"></a>
+#### `client::created`
+
+```cpp
+inline constexpr NumberFieldHandle<Client> created{ {Client::kFields[6], [](const Client& row) { /* implementation omitted */ }}};
+```
+
+<a id="libtmux-entities-hpp-free-symbols-client-last-activity"></a>
+#### `client::last_activity`
+
+```cpp
+inline constexpr NumberFieldHandle<Client> last_activity{ {Client::kFields[7], [](const Client& row) { /* implementation omitted */ }}};
 ```
 
 <a id="libtmux-snapshot-hpp"></a>
