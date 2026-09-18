@@ -576,10 +576,14 @@ SubprocessBackend::publish_started_endpoint(std::string_view start_stderr) const
     // file or directory" for a `-S` selector under a missing parent
     // directory) and still exit 0 - the same stderr-but-exit-0 quirk guarded
     // against elsewhere in this file. Surface it instead of a causeless
-    // message when tmux gave one.
+    // message when tmux gave one; say plainly that it gave none rather than
+    // inventing one, which is what tmux 3.2a does here - it writes nothing at
+    // all, where every later release explains itself.
     std::string diagnostic =
         "tmux started but its exact endpoint was not available to retain";
-    if (!start_stderr.empty()) {
+    if (start_stderr.empty()) {
+      diagnostic += ": tmux gave no reason";
+    } else {
       diagnostic += ": " + std::string{start_stderr};
     }
     return unexpected(CommandFailure{.kind = FailureKind::missing,

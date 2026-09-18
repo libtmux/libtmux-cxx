@@ -286,7 +286,10 @@ TEST(ServerIdentity, ConcurrentFirstStartPinsTheOriginalServer) {
 // stderr and still exits 0, so the failure is invisible unless that stderr
 // is read - the same quirk `StartableAtSocketNameSucceedsUnderAFreshTmuxTmpdir`
 // guards for the auto-mkdir path. The previous message here gave no reason
-// at all.
+// at all. tmux 3.2a writes nothing to stderr for this, where every later
+// release explains itself, so the diagnostic has to carry tmux's reason when
+// there is one and say there was none when there is not - never a bare
+// message a reader cannot act on.
 TEST(ServerIdentity, StartableAtSocketPathUnderAMissingParentSurfacesTmuxsOwnReason) {
   auto scratch = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(scratch.has_value()) << scratch.error();
@@ -301,8 +304,10 @@ TEST(ServerIdentity, StartableAtSocketPathUnderAMissingParentSurfacesTmuxsOwnRea
   const auto created = opened->new_session("first");
   ASSERT_FALSE(created.has_value());
   EXPECT_FALSE(opened->is_alive());
-  EXPECT_NE(created.error().diagnostic.find("error creating"), std::string::npos)
-      << created.error().diagnostic;
+  const bool explained =
+      created.error().diagnostic.find("error creating") != std::string::npos ||
+      created.error().diagnostic.find("tmux gave no reason") != std::string::npos;
+  EXPECT_TRUE(explained) << created.error().diagnostic;
 }
 
 // The two servers really do use the same ids, which is what makes every

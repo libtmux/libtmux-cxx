@@ -954,7 +954,7 @@ CATALOGUE: t.Final = (
         mutation_id="wait-for-text-defers-active-row-match",
         path="apps/mcp/src/wait_for_text.cpp",
         find="  if (*matched && "
-        "!matches_only_the_active_row(initial_capture, wanted)) {\n"
+        "confirmed_by_output(initial_capture, wanted, pending_input)) {\n"
         "    return wait_output(WaitAnswer{.matched = true,",
         replace="  if (*matched) {\n    return wait_output(WaitAnswer{.matched = true,",
         target="mcp_tools_test",
@@ -964,16 +964,16 @@ CATALOGUE: t.Final = (
         "back rather than output the shell produced by running it",
     ),
     Mutation(
-        mutation_id="wait-for-text-timeout-checks-for-the-match",
+        mutation_id="wait-for-text-timeout-marks-an-unconfirmed-match",
         path="apps/mcp/src/wait_for_text.cpp",
-        find="  if (!wanted.empty() && text.find(wanted) != std::string::npos) {",
-        replace="  if (false && !wanted.empty() && "
-        "text.find(wanted) != std::string::npos) {",
+        find="  const bool still_pending = "
+        "!wanted.empty() && text.find(wanted) != std::string::npos;",
+        replace="  const bool still_pending = false;",
         target="mcp_tools_test",
         test_regex=r"^consumer[.]mcp[.]real-tmux$",
-        guards="a wait that would time out with the wanted text still sitting "
-        "in its last capture reports a deferred match instead, so a Timeout "
-        "result never carries the match it claims not to have found",
+        guards="a timeout whose last capture still shows the wanted text says "
+        "so in its mode, so a caller can tell text this server typed and the "
+        "shell never ran apart from a pane that stayed silent",
     ),
     Mutation(
         mutation_id="wait-for-text-capture-joins-wrapped-lines",
