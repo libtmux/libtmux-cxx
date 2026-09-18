@@ -1138,6 +1138,20 @@ TEST(WorkspaceCli, LoadRefusalOfATopLevelKeyIsOneCleanSentence) {
   EXPECT_NE(refused.err.find("x-"), std::string::npos) << refused.err;
 }
 
+// A token that spells a flag is that option's value when the option takes
+// one: machine output follows the parsed flags, not a scan of raw arguments.
+TEST(WorkspaceCli, MachineModeFollowsTheParsedFlagsNotRawArguments) {
+  Files files;
+  std::ofstream{"w.yaml"} << "session_name: s\nwindows: [{panes: [echo]}]\n";
+  const auto swallowed = invoke({"convert", "w.yaml", "--save-to", "--json"});
+  ASSERT_EQ(swallowed.code, 0) << swallowed.err;
+  EXPECT_FALSE(swallowed.out.starts_with("{")) << swallowed.out;
+  EXPECT_TRUE(std::filesystem::exists("--json"));
+  const auto machine = invoke({"convert", "w.yaml", "--save-to", "out.json", "--json"});
+  ASSERT_EQ(machine.code, 0) << machine.err;
+  EXPECT_EQ(Json::parse(machine.out).at("command"), "convert") << machine.out;
+}
+
 // Every stderr error record carries "schema_version":1.
 TEST(WorkspaceCliTmux, ErrorCodesMatchTheSharedLowerSnakeCaseVocabulary) {
   Files files;
