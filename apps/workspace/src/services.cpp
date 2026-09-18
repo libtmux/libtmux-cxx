@@ -684,8 +684,10 @@ Json capture(const Request& request) {
   const bool by_id = name.size() > 1 && name.front() == '$' &&
                      name.find_first_not_of("0123456789", 1) == std::string::npos;
   const auto session = server.session(by_id ? name : "=" + name + ":");
+  // A lookup that finds nothing and a socket with no server behind it are the
+  // same answer here, and neither reads as one in the library's own words.
   if (!session)
-    throw Failure{1, "session_not_found", session.error().diagnostic};
+    throw Failure{1, "session_not_found", "no session named " + name};
   const auto windows = session->windows();
   if (!windows)
     throw Failure{1, "capture_failed", windows.error().diagnostic};

@@ -1174,6 +1174,15 @@ TEST(WorkspaceCliTmux, ErrorCodesMatchTheSharedLowerSnakeCaseVocabulary) {
   record = Json::parse(frozen.err);
   EXPECT_EQ(record.at("schema_version"), 1) << record.dump();
   EXPECT_EQ(record.at("code"), "session_not_found") << record.dump();
+  EXPECT_EQ(record.at("message"), "no session named nosuch") << record.dump();
+
+  // A socket with no server behind it holds no session either, so it is the
+  // same answer rather than the library's stale-handle wording.
+  const auto cold = invoke({"freeze", "nosuch", "-S", socket + ".cold", "--json"});
+  EXPECT_NE(cold.code, 0);
+  record = Json::parse(cold.err);
+  EXPECT_EQ(record.at("code"), "session_not_found") << record.dump();
+  EXPECT_EQ(record.at("message"), "no session named nosuch") << record.dump();
 
   std::ofstream{"ok.yaml"} << "session_name: ok\nwindows: [{panes: [echo]}]\n";
   std::ofstream{"tf.yaml"}
