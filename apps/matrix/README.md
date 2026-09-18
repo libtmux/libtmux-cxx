@@ -73,8 +73,8 @@ what the control path buys; this one, built out of mutations, would not.
 libtmux-ts makes the same choice; libtmux-go, libtmux-rs, Swift, .NET and Java
 dispatch commands over their connections and measure that.
 
-The harness writes a POSIX proxy named `tmux` and puts its directory first on
-`PATH`, because the library resolves `tmux` for itself. Passing
-`tmux_binary` to the fixture alone covers only the server it starts, and every
-measured command then bypasses the counter: the first version of this lane
-reported zero invocations for exactly that reason, and `--check` caught it.
+The harness writes a POSIX proxy that records one invocation and execs the real
+tmux, then names it twice: to the fixture as `tmux_binary`, so the server it
+starts runs through it, and to the `Server` as `ExecutionPolicy::tmux_binary`,
+so every measured command does too. Naming it to the fixture alone covers only
+the server it starts, and every measured command then bypasses the counter.

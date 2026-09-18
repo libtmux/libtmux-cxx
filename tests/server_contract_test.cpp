@@ -13,6 +13,7 @@
 #include <semaphore>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -1867,4 +1868,63 @@ TEST(ServerContract, WaitingOutlivesTheServersDeadline) {
   // The caller's 300ms, not the policy's 1ms.
   EXPECT_GE(elapsed, std::chrono::milliseconds{250})
       << "the policy cut short a wait the caller asked for";
+}
+
+// Which tmux runs is the caller's to decide, not `PATH`'s.
+//
+// The fixture and `ConnectionOptions` both took a binary already; `Server` was
+// the surface that did not, so a hermetic build or a pinned version under test
+// had no way to say so except by arranging the environment around the process.
+TEST(ServerContract, AServerRunsTheTmuxItsPolicyNames) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+
+  const libtmux::ExecutionPolicy absent{
+      .tmux_binary = fixture->socket_path().parent_path() / "no-tmux-here"};
+  auto misdirected =
+      Server::at_socket_path(fixture->socket_path().string(), {}, absent);
+  ASSERT_TRUE(misdirected.has_value());
+
+  // Nothing ran, so nothing can have happened: a caller may retry elsewhere.
+  const auto listed = misdirected->sessions();
+  ASSERT_FALSE(listed.has_value()) << "a tmux that does not exist answered";
+  EXPECT_EQ(listed.error().kind, libtmux::FailureKind::spawn);
+  EXPECT_EQ(listed.error().delivery, DeliveryStatus::not_started);
+
+  // The same socket through a tmux named by absolute path, to show the refusal
+  // above was the policy rather than a broken fixture — and that a path is run
+  // as given rather than searched for.
+  // Split by hand rather than with `views::split`: under C++20 its subrange
+  // does not convert to `string_view`, and this file builds under both.
+  std::filesystem::path resolved;
+  if (const char* const search = std::getenv("PATH"); search != nullptr) {
+    const std::string_view entries{search};
+    for (std::size_t start = 0; start <= entries.size();) {
+      const std::size_t stop = entries.find(':', start);
+      const std::string_view entry = entries.substr(
+          start, stop == std::string_view::npos ? std::string_view::npos : stop - start);
+      if (!entry.empty()) {
+        std::filesystem::path candidate{entry};
+        candidate /= "tmux";
+        std::error_code failed;
+        if (std::filesystem::exists(candidate, failed) && !failed) {
+          resolved = candidate;
+          break;
+        }
+      }
+      if (stop == std::string_view::npos) {
+        break;
+      }
+      start = stop + 1;
+    }
+  }
+  ASSERT_FALSE(resolved.empty()) << "no tmux on PATH to name";
+  ASSERT_TRUE(resolved.is_absolute());
+
+  const libtmux::ExecutionPolicy pinned{.tmux_binary = resolved};
+  auto named = Server::at_socket_path(fixture->socket_path().string(), {}, pinned);
+  ASSERT_TRUE(named.has_value());
+  const auto sessions = named->sessions();
+  ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
+  EXPECT_EQ(sessions->size(), 1U);
 }

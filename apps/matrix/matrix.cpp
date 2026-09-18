@@ -154,16 +154,8 @@ std::optional<Row> measure(const std::string& mode, const std::string& real_tmux
     return std::nullopt;
   }
 
-  // The library resolves `tmux` from PATH for its own commands, so the proxy
-  // is named `tmux` and its directory goes first. Passing tmux_binary alone
-  // only covers the server the fixture starts, and every measured command
-  // would then bypass the counter: the first version of this lane reported
-  // zero invocations for exactly that reason.
-  const char* const inherited_path = std::getenv("PATH");
-  const std::string patched_path =
-      directory.string() + ":" + (inherited_path == nullptr ? "" : inherited_path);
-  ::setenv("PATH", patched_path.c_str(), 1);
-
+  // The fixture's server and the policy's measured commands both run through
+  // the proxy, so nothing here can bypass the invocation counter.
   auto fixture = libtmux::test::ScopedTmuxServer::start({
       .tmux_binary = proxy,
       .session_name = "bench",
@@ -172,7 +164,8 @@ std::optional<Row> measure(const std::string& mode, const std::string& real_tmux
     std::fprintf(stderr, "benchmarks: %s\n", fixture.error().c_str());
     return std::nullopt;
   }
-  auto opened = libtmux::Server::at_socket_path(fixture->socket_path().string());
+  auto opened = libtmux::Server::at_socket_path(fixture->socket_path().string(), {},
+                                                {.tmux_binary = proxy});
   if (!opened.has_value()) {
     std::fprintf(stderr, "benchmarks: %s\n", opened.error().diagnostic.c_str());
     return std::nullopt;
@@ -215,9 +208,6 @@ std::optional<Row> measure(const std::string& mode, const std::string& real_tmux
                            .count();
 
   const int processes = count_records(records);
-  if (inherited_path != nullptr) {
-    ::setenv("PATH", inherited_path, 1);
-  }
   const std::string answer = search_answer(server);
   const auto clients = server.clients();
   // Leaving one directory behind per lane fills the temporary directory with

@@ -220,7 +220,7 @@ Backend::prepare_attach(std::string_view target) const {
         .exit_code = 0,
         .diagnostic = "this backend cannot retain an exact attach route"});
   }
-  std::vector<std::string> command{"tmux"};
+  std::vector<std::string> command{policy().tmux_binary.string()};
   const auto& selector = connection();
   command.insert(command.end(), selector.begin(), selector.end());
   command.emplace_back("attach-session");
@@ -519,7 +519,7 @@ SubprocessBackend::build_request(const CommandRequest& command,
                                  std::optional<std::size_t> output_limit) const {
   ProcessRequest request;
   const auto& active_connection = connection();
-  request.executable = "tmux";
+  request.executable = policy().tmux_binary;
   request.timeout = timeout;
 #if defined(_WIN32)
   // Warm claiming reserializes the caller's cwd into psmux's line protocol.

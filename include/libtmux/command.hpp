@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <format>
 #include <functional>
 #include <initializer_list>
@@ -227,6 +228,19 @@ struct ExecutionPolicy {
   std::optional<std::chrono::milliseconds> timeout{std::chrono::seconds{30}};
   // Absent leaves the transport's own bound, which is one megabyte.
   std::optional<std::size_t> output_limit{};
+  // Which tmux to run. A bare name is resolved through `PATH`, as tmux's own
+  // documentation assumes; a path containing a separator is used as given.
+  //
+  // Naming it is how a caller stops `PATH` deciding: a hermetic build, a
+  // pinned version under test, or a wrapper that reaches tmux on another
+  // machine. It rides the policy rather than the call because a Server's
+  // connection is immutable, and because a handle that changed which tmux it
+  // meant between two calls would make its own entities disagree.
+  //
+  // `Server::control` passes this to the connection it opens, so both
+  // transports run the same executable unless the caller overrides it in
+  // `ConnectionOptions`.
+  std::filesystem::path tmux_binary{"tmux"};
 };
 
 LIBTMUX_NAMESPACE_END

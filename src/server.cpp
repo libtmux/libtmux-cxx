@@ -21,11 +21,18 @@ LIBTMUX_NAMESPACE_BEGIN
 
 namespace {
 
-[[nodiscard]] ConnectionOptions routed_control_options(ConnectionOptions options,
-                                                       std::string socket_path,
-                                                       std::string session) {
+[[nodiscard]] ConnectionOptions
+routed_control_options(ConnectionOptions options, std::string socket_path,
+                       std::string session, const std::filesystem::path& tmux_binary) {
   options.socket_path = std::move(socket_path);
   options.session_name = std::move(session);
+  // The Server's executable, unless this caller named one here. Both fields
+  // default to a bare `tmux`, so a caller who set neither gets one answer and
+  // a caller who set either gets the one they wrote — and a Server pinned to a
+  // particular tmux does not open a connection to whatever `PATH` finds.
+  if (options.tmux_binary == std::filesystem::path{"tmux"}) {
+    options.tmux_binary = tmux_binary;
+  }
   return options;
 }
 
@@ -350,8 +357,9 @@ Server::control_with_options(std::string_view session,
         ProtocolError{.message = "this server has no socket to connect to",
                       .delivery = DeliveryStatus::not_started});
   }
-  return Connection::connect(routed_control_options(
-      std::move(options), std::string{socket_path}, std::string{session}));
+  return Connection::connect(
+      routed_control_options(std::move(options), std::string{socket_path},
+                             std::string{session}, backend_->policy().tmux_binary));
 }
 
 expected<Version, CommandFailure> Server::tmux_version() const {
