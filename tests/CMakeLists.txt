@@ -458,10 +458,8 @@ if(NOT WIN32)
     PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
   target_compile_options(
     libtmux_spawn_descriptors_test PRIVATE -fno-sanitize-recover=undefined)
-  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    target_compile_definitions(
-      libtmux_spawn_descriptors_test
-      PRIVATE LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
+  # The interposer this wraps is compiled only with the seam.
+  if(LIBTMUX_ENABLE_FAULT_INJECTION AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(
       libtmux_spawn_descriptors_test PRIVATE "-Wl,--wrap=getrlimit")
   endif()
@@ -497,10 +495,6 @@ if(NOT WIN32)
     PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
   target_compile_options(
     libtmux_posix_child_test PRIVATE -fno-sanitize-recover=undefined)
-  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    target_compile_definitions(
-      libtmux_posix_child_test PRIVATE LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
-  endif()
 
   gtest_discover_tests(
     libtmux_posix_child_test
@@ -742,11 +736,6 @@ foreach(control_case parser integration)
 endforeach()
 target_include_directories(
   libtmux_control_integration_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  target_compile_definitions(
-    libtmux_control_integration_test
-    PRIVATE LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
-endif()
 
 include(GoogleTest)
 gtest_discover_tests(
@@ -823,3 +812,26 @@ foreach(
       # parallel CTest run.
       RESOURCE_LOCK build_tree)
 endforeach()
+
+# What ships carries no way to break itself.
+#
+# The fault-injection seams are entry points and process-wide mutable state
+# that exist for this suite alone, so a build without
+# `LIBTMUX_ENABLE_FAULT_INJECTION` must not contain them — and because that is
+# the default, this runs in every ordinary lane against the very archive a
+# consumer would link. `nm` is POSIX; a toolchain without it is not asserted
+# about rather than silently passing.
+if(NOT LIBTMUX_ENABLE_FAULT_INJECTION AND NOT WIN32)
+  find_program(LIBTMUX_NM NAMES nm)
+  if(LIBTMUX_NM)
+    add_test(
+      NAME libtmux.archive.carries_no_test_seams
+      COMMAND
+        "${CMAKE_COMMAND}" "-DNM=${LIBTMUX_NM}"
+        "-DARCHIVE=$<TARGET_FILE:libtmux>" -P
+        "${CMAKE_CURRENT_SOURCE_DIR}/archive_symbols.cmake")
+    set_tests_properties(
+      libtmux.archive.carries_no_test_seams
+      PROPERTIES LABELS "libtmux;package" TIMEOUT 60)
+  endif()
+endif()

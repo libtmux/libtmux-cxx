@@ -14,9 +14,15 @@ else()
 endif()
 add_library(libtmux STATIC ${LIBTMUX_SOURCES})
 add_library(libtmux::libtmux ALIAS libtmux)
-if(LIBTMUX_BUILD_TESTS AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+# Public, not private: the tests reach these seams through the same headers,
+# so one definition keeps the library and its suite agreeing about whether the
+# seams exist at all. Never set in a default or installed build.
+if(LIBTMUX_ENABLE_FAULT_INJECTION AND NOT WIN32)
+  target_compile_definitions(libtmux PUBLIC LIBTMUX_FAULT_INJECTION)
+endif()
+if(LIBTMUX_ENABLE_FAULT_INJECTION AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_definitions(
-    libtmux PRIVATE LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
+    libtmux PUBLIC LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
 endif()
 
 # Two threads per control connection. This links on a glibc that folded

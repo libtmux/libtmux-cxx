@@ -93,7 +93,7 @@ private:
   bool released_{};
 };
 
-#if !defined(_WIN32)
+#if !defined(_WIN32) && defined(LIBTMUX_FAULT_INJECTION)
 class RuntimeCompletionGate final {
 public:
   RuntimeCompletionGate(std::binary_semaphore& release, std::function<void()> observer)
@@ -256,8 +256,9 @@ TEST(ServerContract, RuntimeReadinessWaitEndsWhenTheRuntimeCloses) {
 }
 
 TEST(ServerContract, AThrowingCloseStillWakesABlockedWaiter) {
-#if defined(_WIN32)
-  GTEST_SKIP() << "the runtime failure seam runs in its POSIX lane";
+#if defined(_WIN32) || !defined(LIBTMUX_FAULT_INJECTION)
+  GTEST_SKIP() << "the runtime fault-injection seam needs a POSIX build configured "
+                  "with LIBTMUX_ENABLE_FAULT_INJECTION";
 #else
   auto runtime = start_runtime();
   std::promise<void> entered;
@@ -666,8 +667,9 @@ TEST(ServerContract, ImmediateFailuresNeverConsumeAdmissionOrObservation) {
 }
 
 TEST(ServerContract, WindowsStructuralRefusalPrecedesRuntimeAdmission) {
-#if defined(_WIN32)
-  GTEST_SKIP() << "the portable Windows validation seam runs in its POSIX lane";
+#if defined(_WIN32) || !defined(LIBTMUX_FAULT_INJECTION)
+  GTEST_SKIP() << "the runtime fault-injection seam needs a POSIX build configured "
+                  "with LIBTMUX_ENABLE_FAULT_INJECTION";
 #else
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
@@ -707,8 +709,9 @@ TEST(ServerContract, WindowsStructuralRefusalPrecedesRuntimeAdmission) {
 }
 
 TEST(ServerContract, WindowsCommandLineLimitPrecedesRuntimeAdmission) {
-#if defined(_WIN32)
-  GTEST_SKIP() << "the portable Windows validation seam runs in its POSIX lane";
+#if defined(_WIN32) || !defined(LIBTMUX_FAULT_INJECTION)
+  GTEST_SKIP() << "the runtime fault-injection seam needs a POSIX build configured "
+                  "with LIBTMUX_ENABLE_FAULT_INJECTION";
 #else
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
@@ -761,8 +764,9 @@ TEST(ServerContract, ZeroCapacityRefusesRuntimeStartup) {
 }
 
 TEST(ServerContract, RuntimeStartupFailuresAreValues) {
-#if defined(_WIN32)
-  GTEST_SKIP() << "the Windows start-failure seam runs in its platform lane";
+#if defined(_WIN32) || !defined(LIBTMUX_FAULT_INJECTION)
+  GTEST_SKIP() << "the runtime fault-injection seam needs a POSIX build configured "
+                  "with LIBTMUX_ENABLE_FAULT_INJECTION";
 #else
   libtmux::detail::fail_next_runtime_start_for_test();
 
@@ -775,8 +779,9 @@ TEST(ServerContract, RuntimeStartupFailuresAreValues) {
 }
 
 TEST(ServerContract, PostAcceptanceSubscriptionFailuresAreIndeterminate) {
-#if defined(_WIN32)
-  GTEST_SKIP() << "the subscription-failure seam runs in its POSIX lane";
+#if defined(_WIN32) || !defined(LIBTMUX_FAULT_INJECTION)
+  GTEST_SKIP() << "the runtime fault-injection seam needs a POSIX build configured "
+                  "with LIBTMUX_ENABLE_FAULT_INJECTION";
 #else
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
@@ -809,8 +814,9 @@ TEST(ServerContract, PostAcceptanceSubscriptionFailuresAreIndeterminate) {
 }
 
 TEST(ServerContract, PostAdmissionPublicationFailuresAreIndeterminate) {
-#if defined(_WIN32)
-  GTEST_SKIP() << "the runtime failure seam runs in its POSIX lane";
+#if defined(_WIN32) || !defined(LIBTMUX_FAULT_INJECTION)
+  GTEST_SKIP() << "the runtime fault-injection seam needs a POSIX build configured "
+                  "with LIBTMUX_ENABLE_FAULT_INJECTION";
 #else
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
@@ -849,8 +855,9 @@ TEST(ServerContract, PostAdmissionPublicationFailuresAreIndeterminate) {
 }
 
 TEST(ServerContract, LifecycleOnlyFailuresAfterAdmissionAreIndeterminate) {
-#if defined(_WIN32)
-  GTEST_SKIP() << "the runtime failure seam runs in its POSIX lane";
+#if defined(_WIN32) || !defined(LIBTMUX_FAULT_INJECTION)
+  GTEST_SKIP() << "the runtime fault-injection seam needs a POSIX build configured "
+                  "with LIBTMUX_ENABLE_FAULT_INJECTION";
 #else
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
@@ -878,8 +885,9 @@ TEST(ServerContract, LifecycleOnlyFailuresAfterAdmissionAreIndeterminate) {
 }
 
 TEST(ServerContract, ObserverQueueFailuresRemainTerminalObligations) {
-#if defined(_WIN32)
-  GTEST_SKIP() << "the runtime failure seam runs in its POSIX lane";
+#if defined(_WIN32) || !defined(LIBTMUX_FAULT_INJECTION)
+  GTEST_SKIP() << "the runtime fault-injection seam needs a POSIX build configured "
+                  "with LIBTMUX_ENABLE_FAULT_INJECTION";
 #else
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
@@ -914,8 +922,9 @@ TEST(ServerContract, ObserverQueueFailuresRemainTerminalObligations) {
 }
 
 TEST(ServerContract, CompletedMeansResultAndObservationAreReady) {
-#if defined(_WIN32)
-  GTEST_SKIP() << "the runtime completion seam runs in its POSIX lane";
+#if defined(_WIN32) || !defined(LIBTMUX_FAULT_INJECTION)
+  GTEST_SKIP() << "the runtime fault-injection seam needs a POSIX build configured "
+                  "with LIBTMUX_ENABLE_FAULT_INJECTION";
 #else
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
@@ -1242,8 +1251,9 @@ TEST(ServerContract, ConcurrentCloseCallersReceiveOneTerminalReport) {
 }
 
 TEST(ServerContract, AFailedCloseClaimDoesNotStrandAnotherCaller) {
-#if defined(_WIN32)
-  GTEST_SKIP() << "the runtime failure seam runs in its POSIX lane";
+#if defined(_WIN32) || !defined(LIBTMUX_FAULT_INJECTION)
+  GTEST_SKIP() << "the runtime fault-injection seam needs a POSIX build configured "
+                  "with LIBTMUX_ENABLE_FAULT_INJECTION";
 #else
   auto runtime = start_runtime();
   libtmux::detail::fail_next_runtime_action_for_test(
@@ -1346,8 +1356,9 @@ TEST(ServerContract, OpeningAServerStartsNoAsynchronousThreads) {
 }
 
 TEST(ServerContract, AcceptedCommandsLaunchInFifoOrder) {
-#if defined(_WIN32)
-  GTEST_SKIP() << "the Windows worker launch order has its own platform lane";
+#if defined(_WIN32) || !defined(LIBTMUX_FAULT_INJECTION)
+  GTEST_SKIP() << "the runtime fault-injection seam needs a POSIX build configured "
+                  "with LIBTMUX_ENABLE_FAULT_INJECTION";
 #else
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();

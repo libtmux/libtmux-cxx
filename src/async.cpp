@@ -322,6 +322,7 @@ private:
 };
 
 #if !defined(_WIN32)
+#if defined(LIBTMUX_FAULT_INJECTION)
 std::mutex launch_observer_mutex;
 std::function<void(const detail::ProcessRequest&)> runtime_launch_observer;
 std::function<void()> runtime_completion_observer;
@@ -373,11 +374,33 @@ void notify_runtime_completion_observer() noexcept {
   } catch (...) {
   }
 }
+#else
+// Without fault injection there is no state to consult, and every caller below
+// asks the same questions. Answering them as constants leaves the runtime's own
+// code unguarded and folds each branch away, so the shipped archive carries
+// neither the lock nor the paths that only a test could reach.
+[[nodiscard]] constexpr bool consume_runtime_start_failure() noexcept { return false; }
+[[nodiscard]] constexpr bool consume_runtime_subscription_failure() noexcept {
+  return false;
+}
+[[nodiscard]] constexpr bool use_windows_validation_for_test() noexcept {
+  return false;
+}
+[[nodiscard]] constexpr bool
+consume_runtime_action_failure(detail::RuntimeFailurePoint) noexcept {
+  return false;
+}
+[[nodiscard]] inline std::function<void(const detail::ProcessRequest&)>
+copy_runtime_launch_observer() {
+  return {};
+}
+inline void notify_runtime_completion_observer() noexcept {}
+#endif
 #endif
 
 } // namespace
 
-#if !defined(_WIN32)
+#if !defined(_WIN32) && defined(LIBTMUX_FAULT_INJECTION)
 namespace detail {
 
 void set_runtime_launch_observer_for_test(

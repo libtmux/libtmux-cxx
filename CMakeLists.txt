@@ -44,6 +44,15 @@ option(LIBTMUX_WARNINGS_AS_ERRORS "Treat first-party warnings as errors" OFF)
 option(LIBTMUX_INSTALL "Generate install rules" ${PROJECT_IS_TOP_LEVEL})
 option(LIBTMUX_BUILD_BENCHMARKS "Build the benchmark suite (apps/matrix, benchmarks/)"
        OFF)
+# Off, including with tests on, so that what the suite exercises is what a
+# consumer links. Fault injection reaches error paths a caller cannot provoke —
+# a thread that will not start, an allocation that fails mid-publication — and
+# pays for it with process-wide mutable state and entry points that have no
+# business in a shipped archive. One lane turns it on and runs the tests that
+# need it; every other lane, and every release, builds without it. A test
+# asserts the archive is clean whenever it is off.
+option(LIBTMUX_ENABLE_FAULT_INJECTION
+       "Compile the test-only fault-injection seams into the library" OFF)
 option(LIBTMUX_BUILD_EXAMPLES "Build and run the examples"
        ${PROJECT_IS_TOP_LEVEL})
 # `libtmux::testing` — the private-tmux-server fixture, installed alongside

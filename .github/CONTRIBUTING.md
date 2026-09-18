@@ -108,6 +108,13 @@ $ (set -e; for p in \
   done)
 ```
 
+`cxx-sanitize` is also the fault-injection lane: it is the one build that sets
+`LIBTMUX_ENABLE_FAULT_INJECTION`, so the seams reaching error paths a caller
+cannot provoke — a thread that will not start, an allocation that fails while a
+result is published — are compiled in and their tests run. Every other lane
+builds the library a consumer links, and a test there asserts the archive
+exports no seam at all. Tests that need one skip by name when it is absent.
+
 ```console
 $ python3 -m tools.parity verify --manifest tools/parity/data/manifest.json --mode structural --allow-pending
 ```

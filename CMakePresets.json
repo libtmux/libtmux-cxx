@@ -39,8 +39,10 @@
       "inherits": "cxx-dev",
       "cacheVariables": {
         "LIBTMUX_ENABLE_SANITIZERS": "ON",
-        "LIBTMUX_ENABLE_THREAD_SANITIZER": "OFF"
-      }
+        "LIBTMUX_ENABLE_THREAD_SANITIZER": "OFF",
+        "LIBTMUX_ENABLE_FAULT_INJECTION": "ON"
+      },
+      "displayName": "Clang sanitizers, with the fault-injection seams"
     },
     {
       "name": "cxx-tsan",

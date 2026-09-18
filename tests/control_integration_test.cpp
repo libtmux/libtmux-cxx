@@ -65,7 +65,7 @@ using libtmux::test::ScopedTmuxServer;
 using libtmux::test::ScopedTmuxServerOptions;
 using libtmux::test::SocketMode;
 
-#if defined(__linux__)
+#if defined(__linux__) && defined(LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
 struct LateMarker final {
   std::mutex mutex;
   std::condition_variable changed;
@@ -283,6 +283,7 @@ TEST(ControlModeConnection, ControlClientDoesNotInheritABlockedSignalMask) {
   EXPECT_EQ(*mask, 0ULL);
 }
 
+#if defined(LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
 TEST(ControlModeConnection, ForcedNumericPolicyDoesNotLeakAConcurrentHighDescriptor) {
   auto server = start_server(unique_name("control-descriptor-policy"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
@@ -378,8 +379,9 @@ TEST(ControlModeConnection, ForcedNumericPolicyDoesNotLeakAConcurrentHighDescrip
   EXPECT_NE(inherited.revents & POLLERR, 0);
   EXPECT_TRUE(stopped.has_value());
 }
+#endif
 
-#if defined(__GLIBC__)
+#if defined(__GLIBC__) && defined(LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
 TEST(ControlModeConnection, ForcedNumericPolicyRefusesAMarkerAboveALoweredSoftLimit) {
   auto server = start_server(unique_name("control-high-descriptor-policy"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
