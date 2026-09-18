@@ -8,7 +8,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <set>
 #include <sstream>
+#include <string>
 #include <string_view>
 
 #include <CLI/CLI.hpp>
@@ -361,6 +363,20 @@ Json metadata(const CLI::App& node) {
           {"options", options},
           {"children", children}};
 }
+// Every spelling of an option that takes a value, so a scan of raw arguments
+// can step over the value instead of reading it as a flag.
+void valued_options(const CLI::App& node, std::set<std::string>& names) {
+  for (const auto* option : node.get_options()) {
+    if (option->get_expected_max() == 0 || option->get_positional())
+      continue;
+    for (const auto& name : option->get_snames())
+      names.insert("-" + name);
+    for (const auto& name : option->get_lnames())
+      names.insert("--" + name);
+  }
+  for (const auto* child : node.get_subcommands([](const CLI::App*) { return true; }))
+    valued_options(*child, names);
+}
 bool colour_enabled(const Request& request, std::ostream& output) {
   const auto environment = [](const char* name) {
     const char* value = std::getenv(name);
@@ -399,13 +415,21 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
   request.stdout_terminal = &output == &std::cout && ::isatty(STDOUT_FILENO) != 0;
   request.stdin_terminal = request.terminal_allowed && ::isatty(STDIN_FILENO) != 0;
 #endif
-  for (const auto& arg : arguments) {
-    if (arg == "--")
+  // Machine mode is read from the parsed model below; this answers only for a
+  // usage error raised before parsing finishes. An option's value is skipped,
+  // so a session named `--json` stays a name.
+  std::set<std::string> valued;
+  valued_options(model.root, valued);
+  for (std::size_t index = 0; index < arguments.size(); ++index) {
+    const auto& argument = arguments[index];
+    if (argument == "--")
       break;
-    if (arg == "--json")
+    if (argument == "--json")
       request.json = true;
-    if (arg == "--ndjson")
+    else if (argument == "--ndjson")
       request.ndjson = true;
+    else if (valued.contains(argument))
+      ++index;
   }
   DiagnosticLog diagnostics{request, errors};
   Execution execution;
@@ -453,6 +477,8 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
     std::reverse(arguments.begin(), arguments.end());
     model.root.parse(arguments);
     collect(model.root, request);
+    request.json = request.flag("json");
+    request.ndjson = request.flag("ndjson");
     if (request.flag("generate-completion")) {
       const auto shell = request.value("generate-completion");
       const auto script = completion_script(shell);
