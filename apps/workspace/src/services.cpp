@@ -463,49 +463,98 @@ void normalise(Json& node, const fs::path& base, const fs::path& parent = {}) {
     }
   }
 }
+// The one reading of TMUX in this tool: `socket,pid,session`, where a socket
+// path may itself contain a comma, so the split is at the last comma that can
+// begin the pid. A value of another shape is that variable's problem, not a
+// different server and not a missing terminal.
+struct TmuxContext {
+  std::string socket, pid, session;
+};
+TmuxContext tmux_context() {
+  const auto refuse = [] {
+    return Failure{2, "usage",
+                   "TMUX does not name a tmux client context; it is written "
+                   "socket,pid,session"};
+  };
+  const auto value = environment("TMUX");
+  const auto last = value.find_last_of(',');
+  const auto previous = last == std::string::npos || last == 0
+                            ? std::string::npos
+                            : value.find_last_of(',', last - 1);
+  if (previous == std::string::npos || previous == 0)
+    throw refuse();
+  const TmuxContext context{value.substr(0, previous),
+                            value.substr(previous + 1, last - previous - 1),
+                            value.substr(last + 1)};
+  const auto digits = [](std::string_view text) {
+    return !text.empty() &&
+           text.find_first_not_of("0123456789") == std::string_view::npos;
+  };
+  if (!digits(context.pid) || !digits(context.session))
+    throw refuse();
+  return context;
+}
+bool same_socket(std::string_view left, std::string_view right) {
+  if (left == right)
+    return true;
+  std::error_code ignored;
+  return fs::weakly_canonical(fs::path{left}, ignored) ==
+         fs::weakly_canonical(fs::path{right}, ignored);
+}
 Server endpoint(const Request& request) {
   auto server =
       !request.value("S").empty()   ? Server::at_socket_path(expand(request.value("S")))
       : !request.value("L").empty() ? Server::at_socket_name(request.value("L"))
-      : !environment("TMUX").empty() ? Server::from_env()
+      : !environment("TMUX").empty() ? Server::at_socket_path(tmux_context().socket)
                                      : Server::at_default();
   if (!server)
-    throw Failure{1, "invalid_endpoint", server.error().diagnostic};
+    throw Failure{2, "usage", "the selected tmux socket cannot be used"};
   return *server;
 }
-libtmux::Pane current_pane(const Server& server, const std::string& code) {
-  const auto inherited = Server::from_env();
-  if (!inherited)
-    throw Failure{1, code, inherited.error().diagnostic};
-  const auto pane = inherited->pane(environment("TMUX_PANE"));
-  if (!pane)
-    throw Failure{1, code, pane.error().diagnostic};
-  const auto context = environment("TMUX");
-  const auto last = context.find_last_of(',');
-  const auto previous = last == std::string::npos || last == 0
-                            ? std::string::npos
-                            : context.find_last_of(',', last - 1);
-  const auto pid = pane->expand("#{pid}");
-  if (previous == std::string::npos || !pid ||
-      *pid != context.substr(previous + 1, last - previous - 1))
-    throw Failure{1, code, "TMUX identifies a different server process"};
-  const auto selected = server.pane(environment("TMUX_PANE"));
-  if (!selected || selected->connection_identity() != pane->connection_identity())
+// Resolves the context an attached load hands off through, before anything is
+// built: TMUX parses, names the server this command targets and a process
+// still running it, and TMUX_PANE is a pane there with a terminal.
+libtmux::Pane current_pane(const Server& server) {
+  const auto context = tmux_context();
+  if (!same_socket(context.socket, server.socket_path()))
     throw Failure{2, "usage",
                   "selected server differs from the current pane's server; use -d"};
+  const auto identifier = environment("TMUX_PANE");
+  if (identifier.size() < 2 || identifier.front() != '%' ||
+      identifier.find_first_not_of("0123456789", 1) != std::string::npos)
+    throw Failure{2, "usage", "TMUX_PANE is not a pane id: " + identifier};
+  const auto selected = server.pane(identifier);
+  if (!selected)
+    throw Failure{2, "usage",
+                  "this tmux server has no pane " + identifier + "; use -d"};
+  const auto pid = selected->expand("#{pid}");
+  if (!pid || *pid != context.pid)
+    throw Failure{2, "usage",
+                  "TMUX names a tmux server that is no longer running on this "
+                  "socket; use -d"};
+  if (selected->tty().empty())
+    throw Failure{2, "usage", "the current pane has no terminal; use -d"};
   return *selected;
 }
 Session append_target(const Server& server) {
-  const auto session = current_pane(server, "append_context").session();
+  const auto session = current_pane(server).session();
   if (!session)
-    throw Failure{1, "append_context", session.error().diagnostic};
+    throw Failure{2, "usage", "the current pane names no session; use -d"};
   return *session;
 }
+// `resolving` separates the two callers: resolving the context before
+// anything is built is a refusal about how the command was invoked, while the
+// same lookup repeated at hand-off time reports a server that changed under a
+// load whose sessions already exist.
 Client current_client(const Server& server, std::string_view pane,
-                      std::string_view window) {
+                      std::string_view window, bool resolving = true) {
+  const auto refuse = [resolving](std::string message) {
+    return Failure{resolving ? 2 : 1, resolving ? "usage" : "tmux_failed",
+                   std::move(message)};
+  };
   const auto clients = server.clients();
   if (!clients)
-    throw Failure{1, "client_context", clients.error().diagnostic};
+    throw refuse("this tmux server did not report its clients; use load -d");
   std::optional<Client> selected;
   for (const auto& client : *clients) {
     if (client.control_mode() || client.tty().empty() || client.window_id() != window)
@@ -513,19 +562,15 @@ Client current_client(const Server& server, std::string_view pane,
     if (std::ranges::any_of(client.flags() | std::views::split(','), [](auto flag) {
           return std::ranges::equal(flag, std::string_view{"active-pane"});
         }))
-      throw Failure{
-          2, "client_context",
-          "independent active-pane client focus is unverifiable; use load -d"};
+      throw refuse("independent active-pane client focus is unverifiable; use load -d");
     if (client.active_pane_id() != pane)
       continue;
     if (selected)
-      throw Failure{2, "client_context",
-                    "multiple clients view this pane; use load -d"};
+      throw refuse("multiple clients view this pane; use load -d");
     selected = client;
   }
   if (!selected || selected->pid() <= 0 || selected->name().empty())
-    throw Failure{2, "client_context",
-                  "no terminal client views this pane; use load -d"};
+    throw refuse("no terminal client views this pane; use load -d");
   return *selected;
 }
 std::function<void()> load_handoff(Session session, std::optional<Client> caller,
@@ -534,42 +579,53 @@ std::function<void()> load_handoff(Session session, std::optional<Client> caller
   if (!caller && !switch_without_client) {
     const auto prepared = session.attach_command();
     if (!prepared)
-      throw Failure{1, "attach_failed", prepared.error().diagnostic};
+      throw Failure{1, "tmux_failed",
+                    "tmux could not prepare the attachment; the loaded sessions "
+                    "remain"};
     command = *prepared;
   }
   return [session = std::move(session), caller = std::move(caller),
           command = std::move(command), switch_without_client] {
+    const auto unreachable = [] {
+      return Failure{1, "tmux_failed",
+                     "the tmux server could not be reached; the loaded sessions "
+                     "remain"};
+    };
+    const auto unswitched = [] {
+      return Failure{1, "tmux_failed",
+                     "tmux could not switch the client; the loaded sessions remain"};
+    };
     if (caller) {
       const auto server = caller->server();
       if (!server)
-        throw Failure{1, "client_context", server.error().diagnostic};
+        throw unreachable();
       const auto current =
-          current_client(*server, caller->active_pane_id(), caller->window_id());
+          current_client(*server, caller->active_pane_id(), caller->window_id(), false);
       if (current.connection_identity() != caller->connection_identity() ||
           current.name() != caller->name() || current.pid() != caller->pid() ||
           current.created() != caller->created() || current.tty() != caller->tty())
-        throw Failure{1, "client_changed",
+        throw Failure{1, "tmux_failed",
                       "the invoking client changed; loaded sessions remain"};
       // tmux targets a client name; it cannot atomically check this incarnation.
       const auto switched = current.switch_to(session);
       if (!switched)
-        throw Failure{1, "switch_failed", switched.error().diagnostic};
+        throw unswitched();
     } else if (switch_without_client) {
       // No pane identifies which client to target (a run-shell key binding
       // sets TMUX but not TMUX_PANE): let tmux pick its most recent one.
       const auto server = session.server();
       if (!server)
-        throw Failure{1, "client_context", server.error().diagnostic};
+        throw unreachable();
       const auto switched =
           server->run({"switch-client", "-t", std::string{session.id()}});
       if (!switched)
-        throw Failure{1, "switch_failed", switched.error().diagnostic};
+        throw unswitched();
     } else {
       const auto child = run_child(
           command->argv(),
           {.terminal = true, .terminal_required = true, .timeout = std::nullopt});
       if (child.code != 0)
-        throw Failure{child.code, "attach_failed",
+        throw Failure{child.code, "tmux_failed",
                       "attachment exited with status " + std::to_string(child.code) +
                           "; loaded sessions remain"};
     }
@@ -588,12 +644,8 @@ Server start_endpoint(const Request& request, Bootstrap& bootstrap) {
     command.insert(command.end(), {"-S", expand(request.value("S"))});
   else if (!request.value("L").empty())
     command.insert(command.end(), {"-L", request.value("L")});
-  else if (const auto inherited = environment("TMUX"); !inherited.empty()) {
-    const auto last = inherited.find_last_of(',');
-    const auto pid =
-        last == std::string::npos ? last : inherited.find_last_of(',', last - 1);
-    command.insert(command.end(), {"-S", inherited.substr(0, pid)});
-  }
+  else if (!environment("TMUX").empty())
+    command.insert(command.end(), {"-S", tmux_context().socket});
   if (!request.value("f").empty())
     command.insert(command.end(), {"-f", expand(request.value("f"))});
   if (request.flag("2"))
@@ -1201,19 +1253,11 @@ void validate(const Request& request) {
       }
     }
     if (request.flag("append")) {
+      (void)tmux_context();
       const auto pane = environment("TMUX_PANE");
-      const auto context = environment("TMUX");
-      const auto last = context.find_last_of(',');
-      const auto previous = last == std::string::npos || last == 0
-                                ? std::string::npos
-                                : context.find_last_of(',', last - 1);
-      if (previous == std::string::npos || previous == 0 || last == previous + 1 ||
-          last + 1 == context.size() ||
-          context.find_first_not_of("0123456789", previous + 1) != last ||
-          context.find_first_not_of("0123456789", last + 1) != std::string::npos ||
-          pane.size() < 2 || pane.front() != '%' ||
+      if (pane.size() < 2 || pane.front() != '%' ||
           pane.find_first_not_of("0123456789", 1) != std::string::npos)
-        throw Failure{2, "usage", "load requires valid TMUX and TMUX_PANE context"};
+        throw Failure{2, "usage", "TMUX_PANE is not a pane id: " + pane};
     }
   }
   if (request.command == "freeze" && request.value("session").empty())
@@ -1505,14 +1549,13 @@ static Execution execute_impl(const Request& request, const EventSink& event,
         borrowed = append_target(server);
       else if (interactive && !environment("TMUX").empty()) {
         if (!environment("TMUX_PANE").empty()) {
-          const auto pane = current_pane(server, "client_context");
+          const auto pane = current_pane(server);
           caller = current_client(server, pane.id(), pane.window_id());
         } else {
           // No controlling pane to name a client from (a run-shell key
           // binding sets TMUX but not TMUX_PANE): confirm this is still the
           // server TMUX names, then let tmux pick its most recent client.
-          const auto inherited = Server::from_env();
-          if (!inherited || inherited->socket_path() != server.socket_path())
+          if (!same_socket(tmux_context().socket, server.socket_path()))
             throw Failure{
                 2, "usage",
                 "selected server differs from the current pane's server; use -d"};

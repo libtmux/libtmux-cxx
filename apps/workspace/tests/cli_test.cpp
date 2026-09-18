@@ -2001,7 +2001,7 @@ TEST(WorkspaceCliTmux, AppendKeepsItsBorrowedSessionAndReportsRetainedWindows) {
                                           fixture->socket_path().string() + ",0,0"};
     std::ofstream{file} << "session_name: ignored-name\nwindows: [{}]\n";
     const auto rejected = invoke({"load", file.string(), "--append", "--json"});
-    EXPECT_EQ(rejected.code, 1);
+    EXPECT_EQ(rejected.code, 2);
     const auto unchanged = session->windows();
     ASSERT_TRUE(unchanged.has_value());
     EXPECT_EQ(unchanged->size(), 3U);
@@ -2010,6 +2010,66 @@ TEST(WorkspaceCliTmux, AppendKeepsItsBorrowedSessionAndReportsRetainedWindows) {
   const auto missing = invoke({"load", file.string(), "--append", "--json"});
   EXPECT_EQ(missing.code, 2);
   EXPECT_TRUE(missing.out.empty());
+}
+
+// Every way the invoking context can be unusable -- a server that has since
+// restarted, a socket that is gone, a pane that is not there or not a pane
+// id, and a TMUX that does not parse -- is refused the same way, before
+// anything is built, in this tool's own words.
+TEST(WorkspaceCliTmux, BrokenInvokingContextRefusesAsUsageBeforeBuilding) {
+  using libtmux::workspace::cli::execute;
+  using libtmux::workspace::cli::Json;
+  using libtmux::workspace::cli::Request;
+  Files files;
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-ctx")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto socket = fixture->socket_path().string();
+  const auto server = libtmux::Server::at_socket_path(socket);
+  ASSERT_TRUE(server.has_value());
+  const auto home = server->session(fixture->session_name());
+  ASSERT_TRUE(home.has_value());
+  const auto pane = home->active_pane();
+  ASSERT_TRUE(pane.has_value());
+  const auto daemon = pane->expand("#{pid}");
+  ASSERT_TRUE(daemon.has_value());
+  std::ofstream{"ctx.yaml"} << "session_name: ctxprobe\nwindows: [{}]\n";
+  struct Broken {
+    std::string name, context, pane_id;
+  };
+  const std::string here{pane->id()};
+  const std::vector<Broken> broken{
+      {"restarted server", socket + ",999999,0", here},
+      {"socket gone", socket + ".gone," + *daemon + ",0", here},
+      {"pane not on this server", socket + "," + *daemon + ",0", "%9999"},
+      {"pane is not an id", socket + "," + *daemon + ",0", "notapane"},
+      {"unparsable", socket, here}};
+  for (const auto& [name, context, pane_id] : broken) {
+    SCOPED_TRACE(name);
+    libtmux::test::EnvironmentGuard tmux{"TMUX", context};
+    libtmux::test::EnvironmentGuard current{"TMUX_PANE", pane_id};
+    const Request request{
+        .command = "load",
+        .importer = {},
+        .values = {{"workspace-file", {"ctx.yaml"}}, {"S", {socket}}}};
+    const auto execution = execute(
+        request, [](const std::string&, const Json&) {},
+        [](std::string_view) { return "y"; });
+    EXPECT_EQ(execution.exit_code, 2) << execution.value.dump();
+    ASSERT_EQ(execution.value.at("errors").size(), 1U) << execution.value.dump();
+    const auto& problem = execution.value.at("errors")[0];
+    EXPECT_EQ(problem.at("code"), "usage") << execution.value.dump();
+    const auto message = problem.at("message").get<std::string>();
+    for (const auto* internal :
+         {"handle predates", "no current client", "error connecting", "Session handle"})
+      EXPECT_EQ(message.find(internal), std::string::npos) << message;
+    EXPECT_TRUE(execution.value.at("results").empty()) << execution.value.dump();
+    EXPECT_FALSE(server->session("=ctxprobe:").has_value());
+    if (name == "unparsable") {
+      EXPECT_NE(message.find("TMUX"), std::string::npos) << message;
+      EXPECT_NE(message.find("socket,pid,session"), std::string::npos) << message;
+    }
+  }
 }
 
 // An interactive load, inside tmux, answers three separate questions
@@ -2084,7 +2144,7 @@ TEST(WorkspaceCliTmux, PromptedLoadRoutesEachAnswerToItsOwnPath) {
       // answer asks for fails identifiably rather than silently detaching.
       EXPECT_EQ(execution.exit_code, 2) << execution.value.dump();
       ASSERT_EQ(execution.value.at("errors").size(), 1U);
-      EXPECT_EQ(execution.value.at("errors")[0].at("code"), "client_context");
+      EXPECT_EQ(execution.value.at("errors")[0].at("code"), "usage");
       EXPECT_TRUE(execution.value.at("results").empty());
     }
   }
@@ -2120,7 +2180,7 @@ TEST(WorkspaceCliTmux, PromptedLoadRoutesEachAnswerToItsOwnPath) {
     } else {
       EXPECT_EQ(execution.exit_code, 2) << execution.value.dump();
       ASSERT_EQ(execution.value.at("errors").size(), 1U);
-      EXPECT_EQ(execution.value.at("errors")[0].at("code"), "client_context");
+      EXPECT_EQ(execution.value.at("errors")[0].at("code"), "usage");
     }
     const auto after_windows = existing->windows();
     ASSERT_TRUE(after_windows.has_value());
