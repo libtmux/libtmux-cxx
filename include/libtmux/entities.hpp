@@ -721,8 +721,6 @@ public:
   // why the target is named rather than inferred from where this pane is.
   [[nodiscard]] expected<void, CommandFailure> join(const Window& target) const;
 
-  // Forget the scrollback, which is the only way to bound a pane's memory
-  // without restarting what is running in it.
   // Put this pane into copy mode, where its contents can be scrolled and
   // selected rather than typed into.
   //
@@ -762,6 +760,8 @@ public:
   respawn(bool replace_running = false) const;
   [[nodiscard]] expected<void, CommandFailure> respawn(RespawnOptions options) const;
 
+  // Forget the scrollback, which is the only way to bound a pane's memory
+  // without restarting what is running in it.
   [[nodiscard]] expected<void, CommandFailure> clear_history() const;
 
   // Ask tmux to expand a format against this pane. `#{pane_current_command}`
