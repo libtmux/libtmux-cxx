@@ -1183,6 +1183,13 @@ TEST(WorkspaceCliTmux, ErrorCodesMatchTheSharedLowerSnakeCaseVocabulary) {
   EXPECT_EQ(record.at("schema_version"), 1) << record.dump();
   EXPECT_EQ(record.at("code"), "unsupported_key") << record.dump();
 
+  // A pattern that does not compile is a usage error like any other refusal
+  // about the arguments, not a vocabulary of its own.
+  const auto pattern = invoke({"search", "[", "--json"});
+  EXPECT_EQ(pattern.code, 2);
+  record = Json::parse(pattern.err);
+  EXPECT_EQ(record.at("code"), "usage") << record.dump();
+
   const auto frozen = invoke({"freeze", "nosuch", "-S", socket, "--json"});
   EXPECT_NE(frozen.code, 0);
   record = Json::parse(frozen.err);
@@ -1442,7 +1449,7 @@ TEST(WorkspaceCli, EditorLaunchFailureEndsItsNdjsonOperation) {
   EXPECT_EQ(failed.at("event"), "failed");
   EXPECT_EQ(failed.at("sequence"), 2);
   EXPECT_FALSE(static_cast<bool>(std::getline(lines, line)));
-  EXPECT_EQ(Json::parse(result.err).at("code"), "process_failed");
+  EXPECT_EQ(Json::parse(result.err).at("code"), "script_failed");
 }
 
 // A session built with no explicit size sits at tmux's `default-size`
@@ -1921,7 +1928,7 @@ TEST(WorkspaceCliTmux, CaptureOptionReadFailureDoesNotPublish) {
     EXPECT_FALSE(std::filesystem::exists(destination));
     ASSERT_FALSE(captured.err.empty());
     const auto error = Json::parse(captured.err);
-    EXPECT_EQ(error.at("code"), "capture_failed");
+    EXPECT_EQ(error.at("code"), "tmux_failed");
     EXPECT_NE(
         error.at("message").get<std::string>().find("capture option read refused"),
         std::string::npos);
@@ -2441,7 +2448,7 @@ TEST(WorkspaceCliTmux, FailedEventDeliveryRetainsCompletedSessionAccounting) {
     ASSERT_EQ(result.at("results").size(), 1U);
     EXPECT_EQ(result.at("results")[0].at("session_id"), retained->id());
     EXPECT_EQ(result.at("errors")[0].at("code"),
-              closed ? "output_closed" : "operation_failed");
+              closed ? "output_closed" : "tmux_failed");
   }
 }
 
