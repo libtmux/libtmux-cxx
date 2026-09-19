@@ -52,8 +52,10 @@ using libtmux::mcp::Toolset;
 class DeadlineBackend final : public libtmux::detail::Backend {
 public:
   explicit DeadlineBackend(std::chrono::milliseconds delay,
-                           std::string capture = "visible text without the marker\n")
-      : delay_{delay}, capture_{std::move(capture)} {}
+                           std::string capture = "visible text without the marker\n",
+                           std::optional<libtmux::CommandFailure> capture_failure = {})
+      : delay_{delay}, capture_{std::move(capture)},
+        capture_failure_{std::move(capture_failure)} {}
 
   libtmux::expected<std::string, libtmux::CommandFailure>
   run(const libtmux::CommandRequest& command,
@@ -78,6 +80,9 @@ public:
     }
     const std::vector<std::string> argv = command.argv();
     if (argv.front() == "capture-pane") {
+      if (capture_failure_.has_value()) {
+        return libtmux::unexpected(*capture_failure_);
+      }
       return capture_;
     }
     if (argv.front() == "display-message" &&
@@ -116,6 +121,7 @@ public:
 private:
   std::chrono::milliseconds delay_;
   std::string capture_;
+  std::optional<libtmux::CommandFailure> capture_failure_;
   std::vector<std::string> connection_;
   mutable std::vector<std::optional<std::chrono::milliseconds>> timeouts_;
 };
@@ -2491,6 +2497,27 @@ TEST(McpTools, RejectsWaitWhenDeterministicMatchingWorkBudgetIsSpent) {
   ASSERT_FALSE(waited.has_value());
   EXPECT_FALSE(waited.error().caller_error);
   EXPECT_EQ(waited.error().message, "wait matching work limit exceeded");
+}
+
+// A pane that resolved and then could not be read reports why it could not be
+// read. `missing` is not only "no such pane": tmux also answers it for a server
+// that went away and a session that no longer exists, and rewording all of them
+// as a lookup failure hides the one fact a caller needs.
+TEST(McpTools, WaitReportsWhyThePaneCouldNotBeReadAfterItResolved) {
+  auto backend = std::make_shared<DeadlineBackend>(
+      std::chrono::milliseconds{0}, std::string{},
+      libtmux::CommandFailure{.kind = libtmux::FailureKind::missing,
+                              .delivery = libtmux::DeliveryStatus::replied,
+                              .exit_code = 1,
+                              .diagnostic = "tmux has no session mcp"});
+  const Server server = libtmux::detail::server_over(backend);
+
+  const auto waited = all_tools().call(
+      server, "wait_for_text",
+      {{"target", "mcp"}, {"text", "never appears"}, {"timeout_ms", "1000"}});
+
+  ASSERT_FALSE(waited.has_value());
+  EXPECT_EQ(waited.error().message, "tmux has no session mcp");
 }
 
 TEST(McpToolsTmux, ReportsAPaneThatDisappearsDuringSearch) {

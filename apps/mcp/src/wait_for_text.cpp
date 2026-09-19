@@ -128,10 +128,6 @@ ToolResult wait_for_text(const Server& server, const Arguments& arguments,
     if (waited.error().kind == FailureKind::cancelled) {
       return libtmux::unexpected(cancellation_error());
     }
-    if (waited.error().kind == FailureKind::missing) {
-      return libtmux::unexpected(
-          ToolError{false, "tmux could not resolve the requested pane"});
-    }
     return libtmux::unexpected(tmux_error(waited.error()));
   }
   const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
