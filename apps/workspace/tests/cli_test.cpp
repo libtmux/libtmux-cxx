@@ -1970,9 +1970,15 @@ TEST(WorkspaceCliTmux, CaptureTreatsAnyOrdinaryShellAsTheDefaultOne) {
   EXPECT_FALSE(pane.contains("shell_command")) << pane;
 }
 
-// tmux runs a session whose name carries a target separator, but no
-// workspace can name it: freeze refuses that session instead of writing a
-// document load would then reject.
+// No workspace can name a session whose name carries a target separator, but
+// what a by-name lookup answers for one depends on the tmux release: older
+// releases silently rewrite "." or ":" out of the name at creation, so no
+// session ever exists under the literal argument and freeze would otherwise
+// report session_not_found; newer releases keep the name verbatim and do
+// resolve it (with an explicit trailing separator), so freeze would instead
+// report the name as found but unusable. Assert the one answer that holds
+// regardless of era: freeze refuses the argument itself, without needing a
+// session by that literal name to exist.
 TEST(WorkspaceCliTmux, FreezeRefusesASessionNameLoadWouldReject) {
   Files files;
   auto fixture = libtmux::test::ScopedTmuxServer::start(
@@ -1981,7 +1987,6 @@ TEST(WorkspaceCliTmux, FreezeRefusesASessionNameLoadWouldReject) {
   const auto socket = fixture->socket_path().string();
   const auto server = libtmux::Server::at_socket_path(socket);
   ASSERT_TRUE(server.has_value());
-  ASSERT_TRUE(server->new_session("my.proj").has_value());
   ASSERT_TRUE(server->new_session("ordinary").has_value());
 
   const auto refused =
