@@ -2,6 +2,10 @@
 
 #include <atomic>
 #include <cassert>
+#if !defined(_WIN32)
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 #include <condition_variable>
 #include <mutex>
 #include <optional>
@@ -41,6 +45,7 @@ public:
     }
     ready_tail = token;
     ++ready_count;
+    refresh_wake_locked();
   }
 
   void unlink_ready(std::uint64_t token, Record& record) noexcept {
@@ -67,6 +72,7 @@ public:
     record.next_ready.reset();
     assert(ready_count != 0U);
     --ready_count;
+    refresh_wake_locked();
   }
 
   [[nodiscard]] Records::node_type claim_ready() noexcept {
@@ -80,8 +86,50 @@ public:
     return records.extract(record);
   }
 
+  ~CompletionQueueCore() noexcept {
+#if !defined(_WIN32)
+    if (wake_read >= 0) {
+      ::close(wake_read);
+    }
+    if (wake_write >= 0) {
+      ::close(wake_write);
+    }
+#endif
+  }
+
+  // Whether a caller waiting on this queue would be released right now. The
+  // condition variable and the descriptor both answer from here, so a poller
+  // and a blocked waiter can never disagree about whether there is work.
+  [[nodiscard]] bool ready_locked() const noexcept {
+    return ready_count != 0U || finished || closed;
+  }
+
+  // Makes the descriptor readable exactly when `ready_locked` holds. One byte,
+  // written once and read back once, mirroring `NotificationStream`: the byte
+  // carries nothing, readability is the whole signal, and a poller must drain
+  // by taking the work rather than by reading the pipe.
+  void refresh_wake_locked() noexcept {
+#if !defined(_WIN32)
+    const bool wanted = ready_locked();
+    if (wanted && !wake_armed && wake_write >= 0) {
+      const char byte = 1;
+      if (::write(wake_write, &byte, 1) == 1) {
+        wake_armed = true;
+      }
+    } else if (!wanted && wake_armed && wake_read >= 0) {
+      char byte = 0;
+      if (::read(wake_read, &byte, 1) == 1) {
+        wake_armed = false;
+      }
+    }
+#endif
+  }
+
   std::mutex mutex;
   std::condition_variable ready_changed;
+  int wake_read{-1};
+  int wake_write{-1};
+  bool wake_armed{false};
   Records records;
   std::optional<std::uint64_t> ready_head;
   std::optional<std::uint64_t> ready_tail;
@@ -160,7 +208,34 @@ void WeakCompletionMailbox::detach(CompletionToken token) const noexcept {
   }
 }
 
-CompletionQueue::CompletionQueue() : core_{std::make_shared<CompletionQueueCore>()} {}
+CompletionQueue::CompletionQueue() : core_{std::make_shared<CompletionQueueCore>()} {
+#if !defined(_WIN32)
+  int ends[2] = {-1, -1};
+  // A queue whose pipe could not be made still works; `ready_fd` answers -1
+  // and a caller polls or blocks in `wait_ready` as before.
+#if defined(__linux__)
+  if (::pipe2(ends, O_CLOEXEC | O_NONBLOCK) == 0) {
+#else
+  if (::pipe(ends) == 0) {
+    ::fcntl(ends[0], F_SETFD, FD_CLOEXEC);
+    ::fcntl(ends[1], F_SETFD, FD_CLOEXEC);
+    ::fcntl(ends[0], F_SETFL, O_NONBLOCK);
+    ::fcntl(ends[1], F_SETFL, O_NONBLOCK);
+#endif
+    core_->wake_read = ends[0];
+    core_->wake_write = ends[1];
+  }
+#endif
+}
+
+int CompletionQueue::ready_fd() const noexcept {
+  const auto& core = core_;
+  if (!core) {
+    return -1;
+  }
+  std::lock_guard lock{core->mutex};
+  return core->wake_read;
+}
 
 CompletionQueue::~CompletionQueue() { close(); }
 
@@ -324,6 +399,7 @@ void CompletionQueue::finish() {
   {
     std::lock_guard lock{core->mutex};
     core->finished = true;
+    core->refresh_wake_locked();
   }
   core->ready_changed.notify_all();
 }
@@ -340,6 +416,10 @@ void CompletionQueue::close() {
     core->ready_head.reset();
     core->ready_tail.reset();
     core->ready_count = 0U;
+    // Still readable, not cleared: `closed` releases a waiter just as ready
+    // work does, and a poller must learn that the queue is done rather than
+    // wait for an answer that cannot come.
+    core->refresh_wake_locked();
     records.swap(core->records);
   }
   core->ready_changed.notify_all();

@@ -111,6 +111,20 @@ public:
   // Only one dispatch or discard call runs at once; competitors return zero.
   [[nodiscard]] std::size_t discard_ready();
 
+  // Readable exactly when `wait_ready` would return without blocking, for a
+  // caller that owns an event loop and cannot park a thread in `wait_ready`.
+  // The same contract as `Connection::notification_fd`:
+  //
+  //   - Readability is the signal. Do not read from it: the byte carries
+  //     nothing and is this runtime's to consume. Drain by taking the work —
+  //     `dispatch_ready` or `discard_ready` — which clears it.
+  //   - A closed runtime makes it readable, so a poller learns that no answer
+  //     is coming rather than waiting for one.
+  //   - Valid until this runtime is destroyed or moved from. `-1` when the
+  //     pipe could not be created, and on Windows, where the runtime has no
+  //     descriptor to offer; a caller that gets `-1` uses `wait_ready`.
+  [[nodiscard]] int ready_fd() const noexcept;
+
 private:
   struct State;
   explicit CommandRuntime(std::unique_ptr<State> state) noexcept;

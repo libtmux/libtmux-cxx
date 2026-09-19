@@ -17,6 +17,8 @@
 #include <thread>
 #include <vector>
 
+#include <poll.h>
+
 #include <gtest/gtest.h>
 
 #include "libtmux/batch.hpp"
@@ -303,6 +305,52 @@ TEST(ServerContract, RuntimeReadinessWakesEveryWaitingCaller) {
   EXPECT_EQ(runtime.discard_ready(), 1U);
   EXPECT_EQ(runtime.wait_ready(), libtmux::ReadyStatus::closed);
   EXPECT_TRUE(std::move(*operation).wait().has_value());
+}
+
+// `ready_fd` is for a caller who owns an event loop and cannot park a thread
+// in `wait_ready`. Without it, integrating this runtime means a thread blocked
+// in `wait_ready`, a queue of the caller's own and a self-pipe to wake the
+// loop — which is what this is, built once here instead of by every caller.
+TEST(ServerContract, ReadyDescriptorTracksWhatWaitReadyWouldAnswer) {
+  using namespace std::chrono_literals;
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  // With an observer: the readiness this descriptor reports is the runtime's
+  // queue of observer obligations, and a server with no observer never puts
+  // anything in it.
+  std::size_t observed = 0U;
+  const auto server = Server::at_socket_path(
+      fixture->socket_path(),
+      [&observed](std::string_view, const libtmux::CommandFailure*) { ++observed; });
+  ASSERT_TRUE(server.has_value());
+  auto runtime = start_runtime();
+
+  const int ready = runtime.ready_fd();
+  ASSERT_GE(ready, 0) << "POSIX builds offer a descriptor";
+  const auto readable = [ready] {
+    pollfd polled{.fd = ready, .events = POLLIN, .revents = 0};
+    return ::poll(&polled, 1, 0) == 1 && (polled.revents & POLLIN) != 0;
+  };
+
+  EXPECT_FALSE(readable()) << "nothing has been submitted, so nothing is ready";
+
+  auto operation = server->try_submit(runtime, {"display-message", "-p", "ok"}, 5s);
+  ASSERT_TRUE(operation.has_value());
+  EXPECT_TRUE(std::move(*operation).wait().has_value());
+  ASSERT_TRUE(wait_until(readable, 5s))
+      << "a completed command leaves a ready observer, so the descriptor wakes "
+         "a poller that never called wait_ready";
+  EXPECT_EQ(runtime.wait_ready_for(0ms), libtmux::ReadyStatus::ready)
+      << "the descriptor and wait_ready must agree";
+
+  EXPECT_EQ(runtime.dispatch_ready(), 1U);
+  EXPECT_FALSE(readable())
+      << "taking the work clears it; reading the pipe is not how it is drained";
+
+  // A closed runtime releases a waiter, so it must release a poller too — or a
+  // loop waits for an answer that cannot come.
+  static_cast<void>(runtime.close());
+  EXPECT_TRUE(readable());
 }
 
 #if defined(__cpp_lib_jthread) && __cpp_lib_jthread >= 201911L
@@ -1912,8 +1960,9 @@ TEST(ServerContract, AServerRunsTheTmuxItsPolicyNames) {
     const std::string_view entries{search};
     for (std::size_t start = 0; start <= entries.size();) {
       const std::size_t stop = entries.find(':', start);
-      const std::string_view entry = entries.substr(
-          start, stop == std::string_view::npos ? std::string_view::npos : stop - start);
+      const std::string_view entry =
+          entries.substr(start, stop == std::string_view::npos ? std::string_view::npos
+                                                               : stop - start);
       if (!entry.empty()) {
         std::filesystem::path candidate{entry};
         candidate /= "tmux";

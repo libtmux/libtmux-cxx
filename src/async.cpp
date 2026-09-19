@@ -824,6 +824,8 @@ struct CommandRuntime::State final {
     return observers_.discard_ready();
   }
 
+  [[nodiscard]] int ready_fd() const noexcept { return observers_.ready_fd(); }
+
 private:
   class FinishReadinessWaits final {
   public:
@@ -1100,6 +1102,10 @@ std::size_t CommandRuntime::dispatch_ready() {
 
 std::size_t CommandRuntime::discard_ready() {
   return state_ ? state_->discard_ready() : 0U;
+}
+
+int CommandRuntime::ready_fd() const noexcept {
+  return state_ ? state_->ready_fd() : -1;
 }
 
 CommandOperation::CommandOperation(std::unique_ptr<State> state) noexcept

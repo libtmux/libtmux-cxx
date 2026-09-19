@@ -53,6 +53,7 @@ public:
   [[nodiscard]] std::size_t discard_ready();
   [[nodiscard]] QueueReadyStatus
   wait_ready(std::chrono::steady_clock::time_point deadline);
+  [[nodiscard]] int ready_fd() const noexcept;
   void finish();
   void detach(CompletionToken token);
   void close();
