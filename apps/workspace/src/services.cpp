@@ -778,20 +778,34 @@ Json capture(const Request& request) {
   const auto name = request.value("session");
   const bool by_id = name.size() > 1 && name.front() == '$' &&
                      name.find_first_not_of("0123456789", 1) == std::string::npos;
+  const auto unaddressable = [](const std::string& session_name) {
+    throw Failure{1, "invalid_workspace",
+                  "session " + session_name +
+                      " cannot be captured: tmux reads \".\" and \":\" in a "
+                      "session name as target separators, so a workspace naming "
+                      "it could not be loaded"};
+  };
+  // Reject the argument before asking tmux, rather than let the answer
+  // depend on which tmux is running. Older releases silently rewrite "." or
+  // ":" out of a session name at creation, so no session ever exists under
+  // the literal argument and the lookup below answers session_not_found;
+  // newer releases keep the name verbatim and this lookup's "=name:" form
+  // does find it, reaching the post-lookup check instead. Either way the
+  // name could never appear in a workspace `load` could read back, so give
+  // the same answer regardless of era or of whether a session happens to
+  // exist under that literal name.
+  if (!by_id && !libtmux::session_target(name))
+    unaddressable(name);
   const auto session = server.session(by_id ? name : "=" + name + ":");
   // A lookup that finds nothing and a socket with no server behind it are the
   // same answer here, and neither reads as one in the library's own words.
   if (!session)
     throw Failure{1, "session_not_found", "no session named " + name};
-  // Never write a document load would refuse. tmux reads "." and ":" in a
-  // target as separators, so a session whose name carries one cannot be
-  // addressed by name at all -- including by the workspace this would save.
+  // Never write a document load would refuse. A session named by id can still
+  // hold an unaddressable name (tmux may keep "." or ":" in it verbatim), and
+  // that name is what a saved workspace would carry.
   if (!libtmux::session_target(session->name()))
-    throw Failure{1, "invalid_workspace",
-                  "session " + std::string{session->name()} +
-                      " cannot be captured: tmux reads \".\" and \":\" in a "
-                      "session name as target separators, so a workspace naming "
-                      "it could not be loaded"};
+    unaddressable(std::string{session->name()});
   const auto windows = session->windows();
   if (!windows)
     throw Failure{1, "tmux_failed", windows.error().diagnostic};
