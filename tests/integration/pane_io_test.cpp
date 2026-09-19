@@ -124,9 +124,9 @@ TEST(PaneIo, CopyModeIsEnteredAndLeftWithoutAnAttachedClient) {
 
 } // namespace
 
-// `wait_for_text` — the four things a supervising caller needs it to get
-// right. The mechanism these exercise lived in the MCP server until it moved
-// here; the reason it is worth a core test is the third one.
+// `wait_for_text` — things a supervising caller needs it to get right. The
+// mechanism these exercise lived in the MCP server until it moved here; the
+// reason it is worth a core test is the third one.
 
 TEST(PaneIo, WaitForTextSeesOutputThatArrivesAfterTheWaitBegins) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
@@ -246,4 +246,35 @@ TEST(PaneIo, WaitForTextAnswersCancellationRatherThanTheDeadline) {
   ASSERT_FALSE(waited.has_value()) << "a cancelled wait is a failure, not a timeout";
   EXPECT_EQ(waited.error().kind, libtmux::FailureKind::cancelled);
   EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::seconds{5});
+}
+
+// tmux wraps a line at the pane's width with no newline of its own, and
+// `capture-pane -p` without `-J` reports that as two separate lines —
+// splitting a wanted string that straddles the wrap column between them.
+TEST(PaneIo, WaitForTextRejoinsALineTmuxOnlyWrappedForDisplay) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  auto pane = server.pane(fixture->session_name());
+  ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
+  ASSERT_TRUE(
+      server
+          .run({"resize-window", "-t", fixture->session_name(), "-x", "10", "-y", "5"})
+          .has_value());
+
+  // Fourteen columns into a ten-column pane, composed so the marker itself is
+  // not in the command tmux echoes back. The trailing `echo` moves the
+  // prompt to a fresh row, so the marker settles above the active row
+  // instead of fusing with it.
+  const std::string command = "sh -c 'sleep 0.1; printf wrapped-$(echo marker); echo'";
+  ASSERT_TRUE(pane->send_line(command).has_value());
+
+  libtmux::WaitOptions options;
+  options.timeout = std::chrono::seconds{5};
+  options.sent = [&command](std::string_view) {
+    return std::vector<std::string>{command};
+  };
+  const auto waited = pane->wait_for_text("wrapped-marker", options);
+  ASSERT_TRUE(waited.has_value()) << waited.error().diagnostic;
+  EXPECT_TRUE(waited->matched) << waited->text;
 }
