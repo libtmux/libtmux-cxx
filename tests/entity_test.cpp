@@ -1185,7 +1185,18 @@ TEST(Entity, ADeadPaneReportsWhatItExitedWith) {
     }
     std::this_thread::sleep_for(std::chrono::milliseconds{10});
   }
-  ASSERT_TRUE(dead.has_value()) << "the pane never exited";
+  if (!dead.has_value()) {
+    // The wait above gave up; ask tmux directly what it thinks happened to
+    // this pane, since a raw read is the fastest way to tell "never
+    // finished exiting" apart from "reports something this accessor does
+    // not expect" without guessing again.
+    const auto raw = server.run({"display-message", "-p", "-t", pane.id().value(),
+                                 "dead=#{pane_dead} status=#{pane_dead_status} "
+                                 "signal=#{pane_dead_signal} "
+                                 "command=#{pane_current_command} pid=#{pane_pid}"});
+    FAIL() << "the pane never exited; tmux reports: "
+           << (raw.has_value() ? *raw : raw.error().diagnostic);
+  }
 
   const auto status = dead->exit_status();
   ASSERT_TRUE(status.has_value()) << "a dead pane reported no status";
