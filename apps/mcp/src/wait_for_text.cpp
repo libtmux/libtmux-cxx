@@ -123,7 +123,7 @@ ToolResult wait_for_text(const Server& server, const Arguments& arguments,
   };
 
   auto waited = server.wait_for_text(*argument(arguments, "target"),
-                                     *argument(arguments, "text"), std::move(options));
+                                     *argument(arguments, "text"), options);
   if (!waited.has_value()) {
     if (waited.error().kind == FailureKind::cancelled) {
       return libtmux::unexpected(cancellation_error());

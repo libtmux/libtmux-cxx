@@ -503,7 +503,7 @@ One object by target, for a caller holding an id or a `session:window` path that
 #### `Server::wait_for_text`
 
 ```cpp
-[[nodiscard]] expected<WaitResult, CommandFailure> wait_for_text(std::string_view target, std::string_view wanted, WaitOptions options = {}) const;
+[[nodiscard]] expected<WaitResult, CommandFailure> wait_for_text(std::string_view target, std::string_view wanted, const WaitOptions& options = {}) const;
 ```
 Wait until the pane `target` names produces `wanted`. For a caller holding a target rather than a `Pane` — `Pane::wait_for_text` is the same wait without the lookup. One deadline covers both: a target that will not resolve cannot spend the whole budget and leave nothing for waiting, and `WaitPath::pane_lookup` says that is what happened.
 
@@ -2906,7 +2906,7 @@ The visible contents, as tmux printed them. `capture_lines` frames it into lines
 #### `Pane::wait_for_text`
 
 ```cpp
-[[nodiscard]] expected<WaitResult, CommandFailure> wait_for_text(std::string_view wanted, WaitOptions options = {}) const;
+[[nodiscard]] expected<WaitResult, CommandFailure> wait_for_text(std::string_view wanted, const WaitOptions& options = {}) const;
 ```
 Wait until this pane produces `wanted`, rather than until it merely appears on screen. Prefers the control stream's `%output` and falls back to re-reading the screen when no connection can be opened; `WaitOptions` says which, and `WaitResult::path` says which answered. A caller that typed the text it is waiting for names it in `WaitOptions::sent`, or the shell's echo of its own command is credited to the pane as output.
 

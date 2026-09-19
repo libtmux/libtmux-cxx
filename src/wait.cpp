@@ -393,8 +393,8 @@ stream_for_text(Wait& wait, std::string_view session_name, std::string screen) {
 
 } // namespace
 
-expected<WaitResult, CommandFailure> Pane::wait_for_text(std::string_view wanted,
-                                                         WaitOptions options) const {
+expected<WaitResult, CommandFailure>
+Pane::wait_for_text(std::string_view wanted, const WaitOptions& options) const {
   if (auto refusal = refused(ServerFeature::pane_io,
                              "psmux can capture the active pane for a stale target")) {
     return unexpected(std::move(*refusal));
@@ -413,9 +413,9 @@ expected<WaitResult, CommandFailure> Pane::wait_for_text(std::string_view wanted
   return perform(wait);
 }
 
-expected<WaitResult, CommandFailure> Server::wait_for_text(std::string_view target,
-                                                           std::string_view wanted,
-                                                           WaitOptions options) const {
+expected<WaitResult, CommandFailure>
+Server::wait_for_text(std::string_view target, std::string_view wanted,
+                      const WaitOptions& options) const {
   // One deadline covers the lookup and the wait, because the caller's budget is
   // for the whole question: a target that will not resolve must not be able to
   // spend it all and leave nothing for waiting.

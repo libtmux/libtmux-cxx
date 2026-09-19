@@ -794,7 +794,7 @@ public:
   // typed the text it is waiting for names it in `WaitOptions::sent`, or the
   // shell's echo of its own command is credited to the pane as output.
   [[nodiscard]] expected<WaitResult, CommandFailure>
-  wait_for_text(std::string_view wanted, WaitOptions options = {}) const;
+  wait_for_text(std::string_view wanted, const WaitOptions& options = {}) const;
 
   [[nodiscard]] expected<void, CommandFailure> set_width(long long width) const;
   [[nodiscard]] expected<void, CommandFailure> set_height(long long height) const;
