@@ -38,6 +38,7 @@ using libtmux::CommandFailure;
 using libtmux::CommandRequest;
 using libtmux::FailureKind;
 using libtmux::Server;
+using libtmux::Version;
 
 // Answers a fixed script, so the seam can be tested without any tmux at all.
 class ScriptedExecutor final : public libtmux::CommandExecutor {
@@ -346,13 +347,22 @@ TEST(ControlBackedServer, LaunchesWhatTmuxMayLeaveRunning) {
   auto launching = Server::at_socket_path(fixture->socket_path().string(), {},
                                           {.tmux_binary = tmux.proxy});
   ASSERT_TRUE(launching.has_value()) << launching.error().diagnostic;
+  const auto version = launching->tmux_version();
+  ASSERT_TRUE(version.has_value()) << version.error().diagnostic;
   auto controlled = launching->over_control(fixture->session_name());
   ASSERT_TRUE(controlled.has_value()) << controlled.error().message;
 
   tmux.reset();
   const auto finished = controlled->run({"run-shell", "sleep 0.2; printf finished"});
   ASSERT_TRUE(finished.has_value()) << finished.error().diagnostic;
-  EXPECT_EQ(*finished, "finished\n");
+  // Before tmux 3.5, cmd-run-shell.c's cmd_run_shell_print returned without
+  // writing when it found no window pane, which is exactly what happens once
+  // a control client already holds the session's active pane -- restored in
+  // fb37d52d. Below that floor the launch still runs and completes, but the
+  // CLI answers empty rather than the shell's output.
+  if (*version >= Version{.major = 3, .minor = 5}) {
+    EXPECT_EQ(*finished, "finished\n");
+  }
   EXPECT_EQ(tmux.launches(), 1);
 
   // An abbreviation could be anything once aliases are counted, so it launches.
