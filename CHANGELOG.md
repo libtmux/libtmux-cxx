@@ -9,6 +9,134 @@ was recorded as it landed.
 
 ## Unreleased
 
+### Breaking
+
+- `Session::id`, `Window::id`, `Pane::id` and the `session_id`/`window_id`
+  accessors now return `SessionId`, `WindowId` and `PaneId`, not
+  `std::string_view`; reach the string through `value()`. Source-breaking;
+  ABI-breaking. (#18)
+
+  Before: `server.pane(pane.id())`
+  After:  `server.pane(pane.id().value())`
+
+- `CommandObserver` takes one `CommandReport` instead of a command and a
+  failure pointer. Source-breaking for every observer; ABI-breaking. (#18)
+
+  Before: `[](std::string_view command, const CommandFailure* failure) {}`
+  After:  `[](const CommandReport& report) {}`
+
+- `Pane::kFields` gains `pane_dead_status`; a hand-written recording needs
+  one more value per row. Source-breaking for a literal recording. (#18)
+
+  Before: `"%0␞nvim␞1␞…␞0␞"`
+  After:  `"%0␞nvim␞1␞…␞0␞␞"`
+
+- `ConnectionOptions::tmux_binary` is now
+  `std::optional<std::filesystem::path>`, absent by default. Source-breaking
+  for code reading the field; ABI-breaking. (#18)
+
+  Before: `options.tmux_binary.string()`
+  After:  `options.tmux_binary.value_or("tmux").string()`
+
+### Asynchronous commands
+
+- `CommandRuntime::wait_ready` and `wait_ready_for` replace observer
+  polling with blocking waits; `close` now waits for every such caller to
+  leave before returning. (#18)
+- `CommandOperation::wait_for` and `wait_until` bound a wait without
+  consuming the operation, and accept a `std::stop_token` to cancel it. (#18)
+- Add `CommandRuntime::ready_fd`, readable exactly when `wait_ready` would
+  return without blocking. (#18)
+
+### Queries
+
+- `libtmux::output_confirms` identifies pane text apart from a command
+  still on the prompt or its own echoed input — previously MCP-only. (#18)
+- `Server::commands()` and `Server::buffers()` can now be filtered, joining
+  `session`, `window`, `pane` and `client`. (#18)
+- Every field an entity reads now has a matching filter handle beside it,
+  such as `pane::at_top` and `session::created`. (#18)
+
+### Server
+
+- Add `Server::over_control(session, connections)`, a `Server` whose
+  commands travel over held-open control clients rather than one launched
+  process each. (#18)
+- `Server::environment()`, `set_environment`, `unset_environment` and
+  `remove_environment` reach the environment tmux gives new processes.
+  (#18)
+- `Server::over` now builds a `Server` on a caller-supplied transport,
+  making the long-unreachable `BackendKind::custom` usable for the first
+  time. (#18)
+- `Server::tmux_version()` now asks `tmux -V` once per handle instead of
+  once per call. (#18)
+- `ExecutionPolicy` now carries `tmux_binary`, so a `Server` runs the tmux
+  its caller names rather than whichever `PATH` finds. (#18)
+- `Server::startable_at_socket_name`, `startable_at_default` and
+  `startable_at_socket_path` now keep the caller's own selector for their
+  first command, rather than pinning `-S <resolved path>`, which could
+  silently fail to start the daemon. Behavioural. (#18)
+
+### Windows
+
+- `Window::select_layout` now refuses a value that is not a known preset,
+  saved-layout shape, or version-appropriate JSON layout, before running
+  tmux — previously an unrecognised layout could crash tmux 3.3/3.3a
+  outright. A mirrored preset needs tmux 3.5+, a JSON layout 3.8+, refused
+  client-side below those floors. Behavioural. (#18)
+
+### Build
+
+- `LIBTMUX_VERSION_MAJOR`, `MINOR`, `PATCH` and `STRING` let a consumer
+  branch at preprocessing time on the version it compiled against. (#18)
+- The install now ships `lib/pkgconfig/libtmux.pc`, so a Meson, autotools
+  or hand-invoked build can consume the package without CMake. (#18)
+- `BUILD_SHARED_LIBS` now actually decides whether the library builds
+  static or shared; Windows refuses a shared build at configure time. (#18)
+- The library no longer carries its test-only fault-injection seams by
+  default; they now need `LIBTMUX_ENABLE_FAULT_INJECTION`. (#18)
+
+### Entities
+
+- A field an entity reads as a number is now refused when present and not
+  a number, rather than silently read as zero. Behavioural. (#18)
+- Reading a field from a recording made against an older release, which
+  named fewer fields, now answers empty instead of reading past the row.
+  Behavioural. (#18)
+
+### Pane
+
+- `Pane::exit_status()` answers what the pane's process exited with, as
+  an optional; only a pane held by `remain-on-exit` can report one. (#18)
+- `Pane` now exposes `left()` and `top()`, typed pane position alongside
+  `width()`/`height()`. (#18)
+- Add `Pane::toggle_zoom`, addressing `resize-pane -Z` by this pane's id.
+  (#18)
+- Add `Pane::wait_for_text` and `Server::wait_for_text`, waiting until a
+  pane produces text rather than until it's on screen. (#18)
+
+### Errors
+
+- Add `libtmux/error.hpp`: `as_command_failure` and `as_protocol_error`
+  cross between the two runtime failure types. (#18)
+
+### Control mode
+
+- `Connection::set_pane_output` now restores new output after a pane was
+  muted, rather than leaving it silent. (#18)
+- `Connection::connect` now sends `refresh-client -f new-layouts` on every
+  connection, so layout data agrees with a plain `Server` snapshot on tmux
+  3.8+. (#18)
+- `libtmux::parse` now populates `session`, `window` and `pane` for a
+  `%subscription-changed` notification, previously left empty. (#18)
+
+### MCP server
+
+- A pane no longer stays locked for the life of the server after a
+  `run_shell_command` that timed out or was cancelled. (#18)
+- `wait_for_text` no longer matches a caller's own command echoed on a
+  pane's active row before the shell runs it. Behavioural. (#18)
+
 ## 0.1.0-alpha.8 (2026-09-12)
 
 This alpha reaches the standard library from the typed surface. An entity and a
