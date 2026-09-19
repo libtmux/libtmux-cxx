@@ -292,12 +292,23 @@ inline libtmux::expected<std::string, std::string> run_server_steps(
   // reported instead.
   static_cast<void>(::signal(SIGPIPE, SIG_IGN));
   for (const InputStep& step : steps) {
+    // A short write used to break out of this loop and carry on, so the rest
+    // of the step never reached the server. The test then failed far away, on
+    // a reply that could not exist because its request was never sent — and
+    // `EINTR` is exactly what a loaded machine delivers here, which is why
+    // that showed up as an occasional "did not reply to request N" rather
+    // than as anything about writing.
     std::size_t written = 0;
     while (written < step.text.size()) {
       const auto wrote =
           ::write(to_child[1], step.text.data() + written, step.text.size() - written);
+      if (wrote < 0 && errno == EINTR) {
+        continue;
+      }
       if (wrote <= 0) {
-        break;
+        return abort(program.string() + ": wrote " + std::to_string(written) + " of " +
+                     std::to_string(step.text.size()) +
+                     " bytes to its stdin: " + std::strerror(errno));
       }
       written += static_cast<std::size_t>(wrote);
     }

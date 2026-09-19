@@ -217,7 +217,19 @@ const json* response(const std::vector<json>& messages, const json& id) {
 const json& require_response(const std::vector<json>& messages, const json& id) {
   const json* reply = response(messages, id);
   if (reply == nullptr) {
-    throw std::runtime_error{"MCP server did not reply to request " + id.dump()};
+    // Name what did arrive. "No reply to 168" alone cannot distinguish a
+    // request the server never saw from one it answered out of the shape this
+    // looks for, and the two want opposite investigations.
+    std::string seen;
+    for (const json& message : messages) {
+      const auto identifier = message.find("id");
+      if (!seen.empty()) {
+        seen += ", ";
+      }
+      seen += identifier != message.end() ? identifier->dump() : std::string{"<no id>"};
+    }
+    throw std::runtime_error{"MCP server did not reply to request " + id.dump() +
+                             "; it answered [" + seen + "]"};
   }
   return *reply;
 }
