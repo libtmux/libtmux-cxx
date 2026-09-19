@@ -195,7 +195,7 @@ TEST(BackendSeam, TheWholeSurfaceRunsOverASubstitutedExecutor) {
 
   // Parsed from the script, with no tmux anywhere.
   const Session& session = sessions->front();
-  EXPECT_EQ(session.id(), "$3");
+  EXPECT_EQ(session.id().value(), "$3");
   EXPECT_EQ(session.name(), "scripted");
   EXPECT_EQ(session.window_count(), 2);
   EXPECT_EQ(session.path(), "/tmp");
@@ -393,8 +393,8 @@ TEST(BackendSeam, EntityIdentityFollowsTheServerRatherThanTheBuildPlatform) {
     EXPECT_EQ((*snapshot)->rows().size(), 2U);
     const libtmux::Pane first{*snapshot, 0};
     const libtmux::Pane second{*snapshot, 1};
-    EXPECT_EQ(first.id(), second.id());
-    EXPECT_NE(first.session_id(), second.session_id());
+    EXPECT_EQ(first.id().value(), second.id().value());
+    EXPECT_NE(first.session_id().value(), second.session_id().value());
     return first == second;
   };
 
@@ -418,7 +418,7 @@ TEST(BackendSeam, RawTmux37RepairsABrokenOutWindowByStableId) {
   const auto broken = pane.break_out("roomy");
 
   ASSERT_TRUE(broken.has_value()) << broken.error().diagnostic;
-  EXPECT_EQ(broken->id(), "@9");
+  EXPECT_EQ(broken->id().value(), "@9");
   EXPECT_EQ(broken->name(), "roomy");
   EXPECT_EQ(backend->version_queries, 0U);
   ASSERT_EQ(backend->issued.size(), 3U);
@@ -580,7 +580,7 @@ TEST(BackendSeam, NamedBreakMismatchOnAnotherVersionIsReturnedUnchanged) {
   const auto broken = pane.break_out("roomy");
 
   ASSERT_TRUE(broken.has_value()) << broken.error().diagnostic;
-  EXPECT_EQ(broken->id(), "@9");
+  EXPECT_EQ(broken->id().value(), "@9");
   EXPECT_EQ(broken->name(), "unexpected");
   EXPECT_EQ(backend->version_queries, 0U);
   EXPECT_EQ(backend->issued.size(), 2U);

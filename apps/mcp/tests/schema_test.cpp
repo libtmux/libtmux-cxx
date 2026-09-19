@@ -298,67 +298,71 @@ TEST(McpProtocolSchemaTmux, EmitsEveryToolAnswerBesideItsPublishedSchema) {
                std::initializer_list<std::pair<std::string_view, std::string_view>>
                    arguments) { calls.emplace(std::move(name), Arguments{arguments}); };
   add("list_sessions", {});
-  add("list_windows", {{"session", root->id()}});
+  add("list_windows", {{"session", root->id().value()}});
   add("list_panes", {});
   add("get_server_info", {});
-  add("get_session_info", {{"session", root->id()}});
-  add("get_window_info", {{"windowId", main_window.id()}});
-  add("get_pane_info", {{"paneId", primary.id()}});
-  add("capture_pane", {{"paneId", primary.id()}});
-  add("capture_since", {{"paneId", primary.id()}, {"cursor", "0"}});
-  add("snapshot_pane", {{"paneId", primary.id()}});
+  add("get_session_info", {{"session", root->id().value()}});
+  add("get_window_info", {{"windowId", main_window.id().value()}});
+  add("get_pane_info", {{"paneId", primary.id().value()}});
+  add("capture_pane", {{"paneId", primary.id().value()}});
+  add("capture_since", {{"paneId", primary.id().value()}, {"cursor", "0"}});
+  add("snapshot_pane", {{"paneId", primary.id().value()}});
   add("search_panes", {{"pattern", "schema"}});
   add("find_pane_by_position",
-      {{"row", "0"}, {"column", "0"}, {"windowId", main_window.id()}});
-  add("wait_for_text",
-      {{"target", primary.id()}, {"text", "never appears"}, {"timeout_ms", "1"}});
-  Arguments variables{{"paneId", primary.id()}};
+      {{"row", "0"}, {"column", "0"}, {"windowId", main_window.id().value()}});
+  add("wait_for_text", {{"target", primary.id().value()},
+                        {"text", "never appears"},
+                        {"timeout_ms", "1"}});
+  Arguments variables{{"paneId", primary.id().value()}};
   variables.string_arrays["names"] = {"pane_id"};
   calls.emplace("get_tmux_variables", std::move(variables));
-  add("show_option", {{"name", "history-limit"}, {"target", root->id()}});
+  add("show_option", {{"name", "history-limit"}, {"target", root->id().value()}});
   add("show_environment", {});
   add("show_hooks", {});
   calls.emplace("call_read_tools_batch", std::move(batch));
-  add("rename_session", {{"session", root->id()}, {"name", "schema-#{pid}"}});
-  add("rename_window", {{"windowId", main_window.id()}, {"name", "schema-#{pid}"}});
-  add("select_window", {{"windowId", main_window.id()}});
-  add("select_pane", {{"paneId", primary.id()}});
-  add("select_layout", {{"windowId", main_window.id()}, {"layout", "tiled"}});
+  add("rename_session", {{"session", root->id().value()}, {"name", "schema-#{pid}"}});
+  add("rename_window",
+      {{"windowId", main_window.id().value()}, {"name", "schema-#{pid}"}});
+  add("select_window", {{"windowId", main_window.id().value()}});
+  add("select_pane", {{"paneId", primary.id().value()}});
+  add("select_layout", {{"windowId", main_window.id().value()}, {"layout", "tiled"}});
   add("resize_window",
-      {{"windowId", main_window.id()}, {"width", "100"}, {"height", "40"}});
-  add("resize_pane", {{"paneId", primary.id()}, {"width", "30"}});
-  add("move_window", {{"windowId", main_window.id()}, {"index", "9"}});
-  add("swap_pane", {{"sourcePaneId", primary.id()}, {"targetPaneId", secondary->id()}});
-  add("set_pane_title", {{"paneId", primary.id()}, {"title", "schema-#{pid}"}});
+      {{"windowId", main_window.id().value()}, {"width", "100"}, {"height", "40"}});
+  add("resize_pane", {{"paneId", primary.id().value()}, {"width", "30"}});
+  add("move_window", {{"windowId", main_window.id().value()}, {"index", "9"}});
+  add("swap_pane", {{"sourcePaneId", primary.id().value()},
+                    {"targetPaneId", secondary->id().value()}});
+  add("set_pane_title", {{"paneId", primary.id().value()}, {"title", "schema-#{pid}"}});
   add("wait_for_channel", {{"channel", "schema-wait"}, {"timeoutMs", "1000"}});
   add("signal_channel", {{"channel", "schema-signal"}});
   add("set_mouse_enabled", {{"enabled", "false"}});
-  add("set_history_limit", {{"session", root->id()}, {"limit", "2000"}});
+  add("set_history_limit", {{"session", root->id().value()}, {"limit", "2000"}});
   add("create_session", {{"name", "schema-created-#{pid}"},
                          {"windowName", "schema-first-#{pid}"},
                          {"startDirectory", literal_directory.string()}});
-  add("create_window", {{"session", root->id()},
+  add("create_window", {{"session", root->id().value()},
                         {"name", "schema-created-window-#{pid}"},
                         {"startDirectory", literal_directory.string()}});
-  add("split_window",
-      {{"paneId", primary.id()}, {"startDirectory", literal_directory.string()}});
-  add("respawn_pane", {{"paneId", respawn_pane.id()},
+  add("split_window", {{"paneId", primary.id().value()},
+                       {"startDirectory", literal_directory.string()}});
+  add("respawn_pane", {{"paneId", respawn_pane.id().value()},
                        {"force", "true"},
                        {"startDirectory", literal_directory.string()}});
-  add("run_shell_command", {{"paneId", primary.id()},
+  add("run_shell_command", {{"paneId", primary.id().value()},
                             {"command", "printf schema-conformance"},
                             {"timeoutMs", "5000"}});
-  add("send_keys", {{"paneId", primary.id()}, {"keys", "Escape"}});
+  add("send_keys", {{"paneId", primary.id().value()}, {"keys", "Escape"}});
   Arguments key_batch;
-  key_batch.send_key_operations.push_back(
-      libtmux::mcp::FlatArguments{{"paneId", primary.id()}, {"keys", "Escape"}});
+  key_batch.send_key_operations.push_back(libtmux::mcp::FlatArguments{
+      {"paneId", primary.id().value()}, {"keys", "Escape"}});
   calls.emplace("send_keys_batch", std::move(key_batch));
-  add("paste_text", {{"paneId", primary.id()}, {"text", "schema-conformance"}});
-  add("set_synchronize_panes", {{"windowId", main_window.id()}, {"enabled", "false"}});
-  add("clear_pane_scrollback", {{"paneId", primary.id()}});
-  add("kill_pane", {{"paneId", doomed_pane->id()}});
-  add("kill_window", {{"windowId", doomed_window->id()}});
-  add("kill_session", {{"session", doomed_session->id()}});
+  add("paste_text", {{"paneId", primary.id().value()}, {"text", "schema-conformance"}});
+  add("set_synchronize_panes",
+      {{"windowId", main_window.id().value()}, {"enabled", "false"}});
+  add("clear_pane_scrollback", {{"paneId", primary.id().value()}});
+  add("kill_pane", {{"paneId", doomed_pane->id().value()}});
+  add("kill_window", {{"windowId", doomed_window->id().value()}});
+  add("kill_session", {{"session", doomed_session->id().value()}});
   const json schemas = published_schemas();
 
   std::ofstream out{destination, std::ios::trunc};
@@ -385,15 +389,15 @@ TEST(McpProtocolSchemaTmux, EmitsEveryToolAnswerBesideItsPublishedSchema) {
     }
     ASSERT_TRUE(result.has_value()) << tool.name << ": " << result.error().message;
     if (tool.name == "rename_session") {
-      const auto renamed = server.session(root->id());
+      const auto renamed = server.session(root->id().value());
       ASSERT_TRUE(renamed.has_value()) << renamed.error().diagnostic;
       EXPECT_EQ(renamed->name(), "schema-#{pid}");
     } else if (tool.name == "rename_window") {
-      const auto renamed = server.window(main_window.id());
+      const auto renamed = server.window(main_window.id().value());
       ASSERT_TRUE(renamed.has_value()) << renamed.error().diagnostic;
       EXPECT_EQ(renamed->name(), "schema-#{pid}");
     } else if (tool.name == "set_pane_title") {
-      const auto titled = server.pane(primary.id());
+      const auto titled = server.pane(primary.id().value());
       ASSERT_TRUE(titled.has_value()) << titled.error().diagnostic;
       EXPECT_EQ(titled->title(), "schema-#{pid}");
     } else if (tool.name == "create_session") {

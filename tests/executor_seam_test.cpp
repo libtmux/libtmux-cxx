@@ -241,7 +241,8 @@ TEST(ExecutorSeam, ListingsOverAControlConnectionMatchTheLaunchingPath) {
 
   ASSERT_EQ(actual_windows->size(), expected_windows->size());
   for (std::size_t row = 0; row < actual_windows->size(); ++row) {
-    EXPECT_EQ(actual_windows->at(row).id(), expected_windows->at(row).id());
+    EXPECT_EQ(actual_windows->at(row).id().value(),
+              expected_windows->at(row).id().value());
     EXPECT_EQ(actual_windows->at(row).name(), expected_windows->at(row).name());
     EXPECT_EQ(actual_windows->at(row).index(), expected_windows->at(row).index());
   }
@@ -314,7 +315,8 @@ TEST(ControlBackedServer, BuildsAWindowWithoutLaunchingTmux) {
   for (int split = 0; split < 5; ++split) {
     const auto pane = window->split();
     ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
-    EXPECT_TRUE(pane->id().starts_with('%')) << "the -P answer parsed as a pane id";
+    EXPECT_TRUE(pane->id().value().starts_with('%'))
+        << "the -P answer parsed as a pane id";
     ASSERT_TRUE(window->select_layout("tiled").has_value());
   }
   ASSERT_TRUE(window->rename("built").has_value());
@@ -327,9 +329,9 @@ TEST(ControlBackedServer, BuildsAWindowWithoutLaunchingTmux) {
   ASSERT_EQ(panes->size(), launched->size());
   EXPECT_EQ(panes->size(), 7U);
   for (std::size_t index = 0; index < panes->size(); ++index) {
-    EXPECT_EQ((*panes)[index].id(), (*launched)[index].id());
+    EXPECT_EQ((*panes)[index].id().value(), (*launched)[index].id().value());
   }
-  const auto renamed = controlled->window(window->id());
+  const auto renamed = controlled->window(window->id().value());
   ASSERT_TRUE(renamed.has_value()) << renamed.error().diagnostic;
   EXPECT_EQ(renamed->name(), "built");
 }

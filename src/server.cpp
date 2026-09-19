@@ -94,8 +94,8 @@ exact_psmux_sessions(const std::shared_ptr<const detail::Backend>& backend,
   exact.reserve(candidates->size());
   for (const Session& candidate : *candidates) {
     auto call_policy = remaining_policy(policy, started);
-    auto belongs =
-        backend->session_belongs(candidate.id(), candidate.name(), call_policy.timeout);
+    auto belongs = backend->session_belongs(candidate.id().value(), candidate.name(),
+                                            call_policy.timeout);
     if (!belongs.has_value()) {
       if (unavailable_candidate(belongs.error())) {
         continue;
@@ -107,7 +107,8 @@ exact_psmux_sessions(const std::shared_ptr<const detail::Backend>& backend,
     }
 
     auto refreshed = detail::describe<Session>(
-        backend, ":", candidate.id(), {.id = candidate.id(), .name = candidate.name()},
+        backend, ":", candidate.id().value(),
+        {.id = candidate.id().value(), .name = candidate.name()},
         remaining_policy(policy, started));
     if (!refreshed.has_value()) {
       if (unavailable_candidate(refreshed.error())) {
@@ -116,7 +117,7 @@ exact_psmux_sessions(const std::shared_ptr<const detail::Backend>& backend,
       return unexpected(refreshed.error());
     }
     if (std::ranges::any_of(exact, [&](const Session& retained) {
-          return retained.id() == refreshed->id();
+          return retained.id().value() == refreshed->id().value();
         })) {
       return unexpected(
           CommandFailure{.kind = FailureKind::refused,
@@ -809,10 +810,10 @@ expected<std::vector<Window>, CommandFailure> Server::windows() const {
   }
   std::vector<Window> windows;
   for (const Session& session : *owned) {
-    auto listed =
-        detail::list_entities<Window>(backend_, {"list-windows", "-t", ":"},
-                                      {.id = session.id(), .name = session.name()},
-                                      remaining_policy(policy, started));
+    auto listed = detail::list_entities<Window>(
+        backend_, {"list-windows", "-t", ":"},
+        {.id = session.id().value(), .name = session.name()},
+        remaining_policy(policy, started));
     if (!listed.has_value()) {
       return unexpected(listed.error());
     }
@@ -836,10 +837,10 @@ expected<std::vector<Pane>, CommandFailure> Server::panes() const {
   }
   std::vector<Pane> panes;
   for (const Session& session : *owned) {
-    auto listed =
-        detail::list_entities<Pane>(backend_, {"list-panes", "-s", "-t", ":"},
-                                    {.id = session.id(), .name = session.name()},
-                                    remaining_policy(policy, started));
+    auto listed = detail::list_entities<Pane>(
+        backend_, {"list-panes", "-s", "-t", ":"},
+        {.id = session.id().value(), .name = session.name()},
+        remaining_policy(policy, started));
     if (!listed.has_value()) {
       return unexpected(listed.error());
     }
@@ -1109,7 +1110,8 @@ expected<Session, CommandFailure> Server::session(std::string_view target) const
       exact.find_first_not_of("0123456789", 1U) == std::string_view::npos;
   std::optional<Session> found;
   for (const Session& candidate : *owned) {
-    if ((by_id && candidate.id() == exact) || (!by_id && candidate.name() == exact)) {
+    if ((by_id && candidate.id().value() == exact) ||
+        (!by_id && candidate.name() == exact)) {
       if (found.has_value()) {
         return unexpected(CommandFailure{
             .kind = FailureKind::validation,

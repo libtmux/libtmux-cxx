@@ -178,7 +178,7 @@ std::optional<Row> measure(const std::string& mode, const std::string& real_tmux
   if (!window.has_value()) {
     return std::nullopt;
   }
-  const std::string target{window->id()};
+  const std::string target{window->id().value()};
 
   reset_records(records);
   const auto started = std::chrono::steady_clock::now();

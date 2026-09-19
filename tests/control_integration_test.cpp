@@ -711,10 +711,10 @@ TEST(ControlModeConnection, LayoutContainsPaneAnswersAfterTheObservedPaneIsKille
   auto panes = server->panes();
   ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
   ASSERT_EQ(panes->size(), 1U);
-  const std::string kept{panes->front().id()};
+  const std::string kept{panes->front().id().value()};
   const auto split = panes->front().split();
   ASSERT_TRUE(split.has_value()) << split.error().diagnostic;
-  const std::string doomed{split->id()};
+  const std::string doomed{split->id().value()};
 
   // Drain the split's own layout-change before killing the pane, so the one
   // this test reads is unambiguously the one the kill caused.

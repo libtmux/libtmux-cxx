@@ -1293,6 +1293,14 @@ The tmux object hierarchy.  A Session, Window, Pane or Client is one row of a sn
   - [`CaptureOptions::with_escape_sequences`](#libtmux-entities-hpp-captureoptions-with-escape-sequences)
   - [`CaptureOptions::keep_trailing_spaces`](#libtmux-entities-hpp-captureoptions-keep-trailing-spaces)
   - [`CaptureOptions::output_limit`](#libtmux-entities-hpp-captureoptions-output-limit)
+- [`EntityId`](#libtmux-entities-hpp-entityid)
+  - [`EntityId::EntityId`](#libtmux-entities-hpp-entityid-entityid)
+  - [`EntityId::EntityId`](#libtmux-entities-hpp-entityid-entityid-2)
+  - [`EntityId::value`](#libtmux-entities-hpp-entityid-value)
+  - [`EntityId::empty`](#libtmux-entities-hpp-entityid-empty)
+  - [`EntityId::operator==`](#libtmux-entities-hpp-entityid-operator)
+  - [`EntityId::operator==`](#libtmux-entities-hpp-entityid-operator-2)
+  - [`EntityId::operator<=>`](#libtmux-entities-hpp-entityid-operator-3)
 - [`AttachCommand`](#libtmux-entities-hpp-attachcommand)
   - [`AttachCommand::AttachCommand`](#libtmux-entities-hpp-attachcommand-attachcommand)
   - [`AttachCommand::AttachCommand`](#libtmux-entities-hpp-attachcommand-attachcommand-2)
@@ -1512,10 +1520,14 @@ The tmux object hierarchy.  A Session, Window, Pane or Client is one row of a sn
 - [`std::formatter<libtmux::Client>`](#libtmux-entities-hpp-std-formatter-libtmux-client)
   - [`std::formatter<libtmux::Client>::format`](#libtmux-entities-hpp-std-formatter-libtmux-client-format)
 - [`Free symbols`](#libtmux-entities-hpp-free-symbols)
+  - [`SessionId`](#libtmux-entities-hpp-free-symbols-sessionid)
+  - [`WindowId`](#libtmux-entities-hpp-free-symbols-windowid)
+  - [`PaneId`](#libtmux-entities-hpp-free-symbols-paneid)
   - [`operator<<`](#libtmux-entities-hpp-free-symbols-operator)
   - [`operator<<`](#libtmux-entities-hpp-free-symbols-operator-2)
   - [`operator<<`](#libtmux-entities-hpp-free-symbols-operator-3)
   - [`operator<<`](#libtmux-entities-hpp-free-symbols-operator-4)
+  - [`operator<<`](#libtmux-entities-hpp-free-symbols-operator-5)
   - [`to_string`](#libtmux-entities-hpp-free-symbols-to-string)
   - [`to_string`](#libtmux-entities-hpp-free-symbols-to-string-2)
   - [`to_string`](#libtmux-entities-hpp-free-symbols-to-string-3)
@@ -1857,6 +1869,64 @@ std::optional<std::size_t> output_limit{};
 ```
 How much of the answer this call is prepared to hold. A scrollback can be far larger than the default, and one that does not fit is reported.
 
+<a id="libtmux-entities-hpp-entityid"></a>
+### `EntityId`
+
+A tmux object id, typed by what it names.  tmux spells these `$0`, `@1` and `%2`. The prefix says which kind it is, and nothing in the type did: six accessors returned `std::string_view`, so a window id compiled wherever a pane id belonged, and `pane.id() == window.id()` was a comparison that can never be true but always built.  The string is reached through `value()` rather than through a conversion. A conversion is what let the mix-up through in the first place: with one, every `std::string_view` parameter accepts any id again, and this would read as type safety while providing none.  Comparing an id to plain text still works, because that cannot confuse two kinds — `pane.id() == "%0"` asks something answerable. Comparing two ids of different kinds does not compile.
+
+```cpp
+template <typename Kind> class EntityId;
+```
+
+<a id="libtmux-entities-hpp-entityid-entityid"></a>
+#### `EntityId::EntityId`
+
+```cpp
+EntityId() = default;
+```
+
+<a id="libtmux-entities-hpp-entityid-entityid-2"></a>
+#### `EntityId::EntityId`
+
+```cpp
+explicit constexpr EntityId(std::string_view value) noexcept;
+```
+
+<a id="libtmux-entities-hpp-entityid-value"></a>
+#### `EntityId::value`
+
+```cpp
+[[nodiscard]] constexpr std::string_view value() const noexcept;
+```
+
+<a id="libtmux-entities-hpp-entityid-empty"></a>
+#### `EntityId::empty`
+
+```cpp
+[[nodiscard]] constexpr bool empty() const noexcept;
+```
+
+<a id="libtmux-entities-hpp-entityid-operator"></a>
+#### `EntityId::operator==`
+
+```cpp
+[[nodiscard]] friend constexpr bool operator==(EntityId left, EntityId right) noexcept;
+```
+
+<a id="libtmux-entities-hpp-entityid-operator-2"></a>
+#### `EntityId::operator==`
+
+```cpp
+[[nodiscard]] friend constexpr bool operator==(EntityId left, std::string_view right) noexcept;
+```
+
+<a id="libtmux-entities-hpp-entityid-operator-3"></a>
+#### `EntityId::operator<=>`
+
+```cpp
+[[nodiscard]] friend constexpr auto operator<=>(EntityId left, EntityId right) noexcept;
+```
+
 <a id="libtmux-entities-hpp-attachcommand"></a>
 ### `AttachCommand`
 
@@ -1955,7 +2025,7 @@ using Row::server;
 #### `Session::id`
 
 ```cpp
-[[nodiscard]] std::string_view id() const noexcept;
+[[nodiscard]] SessionId id() const noexcept;
 ```
 
 <a id="libtmux-entities-hpp-session-name"></a>
@@ -2240,7 +2310,7 @@ using Row::server;
 #### `Window::id`
 
 ```cpp
-[[nodiscard]] std::string_view id() const noexcept;
+[[nodiscard]] WindowId id() const noexcept;
 ```
 
 <a id="libtmux-entities-hpp-window-name"></a>
@@ -2261,7 +2331,7 @@ using Row::server;
 #### `Window::session_id`
 
 ```cpp
-[[nodiscard]] std::string_view session_id() const noexcept;
+[[nodiscard]] SessionId session_id() const noexcept;
 ```
 The link to the parent, carried in the row so traversal upward costs nothing until the parent itself is wanted.
 
@@ -2599,7 +2669,7 @@ using Row::server;
 #### `Pane::id`
 
 ```cpp
-[[nodiscard]] std::string_view id() const noexcept;
+[[nodiscard]] PaneId id() const noexcept;
 ```
 
 <a id="libtmux-entities-hpp-pane-command"></a>
@@ -2621,14 +2691,14 @@ What is running in the pane now, which is not what started it.
 #### `Pane::window_id`
 
 ```cpp
-[[nodiscard]] std::string_view window_id() const noexcept;
+[[nodiscard]] WindowId window_id() const noexcept;
 ```
 
 <a id="libtmux-entities-hpp-pane-session-id"></a>
 #### `Pane::session_id`
 
 ```cpp
-[[nodiscard]] std::string_view session_id() const noexcept;
+[[nodiscard]] SessionId session_id() const noexcept;
 ```
 
 <a id="libtmux-entities-hpp-pane-index"></a>
@@ -3463,7 +3533,36 @@ template <typename Context> auto format(const libtmux::Client& value, Context& c
 <a id="libtmux-entities-hpp-free-symbols"></a>
 ### `Free symbols`
 
+<a id="libtmux-entities-hpp-free-symbols-sessionid"></a>
+#### `SessionId`
+
+```cpp
+using SessionId = EntityId<struct SessionIdKind>;
+```
+Distinct types, not aliases of one: `Kind` is only ever named here.
+
+<a id="libtmux-entities-hpp-free-symbols-windowid"></a>
+#### `WindowId`
+
+```cpp
+using WindowId = EntityId<struct WindowIdKind>;
+```
+
+<a id="libtmux-entities-hpp-free-symbols-paneid"></a>
+#### `PaneId`
+
+```cpp
+using PaneId = EntityId<struct PaneIdKind>;
+```
+
 <a id="libtmux-entities-hpp-free-symbols-operator"></a>
+#### `operator<<`
+
+```cpp
+template <typename Kind> std::ostream& operator<<(std::ostream& stream, EntityId<Kind> id);
+```
+
+<a id="libtmux-entities-hpp-free-symbols-operator-2"></a>
 #### `operator<<`
 
 ```cpp
@@ -3471,21 +3570,21 @@ std::ostream& operator<<(std::ostream& stream, const Session& session);
 ```
 Written as tmux would name it, with the detail that identifies it: an id and the thing a reader recognises it by. Declared against a forward-declared stream so no consumer pays for <ostream> to include an entity.
 
-<a id="libtmux-entities-hpp-free-symbols-operator-2"></a>
+<a id="libtmux-entities-hpp-free-symbols-operator-3"></a>
 #### `operator<<`
 
 ```cpp
 std::ostream& operator<<(std::ostream& stream, const Window& window);
 ```
 
-<a id="libtmux-entities-hpp-free-symbols-operator-3"></a>
+<a id="libtmux-entities-hpp-free-symbols-operator-4"></a>
 #### `operator<<`
 
 ```cpp
 std::ostream& operator<<(std::ostream& stream, const Pane& pane);
 ```
 
-<a id="libtmux-entities-hpp-free-symbols-operator-4"></a>
+<a id="libtmux-entities-hpp-free-symbols-operator-5"></a>
 #### `operator<<`
 
 ```cpp

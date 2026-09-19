@@ -168,6 +168,54 @@ struct CaptureOptions {
   std::optional<std::size_t> output_limit{};
 };
 
+// A tmux object id, typed by what it names.
+//
+// tmux spells these `$0`, `@1` and `%2`. The prefix says which kind it is, and
+// nothing in the type did: six accessors returned `std::string_view`, so a
+// window id compiled wherever a pane id belonged, and `pane.id() ==
+// window.id()` was a comparison that can never be true but always built.
+//
+// The string is reached through `value()` rather than through a conversion.
+// A conversion is what let the mix-up through in the first place: with one,
+// every `std::string_view` parameter accepts any id again, and this would read
+// as type safety while providing none.
+//
+// Comparing an id to plain text still works, because that cannot confuse two
+// kinds — `pane.id() == "%0"` asks something answerable. Comparing two ids of
+// different kinds does not compile.
+template <typename Kind> class EntityId {
+public:
+  EntityId() = default;
+  explicit constexpr EntityId(std::string_view value) noexcept : value_{value} {}
+
+  [[nodiscard]] constexpr std::string_view value() const noexcept { return value_; }
+  [[nodiscard]] constexpr bool empty() const noexcept { return value_.empty(); }
+
+  [[nodiscard]] friend constexpr bool operator==(EntityId left,
+                                                 EntityId right) noexcept {
+    return left.value_ == right.value_;
+  }
+  [[nodiscard]] friend constexpr bool operator==(EntityId left,
+                                                 std::string_view right) noexcept {
+    return left.value_ == right;
+  }
+  [[nodiscard]] friend constexpr auto operator<=>(EntityId left,
+                                                  EntityId right) noexcept {
+    return left.value_ <=> right.value_;
+  }
+
+private:
+  std::string_view value_{};
+};
+
+// Distinct types, not aliases of one: `Kind` is only ever named here.
+using SessionId = EntityId<struct SessionIdKind>;
+using WindowId = EntityId<struct WindowIdKind>;
+using PaneId = EntityId<struct PaneIdKind>;
+
+template <typename Kind>
+std::ostream& operator<<(std::ostream& stream, EntityId<Kind> id);
+
 namespace detail {
 
 // tmux renders every value as text. These read the three shapes it uses, and
@@ -324,7 +372,7 @@ public:
   using Row::connection_identity;
   using Row::server;
 
-  [[nodiscard]] std::string_view id() const noexcept { return value(0); }
+  [[nodiscard]] SessionId id() const noexcept { return SessionId{value(0)}; }
   [[nodiscard]] std::string_view name() const noexcept { return value(1); }
   // `session_attached` counts clients rather than rendering a flag, so any
   // count other than zero means attached.
@@ -454,12 +502,12 @@ public:
   using Row::connection_identity;
   using Row::server;
 
-  [[nodiscard]] std::string_view id() const noexcept { return value(0); }
+  [[nodiscard]] WindowId id() const noexcept { return WindowId{value(0)}; }
   [[nodiscard]] std::string_view name() const noexcept { return value(1); }
   [[nodiscard]] bool active() const noexcept { return detail::to_flag(value(2)); }
   // The link to the parent, carried in the row so traversal upward costs
   // nothing until the parent itself is wanted.
-  [[nodiscard]] std::string_view session_id() const noexcept { return value(3); }
+  [[nodiscard]] SessionId session_id() const noexcept { return SessionId{value(3)}; }
   // Position within its session, which `base-index` is free to start anywhere.
   [[nodiscard]] long long index() const noexcept { return detail::to_number(value(4)); }
   [[nodiscard]] long long pane_count() const noexcept {
@@ -500,8 +548,9 @@ public:
   // window refreshed after a rename equals the one it was refreshed from.
   [[nodiscard]] bool operator==(const Window& other) const noexcept {
     return same_connection(other) &&
-           detail::same_entity_id(ids_scoped_by_session(), id(), session_id(),
-                                  other.id(), other.session_id());
+           detail::same_entity_id(ids_scoped_by_session(), id().value(),
+                                  session_id().value(), other.id().value(),
+                                  other.session_id().value());
   }
 
   // How to address this window, and the reason a window id alone will not do.
@@ -635,12 +684,12 @@ public:
   using Row::connection_identity;
   using Row::server;
 
-  [[nodiscard]] std::string_view id() const noexcept { return value(0); }
+  [[nodiscard]] PaneId id() const noexcept { return PaneId{value(0)}; }
   // What is running in the pane now, which is not what started it.
   [[nodiscard]] std::string_view command() const noexcept { return value(1); }
   [[nodiscard]] bool active() const noexcept { return detail::to_flag(value(2)); }
-  [[nodiscard]] std::string_view window_id() const noexcept { return value(3); }
-  [[nodiscard]] std::string_view session_id() const noexcept { return value(4); }
+  [[nodiscard]] WindowId window_id() const noexcept { return WindowId{value(3)}; }
+  [[nodiscard]] SessionId session_id() const noexcept { return SessionId{value(4)}; }
   [[nodiscard]] long long index() const noexcept { return detail::to_number(value(5)); }
   [[nodiscard]] std::string_view title() const noexcept { return value(6); }
   [[nodiscard]] long long pid() const noexcept { return detail::to_number(value(7)); }
@@ -699,8 +748,9 @@ public:
   // pane refreshed after a rename equals the one it was refreshed from.
   [[nodiscard]] bool operator==(const Pane& other) const noexcept {
     return same_connection(other) &&
-           detail::same_entity_id(ids_scoped_by_session(), id(), session_id(),
-                                  other.id(), other.session_id());
+           detail::same_entity_id(ids_scoped_by_session(), id().value(),
+                                  session_id().value(), other.id().value(),
+                                  other.session_id().value());
   }
 
   [[nodiscard]] expected<Window, CommandFailure> window() const;
@@ -1003,7 +1053,7 @@ std::ostream& operator<<(std::ostream& stream, const Client& client);
 namespace session {
 
 inline constexpr StringFieldHandle<Session> id{
-    {Session::kFields[0], [](const Session& row) { return row.id(); }}};
+    {Session::kFields[0], [](const Session& row) { return row.id().value(); }}};
 inline constexpr StringFieldHandle<Session> name{
     {Session::kFields[1], [](const Session& row) { return row.name(); }}};
 inline constexpr BoolFieldHandle<Session> attached{
@@ -1031,13 +1081,13 @@ inline constexpr NumberFieldHandle<Session> created{
 namespace window {
 
 inline constexpr StringFieldHandle<Window> id{
-    {Window::kFields[0], [](const Window& row) { return row.id(); }}};
+    {Window::kFields[0], [](const Window& row) { return row.id().value(); }}};
 inline constexpr StringFieldHandle<Window> name{
     {Window::kFields[1], [](const Window& row) { return row.name(); }}};
 inline constexpr BoolFieldHandle<Window> active{
     {Window::kFields[2], [](const Window& row) { return row.active(); }}};
 inline constexpr StringFieldHandle<Window> session_id{
-    {Window::kFields[3], [](const Window& row) { return row.session_id(); }}};
+    {Window::kFields[3], [](const Window& row) { return row.session_id().value(); }}};
 inline constexpr StringFieldHandle<Window> session_name{
     {Window::kSessionNameField, [](const Window& row) { return row.session_name(); }}};
 inline constexpr StringFieldHandle<Window> layout{
@@ -1064,15 +1114,15 @@ inline constexpr NumberFieldHandle<Window> linked_sessions{
 namespace pane {
 
 inline constexpr StringFieldHandle<Pane> id{
-    {Pane::kFields[0], [](const Pane& row) { return row.id(); }}};
+    {Pane::kFields[0], [](const Pane& row) { return row.id().value(); }}};
 inline constexpr StringFieldHandle<Pane> command{
     {Pane::kFields[1], [](const Pane& row) { return row.command(); }}};
 inline constexpr BoolFieldHandle<Pane> active{
     {Pane::kFields[2], [](const Pane& row) { return row.active(); }}};
 inline constexpr StringFieldHandle<Pane> window_id{
-    {Pane::kFields[3], [](const Pane& row) { return row.window_id(); }}};
+    {Pane::kFields[3], [](const Pane& row) { return row.window_id().value(); }}};
 inline constexpr StringFieldHandle<Pane> session_id{
-    {Pane::kFields[4], [](const Pane& row) { return row.session_id(); }}};
+    {Pane::kFields[4], [](const Pane& row) { return row.session_id().value(); }}};
 inline constexpr StringFieldHandle<Pane> session_name{
     {Pane::kSessionNameField, [](const Pane& row) { return row.session_name(); }}};
 inline constexpr StringFieldHandle<Pane> title{

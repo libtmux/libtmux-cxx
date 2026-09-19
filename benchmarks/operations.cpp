@@ -159,7 +159,7 @@ bool bench_control_throughput(const libtmux::test::ScopedTmuxServer& fixture,
     std::fprintf(stderr, "benchmarks: no pane to stream from\n");
     return false;
   }
-  const std::string pane_id{panes->front().id()};
+  const std::string pane_id{panes->front().id().value()};
 
   auto connected =
       libtmux::Connection::connect({.socket_path = fixture.socket_path(),

@@ -1889,7 +1889,7 @@ TEST(ServerContract, AnObserverNeverSeesAnEnvironmentValue) {
   ASSERT_TRUE(wait_until([&runtime] { return runtime.snapshot().completed == 1U; }));
   EXPECT_EQ(runtime.dispatch_ready(), 1U);
   const auto value = server->run(
-      {"show-environment", "-t", std::string{session->id()}, "LIBTMUX_SECRET"});
+      {"show-environment", "-t", std::string{session->id().value()}, "LIBTMUX_SECRET"});
   ASSERT_TRUE(value.has_value()) << value.error().diagnostic;
   EXPECT_EQ(*value, "LIBTMUX_SECRET=" + std::string{secret} + "\n");
 

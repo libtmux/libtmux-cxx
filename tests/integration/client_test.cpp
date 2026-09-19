@@ -187,7 +187,7 @@ TEST(Client, AttachingIsACommandLineRatherThanACall) {
   EXPECT_EQ(permissions & exposed, std::filesystem::perms::none);
   EXPECT_EQ(command[command.size() - 3], "attach-session");
   EXPECT_EQ(command[command.size() - 2], "-t");
-  EXPECT_EQ(command.back(), sessions->front().id());
+  EXPECT_EQ(command.back(), sessions->front().id().value());
 
   // Running it through the library is exactly what does not work, and it says
   // so rather than hanging.

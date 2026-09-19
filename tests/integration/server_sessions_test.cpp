@@ -36,7 +36,7 @@ TEST(ServerSessions, NewSessionCreatesOneAndHandsItBack) {
   // The server agrees it exists, and the returned value names the same one.
   const auto found = server.session("made");
   ASSERT_TRUE(found.has_value()) << found.error().diagnostic;
-  EXPECT_EQ(found->id(), created->id());
+  EXPECT_EQ(found->id().value(), created->id().value());
 
   // Detached, so a library call never takes the terminal.
   EXPECT_FALSE(created->attached());
@@ -125,7 +125,7 @@ TEST(WindowFields, ReportsWhetherAWindowIsZoomed) {
   const auto windows = server.windows();
   ASSERT_TRUE(windows.has_value()) << windows.error().diagnostic;
   ASSERT_FALSE(windows->empty());
-  const std::string id{windows->at(0).id()};
+  const std::string id{windows->at(0).id().value()};
   EXPECT_FALSE(windows->at(0).zoomed()) << "a fresh window reported zoomed";
 
   // Zooming needs something to zoom into, so split first.

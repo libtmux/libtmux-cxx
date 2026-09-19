@@ -47,13 +47,14 @@ int main() {
   }
   const libtmux::Pane& pane = panes->at(0);
   std::printf("made %s, holding %s\n", std::string{window->name()}.c_str(),
-              std::string{pane.id()}.c_str());
+              std::string{pane.id().value()}.c_str());
 
   // A pane is a value: it prints, compares and can be stored.
   const auto owner = pane.window();
   if (owner.has_value()) {
     std::printf("its window is %s, the one just made: %s\n",
-                std::string{owner->id()}.c_str(), *owner == *window ? "yes" : "no");
+                std::string{owner->id().value()}.c_str(),
+                *owner == *window ? "yes" : "no");
   }
 
   // An entity reads the moment it was listed. Ask again for the present.

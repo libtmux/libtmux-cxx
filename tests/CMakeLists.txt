@@ -800,6 +800,7 @@ foreach(
   capture_lines_refuses_a_temporary
   parse_refuses_a_temporary
   relation_join_refuses_a_temporary
+  entity_ids_do_not_mix
   no_implicit_submit)
   add_library(libtmux_compile_${probe} OBJECT EXCLUDE_FROM_ALL compile/${probe}.cpp)
   target_link_libraries(

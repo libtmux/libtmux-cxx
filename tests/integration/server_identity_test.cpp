@@ -325,7 +325,7 @@ TEST(ServerIdentity, TwoServersNumberTheirObjectsTheSameWay) {
   ASSERT_FALSE(here->empty());
   ASSERT_FALSE(there->empty());
 
-  EXPECT_EQ(here->front().id(), there->front().id());
+  EXPECT_EQ(here->front().id().value(), there->front().id().value());
   // Same id, different servers, so not the same pane.
   EXPECT_NE(here->front(), there->front());
 }
@@ -494,7 +494,8 @@ TEST(ServerIdentity, RestartAtTheSameSocketIsANewServer) {
   const auto current_sessions = current->sessions();
   ASSERT_TRUE(current_sessions.has_value()) << current_sessions.error().diagnostic;
   ASSERT_FALSE(current_sessions->empty());
-  EXPECT_EQ(stale_sessions->front().id(), current_sessions->front().id());
+  EXPECT_EQ(stale_sessions->front().id().value(),
+            current_sessions->front().id().value());
   EXPECT_NE(stale_sessions->front(), current_sessions->front());
 
   std::unordered_set<libtmux::Session> sessions;

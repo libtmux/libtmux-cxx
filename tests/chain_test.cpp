@@ -77,11 +77,12 @@ TEST(Chain, SendsTheSameCommandAPaneWouldForTextStartingWithADash) {
   const auto& pane = panes->front();
 
   Chain chain;
-  chain.send_text(std::string{pane.id()}, "-n not a flag");
+  chain.send_text(std::string{pane.id().value()}, "-n not a flag");
   ASSERT_TRUE(chain.valid()) << chain.error();
   const auto argv = chain.batch().argv();
-  EXPECT_EQ(argv, (std::vector<std::string>{"send-keys", "-t", std::string{pane.id()},
-                                            "-l", "--", "-n not a flag"}));
+  EXPECT_EQ(argv,
+            (std::vector<std::string>{"send-keys", "-t", std::string{pane.id().value()},
+                                      "-l", "--", "-n not a flag"}));
 
   // And tmux takes it, over both spellings, rather than reading `-n` as an
   // option it does not have.

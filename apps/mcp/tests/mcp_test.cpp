@@ -339,7 +339,8 @@ TEST(McpToolsTmux, RunsShellFramingThroughThePinnedServerEndpoint) {
                   .has_value());
 
   const auto preflight = libtmux::mcp::detail::preflight_pane_input(
-      server, panes->front().id(), libtmux::mcp::detail::PaneInputScope::target_only);
+      server, panes->front().id().value(),
+      libtmux::mcp::detail::PaneInputScope::target_only);
   ASSERT_TRUE(preflight.has_value()) << preflight.error().message;
   auto held = libtmux::mcp::detail::reserve_pane_input(
       retained.string(), preflight->server_pid, preflight->server_start_time,
@@ -352,14 +353,15 @@ TEST(McpToolsTmux, RunsShellFramingThroughThePinnedServerEndpoint) {
     ASSERT_FALSE(replaced.error()) << replaced.error().message();
     EXPECT_EQ(server.socket_path(), selected.string());
 
-    const auto collided = all_tools().call(
-        server, "send_keys", {{"paneId", panes->front().id()}, {"keys", "Space"}});
+    const auto collided =
+        all_tools().call(server, "send_keys",
+                         {{"paneId", panes->front().id().value()}, {"keys", "Space"}});
     ASSERT_FALSE(collided.has_value());
     EXPECT_NE(collided.error().message.find("still active"), std::string::npos);
     held->release();
 
     const auto answer = all_tools().call(server, "run_shell_command",
-                                         {{"paneId", panes->front().id()},
+                                         {{"paneId", panes->front().id().value()},
                                           {"command", "printf pinned-endpoint-output"},
                                           {"timeoutMs", "2000"}});
     ASSERT_TRUE(answer.has_value()) << answer.error().message;
@@ -1206,7 +1208,8 @@ TEST(McpToolsTmux, PaneInputReservationsUnifyPhysicalSocketAliases) {
   ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
   ASSERT_EQ(panes->size(), 1U);
   const auto preflight = libtmux::mcp::detail::preflight_pane_input(
-      server, panes->front().id(), libtmux::mcp::detail::PaneInputScope::target_only);
+      server, panes->front().id().value(),
+      libtmux::mcp::detail::PaneInputScope::target_only);
   ASSERT_TRUE(preflight.has_value()) << preflight.error().message;
   const std::filesystem::path socket = fixture->socket_path();
   const std::filesystem::path hard_link = socket.string() + "-hard";
@@ -1223,7 +1226,7 @@ TEST(McpToolsTmux, PaneInputReservationsUnifyPhysicalSocketAliases) {
     const auto aliased = Server::at_socket_path(alias.string());
     ASSERT_TRUE(aliased.has_value()) << aliased.error().diagnostic;
     const auto observed = libtmux::mcp::detail::preflight_pane_input(
-        *aliased, panes->front().id(),
+        *aliased, panes->front().id().value(),
         libtmux::mcp::detail::PaneInputScope::target_only);
     ASSERT_TRUE(observed.has_value()) << observed.error().message;
     EXPECT_TRUE(held->covers(alias.string(), observed->server_pid,
@@ -1243,8 +1246,8 @@ TEST(McpToolsTmux, PaneInputPreflightAcceptsCompleteLinkedPlacements) {
   const auto panes = server.panes();
   ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
   ASSERT_EQ(panes->size(), 1U);
-  const std::string pane_id{panes->front().id()};
-  const std::string window_id{panes->front().window_id()};
+  const std::string pane_id{panes->front().id().value()};
+  const std::string window_id{panes->front().window_id().value()};
   const auto linked = server.run({"new-session", "-d", "-s", "linked"});
   ASSERT_TRUE(linked.has_value()) << linked.error().diagnostic;
   const auto placed = server.run({"link-window", "-s", window_id, "-t", "linked:1"});
@@ -1266,9 +1269,9 @@ TEST(McpToolsTmux, PaneInputPreflightAcceptsOneWindowAtMultipleSessionIndices) {
   const auto sessions = server.sessions();
   ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
   ASSERT_EQ(sessions->size(), 1U);
-  const std::string pane_id{panes->front().id()};
-  const std::string window_id{panes->front().window_id()};
-  const std::string target = std::string{sessions->front().id()} + ":7";
+  const std::string pane_id{panes->front().id().value()};
+  const std::string window_id{panes->front().window_id().value()};
+  const std::string target = std::string{sessions->front().id().value()} + ":7";
   const auto linked = server.run({"link-window", "-s", window_id, "-t", target});
   ASSERT_TRUE(linked.has_value()) << linked.error().diagnostic;
 
@@ -1292,8 +1295,8 @@ TEST(McpToolsTmux, PaneWritersRecheckStateImmediatelyBeforeDispatch) {
     const auto panes = server.panes();
     ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
     ASSERT_EQ(panes->size(), 1U);
-    const std::string pane_id{panes->front().id()};
-    const std::string window_id{panes->front().window_id()};
+    const std::string pane_id{panes->front().id().value()};
+    const std::string window_id{panes->front().window_id().value()};
     const auto hooked =
         server.run({"set-hook", "-g", "after-list-clients",
                     "set-window-option -t " + window_id + " synchronize-panes on"});
@@ -1349,7 +1352,7 @@ TEST(McpToolsTmux, ReleasesTimedOutRunReservationWhenDaemonExits) {
   auto panes = server.panes();
   ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
   ASSERT_EQ(panes->size(), 1U);
-  const std::string pane_id{panes->front().id()};
+  const std::string pane_id{panes->front().id().value()};
   const auto preflight = libtmux::mcp::detail::preflight_pane_input(
       server, pane_id, libtmux::mcp::detail::PaneInputScope::target_only);
   ASSERT_TRUE(preflight.has_value()) << preflight.error().message;
@@ -1619,22 +1622,23 @@ TEST(McpToolsTmux, PaneInputPreflightReadsFreshState) {
 
   ASSERT_TRUE(pane.enter_copy_mode().has_value());
   const auto guarded = libtmux::mcp::detail::preflight_pane_input(
-      server, pane.id(), libtmux::mcp::detail::PaneInputScope::target_only);
+      server, pane.id().value(), libtmux::mcp::detail::PaneInputScope::target_only);
   ASSERT_FALSE(guarded.has_value());
-  EXPECT_NE(guarded.error().message.find(pane.id()), std::string::npos);
+  EXPECT_NE(guarded.error().message.find(pane.id().value()), std::string::npos);
   EXPECT_EQ(guarded.error().message.find("scripted expansion failure"),
             std::string::npos);
 
   ASSERT_TRUE(pane.leave_mode().has_value());
-  ASSERT_TRUE(server.run({"select-pane", "-t", pane.id(), "-d"}).has_value());
+  ASSERT_TRUE(server.run({"select-pane", "-t", pane.id().value(), "-d"}).has_value());
   const auto input_off = libtmux::mcp::detail::preflight_pane_input(
-      server, pane.id(), libtmux::mcp::detail::PaneInputScope::target_only);
+      server, pane.id().value(), libtmux::mcp::detail::PaneInputScope::target_only);
   ASSERT_FALSE(input_off.has_value());
   EXPECT_NE(input_off.error().message.find("disabled"), std::string::npos);
-  ASSERT_TRUE(server.run({"select-pane", "-t", pane.id(), "-e"}).has_value());
-  EXPECT_TRUE(libtmux::mcp::detail::preflight_pane_input(
-                  server, pane.id(), libtmux::mcp::detail::PaneInputScope::target_only)
-                  .has_value());
+  ASSERT_TRUE(server.run({"select-pane", "-t", pane.id().value(), "-e"}).has_value());
+  EXPECT_TRUE(
+      libtmux::mcp::detail::preflight_pane_input(
+          server, pane.id().value(), libtmux::mcp::detail::PaneInputScope::target_only)
+          .has_value());
 }
 
 TEST(McpToolsTmux, CreatesAWindowAndTypesIntoItsPane) {
@@ -1676,10 +1680,10 @@ TEST(McpToolsTmux, SelectLayoutRefusesALeadingDashInsteadOfRunningItAsAFlag) {
   ASSERT_TRUE(window.split().has_value());
   ASSERT_TRUE(window.select_layout("tiled").has_value());
   ASSERT_TRUE(window.select_layout("main-vertical").has_value());
-  const auto before = server.window(window.id());
+  const auto before = server.window(window.id().value());
   ASSERT_TRUE(before.has_value()) << before.error().diagnostic;
   const std::string main_vertical_layout{before->layout()};
-  const std::string window_id{window.id()};
+  const std::string window_id{window.id().value()};
 
   const auto tools = all_tools();
   // Unguarded, tmux reads a leading "-o" as its own undo flag rather than a
@@ -1717,7 +1721,7 @@ TEST(McpToolsTmux, WaitForTextAfterSendKeysDoesNotMatchTheEchoedCommandLine) {
   auto panes = server.panes();
   ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
   ASSERT_FALSE(panes->empty());
-  const std::string pane_id{panes->front().id()};
+  const std::string pane_id{panes->front().id().value()};
   const auto tools = all_tools();
 
   const std::string marker{"MCPMARKER-D10-42"};
@@ -1765,7 +1769,7 @@ TEST(McpToolsTmux, WaitForTextNeverMatchesACommandThatWasNeverSubmitted) {
   auto panes = server.panes();
   ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
   ASSERT_FALSE(panes->empty());
-  const std::string pane_id{panes->front().id()};
+  const std::string pane_id{panes->front().id().value()};
   const auto tools = all_tools();
 
   const std::string marker{"MCPMARKER-D10-UNSUBMITTED-" + std::string(80U, 'X')};
@@ -1807,7 +1811,7 @@ TEST(McpToolsTmux, WaitForTextDoesNotMatchAPendingLineOutputPushesOffTheActiveRo
   auto panes = session->panes();
   ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
   ASSERT_FALSE(panes->empty());
-  const std::string pane_id{panes->front().id()};
+  const std::string pane_id{panes->front().id().value()};
   const auto tools = all_tools();
 
   const auto background =
@@ -1841,7 +1845,7 @@ TEST(McpToolsTmux, LiteralizesTmuxFormatBearingStateOnce) {
   auto windows = server.windows();
   ASSERT_TRUE(windows.has_value()) << windows.error().diagnostic;
   ASSERT_EQ(windows->size(), 1U);
-  const std::string window_id{windows->front().id()};
+  const std::string window_id{windows->front().id().value()};
   const std::string literal_name{"literal-#{session_name}"};
   const auto tools = all_tools();
 

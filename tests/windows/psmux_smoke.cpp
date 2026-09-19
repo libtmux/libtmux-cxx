@@ -1182,9 +1182,10 @@ int main() {
     report_command("could not acquire session beta", second_session.error());
     return EXIT_FAILURE;
   }
-  if (!require(first_session->id() == "$" + std::to_string(alpha_identity->id) &&
-                   second_session->id() == "$" + std::to_string(beta_identity->id),
-               "typed psmux sessions did not retain their durable registry IDs")) {
+  if (!require(
+          first_session->id().value() == "$" + std::to_string(alpha_identity->id) &&
+              second_session->id().value() == "$" + std::to_string(beta_identity->id),
+          "typed psmux sessions did not retain their durable registry IDs")) {
     return EXIT_FAILURE;
   }
 
@@ -1225,7 +1226,7 @@ int main() {
   }
   {
     std::ofstream duplicate{duplicate_sid};
-    duplicate << std::string_view{first_session->id()}.substr(1U) << '\n';
+    duplicate << std::string_view{first_session->id().value()}.substr(1U) << '\n';
     if (!duplicate) {
       std::cerr << "FAIL: could not create a duplicate psmux session id\n";
       return EXIT_FAILURE;
@@ -1489,9 +1490,10 @@ int main() {
                "psmux-ignored split-window options must fail before dispatch")) {
     return EXIT_FAILURE;
   }
-  if (!require(first_window->id() == second_window->id(),
+  if (!require(first_window->id().value() == second_window->id().value(),
                "psmux should expose its repeated per-session window ID") ||
-      !require(first_window->session_id() != second_window->session_id(),
+      !require(first_window->session_id().value() !=
+                   second_window->session_id().value(),
                "repeated window IDs must retain distinct session IDs") ||
       !require(*first_window != *second_window,
                "window identity must disambiguate repeated IDs by session")) {
@@ -1532,7 +1534,7 @@ int main() {
                    refreshed_window.error());
     return EXIT_FAILURE;
   }
-  if (!require(refreshed_window->id() == first_window->id() &&
+  if (!require(refreshed_window->id().value() == first_window->id().value() &&
                    refreshed_window->name() == first_window->name(),
                "rejecting rename-window must leave the window intact")) {
     return EXIT_FAILURE;
@@ -1567,7 +1569,7 @@ int main() {
                "server-wide windows must exclude nested namespaces")) {
     return EXIT_FAILURE;
   }
-  const auto ambiguous_window = server.window(first_window->id());
+  const auto ambiguous_window = server.window(first_window->id().value());
   if (!require(!ambiguous_window, "global psmux window lookup must fail closed") ||
       !require(ambiguous_window.error().kind == libtmux::FailureKind::unsupported,
                "global psmux window lookup must report unsupported")) {
@@ -1590,12 +1592,13 @@ int main() {
   const auto session_of_first_pane = first_pane->session();
   if (!require(panes_in_first_window && panes_in_first_window->size() == 1U &&
                    active_in_first_window &&
-                   active_in_first_window->id() == first_pane->id() &&
+                   active_in_first_window->id().value() == first_pane->id().value() &&
                    owner_of_first_pane &&
-                   owner_of_first_pane->id() == first_window->id() &&
+                   owner_of_first_pane->id().value() == first_window->id().value() &&
                    session_of_first_window && session_of_first_pane &&
-                   session_of_first_window->id() == first_session->id() &&
-                   session_of_first_pane->id() == first_session->id(),
+                   session_of_first_window->id().value() ==
+                       first_session->id().value() &&
+                   session_of_first_pane->id().value() == first_session->id().value(),
                "psmux child relations must filter through the stable session")) {
     return EXIT_FAILURE;
   }
@@ -1606,9 +1609,9 @@ int main() {
   }
   if (!require(second_pane->width() == 117 && second_pane->height() == 31,
                "the native psmux fixture must preserve initial dimensions") ||
-      !require(first_pane->id() == second_pane->id(),
+      !require(first_pane->id().value() == second_pane->id().value(),
                "psmux should expose its repeated per-session pane ID") ||
-      !require(first_pane->session_id() != second_pane->session_id(),
+      !require(first_pane->session_id().value() != second_pane->session_id().value(),
                "repeated pane IDs must retain distinct session IDs") ||
       !require(*first_pane != *second_pane,
                "pane identity must disambiguate repeated IDs by session")) {
@@ -1690,7 +1693,7 @@ int main() {
                "server-wide panes must exclude nested namespaces")) {
     return EXIT_FAILURE;
   }
-  const auto ambiguous_pane = server.pane(first_pane->id());
+  const auto ambiguous_pane = server.pane(first_pane->id().value());
   if (!require(!ambiguous_pane, "global psmux pane lookup must fail closed") ||
       !require(ambiguous_pane.error().kind == libtmux::FailureKind::unsupported,
                "global psmux pane lookup must report unsupported")) {
@@ -1785,7 +1788,8 @@ int main() {
     return EXIT_FAILURE;
   }
   const auto renamed_gamma = server.session("gamma");
-  if (!require(renamed_gamma && renamed_gamma->id() == first_session->id(),
+  if (!require(renamed_gamma &&
+                   renamed_gamma->id().value() == first_session->id().value(),
                "the exact renamed psmux session must retain its identity")) {
     return EXIT_FAILURE;
   }
@@ -1835,7 +1839,8 @@ int main() {
   const auto found_alpha = server.session("alpha");
   if (!require(!missing_gamma &&
                    missing_gamma.error().kind == libtmux::FailureKind::missing &&
-                   found_alpha && found_alpha->id() == replacement_alpha->id(),
+                   found_alpha &&
+                   found_alpha->id().value() == replacement_alpha->id().value(),
                "Server::session must use the exact filtered psmux listing")) {
     return EXIT_FAILURE;
   }

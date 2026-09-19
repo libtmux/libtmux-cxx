@@ -54,7 +54,8 @@ int main() {
   if (const auto only = libtmux::exactly_one_owned(
           *windows | libtmux::matching(libtmux::window::name == "logs"));
       only.has_value()) {
-    std::printf("exactly one logs window: %s\n", std::string{only->id()}.c_str());
+    std::printf("exactly one logs window: %s\n",
+                std::string{only->id().value()}.c_str());
   } else {
     std::printf("no single logs window: %s\n",
                 std::string{libtmux::to_string(only.error())}.c_str());

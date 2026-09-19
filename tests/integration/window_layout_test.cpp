@@ -43,7 +43,7 @@ TEST(WindowLayout, SelectMakesOneWindowTheActiveOne) {
   // value in hand still says what was true before the selection moved.
   const auto active = session->active_window();
   ASSERT_TRUE(active.has_value()) << active.error().diagnostic;
-  EXPECT_EQ(active->id(), windows->front().id());
+  EXPECT_EQ(active->id().value(), windows->front().id().value());
   EXPECT_FALSE(windows->back().refresh().value().active());
 }
 
@@ -144,7 +144,7 @@ TEST(WindowLayout, RotateMovesThePanesAndLeavesTheCells) {
   const auto after = window->panes();
   ASSERT_TRUE(after.has_value()) << after.error().diagnostic;
   ASSERT_EQ(after->size(), before.size());
-  EXPECT_NE(after->front().id(), before.front().id())
+  EXPECT_NE(after->front().id().value(), before.front().id().value())
       << "rotating should put another pane in the first cell";
 }
 
@@ -166,7 +166,7 @@ TEST(WindowLayout, LastPaneReturnsToThePreviouslySelectedOne) {
 
   const auto back = window->select_last_pane();
   ASSERT_TRUE(back.has_value()) << back.error().diagnostic;
-  EXPECT_EQ(back->id(), panes.front().id());
+  EXPECT_EQ(back->id().value(), panes.front().id().value());
 }
 
 TEST(WindowLayout, LastPaneRefusesWhenThereIsOnlyOne) {

@@ -122,7 +122,7 @@ TEST(ValueSemantics, EntitiesKeyTheOrdinaryContainers) {
   const auto again = server.windows();
   ASSERT_TRUE(again.has_value()) << again.error().diagnostic;
   for (const Window& window : *again) {
-    EXPECT_TRUE(unique.contains(window)) << window.id() << " hashed elsewhere";
+    EXPECT_TRUE(unique.contains(window)) << window.id().value() << " hashed elsewhere";
   }
 
   std::unordered_map<Window, std::string> named;
@@ -285,6 +285,31 @@ TEST(ValueSemantics, OutputIsToldApartFromWhatIsMerelyOnScreen) {
 // Two runtime failure types, because the two transports answer different
 // questions — and a caller handling both wrote the same adapter to get one.
 // What it must not lose is what each says about delivery.
+// An id says what it names. What still works matters as much as what does
+// not: comparing one to text answers a real question, and `tests/compile`
+// holds the half that must not build.
+TEST(ValueSemantics, AnIdIsTypedByWhatItNames) {
+  static_assert(!std::same_as<libtmux::PaneId, libtmux::WindowId>);
+  static_assert(!std::same_as<libtmux::WindowId, libtmux::SessionId>);
+  // No conversion: with one, every `std::string_view` parameter takes any id
+  // again and this reads as safety while providing none.
+  static_assert(!std::convertible_to<libtmux::PaneId, std::string_view>);
+  static_assert(!std::constructible_from<libtmux::PaneId, libtmux::WindowId>);
+
+  const libtmux::PaneId pane{"%7"};
+  EXPECT_EQ(pane.value(), "%7");
+  EXPECT_TRUE(pane == "%7") << "comparing an id to text cannot confuse two kinds";
+  EXPECT_FALSE(pane == "%8");
+  EXPECT_TRUE(pane == libtmux::PaneId{"%7"});
+  EXPECT_FALSE(pane == libtmux::PaneId{"%8"});
+  EXPECT_LT(libtmux::PaneId{"%1"}, libtmux::PaneId{"%2"});
+  EXPECT_TRUE(libtmux::PaneId{}.empty());
+
+  std::ostringstream printed;
+  printed << pane;
+  EXPECT_EQ(printed.str(), "%7") << "a failing comparison has to be readable";
+}
+
 TEST(ValueSemantics, ErrorsCrossBetweenSurfacesWithoutAnAdapter) {
   const auto broken = libtmux::as_command_failure(
       libtmux::ProtocolError{.message = "the wire stopped answering",

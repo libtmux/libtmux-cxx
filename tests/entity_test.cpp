@@ -69,7 +69,7 @@ TEST(Entity, ASessionReachesItsWindowsAndTheirPanes) {
   const auto created = session.new_window("editor");
   ASSERT_TRUE(created.has_value()) << created.error().diagnostic;
   EXPECT_EQ(created->name(), "editor");
-  EXPECT_EQ(created->session_id(), session.id());
+  EXPECT_EQ(created->session_id().value(), session.id().value());
 
   const auto windows = session.windows();
   ASSERT_TRUE(windows.has_value()) << windows.error().diagnostic;
@@ -78,7 +78,7 @@ TEST(Entity, ASessionReachesItsWindowsAndTheirPanes) {
   const auto panes = created->panes();
   ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
   ASSERT_EQ(panes->size(), 1U);
-  EXPECT_EQ(panes->front().window_id(), created->id());
+  EXPECT_EQ(panes->front().window_id().value(), created->id().value());
 }
 
 TEST(Entity, APaneReachesItsWindowAndSession) {
@@ -94,11 +94,11 @@ TEST(Entity, APaneReachesItsWindowAndSession) {
 
   const auto window = pane.window();
   ASSERT_TRUE(window.has_value()) << window.error().diagnostic;
-  EXPECT_EQ(window->id(), pane.window_id());
+  EXPECT_EQ(window->id().value(), pane.window_id().value());
 
   const auto owner = pane.session();
   ASSERT_TRUE(owner.has_value()) << owner.error().diagnostic;
-  EXPECT_EQ(owner->id(), session.id());
+  EXPECT_EQ(owner->id().value(), session.id().value());
 }
 
 TEST(Entity, EntitiesOutliveTheCallThatListedThem) {
@@ -115,7 +115,7 @@ TEST(Entity, EntitiesOutliveTheCallThatListedThem) {
   }();
 
   ASSERT_FALSE(windows.empty());
-  EXPECT_FALSE(windows.front().id().empty());
+  EXPECT_FALSE(windows.front().id().value().empty());
 
   const auto panes = windows.front().panes();
   ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
@@ -140,7 +140,7 @@ TEST(Entity, ASnapshotIsAMomentAndRefreshTakesANewOne) {
   const auto current = created->refresh();
   ASSERT_TRUE(current.has_value()) << current.error().diagnostic;
   EXPECT_EQ(current->name(), "after");
-  EXPECT_EQ(current->id(), created->id());
+  EXPECT_EQ(current->id().value(), created->id().value());
 }
 
 TEST(Entity, RefreshingSomethingTmuxNoLongerHasIsMissingNotEmpty) {
@@ -160,7 +160,7 @@ TEST(Entity, RefreshingSomethingTmuxNoLongerHasIsMissingNotEmpty) {
   const auto current = created->refresh();
   ASSERT_FALSE(current.has_value());
   EXPECT_EQ(current.error().kind, FailureKind::missing);
-  EXPECT_NE(current.error().diagnostic.find(created->id()), std::string::npos);
+  EXPECT_NE(current.error().diagnostic.find(created->id().value()), std::string::npos);
 }
 
 TEST(Entity, RefreshingADeadWindowDoesNotAnswerAboutAnotherOne) {
@@ -176,12 +176,13 @@ TEST(Entity, RefreshingADeadWindowDoesNotAnswerAboutAnotherOne) {
 
   const auto doomed = session.new_window("doomed");
   ASSERT_TRUE(doomed.has_value()) << doomed.error().diagnostic;
-  const std::string dead_id{doomed->id()};
+  const std::string dead_id{doomed->id().value()};
   ASSERT_TRUE(doomed->kill().has_value());
 
   const auto current = doomed->refresh();
   ASSERT_FALSE(current.has_value())
-      << "refresh answered about " << current->id() << " when asked about " << dead_id;
+      << "refresh answered about " << current->id().value() << " when asked about "
+      << dead_id;
   EXPECT_EQ(current.error().kind, FailureKind::missing);
 }
 
@@ -256,7 +257,7 @@ TEST(Entity, AnAnswerThatDoesNotFitIsReportedNotCut) {
   ASSERT_TRUE(window.has_value()) << window.error().diagnostic;
   const auto panes = window->panes();
   ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
-  const std::string pane_id{panes->at(0).id()};
+  const std::string pane_id{panes->at(0).id().value()};
 
   ASSERT_TRUE(
       panes->at(0)
@@ -320,7 +321,7 @@ TEST(Entity, SplittingAWindowReturnsTheNewPane) {
 
   const auto added = window->split();
   ASSERT_TRUE(added.has_value()) << added.error().diagnostic;
-  EXPECT_EQ(added->window_id(), window->id());
+  EXPECT_EQ(added->window_id().value(), window->id().value());
 
   const auto panes = window->panes();
   ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
@@ -625,7 +626,7 @@ TEST(Entity, AWindowMovesToAnIndexInItsOwnSession) {
   const auto moved = window->refresh();
   ASSERT_TRUE(moved.has_value()) << moved.error().diagnostic;
   EXPECT_EQ(moved->index(), 9);
-  EXPECT_EQ(moved->session_id(), session.id());
+  EXPECT_EQ(moved->session_id().value(), session.id().value());
 
   const auto elsewhere = other->windows();
   ASSERT_TRUE(elsewhere.has_value()) << elsewhere.error().diagnostic;
@@ -647,8 +648,8 @@ TEST(Entity, MovingAWindowLeavesItsOtherLinksAlone) {
   const auto elsewhere = server.new_session("elsewhere");
   ASSERT_TRUE(elsewhere.has_value()) << elsewhere.error().diagnostic;
   ASSERT_TRUE(server
-                  .run({"link-window", "-s", std::string{shared->id()}, "-t",
-                        std::string{elsewhere->id()} + ":9"})
+                  .run({"link-window", "-s", std::string{shared->id().value()}, "-t",
+                        std::string{elsewhere->id().value()} + ":9"})
                   .has_value());
 
   ASSERT_TRUE(shared->move_to(5).has_value());
@@ -662,7 +663,7 @@ TEST(Entity, MovingAWindowLeavesItsOtherLinksAlone) {
   ASSERT_TRUE(linked.has_value()) << linked.error().diagnostic;
   bool still_linked = false;
   for (const Window& window : *linked) {
-    if (window.id() == shared->id()) {
+    if (window.id().value() == shared->id().value()) {
       still_linked = true;
       EXPECT_EQ(window.index(), 9);
     }
@@ -672,7 +673,7 @@ TEST(Entity, MovingAWindowLeavesItsOtherLinksAlone) {
   // And the move did not drag the user's focus along with it.
   const auto active = session.active_window();
   ASSERT_TRUE(active.has_value()) << active.error().diagnostic;
-  EXPECT_NE(active->id(), shared->id());
+  EXPECT_NE(active->id().value(), shared->id().value());
 }
 
 TEST(Entity, APaneBreaksOutIntoAWindowOfItsOwn) {
@@ -689,18 +690,18 @@ TEST(Entity, APaneBreaksOutIntoAWindowOfItsOwn) {
   const auto broken = added->break_out("roomy");
   ASSERT_TRUE(broken.has_value()) << broken.error().diagnostic;
   EXPECT_EQ(broken->name(), "roomy");
-  EXPECT_NE(broken->id(), window->id());
+  EXPECT_NE(broken->id().value(), window->id().value());
 
   const auto moved = added->refresh();
   ASSERT_TRUE(moved.has_value()) << moved.error().diagnostic;
-  EXPECT_EQ(moved->window_id(), broken->id());
+  EXPECT_EQ(moved->window_id().value(), broken->id().value());
 
   // Unnamed is the path that crashes tmux 3.7, so it is exercised too.
   const auto second = window->split();
   ASSERT_TRUE(second.has_value()) << second.error().diagnostic;
   const auto unnamed = second->break_out();
   ASSERT_TRUE(unnamed.has_value()) << unnamed.error().diagnostic;
-  EXPECT_FALSE(unnamed->id().empty());
+  EXPECT_FALSE(unnamed->id().value().empty());
   EXPECT_TRUE(server.is_alive()) << "break-pane took the server down";
 
   const auto literal_pane = window->split();
@@ -728,12 +729,12 @@ TEST(Entity, BreakingAnOnlyPanePreservesItsWindow) {
   const auto broken = pane->break_out();
 
   ASSERT_TRUE(broken.has_value()) << broken.error().diagnostic;
-  EXPECT_EQ(broken->id(), original->id());
+  EXPECT_EQ(broken->id().value(), original->id().value());
   EXPECT_EQ(broken->name(), "original");
-  EXPECT_EQ(broken->session_id(), source.id());
+  EXPECT_EQ(broken->session_id().value(), source.id().value());
   const auto moved = pane->refresh();
   ASSERT_TRUE(moved.has_value()) << moved.error().diagnostic;
-  EXPECT_EQ(moved->window_id(), original->id());
+  EXPECT_EQ(moved->window_id().value(), original->id().value());
 }
 
 TEST(Entity, NamingAnOnlyPaneRenamesItInPlace) {
@@ -754,12 +755,12 @@ TEST(Entity, NamingAnOnlyPaneRenamesItInPlace) {
   const auto broken = pane->break_out(requested);
 
   ASSERT_TRUE(broken.has_value()) << broken.error().diagnostic;
-  EXPECT_EQ(broken->id(), original->id());
+  EXPECT_EQ(broken->id().value(), original->id().value());
   EXPECT_EQ(broken->name(), requested);
-  EXPECT_EQ(broken->session_id(), source.id());
+  EXPECT_EQ(broken->session_id().value(), source.id().value());
   const auto moved = pane->refresh();
   ASSERT_TRUE(moved.has_value()) << moved.error().diagnostic;
-  EXPECT_EQ(moved->window_id(), original->id());
+  EXPECT_EQ(moved->window_id().value(), original->id().value());
 }
 
 TEST(Entity, RawTmux37RepairsACoincidentNaturalWindowName) {
@@ -915,7 +916,7 @@ TEST(Entity, CreationVerbsCarryTheFlagsTmuxHas) {
   // Creating something does not move the user.
   const auto active = session.active_window();
   ASSERT_TRUE(active.has_value()) << active.error().diagnostic;
-  EXPECT_NE(active->id(), window->id());
+  EXPECT_NE(active->id().value(), window->id().value());
 
   EXPECT_FALSE(window->split({.percentage = 0}).has_value());
   EXPECT_FALSE(window->split({.percentage = 101}).has_value());
@@ -1098,7 +1099,7 @@ TEST(Entity, ARecordingOfAnOlderSchemaReadsItsAbsentFieldsAsZero) {
   ASSERT_NE(recorded, nullptr);
 
   const Pane pane{recorded, 0};
-  EXPECT_EQ(pane.id(), "%0");
+  EXPECT_EQ(pane.id().value(), "%0");
   EXPECT_EQ(pane.command(), "nvim");
   EXPECT_EQ(pane.width(), 80);
   EXPECT_TRUE(pane.piping() == false);
@@ -1108,7 +1109,7 @@ TEST(Entity, ARecordingOfAnOlderSchemaReadsItsAbsentFieldsAsZero) {
 
   // The row index is the caller's too, and out of range is not a row.
   const Pane absent{recorded, 7};
-  EXPECT_TRUE(absent.id().empty());
+  EXPECT_TRUE(absent.id().value().empty());
   EXPECT_EQ(absent.left(), 0);
 }
 

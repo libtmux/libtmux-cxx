@@ -984,7 +984,7 @@ retain_run_until_proven_complete(PaneInputLease lease, Server server, Pane pane,
 
   try {
     auto settlement = std::make_shared<Settlement>(std::move(lease));
-    const std::string pane_id{pane.id()};
+    const std::string pane_id{pane.id().value()};
     const std::string endpoint = preflight.endpoint_path;
     const auto retained_endpoint = pane_input_endpoint_identity(endpoint);
     const auto same_endpoint = [endpoint, retained_endpoint] {
@@ -1065,7 +1065,7 @@ StructuredValue::Object attached_state(const Server& server, const Session& sess
     return StructuredValue::Object{{"attached", false}, {"client_count", 0LL}};
   }
   const auto clients = server.run(
-      {"list-clients", "-t", std::string{session.id()}, "-F", "#{client_pid}"});
+      {"list-clients", "-t", std::string{session.id().value()}, "-F", "#{client_pid}"});
   if (!clients.has_value()) {
     // A failed query is not evidence nobody is attached; fall back to
     // tmux's own raw count rather than report a confident-looking zero.
@@ -1101,7 +1101,7 @@ StructuredValue::Object attached_state(const Server& server, const Session& sess
 
 StructuredValue session_value(const Server& server, const Session& session) {
   StructuredValue::Object result = attached_state(server, session);
-  result.emplace("id", session.id());
+  result.emplace("id", session.id().value());
   result.emplace("name", session.name());
   result.emplace("path", session.path());
   result.emplace("window_count", session.window_count());
@@ -1110,14 +1110,10 @@ StructuredValue session_value(const Server& server, const Session& session) {
 
 StructuredValue window_value(const Window& window) {
   return StructuredValue::Object{
-      {"active", window.active()},
-      {"height", window.height()},
-      {"id", window.id()},
-      {"index", window.index()},
-      {"layout", window.layout()},
-      {"name", window.name()},
-      {"pane_count", window.pane_count()},
-      {"session_id", window.session_id()},
+      {"active", window.active()},         {"height", window.height()},
+      {"id", window.id().value()},         {"index", window.index()},
+      {"layout", window.layout()},         {"name", window.name()},
+      {"pane_count", window.pane_count()}, {"session_id", window.session_id().value()},
       {"width", window.width()},
   };
 }
@@ -1128,14 +1124,14 @@ StructuredValue pane_value(const Pane& pane) {
       {"command", pane.command()},
       {"dead", pane.dead()},
       {"height", pane.height()},
-      {"id", pane.id()},
+      {"id", pane.id().value()},
       {"index", pane.index()},
       {"path", pane.path()},
       {"pid", pane.pid()},
-      {"session_id", pane.session_id()},
+      {"session_id", pane.session_id().value()},
       {"title", pane.title()},
       {"width", pane.width()},
-      {"window_id", pane.window_id()},
+      {"window_id", pane.window_id().value()},
   };
 }
 
@@ -1794,9 +1790,9 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
         CaptureOptions options;
         options.whole_history = boolean(arguments, "history");
         const auto captured = pane->capture(options);
-        return captured.has_value()
-                   ? detail::output({{"pane_id", pane->id()}, {"text", *captured}})
-                   : failure(captured.error());
+        return captured.has_value() ? detail::output({{"pane_id", pane->id().value()},
+                                                      {"text", *captured}})
+                                    : failure(captured.error());
       },
       "Return visible text, or retained history when requested.");
 
@@ -1824,7 +1820,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
           cursor = 0U;
         }
         return detail::output({{"cursor", static_cast<long long>(captured->size())},
-                               {"pane_id", pane->id()},
+                               {"pane_id", pane->id().value()},
                                {"text", captured->substr(cursor)}});
       },
       "Return bytes after a bounded client cursor and a replacement cursor.");
@@ -1884,8 +1880,8 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
                 return libtmux::unexpected(
                     ToolError{false, "search match limit exceeded"});
               }
-              matches.push_back(
-                  StructuredValue::Object{{"line", line}, {"pane_id", pane.id()}});
+              matches.push_back(StructuredValue::Object{
+                  {"line", line}, {"pane_id", pane.id().value()}});
             }
           }
         }
@@ -2228,7 +2224,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
           return failure(session.error());
         }
         const auto answer = session->rename(required(arguments, "name"));
-        return answer.has_value() ? changed("session_id", session->id())
+        return answer.has_value() ? changed("session_id", session->id().value())
                                   : failure(answer.error());
       },
       "Replace one session name.");
@@ -2247,7 +2243,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
           return failure(window.error());
         }
         const auto answer = window->rename(required(arguments, "name"));
-        return answer.has_value() ? changed("window_id", window->id())
+        return answer.has_value() ? changed("window_id", window->id().value())
                                   : failure(answer.error());
       },
       "Replace one window name.");
@@ -2263,7 +2259,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
           return failure(window.error());
         }
         const auto answer = window->select();
-        return answer.has_value() ? changed("window_id", window->id())
+        return answer.has_value() ? changed("window_id", window->id().value())
                                   : failure(answer.error());
       },
       "Make one window active.");
@@ -2279,7 +2275,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
           return failure(pane.error());
         }
         const auto answer = pane->select();
-        return answer.has_value() ? changed("pane_id", pane->id())
+        return answer.has_value() ? changed("pane_id", pane->id().value())
                                   : failure(answer.error());
       },
       "Make one pane active.");
@@ -2297,7 +2293,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
           return failure(window.error());
         }
         const auto answer = window->select_layout(required(arguments, "layout"));
-        return answer.has_value() ? changed("window_id", window->id())
+        return answer.has_value() ? changed("window_id", window->id().value())
                                   : failure(answer.error());
       },
       "Replace the pane layout of one window.");
@@ -2318,7 +2314,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
         }
         const auto answer =
             window->resize(integer(arguments, "width"), integer(arguments, "height"));
-        return answer.has_value() ? changed("window_id", window->id())
+        return answer.has_value() ? changed("window_id", window->id().value())
                                   : failure(answer.error());
       },
       "Replace one window's dimensions.");
@@ -2353,7 +2349,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
             return failure(answer.error());
           }
         }
-        return changed("pane_id", pane->id());
+        return changed("pane_id", pane->id().value());
       },
       "Replace one or both pane dimensions.");
 
@@ -2370,7 +2366,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
           return failure(window.error());
         }
         const auto answer = window->move_to(integer(arguments, "index"));
-        return answer.has_value() ? changed("window_id", window->id())
+        return answer.has_value() ? changed("window_id", window->id().value())
                                   : failure(answer.error());
       },
       "Move a window to an exact index in its owning session.");
@@ -2392,7 +2388,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
           return failure(target.error());
         }
         const auto answer = source->swap_with(*target);
-        return answer.has_value() ? changed("pane_id", source->id())
+        return answer.has_value() ? changed("pane_id", source->id().value())
                                   : failure(answer.error());
       },
       "Exchange two pane positions without changing their IDs.");
@@ -2411,7 +2407,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
           return failure(pane.error());
         }
         const auto answer = pane->set_title(required(arguments, "title"));
-        return answer.has_value() ? changed("pane_id", pane->id())
+        return answer.has_value() ? changed("pane_id", pane->id().value())
                                   : failure(answer.error());
       },
       "Replace one pane title.");
@@ -2479,7 +2475,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
             "history-limit", std::to_string(integer(arguments, "limit")));
         return answer.has_value()
                    ? detail::output({{"limit", integer(arguments, "limit")},
-                                     {"session_id", session->id()}})
+                                     {"session_id", session->id().value()}})
                    : failure(answer.error());
       },
       "Replace retained-history bounds with a non-negative integer.");
@@ -2519,9 +2515,10 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
           options.height = static_cast<int>(integer(arguments, "height"));
         }
         const auto session = server.new_session(std::move(options));
-        return session.has_value() ? detail::output({{"name", session->name()},
-                                                     {"session_id", session->id()}})
-                                   : failure(session.error());
+        return session.has_value()
+                   ? detail::output({{"name", session->name()},
+                                     {"session_id", session->id().value()}})
+                   : failure(session.error());
       },
       "Create a detached session; names and path data are literalized before tmux "
       "expansion."));
@@ -2554,8 +2551,8 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
         options.start_directory = optional(arguments, "startDirectory");
         const auto window = session->new_window(std::move(options));
         return window.has_value()
-                   ? detail::output({{"session_id", window->session_id()},
-                                     {"window_id", window->id()}})
+                   ? detail::output({{"session_id", window->session_id().value()},
+                                     {"window_id", window->id().value()}})
                    : failure(window.error());
       },
       "Create a detached window; name and path data are literalized before tmux "
@@ -2592,7 +2589,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
         if (!created.has_value()) {
           return failure(created.error());
         }
-        return detail::output({{"pane_id", created->id()}});
+        return detail::output({{"pane_id", created->id().value()}});
       },
       "Create a configured-process pane; path data is literalized before tmux "
       "expansion."));
@@ -2623,7 +2620,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
             boolean(arguments, "force") || boolean(arguments, "killFirst");
         options.start_directory = optional(arguments, "startDirectory");
         const auto answer = pane->respawn(std::move(options));
-        return answer.has_value() ? changed("pane_id", pane->id())
+        return answer.has_value() ? changed("pane_id", pane->id().value())
                                   : failure(answer.error());
       },
       "Restart only the pane's configured process; no caller command is accepted."));
@@ -2652,7 +2649,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
           return libtmux::unexpected(tmux_executable.error());
         }
         const auto initial = detail::preflight_pane_input(
-            server, pane->id(), detail::PaneInputScope::singular_posix_shell);
+            server, pane->id().value(), detail::PaneInputScope::singular_posix_shell);
         if (!initial.has_value()) {
           return libtmux::unexpected(initial.error());
         }
@@ -2669,12 +2666,12 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
         }
         detail::PaneInputLease lease = std::move(*reserved);
         Chain dispatch;
-        dispatch.send_text(pane->id(), payload->text);
+        dispatch.send_text(pane->id().value(), payload->text);
         if (!dispatch.valid()) {
           return libtmux::unexpected(ToolError{true, dispatch.error()});
         }
         const auto final = detail::preflight_pane_input(
-            server, pane->id(), detail::PaneInputScope::singular_posix_shell);
+            server, pane->id().value(), detail::PaneInputScope::singular_posix_shell);
         if (!final.has_value()) {
           return libtmux::unexpected(final.error());
         }
@@ -2695,7 +2692,8 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
           }
           return failure(sent.error());
         }
-        detail::remember_pane_input(server.socket_path(), pane->id(), payload->text);
+        detail::remember_pane_input(server.socket_path(), pane->id().value(),
+                                    payload->text);
         const auto deadline =
             std::chrono::steady_clock::now() +
             std::chrono::milliseconds{integer(arguments, "timeoutMs", 30000)};
@@ -2719,7 +2717,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
           if (completed.has_value()) {
             return detail::output(
                 {{"exit_code", completed->exit_code},
-                 {"pane_id", pane->id()},
+                 {"pane_id", pane->id().value()},
                  {"text",
                   captured->substr(completed->text_begin,
                                    completed->record_begin - completed->text_begin)}});
@@ -2750,12 +2748,12 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
           return failure(pane.error());
         }
         Chain dispatch;
-        dispatch.send_key(pane->id(), required(arguments, "keys"));
+        dispatch.send_key(pane->id().value(), required(arguments, "keys"));
         if (!dispatch.valid()) {
           return libtmux::unexpected(ToolError{true, dispatch.error()});
         }
         const auto preflight = detail::preflight_pane_input(
-            server, pane->id(), detail::PaneInputScope::effective_cohort);
+            server, pane->id().value(), detail::PaneInputScope::effective_cohort);
         if (!preflight.has_value()) {
           return libtmux::unexpected(preflight.error());
         }
@@ -2766,7 +2764,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
         }
         detail::PaneInputLease lease = std::move(*reserved);
         const auto final = detail::preflight_pane_input(
-            server, pane->id(), detail::PaneInputScope::effective_cohort);
+            server, pane->id().value(), detail::PaneInputScope::effective_cohort);
         if (!final.has_value()) {
           return libtmux::unexpected(final.error());
         }
@@ -2778,7 +2776,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
         const auto answer = server.run_chain(dispatch);
         return answer.has_value()
                    ? detail::output(
-                         {{"pane_id", pane->id()},
+                         {{"pane_id", pane->id().value()},
                           {"target_pane_ids", StructuredValue{pane_target_ids(
                                                   preflight->configured_pane_ids)}}})
                    : failure(answer.error());
@@ -2827,18 +2825,18 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
           } else {
             Chain dispatch;
             if (boolean(operation, "literal")) {
-              dispatch.send_text(pane->id(), required(operation, "keys"));
+              dispatch.send_text(pane->id().value(), required(operation, "keys"));
             } else {
-              dispatch.send_key(pane->id(), required(operation, "keys"));
+              dispatch.send_key(pane->id().value(), required(operation, "keys"));
             }
             if (boolean(operation, "enter")) {
-              dispatch.send_key(pane->id(), "Enter");
+              dispatch.send_key(pane->id().value(), "Enter");
             }
             if (!dispatch.valid()) {
               error = dispatch.error();
             } else {
               const auto preflight = detail::preflight_pane_input(
-                  server, pane->id(), detail::PaneInputScope::effective_cohort);
+                  server, pane->id().value(), detail::PaneInputScope::effective_cohort);
               if (!preflight.has_value()) {
                 error = preflight.error().message;
               } else {
@@ -2850,7 +2848,8 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
                 } else {
                   detail::PaneInputLease lease = std::move(*reserved);
                   const auto final = detail::preflight_pane_input(
-                      server, pane->id(), detail::PaneInputScope::effective_cohort);
+                      server, pane->id().value(),
+                      detail::PaneInputScope::effective_cohort);
                   if (!final.has_value()) {
                     error = final.error().message;
                   } else if (!detail::same_pane_input_route(*preflight, *final) ||
@@ -2865,7 +2864,8 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
                     } else {
                       resolved = pane_target_ids(final->configured_pane_ids);
                       if (boolean(operation, "literal")) {
-                        detail::remember_pane_input(server.socket_path(), pane->id(),
+                        detail::remember_pane_input(server.socket_path(),
+                                                    pane->id().value(),
                                                     required(operation, "keys"));
                       }
                     }
@@ -2915,7 +2915,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
           return failure(pane.error());
         }
         const auto initial = detail::preflight_pane_input(
-            server, pane->id(), detail::PaneInputScope::target_only);
+            server, pane->id().value(), detail::PaneInputScope::target_only);
         if (!initial.has_value()) {
           return libtmux::unexpected(initial.error());
         }
@@ -2932,7 +2932,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
         }
         if (payload.empty()) {
           return detail::output(
-              {{"pane_id", pane->id()}, {"changed", StructuredValue{false}}});
+              {{"pane_id", pane->id().value()}, {"changed", StructuredValue{false}}});
         }
         const auto name = private_paste_buffer_name(server);
         if (!name.has_value()) {
@@ -2959,7 +2959,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
               ToolError{false, "temporary paste buffer disappeared"});
         }
         const auto final = detail::preflight_pane_input(
-            server, pane->id(), detail::PaneInputScope::target_only);
+            server, pane->id().value(), detail::PaneInputScope::target_only);
         if (!final.has_value()) {
           return fail_after_cleanup(final.error());
         }
@@ -2977,8 +2977,9 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
           return libtmux::unexpected(
               ToolError{false, "paste completed; " + cleanup->message});
         }
-        detail::remember_pane_input(server.socket_path(), pane->id(), typed_text);
-        return changed("pane_id", pane->id());
+        detail::remember_pane_input(server.socket_path(), pane->id().value(),
+                                    typed_text);
+        return changed("pane_id", pane->id().value());
       },
       "Require the target pane to be live and outside human-owned mode, then stage "
       "a private target-only buffer, optionally append Enter, paste it once, and "
@@ -3003,7 +3004,8 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
         const auto answer =
             window->set_option("synchronize-panes", enabled ? "on" : "off");
         return answer.has_value()
-                   ? detail::output({{"enabled", enabled}, {"window_id", window->id()}})
+                   ? detail::output(
+                         {{"enabled", enabled}, {"window_id", window->id().value()}})
                    : failure(answer.error());
       },
       "Set the inherited window synchronize-panes default; pane-level overrides "
@@ -3033,7 +3035,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
           return failure(pane.error());
         }
         const auto answer = pane->clear_history();
-        return answer.has_value() ? changed("pane_id", pane->id())
+        return answer.has_value() ? changed("pane_id", pane->id().value())
                                   : failure(answer.error());
       },
       "Irreversibly discard retained scrollback for one pane.");
@@ -3048,7 +3050,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
         if (!pane.has_value()) {
           return failure(pane.error());
         }
-        const std::string id{pane->id()};
+        const std::string id{pane->id().value()};
         const auto answer = pane->kill();
         return answer.has_value() ? detail::output({{"pane_id", id}, {"deleted", true}})
                                   : failure(answer.error());
@@ -3065,7 +3067,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
         if (!window.has_value()) {
           return failure(window.error());
         }
-        const std::string id{window->id()};
+        const std::string id{window->id().value()};
         const auto answer = window->kill();
         return answer.has_value()
                    ? detail::output({{"window_id", id}, {"deleted", true}})
@@ -3083,7 +3085,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
         if (!session.has_value()) {
           return failure(session.error());
         }
-        const std::string id{session->id()};
+        const std::string id{session->id().value()};
         const auto answer = session->kill();
         return answer.has_value()
                    ? detail::output({{"session_id", id}, {"deleted", true}})

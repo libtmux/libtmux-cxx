@@ -148,8 +148,8 @@ int main() {
         !libtmux::pane::dead;
 
     for (const libtmux::Pane& shell : *panes | libtmux::matching(interesting)) {
-      std::cout << std::format("{} is a live shell, {} columns wide\n", shell.id(),
-                               shell.width());
+      std::cout << std::format("{} is a live shell, {} columns wide\n",
+                               shell.id().value(), shell.width());
     }
 
     // An expression owns what it compares against, so this one still works
@@ -194,7 +194,8 @@ int main() {
     std::cerr << std::format("{}\n", panes.error());
     return 1;
   }
-  auto addressed = *panes | libtmux::matching(libtmux::pane::id == panes->at(0).id());
+  auto addressed =
+      *panes | libtmux::matching(libtmux::pane::id == panes->at(0).id().value());
 
   if (const auto one = libtmux::exactly_one(addressed); one.has_value()) {
     std::cout << std::format("exactly one: {}\n", one->get());

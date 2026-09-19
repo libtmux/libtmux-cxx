@@ -403,7 +403,7 @@ expected<WaitResult, CommandFailure> Pane::wait_for_text(std::string_view wanted
   if (!server.has_value()) {
     return unexpected(std::move(server.error()));
   }
-  const std::string pane_id{id()};
+  const std::string pane_id{id().value()};
   Wait wait{.server = *server,
             .pane_id = pane_id,
             .wanted = wanted,
