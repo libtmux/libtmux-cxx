@@ -10,7 +10,6 @@
 
 #include <charconv>
 #include <chrono>
-#include <expected>
 #include <functional>
 #include <optional>
 #include <ranges>
@@ -21,6 +20,7 @@
 #include <utility>
 #include <vector>
 
+#include "libtmux/expected.hpp"
 #include "libtmux/format.hpp"
 #include "libtmux/server.hpp"
 #include "libtmux/target.hpp"
