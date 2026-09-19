@@ -2780,7 +2780,17 @@ TEST(WorkspaceCliTmux, ColdLoadRetainsTheWorkspaceAndRemovesItsBootstrap) {
   const auto after = reopened->sessions();
   EXPECT_TRUE(!after || after->empty());
   EXPECT_TRUE(fixture->is_alive());
-  const auto missing = socket.parent_path() / "missing-parent" / "socket";
+  // Short names: this nests two more components under a fixture tree that,
+  // on macOS, can already sit close to sockaddr_un::sun_path's 103-byte
+  // limit (four bytes short of Linux's), and a load that never contacts a
+  // real parent directory should still fail for a missing directory rather
+  // than for a socket path that no longer fits. Assert the budget directly
+  // so the next component added here fails loudly with its real reason
+  // instead of silently changing which exit code the assertion below sees.
+  const auto missing = socket.parent_path() / "gone" / "s";
+  ASSERT_LE(missing.native().size(), libtmux::kSocketPathLimit)
+      << "fixture path exceeds sockaddr_un::sun_path on this platform; "
+         "shorten the components above rather than the assertion below";
   const auto startup_failure =
       invoke({"load", file.string(), "-d", "-S", missing.string(), "--ndjson"});
   EXPECT_EQ(startup_failure.code, 1);
