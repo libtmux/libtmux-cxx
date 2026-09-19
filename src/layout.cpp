@@ -382,7 +382,7 @@ detail::validate_layouts(const Backend& backend, std::span<const LayoutRequest> 
     version = *parsed;
   } else {
     const auto& failure = running.error();
-    if (!allow_cold || !backend.allows_layout_client_version() ||
+    if (!allow_cold || !backend.allows_cold_socket_version_fallback() ||
         failure.kind != FailureKind::missing ||
         failure.delivery != DeliveryStatus::not_started)
       return unexpected(LayoutFailure{*sensitive, failure});
