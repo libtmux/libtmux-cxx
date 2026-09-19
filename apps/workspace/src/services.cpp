@@ -1590,7 +1590,7 @@ static Execution execute_impl(const Request& request, const EventSink& event,
     bool retained_changes{};
     int failure_status{1};
     // Distinct from results.size(): a failed input now also gets a results[]
-    // record (S12b), so "did anything succeed" needs its own count for the
+    // record, so "did anything succeed" needs its own count for the
     // ok/error/partial decision below.
     std::size_t succeeded{};
     bool interactive = !request.flag("d") && !appending;
@@ -1712,7 +1712,7 @@ static Execution execute_impl(const Request& request, const EventSink& event,
         }
         std::optional<Failure> observer_error;
         // Captured so a failed build can still report the session it
-        // attempted (S12b), even though the session itself may since have
+        // attempted, even though the session itself may since have
         // been rolled back.
         std::string attempted_session_id;
         const BuildObserver observer =
@@ -1956,7 +1956,7 @@ static Execution execute_impl(const Request& request, const EventSink& event,
                           {"failed_stage", "cleanup"}});
     }
     // results.empty() no longer distinguishes this: a failed input now gets
-    // a results[] record too (S12b), so whether anything actually succeeded
+    // a results[] record too, so whether anything actually succeeded
     // has its own counter.
     const auto status = errors.empty()                        ? "ok"
                         : succeeded == 0 && !retained_changes ? "error"
