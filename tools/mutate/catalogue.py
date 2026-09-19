@@ -510,8 +510,7 @@ CATALOGUE: t.Final = (
         path="src/wait.cpp",
         find="  auto reply = wait.server.run(command, *remaining);",
         replace=(
-            "  auto reply = "
-            "wait.server.run(command, std::chrono::milliseconds{60000});"
+            "  auto reply = wait.server.run(command, std::chrono::milliseconds{60000});"
         ),
         target="mcp_tools_test",
         test_regex=r"^consumer[.]mcp$",
