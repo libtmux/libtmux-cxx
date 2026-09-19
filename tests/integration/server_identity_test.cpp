@@ -12,6 +12,14 @@
 #include <thread>
 #include <unordered_set>
 
+#if !defined(_WIN32)
+#include <cerrno>
+#include <cstring>
+// mkdtemp is POSIX and glibc declares it in <stdlib.h>; <cstdlib>
+// promises only the std:: names.
+#include <stdlib.h>
+#endif
+
 #include <gtest/gtest.h>
 
 #include "libtmux/cardinality.hpp"
@@ -178,6 +186,40 @@ INSTANTIATE_TEST_SUITE_P(AllSelectors, StartableServerIdentity,
                                          StartableSelector::default_),
                          selector_name);
 
+#if !defined(_WIN32)
+// PublishesTheCreatedServersExactIdentity above points TMUX_TMPDIR at an
+// owner ScopedTmuxServer's own directory, whose startup already created
+// `tmux-<uid>/` as a side effect — masking the defect this proves fixed:
+// `startable_at_*` pinned its very first command, the one that has to
+// create that directory, to `-S <resolved path>`. tmux only creates a
+// missing `tmux-<uid>/` when it resolves the path itself (no selector, or
+// `-L`); handed one directly with `-S`, it prints "error creating ..." on
+// stderr and still exits 0, so nothing upstream saw it fail. This points
+// TMUX_TMPDIR at a directory nothing has touched, so `tmux-<uid>/` is
+// missing exactly as it would be for a first run.
+TEST(ServerIdentity, StartableAtSocketNameSucceedsUnderAFreshTmuxTmpdir) {
+  std::error_code parent_error;
+  const auto parent =
+      std::filesystem::canonical(std::filesystem::temp_directory_path(), parent_error);
+  ASSERT_FALSE(parent_error) << parent_error.message();
+  auto pattern = (parent / "libtmux-cxx-fresh-XXXXXX").string();
+  ASSERT_NE(::mkdtemp(pattern.data()), nullptr) << std::strerror(errno);
+  const std::filesystem::path fresh_tmpdir{pattern};
+  const libtmux::test::EnvironmentGuard tmpdir{"TMUX_TMPDIR", fresh_tmpdir.string()};
+
+  auto opened = Server::startable_at_socket_name("cxx12-fresh",
+                                                 std::filesystem::path{"/dev/null"});
+  ASSERT_TRUE(opened.has_value()) << opened.error().diagnostic;
+  ServerCleanup cleanup{*opened};
+
+  const auto created = opened->new_session("fresh-tmpdir-session");
+  ASSERT_TRUE(created.has_value()) << created.error().diagnostic;
+
+  std::error_code removed;
+  std::filesystem::remove_all(fresh_tmpdir, removed);
+}
+#endif
+
 TEST(ServerIdentity, ConcurrentFirstStartPinsTheOriginalServer) {
   auto owner = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(owner.has_value()) << owner.error();
@@ -237,6 +279,37 @@ TEST(ServerIdentity, ConcurrentFirstStartPinsTheOriginalServer) {
   EXPECT_TRUE(*aliased);
 }
 
+// A `-S` selector under a parent directory that does not exist yet is a
+// shape tmux itself cannot self-heal (unlike `-L`/no-selector, which get
+// its own `tmux-<uid>/` auto-mkdir).
+// Raw tmux prints "error creating <path> (No such file or directory)" to
+// stderr and still exits 0, so the failure is invisible unless that stderr
+// is read - the same quirk `StartableAtSocketNameSucceedsUnderAFreshTmuxTmpdir`
+// guards for the auto-mkdir path. The previous message here gave no reason
+// at all. tmux 3.2a writes nothing to stderr for this, where every later
+// release explains itself, so the diagnostic has to carry tmux's reason when
+// there is one and say there was none when there is not - never a bare
+// message a reader cannot act on.
+TEST(ServerIdentity, StartableAtSocketPathUnderAMissingParentSurfacesTmuxsOwnReason) {
+  auto scratch = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(scratch.has_value()) << scratch.error();
+  const std::filesystem::path selected =
+      scratch->tmux_tmpdir() / "not-yet-created" / "mysock";
+
+  auto opened = Server::startable_at_socket_path(selected.string(),
+                                                 std::filesystem::path{"/dev/null"});
+  ASSERT_TRUE(opened.has_value()) << opened.error().diagnostic;
+  ServerCleanup cleanup{*opened};
+
+  const auto created = opened->new_session("first");
+  ASSERT_FALSE(created.has_value());
+  EXPECT_FALSE(opened->is_alive());
+  const bool explained =
+      created.error().diagnostic.find("error creating") != std::string::npos ||
+      created.error().diagnostic.find("tmux gave no reason") != std::string::npos;
+  EXPECT_TRUE(explained) << created.error().diagnostic;
+}
+
 // The two servers really do use the same ids, which is what makes every
 // refusal below load-bearing rather than theoretical.
 TEST(ServerIdentity, TwoServersNumberTheirObjectsTheSameWay) {
@@ -252,7 +325,7 @@ TEST(ServerIdentity, TwoServersNumberTheirObjectsTheSameWay) {
   ASSERT_FALSE(here->empty());
   ASSERT_FALSE(there->empty());
 
-  EXPECT_EQ(here->front().id(), there->front().id());
+  EXPECT_EQ(here->front().id().value(), there->front().id().value());
   // Same id, different servers, so not the same pane.
   EXPECT_NE(here->front(), there->front());
 }
@@ -354,6 +427,39 @@ TEST(ServerIdentity, TwoHandlesOnOneSocketDescribeTheSameObjects) {
   EXPECT_TRUE(windows->front().link_to(*other).has_value());
 }
 
+// Every command is dispatched through the private hard-link alias
+// `pin_under` substitutes for the socket selector (the `sockaddr_un`
+// length workaround), so a message tmux builds
+// from its own invocation - "no server running on <socket>" - names that
+// alias rather than the path the operator configured. Kill the server out
+// from under a live handle so the next command's failure is tmux's own,
+// genuinely mentioning a socket path, then check which path it names.
+TEST(ServerIdentity, ADeadServerDiagnosticNamesTheOperatorsSocketNotTheAlias) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const std::string operator_path = fixture->socket_path().string();
+
+  // Forces the alias to be pinned before the server dies, matching ordinary
+  // use: a handle used at all before its server disappears.
+  const auto before = server.sessions();
+  ASSERT_TRUE(before.has_value()) << before.error().diagnostic;
+
+  ASSERT_TRUE(server.kill().has_value());
+  const auto stopped_by = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+  while (fixture->is_alive() && std::chrono::steady_clock::now() < stopped_by) {
+    std::this_thread::sleep_for(std::chrono::milliseconds{1});
+  }
+  ASSERT_FALSE(fixture->is_alive());
+
+  const auto after = server.sessions();
+  ASSERT_FALSE(after.has_value());
+  EXPECT_NE(after.error().diagnostic.find(operator_path), std::string::npos)
+      << after.error().diagnostic;
+  EXPECT_EQ(after.error().diagnostic.find("/.libtmux-"), std::string::npos)
+      << after.error().diagnostic;
+}
+
 TEST(ServerIdentity, RestartAtTheSameSocketIsANewServer) {
   auto original = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(original.has_value()) << original.error();
@@ -388,7 +494,8 @@ TEST(ServerIdentity, RestartAtTheSameSocketIsANewServer) {
   const auto current_sessions = current->sessions();
   ASSERT_TRUE(current_sessions.has_value()) << current_sessions.error().diagnostic;
   ASSERT_FALSE(current_sessions->empty());
-  EXPECT_EQ(stale_sessions->front().id(), current_sessions->front().id());
+  EXPECT_EQ(stale_sessions->front().id().value(),
+            current_sessions->front().id().value());
   EXPECT_NE(stale_sessions->front(), current_sessions->front());
 
   std::unordered_set<libtmux::Session> sessions;

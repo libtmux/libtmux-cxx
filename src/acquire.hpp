@@ -7,6 +7,8 @@
 // nothing is a missing object — and tmux does not distinguish them for us.
 
 #include <array>
+#include <charconv>
+#include <concepts>
 #include <cstddef>
 #include <memory>
 #include <optional>
@@ -17,6 +19,7 @@
 #include <vector>
 
 #include "libtmux/command.hpp"
+#include "libtmux/entities.hpp"
 #include "libtmux/expected.hpp"
 #include "libtmux/snapshot.hpp"
 
@@ -79,6 +82,73 @@ template <typename Entity>
 #endif
 }
 
+// The columns each entity reads as a number, named by the handles that filter
+// on them, so a name cannot drift from the field it reads.
+template <typename Entity>
+[[nodiscard]] std::span<const std::string_view> number_fields() noexcept {
+  if constexpr (std::same_as<Entity, Session>) {
+    static constexpr std::array fields{session::client_count.field.name,
+                                       session::window_count.field.name,
+                                       session::created.field.name};
+    return fields;
+  } else if constexpr (std::same_as<Entity, Window>) {
+    static constexpr std::array fields{
+        window::index.field.name, window::pane_count.field.name,
+        window::width.field.name, window::height.field.name,
+        window::linked_sessions.field.name};
+    return fields;
+  } else if constexpr (std::same_as<Entity, Pane>) {
+    static constexpr std::array fields{
+        pane::index.field.name,      pane::pid.field.name,  pane::width.field.name,
+        pane::height.field.name,     pane::left.field.name, pane::top.field.name,
+        pane::exit_status.field.name};
+    return fields;
+  } else if constexpr (std::same_as<Entity, Client>) {
+    static constexpr std::array fields{
+        client::width.field.name, client::height.field.name, client::created.field.name,
+        client::last_activity.field.name};
+    return fields;
+  } else if constexpr (std::same_as<Entity, Buffer>) {
+    static constexpr std::array fields{buffer::size.field.name,
+                                       buffer::created.field.name};
+    return fields;
+  } else {
+    static_assert(std::same_as<Entity, Command>, "name this entity's number fields");
+    return {};
+  }
+}
+
+// A value tmux renders as a number reads as zero when it is empty, which within
+// the supported range means tmux had nothing to say. One that is present but is
+// not a number is not that: it is a transport answering something other than
+// tmux's format, and reading it as zero would put a real-looking 0 where the
+// answer was garbage. Refused where the rows become entities, once, rather than
+// at every accessor.
+template <typename Entity>
+[[nodiscard]] std::optional<CommandFailure> malformed_number(const Snapshot& snapshot) {
+  for (const std::string_view field : number_fields<Entity>()) {
+    const std::size_t column = snapshot.index_of(field);
+    for (const auto& row : snapshot.rows()) {
+      if (column >= row.size() || row[column].empty()) {
+        continue;
+      }
+      const std::string_view text = row[column];
+      long long value = 0;
+      const char* const end = text.data() + text.size();
+      const auto [stopped, code] = std::from_chars(text.data(), end, value);
+      if (code != std::errc{} || stopped != end) {
+        return CommandFailure{
+            .kind = FailureKind::refused,
+            .delivery = DeliveryStatus::replied,
+            .exit_code = 0,
+            .diagnostic = std::string{"tmux answered "} + std::string{field} +
+                          " as \"" + std::string{text} + "\", which is not a number"};
+      }
+    }
+  }
+  return std::nullopt;
+}
+
 inline void append_display_message_text(std::vector<std::string>& command,
                                         std::string text) {
   // psmux 3.3.7 treats display-message's `--` as message text.
@@ -130,6 +200,9 @@ list_entities(std::shared_ptr<const Backend> backend, std::vector<std::string> r
   if (!snapshot.has_value()) {
     return unexpected(snapshot.error());
   }
+  if (auto malformed = malformed_number<Entity>(**snapshot); malformed.has_value()) {
+    return unexpected(std::move(*malformed));
+  }
   const std::size_t rows = (*snapshot)->rows().size();
   std::vector<Entity> entities;
   entities.reserve(rows);
@@ -164,6 +237,9 @@ one_entity(std::shared_ptr<const Backend> backend, CommandRequest request,
                                       route.name);
   if (!snapshot.has_value()) {
     return unexpected(snapshot.error());
+  }
+  if (auto malformed = malformed_number<Entity>(**snapshot); malformed.has_value()) {
+    return unexpected(std::move(*malformed));
   }
   const auto& rows = (*snapshot)->rows();
   // tmux answers a question about an object it cannot resolve in two ways,

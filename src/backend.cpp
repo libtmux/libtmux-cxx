@@ -137,17 +137,42 @@ std::optional<std::string> psmux_session(const std::vector<std::string>& connect
 
 } // namespace
 
+namespace {
+
+// Back up over a UTF-8 continuation byte (`10xxxxxx`) so a fixed byte budget
+// never cuts a multi-byte character in half. At most three steps, since no
+// valid UTF-8 sequence is longer than four bytes; a longer run of
+// continuation bytes is not valid UTF-8 to begin with, and this still bounds
+// how much the cut moves for it.
+std::size_t utf8_safe_cut(std::string_view text, std::size_t maximum) {
+  std::size_t cut = maximum;
+  for (std::size_t back = 0;
+       cut > 0 && back < 3U && (static_cast<unsigned char>(text[cut]) & 0xC0U) == 0x80U;
+       ++back) {
+    --cut;
+  }
+  return cut;
+}
+
+} // namespace
+
 std::string rendered_command(const CommandRequest& command) {
   constexpr std::size_t maximum = 300U;
   const std::vector<std::string_view> parts = sensitive_parts(command);
   std::string rendered;
+  // A `-F` argument's value is a machine format string, backslash-escaped
+  // for tmux and often long - naming it as `<format>` reads better in a
+  // diagnostic than dumping the whole escaped thing.
+  bool previous_was_format_flag = false;
   for (const CommandArgument& argument : command.arguments()) {
     if (!rendered.empty()) {
       rendered.push_back(' ');
     }
-    rendered += redacted_text(argument.value(), parts);
+    rendered += previous_was_format_flag ? std::string{"<format>"}
+                                         : redacted_text(argument.value(), parts);
+    previous_was_format_flag = argument.value() == "-F";
     if (rendered.size() > maximum) {
-      rendered.resize(maximum);
+      rendered.resize(utf8_safe_cut(rendered, maximum));
       rendered += "...";
       break;
     }
@@ -155,12 +180,42 @@ std::string rendered_command(const CommandRequest& command) {
   return rendered;
 }
 
-void Backend::observe(const CommandRequest& command,
-                      const CommandFailure* failure) const {
+namespace {
+// Per thread, not per Backend: a Backend is shared between threads, and this
+// marks where one thread is in one command.
+thread_local std::optional<std::chrono::steady_clock::time_point> dispatch_started;
+} // namespace
+
+Backend::Dispatching::Dispatching() noexcept : previous_{dispatch_started} {
+  dispatch_started = std::chrono::steady_clock::now();
+}
+
+Backend::Dispatching::~Dispatching() noexcept { dispatch_started = previous_; }
+
+std::optional<std::chrono::nanoseconds> Backend::dispatch_elapsed() {
+  if (!dispatch_started.has_value()) {
+    return std::nullopt;
+  }
+  return std::chrono::steady_clock::now() - *dispatch_started;
+}
+
+void Backend::observe(const CommandRequest& command, const CommandFailure* failure,
+                      std::optional<std::chrono::nanoseconds> elapsed) const {
   if (!observer_) {
     return;
   }
-  observer_(rendered_command(command), failure);
+  const std::vector<std::string> argv = command.argv();
+  // `not_started` is this library's own word for nothing having been
+  // dispatched, so there is no duration to report however far into the
+  // dispatch the refusal happened.
+  const bool ran =
+      failure == nullptr || failure->delivery != DeliveryStatus::not_started;
+  observer_(CommandReport{.command = rendered_command(command),
+                          .argv = argv,
+                          .failure = failure,
+                          .elapsed =
+                              ran ? (elapsed.has_value() ? elapsed : dispatch_elapsed())
+                                  : std::nullopt});
 }
 
 CommandFailure Backend::redact(CommandFailure failure,
@@ -170,9 +225,10 @@ CommandFailure Backend::redact(CommandFailure failure,
 }
 
 expected<std::string, CommandFailure>
-Backend::report_failure(const CommandRequest& command, CommandFailure failure) const {
+Backend::report_failure(const CommandRequest& command, CommandFailure failure,
+                        std::optional<std::chrono::nanoseconds> elapsed) const {
   failure = redact(std::move(failure), command);
-  observe(command, &failure);
+  observe(command, &failure, elapsed);
   return unexpected(std::move(failure));
 }
 
@@ -195,7 +251,7 @@ Backend::prepare_attach(std::string_view target) const {
         .exit_code = 0,
         .diagnostic = "this backend cannot retain an exact attach route"});
   }
-  std::vector<std::string> command{"tmux"};
+  std::vector<std::string> command{policy().tmux_binary.string()};
   const auto& selector = connection();
   command.insert(command.end(), selector.begin(), selector.end());
   command.emplace_back("attach-session");
@@ -259,7 +315,15 @@ SubprocessBackend::open_startable(std::vector<std::string> connection,
           .exit_code = 0,
           .diagnostic = "the startable tmux socket path could not be resolved"});
     }
-    endpoint->connection = {"-S", *resolved};
+    // Keep the caller's own selector, not a `-S <resolved path>` of our own:
+    // tmux only creates the missing `tmux-<uid>` directory a socket lives
+    // under when *it* resolves the path (no `-S`, or `-L`), and does not
+    // when handed one by `-S`. Forcing `-S` here made the first command
+    // this backend ever ran — the `start-server`/`new-session` that has to
+    // create that directory — the one command guaranteed to skip the step
+    // that creates it. tmux's own client then reports "error creating
+    // <path>" on stderr but still exits 0, so nothing here saw it fail.
+    endpoint->connection = selector;
     endpoint->socket_path = *resolved;
     endpoint->identity = "pending:" + *resolved;
     endpoint->alias.reset();
@@ -486,7 +550,7 @@ SubprocessBackend::build_request(const CommandRequest& command,
                                  std::optional<std::size_t> output_limit) const {
   ProcessRequest request;
   const auto& active_connection = connection();
-  request.executable = "tmux";
+  request.executable = policy().tmux_binary;
   request.timeout = timeout;
 #if defined(_WIN32)
   // Warm claiming reserializes the caller's cwd into psmux's line protocol.
@@ -527,7 +591,8 @@ SubprocessBackend::build_request(const CommandRequest& command,
   return request;
 }
 
-expected<void, CommandFailure> SubprocessBackend::publish_started_endpoint() const {
+expected<void, CommandFailure>
+SubprocessBackend::publish_started_endpoint(std::string_view start_stderr) const {
   auto endpoint = bind_socket_endpoint(connection_);
   if (!endpoint.has_value()) {
     return unexpected(CommandFailure{
@@ -538,12 +603,24 @@ expected<void, CommandFailure> SubprocessBackend::publish_started_endpoint() con
                       std::move(endpoint.error())});
   }
   if (endpoint->missing || endpoint->identity.empty()) {
-    return unexpected(CommandFailure{
-        .kind = FailureKind::missing,
-        .delivery = DeliveryStatus::replied,
-        .exit_code = 0,
-        .diagnostic =
-            "tmux started but its exact endpoint was not available to retain"});
+    // tmux can print its own reason (e.g. "error creating <path>: No such
+    // file or directory" for a `-S` selector under a missing parent
+    // directory) and still exit 0 - the same stderr-but-exit-0 quirk guarded
+    // against elsewhere in this file. Surface it instead of a causeless
+    // message when tmux gave one; say plainly that it gave none rather than
+    // inventing one, which is what tmux 3.2a does here - it writes nothing at
+    // all, where every later release explains itself.
+    std::string diagnostic =
+        "tmux started but its exact endpoint was not available to retain";
+    if (start_stderr.empty()) {
+      diagnostic += ": tmux gave no reason";
+    } else {
+      diagnostic += ": " + std::string{start_stderr};
+    }
+    return unexpected(CommandFailure{.kind = FailureKind::missing,
+                                     .delivery = DeliveryStatus::replied,
+                                     .exit_code = 0,
+                                     .diagnostic = std::move(diagnostic)});
   }
 
   auto published = std::make_shared<const PublishedEndpoint>(PublishedEndpoint{
@@ -587,6 +664,9 @@ SubprocessBackend::run_scoped(const CommandRequest& command,
                 "this handle predates the socket; reopen it after the server starts"});
   }
   ProcessRequest request = build_request(command, session, timeout, output_limit);
+  // From here down the command is actually dispatched, so this is what its
+  // duration means. Everything refused above it never ran, and reports none.
+  const Dispatching dispatching;
 
   // `CommandObserver` is told about every command, and these two are the
   // commands most worth seeing: one where tmux never started, and one where
@@ -606,6 +686,17 @@ SubprocessBackend::run_scoped(const CommandRequest& command,
                                    .diagnostic = std::move(reply.error().diagnostic)});
   }
 
+  // Captured before the reply's bytes are consumed below: a successful
+  // (exit 0) first-start command still discards its stdout-only text, and
+  // publish_started_endpoint's own diagnostic is the only place this stderr
+  // is still wanted.
+  std::string start_stderr =
+      publishes_started_endpoint ? text(reply->stderr_bytes) : std::string{};
+  while (!start_stderr.empty() &&
+         (start_stderr.back() == '\n' || start_stderr.back() == '\r')) {
+    start_stderr.pop_back();
+  }
+
   auto interpreted =
       publishes_started_endpoint
           ? interpret_unobserved(command, allowed_bytes, *std::move(reply))
@@ -617,7 +708,7 @@ SubprocessBackend::run_scoped(const CommandRequest& command,
     observe(command, &interpreted.error());
     return interpreted;
   }
-  if (auto published = publish_started_endpoint(); !published.has_value()) {
+  if (auto published = publish_started_endpoint(start_stderr); !published.has_value()) {
     return reported(std::move(published.error()));
   }
   observe(command, nullptr);
@@ -692,6 +783,19 @@ SubprocessBackend::interpret_reply(const CommandRequest& command,
            (diagnostic.back() == '\n' || diagnostic.back() == '\r')) {
       diagnostic.pop_back();
     }
+    // tmux was invoked with the private hard-link alias `pin_under`
+    // substitutes for `-S`, so a message tmux builds from its own
+    // arguments (e.g. "no server running on <socket>") names that alias
+    // rather than the path the operator configured. Name theirs.
+    const std::string_view alias = socket_path();
+    const std::string_view operator_path = selected_socket_path();
+    if (!alias.empty() && !operator_path.empty() && alias != operator_path) {
+      std::size_t position = diagnostic.find(alias);
+      while (position != std::string::npos) {
+        diagnostic.replace(position, alias.size(), operator_path);
+        position = diagnostic.find(alias, position + operator_path.size());
+      }
+    }
     // And which command it was: on its own, "can't find session: work" leaves
     // the reader to work out where in their program it came from.
     diagnostic += " (running: " + rendered_command(command) + ")";
@@ -707,6 +811,12 @@ SubprocessBackend::interpret_reply(const CommandRequest& command,
 }
 
 expected<Version, CommandFailure> SubprocessBackend::version() const {
+  {
+    const std::lock_guard cached{version_mutex_};
+    if (version_.has_value()) {
+      return *version_;
+    }
+  }
   auto output = run({"-V"}, policy().timeout, policy().output_limit);
   if (!output.has_value()) {
     return unexpected(output.error());
@@ -718,6 +828,8 @@ expected<Version, CommandFailure> SubprocessBackend::version() const {
                                      .exit_code = 0,
                                      .diagnostic = "tmux -V printed " + *output});
   }
+  const std::lock_guard cached{version_mutex_};
+  version_ = *version;
   return *version;
 }
 

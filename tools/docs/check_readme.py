@@ -24,6 +24,21 @@ REGION = re.compile(
     re.MULTILINE | re.DOTALL,
 )
 FENCE = re.compile(r"^```cpp\n(?P<body>.*?)^```\n", re.MULTILINE | re.DOTALL)
+GIVEN = re.compile(r"^// Given: .+$")
+
+
+def _matching_line(body: str) -> str:
+    """Return the line `_fix` correlates a block by: the first one that is not `Given:`.
+
+    A region declares what it assumes on its very first line (see
+    `check_example_isolation.py`), so matching on line one verbatim would
+    key every such region on the same literal text. The line after it is
+    still the one description unique to that region.
+    """
+    lines = body.splitlines()
+    if lines and GIVEN.match(lines[0]):
+        lines = lines[1:]
+    return lines[0] if lines else ""
 
 
 def regions(source: pathlib.Path) -> dict[str, str]:
@@ -113,9 +128,7 @@ def _fix(readme: pathlib.Path, example: pathlib.Path, available: dict[str, str])
     that no longer resembles anything is left alone and reported, rather than
     silently replaced with whichever region happened to come next.
     """
-    by_first = {
-        body.splitlines()[0]: body for body in available.values() if body.splitlines()
-    }
+    by_first = {_matching_line(body): body for body in available.values()}
     replaced = 0
     unmatched: list[int] = []
     counter = iter(range(1, 10_000))
@@ -124,7 +137,7 @@ def _fix(readme: pathlib.Path, example: pathlib.Path, available: dict[str, str])
         nonlocal replaced
         index = next(counter)
         block = match.group("body").strip()
-        first = block.splitlines()[0] if block.splitlines() else ""
+        first = _matching_line(block)
         body = by_first.get(first)
         if body is None:
             unmatched.append(index)
@@ -148,9 +161,9 @@ def _fix(readme: pathlib.Path, example: pathlib.Path, available: dict[str, str])
 
 def _closest(block: str, available: dict[str, str]) -> str:
     """Name the region a block was probably meant to be, to save a diff hunt."""
-    first = block.splitlines()[0] if block.splitlines() else ""
+    first = _matching_line(block)
     for name, body in available.items():
-        if body.splitlines() and body.splitlines()[0] == first:
+        if _matching_line(body) == first:
             return f" (closest: {name!r}, which starts the same way)"
     return ""
 

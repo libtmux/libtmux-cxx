@@ -117,8 +117,9 @@ TEST(Buffers, PasteDeliversTheTextAndLeavesTheBuffer) {
   ASSERT_TRUE(second.has_value()) << second.error().diagnostic;
   const auto active = session->active_pane();
   ASSERT_TRUE(active.has_value()) << active.error().diagnostic;
-  const auto quiet = active->id() == second->id() ? window->panes()->front() : *second;
-  ASSERT_NE(quiet.id(), active->id());
+  const auto quiet =
+      active->id().value() == second->id().value() ? window->panes()->front() : *second;
+  ASSERT_NE(quiet.id().value(), active->id().value());
   // Wait for the pane's shell to be reading before pasting into it. A paste
   // delivered to a shell that has not started yet is simply lost, and no
   // amount of waiting afterwards brings it back — which is what a ten-second
@@ -162,7 +163,7 @@ TEST(Buffers, PasteDeliversTheTextAndLeavesTheBuffer) {
     std::this_thread::sleep_for(std::chrono::milliseconds{25});
   }
   EXPECT_NE(shown_text.find("pasted-marker"), std::string::npos)
-      << "pane " << quiet.id() << " running "
+      << "pane " << quiet.id().value() << " running "
       << quiet.expand("#{pane_current_command}").value_or("?")
       << ", dead=" << quiet.expand("#{pane_dead}").value_or("?") << ", "
       << quiet.expand("#{pane_width}").value_or("?") << "x"

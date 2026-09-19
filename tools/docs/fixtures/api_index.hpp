@@ -2,6 +2,7 @@
 
 // Focused declarations that protect the API-reference parser's scope rules.
 
+#include <chrono>
 #include <concepts>
 #include <string>
 #include <utility>
@@ -40,6 +41,12 @@ struct Options {
 
   // Maximum item count.
   int count{};
+};
+
+// A callable default is an expression inside the parameter list.
+struct Waiter {
+  void wait_ready(std::chrono::steady_clock::time_point deadline =
+                      std::chrono::steady_clock::time_point::max());
 };
 
 // A templated public value wrapper.

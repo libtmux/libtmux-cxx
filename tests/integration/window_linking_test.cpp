@@ -40,7 +40,7 @@ TEST(WindowLinking, AWindowIsShownInTwoSessionsAtOnce) {
   const auto over_there = elsewhere->windows();
   ASSERT_TRUE(over_there.has_value()) << over_there.error().diagnostic;
   EXPECT_TRUE(std::ranges::any_of(*over_there, [&](const libtmux::Window& one) {
-    return one.id() == shared->id();
+    return one.id().value() == shared->id().value();
   }));
 }
 
@@ -71,13 +71,14 @@ TEST(WindowLinking, UnlinkRemovesTheLinkTheValueNamesAndRefusesTheLast) {
   const auto left_home = home->windows();
   ASSERT_TRUE(left_home.has_value()) << left_home.error().diagnostic;
   EXPECT_FALSE(std::ranges::any_of(*left_home, [&](const libtmux::Window& one) {
-    return one.id() == shared->id();
+    return one.id().value() == shared->id().value();
   })) << "the link named by the value should be the one removed";
 
   const auto kept = elsewhere->windows();
   ASSERT_TRUE(kept.has_value()) << kept.error().diagnostic;
-  const auto survivor = std::ranges::find_if(
-      *kept, [&](const libtmux::Window& one) { return one.id() == shared->id(); });
+  const auto survivor = std::ranges::find_if(*kept, [&](const libtmux::Window& one) {
+    return one.id().value() == shared->id().value();
+  });
   ASSERT_NE(survivor, kept->end()) << "the other session should still hold it";
   EXPECT_EQ(survivor->linked_sessions(), 1);
 
@@ -113,15 +114,16 @@ TEST(WindowLinking, AFormatAnswersAboutTheSessionTheValueCameFrom) {
   // each has to answer about its own side of the link.
   const auto from_home = home->windows();
   ASSERT_TRUE(from_home.has_value()) << from_home.error().diagnostic;
-  const auto here = std::ranges::find_if(
-      *from_home, [&](const libtmux::Window& one) { return one.id() == shared->id(); });
+  const auto here = std::ranges::find_if(*from_home, [&](const libtmux::Window& one) {
+    return one.id().value() == shared->id().value();
+  });
   ASSERT_NE(here, from_home->end());
 
   const auto from_elsewhere = elsewhere->windows();
   ASSERT_TRUE(from_elsewhere.has_value()) << from_elsewhere.error().diagnostic;
   const auto there =
       std::ranges::find_if(*from_elsewhere, [&](const libtmux::Window& one) {
-        return one.id() == shared->id();
+        return one.id().value() == shared->id().value();
       });
   ASSERT_NE(there, from_elsewhere->end());
 

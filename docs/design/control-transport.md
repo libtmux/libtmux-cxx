@@ -46,6 +46,42 @@ log. Most entries are tmux notifications. Unknown entries may instead be
 delayed command output, so callers must preserve unknown bytes rather than
 guess their origin.
 
+## Where the refusal stops
+
+The reasoning above is about commands in general, and it holds there. It does
+not reach every command, and the difference is worth stating because it decides
+what a caller may build.
+
+A guarded block is an incomplete result only for a command tmux can leave
+running after `%end`. Exactly twelve can: `command-prompt`, `confirm-before`,
+`display-menu`, `display-message`, `if-shell`, `load-buffer`, `run-shell`,
+`save-buffer`, `source-file`, `split-window`, `wait-for`, and the queue itself
+(`rg -l CMD_RETURN_WAIT 'cmd-*.c'` in tmux). Being in that list is not the
+same as deferring: several do so only under a flag. `display-message` defers
+only under `-I`, and `split-window` only under `-I` (read standard input into
+the pane) or `-W` (wait for the pane's command to exit) — `cmd-split-window.c`
+returns `CMD_RETURN_WAIT` on those two paths and no other. The library sends
+neither. Every listing it issues is outside the set outright —
+`list-sessions`, `list-windows`, `list-panes`, `list-clients`, `list-buffers`,
+`list-commands`. For those commands, sent as the library sends them, the
+guarded block is the whole answer.
+
+Alias substitution remains unprovable: `CMD_PARSE_NOALIAS` exists but tmux sets
+it only while expanding an alias, so no client can ask for it. It is also not a
+difference between the transports, because a subprocess runs the same alias. A
+transport that serves listings therefore fails closed — a substituted command
+answers something that does not parse as separated rows, and falling back to a
+launch costs only the launch it was avoiding.
+
+None of this makes every command safe on a control client. It makes the
+commands the typed surface issues, as it issues them, answerable there — which
+is what `Server::over_control` does. It sends a command over the wire only if
+it is on a list checked against tmux's `CMD_RETURN_WAIT`, and launches
+everything else: a command that can defer, one that acts on the client itself,
+one that could end the connection, an alias it cannot see through. A failure
+reads exactly as a launched one would, and a connection lost after a command
+was written reports that as indeterminate rather than running it twice.
+
 ## Choosing the surface
 
 | Need | Surface |

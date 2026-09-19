@@ -97,7 +97,7 @@ TEST(TargetComposition, ResolvesToTheSameObjectTmuxDoes) {
 
   const auto pane = server.pane(*composed);
   ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
-  EXPECT_TRUE(libtmux::is_pane_id(pane->id())) << pane->id();
+  EXPECT_TRUE(libtmux::is_pane_id(pane->id().value())) << pane->id().value();
 }
 
 TEST(TargetComposition, PassesAnIdStraightThroughWithoutASession) {
@@ -108,7 +108,7 @@ TEST(TargetComposition, PassesAnIdStraightThroughWithoutASession) {
   const auto panes = server.panes();
   ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
   ASSERT_FALSE(panes->empty());
-  const std::string id{panes->at(0).id()};
+  const std::string id{panes->at(0).id().value()};
 
   // An id is already unambiguous, so neither name is consulted — which is what
   // lets a caller pass one through without knowing the session it is in.
@@ -118,7 +118,7 @@ TEST(TargetComposition, PassesAnIdStraightThroughWithoutASession) {
 
   const auto resolved = server.pane(*composed);
   ASSERT_TRUE(resolved.has_value()) << resolved.error().diagnostic;
-  EXPECT_EQ(resolved->id(), id);
+  EXPECT_EQ(resolved->id().value(), id);
 }
 
 TEST(TargetComposition, RefusesANameTmuxWouldMisread) {

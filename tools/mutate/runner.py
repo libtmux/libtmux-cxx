@@ -65,6 +65,12 @@ class Mutation:
     presets : tuple[str, ...], optional
         Build presets where this mutation has a target and test. Empty means
         every preset.
+    python_test : str | None, optional
+        A dotted ``unittest`` test id (module, or module.Class.method) for a
+        guard that lives under ``tools/`` rather than in C++. When set, `target`
+        and `executable` are unused: there is nothing to build, and the
+        interpreter reads `path` fresh on every run, so the fingerprint that
+        proves a C++ mutation reached its binary has nothing to check here.
     """
 
     mutation_id: str
@@ -76,6 +82,7 @@ class Mutation:
     executable: str | None = None
     test_regex: str | None = None
     presets: tuple[str, ...] = ()
+    python_test: str | None = None
 
     def applies_to(self, preset: str) -> bool:
         """Return whether this mutation belongs to the selected build."""
@@ -91,7 +98,16 @@ class Outcome:
     mutation : Mutation
         The mutation that was run.
     verdict : str
-        ``killed``, ``survived``, or ``not a result``.
+        ``killed``, ``survived``, ``not a result``, or ``skipped here``.
+        The last is its own case rather than a flavour of ``not a result``:
+        a stale find-string or a build that broke means the catalogue no
+        longer knows what it is testing, which is what ``not a result``
+        exists to catch and fail on. This one means the environment
+        running it cannot evaluate the guard at all -- its own guarding
+        test called ``GTEST_SKIP()`` before reaching an assertion, most
+        likely because this preset's tmux is below a version floor the
+        guard needs -- which the catalogue already knew when the entry was
+        written, and is not evidence the entry stopped matching anything.
     detail : str
         Why, for the verdicts that need one.
     """
@@ -217,6 +233,91 @@ def _fingerprint(build_root: pathlib.Path, preset: str, target: str) -> str | No
     return None
 
 
+def _all_selected_tests_skipped(stdout: bytes, selected_count: int) -> bool:
+    r"""Return whether every test CTest ran for this selection was skipped.
+
+    A test that calls ``GTEST_SKIP()`` exits 0, the same as one that ran and
+    passed, so the two are the same "not a result" case wearing a "passed"
+    return code — this repository's guarding tests do that below a stated
+    tmux version floor. CTest's own summary still names the difference in
+    its text, in the "did not run ... (Skipped)" section, which is what this
+    reads instead of the return code.
+
+    Parameters
+    ----------
+    stdout : bytes
+        A ``ctest`` invocation's captured standard output.
+    selected_count : int
+        How many tests the same selection resolved to.
+
+    Returns
+    -------
+    bool
+        Whether every one of them was skipped rather than run.
+
+    Examples
+    --------
+    >>> _all_selected_tests_skipped(b"", 1)
+    False
+    >>> _all_selected_tests_skipped(b"1 - name (Skipped)\\n", 1)
+    True
+    >>> _all_selected_tests_skipped(b"1 - name (Skipped)\\n", 2)
+    False
+    """
+    if selected_count == 0:
+        return False
+    return stdout.count(b"(Skipped)") >= selected_count
+
+
+def _run_python_mutation(
+    mutation: Mutation,
+    source: pathlib.Path,
+    execute: t.Callable[[list[str]], subprocess.CompletedProcess[bytes]],
+) -> Outcome:
+    """Break a guard with no compiler between the edit and the test.
+
+    A Python source file is read fresh by the interpreter on every run, so
+    the C++ path's build-and-fingerprint dance has nothing to prove here: the
+    mutation either reaches `mutation.python_test` or the file was not found.
+
+    Parameters
+    ----------
+    mutation : Mutation
+        What to break. `python_test` must be set.
+    source : pathlib.Path
+        The already-resolved file to edit.
+    execute : Callable
+        Subprocess runner, shared with the CMake path so tests can fake it.
+
+    Returns
+    -------
+    Outcome
+        Verdict and, where it matters, why.
+    """
+    assert mutation.python_test is not None
+    test_command = ["python3", "-m", "unittest", mutation.python_test]
+    baseline = execute(test_command)
+    if baseline.returncode != 0:
+        return Outcome(mutation, "not a result", "the selected test already fails")
+    with _mutated(source, mutation.find, mutation.replace) as applied:
+        if not applied:
+            return Outcome(
+                mutation, "not a result", "the text to replace is absent or repeated"
+            )
+        # The C++ path's build step doubles as a syntax check; a mutation that
+        # leaves invalid Python behind must fail the same way, not read as a
+        # kill nobody earned.
+        compiled = execute(["python3", "-m", "py_compile", str(source)])
+        if compiled.returncode != 0:
+            return Outcome(mutation, "not a result", "the mutation did not parse")
+        tested = execute(test_command)
+    if tested.returncode == 0:
+        return Outcome(mutation, "survived", mutation.guards)
+    if execute(test_command).returncode != 0:
+        return Outcome(mutation, "not a result", "the selected test did not recover")
+    return Outcome(mutation, "killed")
+
+
 def run(
     mutation: Mutation,
     repository: pathlib.Path,
@@ -261,6 +362,8 @@ def run(
     source = repository / mutation.path
     if not source.is_file():
         return Outcome(mutation, "not a result", f"no such file: {mutation.path}")
+    if mutation.python_test is not None:
+        return _run_python_mutation(mutation, source, execute)
     # From a clean build, because the previous mutation left its own binary
     # in the tree: comparing against that would call a real change no change
     # whenever two runs mutate the same place. Ninja makes this a no-op when
@@ -308,6 +411,14 @@ def run(
     baseline = execute(test_command)
     if baseline.returncode != 0:
         return Outcome(mutation, "not a result", "the selected tests already fail")
+    if _all_selected_tests_skipped(baseline.stdout, len(selection["tests"])):
+        return Outcome(
+            mutation,
+            "skipped here",
+            "the guarding test called GTEST_SKIP() before this environment "
+            "could reach it -- likely a version floor this preset's tmux "
+            "does not meet",
+        )
     with _mutated(source, mutation.find, mutation.replace) as applied:
         if not applied:
             return Outcome(
@@ -392,9 +503,9 @@ def report(outcomes: t.Sequence[Outcome]) -> str:
     >>> print(report([Outcome(mutation, "killed")]))
     killed       guard
     <BLANKLINE>
-    1 killed, 0 survived, 0 not a result
+    1 killed, 0 survived, 0 not a result, 0 skipped here
     """
-    order = {"survived": 0, "not a result": 1, "killed": 2}
+    order = {"survived": 0, "not a result": 1, "skipped here": 2, "killed": 3}
     lines = []
     for outcome in sorted(outcomes, key=lambda one: order[one.verdict]):
         detail = f"  ({outcome.detail})" if outcome.detail else ""
@@ -405,7 +516,8 @@ def report(outcomes: t.Sequence[Outcome]) -> str:
     lines.append("")
     lines.append(
         f"{counts['killed']} killed, {counts['survived']} survived, "
-        f"{counts['not a result']} not a result"
+        f"{counts['not a result']} not a result, "
+        f"{counts['skipped here']} skipped here"
     )
     return "\n".join(lines)
 
@@ -414,7 +526,10 @@ def failed(outcomes: t.Sequence[Outcome]) -> bool:
     """Return whether a run should be treated as a failure.
 
     A survivor means something is untested.  A non-result means the
-    catalogue is stale, which is worse: it looks like a pass.
+    catalogue is stale, which is worse: it looks like a pass.  A
+    ``skipped here`` outcome fails neither test: the catalogue already
+    knew this guard needs a tmux version this environment does not have,
+    and running it here proves nothing either way.
 
     Parameters
     ----------
@@ -424,7 +539,8 @@ def failed(outcomes: t.Sequence[Outcome]) -> bool:
     Returns
     -------
     bool
-        True when anything other than a kill happened.
+        True when anything other than a kill or an environment skip
+        happened.
 
     Examples
     --------
@@ -433,5 +549,9 @@ def failed(outcomes: t.Sequence[Outcome]) -> bool:
     False
     >>> failed([Outcome(mutation, "not a result", "did not build")])
     True
+    >>> failed([Outcome(mutation, "skipped here", "tmux is too old here")])
+    False
     """
-    return any(outcome.verdict != "killed" for outcome in outcomes)
+    return any(
+        outcome.verdict not in ("killed", "skipped here") for outcome in outcomes
+    )

@@ -33,13 +33,13 @@ server-side `command-alias` redefine a built-in command.
 
 | Header | Holds |
 |---|---|
-| [`server.hpp`](server.hpp) | `Server` — the entry point. `from_env`, `at_socket_name`, `at_socket_path`, `at_default` |
+| [`server.hpp`](server.hpp) | `Server` — the entry point. `from_env`, `at_socket_name`, `at_socket_path`, `at_default`, and `over` for a transport you supply |
 | [`capabilities.hpp`](capabilities.hpp) | Local backend and feature discovery, including the bounded psmux surface |
 | [`entities.hpp`](entities.hpp) | `Session`, `Window`, `Pane`, `Client`, `Buffer`, and the option structs their creators take |
 | [`socket.hpp`](socket.hpp) | How a server is addressed, and what makes an address valid |
 | [`target.hpp`](target.hpp) | The id-based targets every operation is addressed by |
 | [`delivery.hpp`](delivery.hpp) | `DeliveryStatus` — whether a failed command was not started, written, answered, or left indeterminate |
-| [`command.hpp`](command.hpp) | `CommandFailure`, `FailureKind` — the one command error type |
+| [`command.hpp`](command.hpp) | `CommandFailure`, `FailureKind` — the one command error type; `CommandExecutor`, the one method a transport owes |
 
 ### Asking questions
 

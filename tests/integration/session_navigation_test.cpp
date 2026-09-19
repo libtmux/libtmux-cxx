@@ -53,13 +53,13 @@ TEST(SessionNavigation, NextWindowAdvancesAndWrapsAtTheEnd) {
 
   const auto next = session.select_next_window();
   ASSERT_TRUE(next.has_value()) << next.error().diagnostic;
-  EXPECT_EQ(next->id(), windows[1].id());
+  EXPECT_EQ(next->id().value(), windows[1].id().value());
 
   // From the last window it wraps rather than stopping.
   ASSERT_TRUE(windows.back().select().has_value());
   const auto wrapped = session.select_next_window();
   ASSERT_TRUE(wrapped.has_value()) << wrapped.error().diagnostic;
-  EXPECT_EQ(wrapped->id(), windows.front().id());
+  EXPECT_EQ(wrapped->id().value(), windows.front().id().value());
 }
 
 TEST(SessionNavigation, PreviousWindowStepsBack) {
@@ -73,7 +73,7 @@ TEST(SessionNavigation, PreviousWindowStepsBack) {
 
   const auto back = session.select_previous_window();
   ASSERT_TRUE(back.has_value()) << back.error().diagnostic;
-  EXPECT_EQ(back->id(), windows.front().id());
+  EXPECT_EQ(back->id().value(), windows.front().id().value());
 }
 
 TEST(SessionNavigation, LastWindowReturnsToThePreviouslySelected) {
@@ -91,7 +91,7 @@ TEST(SessionNavigation, LastWindowReturnsToThePreviouslySelected) {
 
   const auto last = session.select_last_window();
   ASSERT_TRUE(last.has_value()) << last.error().diagnostic;
-  EXPECT_EQ(last->id(), windows.front().id());
+  EXPECT_EQ(last->id().value(), windows.front().id().value());
 }
 
 TEST(SessionNavigation, NavigationRefusesWhenThereIsNowhereToGo) {

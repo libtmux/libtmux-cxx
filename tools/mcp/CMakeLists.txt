@@ -32,9 +32,16 @@ target_compile_definitions(
   PRIVATE "MCP_SWAP_FAKE_SERVER_PATH=\"$<TARGET_FILE:mcp_swap_fake_server>\"")
 add_dependencies(mcp_swap_test mcp_swap_fake_server)
 
+# One entry, and the tests inside it run in order. Splitting them
+# per test the way `tests/` does would run them concurrently, and each spawns a
+# server and times its replies against a 25 ms stability window — at load 43
+# under sanitizers that window stops being meaningful and a duplicate reply
+# arrives too late to be seen. The budget is what actually failed: the suite
+# takes about 20 s, and 59.4 s on that same loaded sanitizer lane, against a
+# 60 s limit.
 add_test(NAME tools.mcp-swap COMMAND mcp_swap_test)
 set_tests_properties(
-  tools.mcp-swap PROPERTIES LABELS "tools;contract" TIMEOUT 60)
+  tools.mcp-swap PROPERTIES LABELS "tools;contract" TIMEOUT 300)
 if(LIBTMUX_ENABLE_SANITIZERS
    AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang"
    AND CMAKE_CXX_FLAGS MATCHES "stdlib=libc")

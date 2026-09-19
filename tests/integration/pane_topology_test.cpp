@@ -32,7 +32,7 @@ TEST(PaneTopology, JoinMovesAPaneAndEmptiesTheWindowItLeft) {
   ASSERT_TRUE(split.has_value()) << split.error().diagnostic;
   const auto moved_out = split->break_out();
   ASSERT_TRUE(moved_out.has_value()) << moved_out.error().diagnostic;
-  ASSERT_NE(moved_out->id(), home->id());
+  ASSERT_NE(moved_out->id().value(), home->id().value());
   const auto before = session->windows();
   ASSERT_TRUE(before.has_value()) << before.error().diagnostic;
   ASSERT_EQ(before->size(), 2U);
@@ -47,8 +47,9 @@ TEST(PaneTopology, JoinMovesAPaneAndEmptiesTheWindowItLeft) {
   const auto panes = home->panes();
   ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
   ASSERT_EQ(panes->size(), 2U);
-  EXPECT_TRUE(std::ranges::any_of(
-      *panes, [&](const libtmux::Pane& one) { return one.id() == split->id(); }));
+  EXPECT_TRUE(std::ranges::any_of(*panes, [&](const libtmux::Pane& one) {
+    return one.id().value() == split->id().value();
+  }));
 }
 
 TEST(PaneTopology, ATitleIsSetAndSurvivesTheProcessBeingReplaced) {

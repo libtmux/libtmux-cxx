@@ -47,7 +47,7 @@ TEST(Expand, EachPaneAnswersAboutItselfRatherThanTheActiveOne) {
   for (const libtmux::Pane& pane : *panes) {
     const auto answered = pane.expand("#{pane_id}");
     ASSERT_TRUE(answered.has_value()) << answered.error().diagnostic;
-    EXPECT_EQ(*answered, pane.id());
+    EXPECT_EQ(*answered, pane.id().value());
   }
 }
 
@@ -71,7 +71,7 @@ TEST(Expand, APaneThatHasGoneIsReportedRatherThanBlank) {
   const auto gone = doomed->expand("#{pane_current_command}");
   ASSERT_FALSE(gone.has_value());
   EXPECT_EQ(gone.error().kind, libtmux::FailureKind::missing);
-  EXPECT_NE(gone.error().diagnostic.find(doomed->id()), std::string::npos);
+  EXPECT_NE(gone.error().diagnostic.find(doomed->id().value()), std::string::npos);
 }
 
 TEST(Expand, TheAnswerKeepsTheNewlinesTheFormatAsksFor) {
@@ -198,7 +198,7 @@ TEST(ShowMessage, TheTargetIsTheContextTheTextExpandsIn) {
   ASSERT_TRUE(quiet.has_value()) << quiet.error().diagnostic;
   const auto active = session->active_window();
   ASSERT_TRUE(active.has_value()) << active.error().diagnostic;
-  ASSERT_NE(active->id(), quiet->id());
+  ASSERT_NE(active->id().value(), quiet->id().value());
 
   auto watching = server.control(fixture->session_name());
   ASSERT_TRUE(watching.has_value()) << watching.error().message;
@@ -240,8 +240,9 @@ TEST(ShowMessage, APaneNamesItselfRatherThanTheActiveOne) {
   ASSERT_TRUE(second.has_value()) << second.error().diagnostic;
   const auto active = session->active_pane();
   ASSERT_TRUE(active.has_value()) << active.error().diagnostic;
-  const auto quiet = active->id() == second->id() ? window->panes()->front() : *second;
-  ASSERT_NE(quiet.id(), active->id());
+  const auto quiet =
+      active->id().value() == second->id().value() ? window->panes()->front() : *second;
+  ASSERT_NE(quiet.id().value(), active->id().value());
 
   auto watching = server.control(fixture->session_name());
   ASSERT_TRUE(watching.has_value()) << watching.error().message;
@@ -263,7 +264,8 @@ TEST(ShowMessage, APaneNamesItselfRatherThanTheActiveOne) {
       std::this_thread::sleep_for(5ms);
     }
   }
-  EXPECT_NE(seen.find("sent by " + std::string{quiet.id()}), std::string::npos) << seen;
+  EXPECT_NE(seen.find("sent by " + std::string{quiet.id().value()}), std::string::npos)
+      << seen;
 }
 
 } // namespace

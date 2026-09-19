@@ -1,5 +1,6 @@
 #include "libtmux/entities.hpp"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -20,6 +21,18 @@
 #include "psmux.hpp"
 
 LIBTMUX_NAMESPACE_BEGIN
+
+// Out of line, and instantiated for the three ids only: printing needs the
+// whole of `<ostream>`, and the header that declares these is included by
+// nearly everything.
+template <typename Kind>
+std::ostream& operator<<(std::ostream& stream, EntityId<Kind> id) {
+  return stream << id.value();
+}
+
+template std::ostream& operator<< <SessionIdKind>(std::ostream&, SessionId);
+template std::ostream& operator<< <WindowIdKind>(std::ostream&, WindowId);
+template std::ostream& operator<< <PaneIdKind>(std::ostream&, PaneId);
 
 struct AttachCommand::State {
   State(std::vector<std::string> command,
@@ -127,6 +140,12 @@ bool detail::Row::same_connection(const Row& other) const noexcept {
   return detail::same_server(backend().get(), other.backend().get());
 }
 
+bool detail::Row::ids_scoped_by_session() const noexcept {
+  const auto& connection = backend();
+  return connection != nullptr &&
+         connection->capabilities().implementation == ServerImplementation::psmux;
+}
+
 expected<Server, CommandFailure> detail::Row::server() const {
   if (backend() == nullptr) {
     return unexpected(detail::disconnected());
@@ -220,20 +239,20 @@ std::string session_target(const Session& session) {
   static_cast<void>(session);
   return ":";
 #else
-  return std::string{session.id()};
+  return std::string{session.id().value()};
 #endif
 }
 
 detail::SessionRoute session_route(const Session& session) {
-  return {.id = session.id(), .name = session.name()};
+  return {.id = session.id().value(), .name = session.name()};
 }
 
 detail::SessionRoute session_route(const Window& window) {
-  return {.id = window.session_id(), .name = window.session_name()};
+  return {.id = window.session_id().value(), .name = window.session_name()};
 }
 
 detail::SessionRoute session_route(const Pane& pane) {
-  return {.id = pane.session_id(), .name = pane.session_name()};
+  return {.id = pane.session_id().value(), .name = pane.session_name()};
 }
 
 } // namespace
@@ -370,7 +389,7 @@ expected<void, CommandFailure> Session::kill() const {
 }
 
 expected<Session, CommandFailure> Session::refresh() const {
-  return detail::describe<Session>(backend(), session_target(*this), id(),
+  return detail::describe<Session>(backend(), session_target(*this), id().value(),
                                    session_route(*this));
 }
 
@@ -411,8 +430,8 @@ expected<void, CommandFailure> Session::unset_option(std::string_view name) cons
 }
 
 expected<std::string, CommandFailure> Session::expand(std::string_view format) const {
-  return detail::expand_format<Session>(backend(), session_target(*this), format, id(),
-                                        session_route(*this));
+  return detail::expand_format<Session>(backend(), session_target(*this), format,
+                                        id().value(), session_route(*this));
 }
 
 expected<void, CommandFailure> Session::show_message(std::string_view text) const {
@@ -429,7 +448,7 @@ expected<AttachCommand, CommandFailure> Session::attach_command() const {
   if (backend() == nullptr) {
     return unexpected(detail::disconnected());
   }
-  auto prepared = backend()->prepare_attach(id());
+  auto prepared = backend()->prepare_attach(id().value());
   if (!prepared.has_value()) {
     return unexpected(std::move(prepared.error()));
   }
@@ -481,17 +500,17 @@ expected<std::string, CommandFailure> Window::checked_target() const {
   }
   // A window read out of a recording may carry no session; a bare id is then
   // the only thing there is to say.
-  if (session_id().empty()) {
-    return std::string{id()};
+  if (session_id().value().empty()) {
+    return std::string{id().value()};
   }
-  return std::string{session_id()} + ":" + std::string{id()};
+  return std::string{session_id().value()} + ":" + std::string{id().value()};
 }
 
 namespace {
 
 std::string window_command_target(const Window& window) {
 #if defined(_WIN32)
-  return std::string{window.id()};
+  return std::string{window.id().value()};
 #else
   return window.target();
 #endif
@@ -505,8 +524,8 @@ expected<Session, CommandFailure> Window::session() const {
   if (!current.has_value()) {
     return unexpected(current.error());
   }
-  return detail::describe<Session>(current->backend(), ":", current->session_id(),
-                                   session_route(*current));
+  return detail::describe<Session>(
+      current->backend(), ":", current->session_id().value(), session_route(*current));
 #else
   return detail::describe<Session>(backend(), window_command_target(*this), {},
                                    session_route(*this));
@@ -522,16 +541,16 @@ expected<std::vector<Pane>, CommandFailure> Window::panes() const {
   }
   std::vector<Pane> owned;
   for (Pane& pane : *all) {
-    if (pane.window_id() == id()) {
+    if (pane.window_id().value() == id().value()) {
       owned.push_back(std::move(pane));
     }
   }
   if (owned.empty()) {
-    return unexpected(
-        CommandFailure{.kind = FailureKind::missing,
-                       .delivery = DeliveryStatus::replied,
-                       .exit_code = 0,
-                       .diagnostic = "tmux has no window " + std::string{id()}});
+    return unexpected(CommandFailure{.kind = FailureKind::missing,
+                                     .delivery = DeliveryStatus::replied,
+                                     .exit_code = 0,
+                                     .diagnostic = "tmux has no window " +
+                                                   std::string{id().value()}});
   }
   return owned;
 #else
@@ -552,11 +571,11 @@ expected<Pane, CommandFailure> Window::active_pane() const {
       return std::move(pane);
     }
   }
-  return unexpected(
-      CommandFailure{.kind = FailureKind::missing,
-                     .delivery = DeliveryStatus::replied,
-                     .exit_code = 0,
-                     .diagnostic = "tmux has no active pane in " + std::string{id()}});
+  return unexpected(CommandFailure{.kind = FailureKind::missing,
+                                   .delivery = DeliveryStatus::replied,
+                                   .exit_code = 0,
+                                   .diagnostic = "tmux has no active pane in " +
+                                                 std::string{id().value()}});
 #else
   return detail::describe<Pane>(backend(), window_command_target(*this), {},
                                 session_route(*this));
@@ -607,7 +626,7 @@ expected<Pane, CommandFailure> Window::split(SplitOptions options) const {
     command.push_back(CommandArgument::sensitive(std::move(options.shell_command)));
   }
   return detail::one_entity<Pane>(backend(), std::move(command), FormatArgument::flag,
-                                  id(), {}, session_route(*this));
+                                  id().value(), {}, session_route(*this));
 }
 
 expected<void, CommandFailure> Window::rename(std::string_view name) const {
@@ -652,7 +671,7 @@ expected<void, CommandFailure> Window::show_message(std::string_view text) const
 
 expected<std::string, CommandFailure> Window::expand(std::string_view format) const {
   return detail::expand_format<Window>(backend(), window_command_target(*this), format,
-                                       id(), session_route(*this));
+                                       id().value(), session_route(*this));
 }
 
 expected<void, CommandFailure> Window::kill() const {
@@ -663,16 +682,157 @@ expected<void, CommandFailure> Window::kill() const {
   return effect(run({"kill-window", "-t", window_command_target(*this)}));
 }
 
+namespace {
+
+constexpr std::array kUniversalLayoutPresets{
+    std::string_view{"even-horizontal"}, std::string_view{"even-vertical"},
+    std::string_view{"main-horizontal"}, std::string_view{"main-vertical"},
+    std::string_view{"tiled"}};
+
+constexpr std::array kMirroredLayoutPresets{
+    std::string_view{"main-horizontal-mirrored"},
+    std::string_view{"main-vertical-mirrored"}};
+
+// The oldest release whose preset table includes the mirrored pair. Below it,
+// `main-v`/`main-h` apply cleanly (3.2a, 3.3a); at or above it, the same prefix
+// is ambiguous and refused rather than crashing (3.7c, master).
+constexpr Version kMirroredLayoutFloor{.major = 3, .minor = 5};
+
+bool is_universal_layout_preset(std::string_view layout) {
+  return std::ranges::find(kUniversalLayoutPresets, layout) !=
+         kUniversalLayoutPresets.end();
+}
+
+bool is_mirrored_layout_preset(std::string_view layout) {
+  return std::ranges::find(kMirroredLayoutPresets, layout) !=
+         kMirroredLayoutPresets.end();
+}
+
+// tmux's classic layout string always opens with a 4-digit lowercase-hex
+// checksum then a comma (layout-custom.c). Something in this shape reaches
+// tmux's own classic parser, which refuses a bad checksum cleanly on every
+// supported version (measured by hand on 3.2a, 3.3a, 3.7c and master).
+bool looks_like_classic_layout(std::string_view layout) {
+  if (layout.size() < 5 || layout[4] != ',') {
+    return false;
+  }
+  return std::ranges::all_of(layout.substr(0, 4), [](char digit) {
+    return (digit >= '0' && digit <= '9') || (digit >= 'a' && digit <= 'f');
+  });
+}
+
+// tmux resolves a preset name by unique prefix (`layout_set_lookup`,
+// layout-set.c), never through the layout-string parser 3.3/3.3a crash on. A
+// prefix naming only a mirrored preset counts once the connected version has
+// it.
+expected<std::vector<std::string_view>, CommandFailure>
+resolve_layout_preset_prefix(const Window& window, std::string_view layout) {
+  std::vector<std::string_view> candidates;
+  for (const std::string_view preset : kUniversalLayoutPresets) {
+    if (preset.starts_with(layout)) {
+      candidates.push_back(preset);
+    }
+  }
+  const bool mirrored_candidate =
+      std::ranges::any_of(kMirroredLayoutPresets, [layout](std::string_view preset) {
+        return preset.starts_with(layout);
+      });
+  if (mirrored_candidate) {
+    const auto server_handle = window.server();
+    if (!server_handle.has_value()) {
+      return unexpected(server_handle.error());
+    }
+    const auto version = server_handle->tmux_version();
+    if (!version.has_value()) {
+      return unexpected(version.error());
+    }
+    if (*version >= kMirroredLayoutFloor) {
+      for (const std::string_view preset : kMirroredLayoutPresets) {
+        if (preset.starts_with(layout)) {
+          candidates.push_back(preset);
+        }
+      }
+    }
+  }
+  return candidates;
+}
+
+} // namespace
+
 expected<void, CommandFailure> Window::select_layout(std::string_view layout) const {
   if (layout.empty()) {
     return unexpected(rejected("layout is empty"));
+  }
+  // A leading `-` (tmux's own undo flag `-o` included), a name tmux does not
+  // know, or an incomplete layout string crashes tmux 3.3 and 3.3a outright
+  // rather than being refused (measured by hand); every other supported
+  // version refuses it cleanly instead. `--` alone is not the guard: on 3.3
+  // and 3.3a it turns a bad value into exactly the shape that crashes them.
+  // A universal preset or a classic-shaped layout is safe on every
+  // supported version without asking; a mirrored preset or a JSON layout
+  // needs the connected version checked first, because whether either
+  // belongs in that safe set depends on it.
+  if (!is_universal_layout_preset(layout) && !looks_like_classic_layout(layout)) {
+    const bool mirrored = is_mirrored_layout_preset(layout);
+    const bool json = layout.starts_with('{');
+    if (!mirrored && !json) {
+      const auto prefix = resolve_layout_preset_prefix(*this, layout);
+      if (!prefix.has_value()) {
+        return unexpected(prefix.error());
+      }
+      if (prefix->size() > 1) {
+        std::string candidates;
+        for (std::size_t index = 0; index < prefix->size(); ++index) {
+          if (index != 0) {
+            candidates += ", ";
+          }
+          candidates += (*prefix)[index];
+        }
+        return unexpected(
+            rejected("\"" + std::string{layout} +
+                     "\" could mean more than one layout preset: " + candidates));
+      }
+      if (prefix->empty()) {
+        return unexpected(
+            rejected("\"" + std::string{layout} +
+                     "\" is neither a layout preset nor a saved layout description"));
+      }
+      // Exactly one candidate: safe to dispatch below using the caller's
+      // own spelling. tmux resolves the same unique prefix itself
+      // (layout_set_lookup), so nothing here needs to rewrite it to the
+      // resolved full name.
+    } else {
+      const auto server_handle = server();
+      if (!server_handle.has_value()) {
+        return unexpected(server_handle.error());
+      }
+      const auto version = server_handle->tmux_version();
+      if (!version.has_value()) {
+        return unexpected(version.error());
+      }
+      const Version floor =
+          mirrored ? Version{.major = 3, .minor = 5} : Version{.major = 3, .minor = 8};
+      if (*version < floor) {
+        return unexpected(rejected(
+            "this server's tmux is older than " +
+            std::string{mirrored ? "3.5" : "3.8"} + "; a " +
+            std::string{mirrored ? "mirrored preset" : "JSON layout"} +
+            " needs at least that, and tmux 3.3/3.3a crash outright on a layout "
+            "they do not recognise"));
+      }
+    }
   }
   if (auto refusal = refused(ServerFeature::captured_mutation,
                              "psmux cannot safely target select-layout")) {
     return unexpected(std::move(*refusal));
   }
-  return effect(
-      run({"select-layout", "-t", window_command_target(*this), std::string{layout}}));
+  // `--` before the layout, like every other user-text command in this file:
+  // without it, a leading dash is a flag rather than data, and `-o` in
+  // particular is tmux's own undo flag for this command. The check above is
+  // the actual guard against a hostile or malformed value; this is defence
+  // in depth once a value has already been accepted.
+  return effect(run({"select-layout", "-t", window_command_target(*this), "--",
+                     std::string{layout}}));
 }
 
 expected<void, CommandFailure> Window::resize(long long width, long long height) const {
@@ -774,13 +934,13 @@ expected<void, CommandFailure> Window::move_to(long long index) const {
   // `-d` because move-window otherwise selects what it moved, taking the
   // user's focus somewhere they did not ask to go.
   const std::string source = window_command_target(*this);
-  const std::string owner{session_id()};
+  const std::string owner{session_id().value()};
   const std::string target = owner + ":" + std::to_string(index);
   return effect(run({"move-window", "-d", "-s", source, "-t", target}));
 }
 
 expected<Window, CommandFailure> Window::refresh() const {
-  return detail::describe<Window>(backend(), window_command_target(*this), id(),
+  return detail::describe<Window>(backend(), window_command_target(*this), id().value(),
                                   session_route(*this));
 }
 
@@ -832,7 +992,7 @@ std::string pane_target(const Pane& pane) {
 #if defined(_WIN32)
   static_cast<void>(pane);
 #endif
-  return std::string{pane.id()};
+  return std::string{pane.id().value()};
 }
 
 ExecutionPolicy
@@ -936,10 +1096,10 @@ named_break_report(const std::shared_ptr<const detail::Backend>& backend,
   }
 
   Window window{*snapshot, 0U};
-  if (!is_canonical_tmux_id(window.id(), '@') ||
-      !is_canonical_tmux_id(window.session_id(), '$') ||
-      (!expected_window.empty() && window.id() != expected_window) ||
-      (!expected_session.empty() && window.session_id() != expected_session)) {
+  if (!is_canonical_tmux_id(window.id().value(), '@') ||
+      !is_canonical_tmux_id(window.session_id().value(), '$') ||
+      (!expected_window.empty() && window.id().value() != expected_window) ||
+      (!expected_session.empty() && window.session_id().value() != expected_session)) {
     return unexpected(CommandFailure{
         .kind = FailureKind::refused,
         .delivery = DeliveryStatus::replied,
@@ -1015,7 +1175,7 @@ expected<Window, CommandFailure> Pane::window() const {
     return unexpected(all.error());
   }
   for (Window& window : *all) {
-    if (window.id() == *current_window) {
+    if (window.id().value() == *current_window) {
       return std::move(window);
     }
   }
@@ -1036,8 +1196,8 @@ expected<Session, CommandFailure> Pane::session() const {
   if (!current.has_value()) {
     return unexpected(current.error());
   }
-  return detail::describe<Session>(current->backend(), ":", current->session_id(),
-                                   session_route(*current));
+  return detail::describe<Session>(
+      current->backend(), ":", current->session_id().value(), session_route(*current));
 #else
   return detail::describe<Session>(backend(), pane_target(*this), {},
                                    session_route(*this));
@@ -1128,7 +1288,7 @@ expected<Pane, CommandFailure> Pane::split(SplitOptions options) const {
     command.push_back(CommandArgument::sensitive(std::move(options.shell_command)));
   }
   return detail::one_entity<Pane>(backend(), std::move(command), FormatArgument::flag,
-                                  id(), {}, session_route(*this));
+                                  id().value(), {}, session_route(*this));
 }
 
 expected<std::string, CommandFailure> Pane::capture() const {
@@ -1194,6 +1354,14 @@ expected<void, CommandFailure> Pane::set_height(long long height) const {
       run({"resize-pane", "-t", pane_target(*this), "-y", std::to_string(height)}));
 }
 
+expected<void, CommandFailure> Pane::toggle_zoom() const {
+  if (auto refusal = refused(ServerFeature::captured_mutation,
+                             "psmux cannot safely target resize-pane")) {
+    return unexpected(std::move(*refusal));
+  }
+  return effect(run({"resize-pane", "-Z", "-t", pane_target(*this)}));
+}
+
 expected<void, CommandFailure> Pane::swap_with(const Pane& other) const {
   if (from_different_servers(*this, other)) {
     return unexpected(crossed_servers());
@@ -1214,10 +1382,10 @@ namespace {
   if (!is_canonical_tmux_id(pane_target(pane), '%')) {
     return rejected("break-pane requires a stable numeric pane id");
   }
-  if (!is_canonical_tmux_id(std::string{pane.session_id()}, '$')) {
+  if (!is_canonical_tmux_id(std::string{pane.session_id().value()}, '$')) {
     return rejected("break-pane requires a stable numeric session id");
   }
-  if (!is_canonical_tmux_id(std::string{pane.window_id()}, '@')) {
+  if (!is_canonical_tmux_id(std::string{pane.window_id().value()}, '@')) {
     return rejected("break-pane requires a stable numeric window id");
   }
   return std::nullopt;
@@ -1229,8 +1397,8 @@ namespace {
     const Pane& pane, const std::shared_ptr<const detail::Backend>& executor,
     const ExecutionPolicy& policy, std::chrono::steady_clock::time_point started) {
   const std::string target = pane_target(pane);
-  const std::string owner{pane.session_id()};
-  const std::string home{pane.window_id()};
+  const std::string owner{pane.session_id().value()};
+  const std::string home{pane.window_id().value()};
   if (!is_canonical_tmux_id(target, '%')) {
     return unexpected(rejected("break-pane requires a stable numeric pane id"));
   }
@@ -1284,9 +1452,9 @@ namespace {
                       ", but did not report one exact connected window row"});
   }
   Window created{*snapshot, 0U};
-  if (!is_canonical_tmux_id(created.id(), '@') ||
-      !is_canonical_tmux_id(created.session_id(), '$') ||
-      created.session_id() != owner) {
+  if (!is_canonical_tmux_id(created.id().value(), '@') ||
+      !is_canonical_tmux_id(created.session_id().value(), '$') ||
+      created.session_id().value() != owner) {
     return unexpected(CommandFailure{
         .kind = FailureKind::refused,
         .delivery = DeliveryStatus::replied,
@@ -1306,8 +1474,8 @@ break_out_named(const Pane& pane, std::string_view name,
                 const ExecutionPolicy& policy,
                 std::chrono::steady_clock::time_point started) {
   const std::string target = pane_target(pane);
-  const std::string owner{pane.session_id()};
-  const std::string home{pane.window_id()};
+  const std::string owner{pane.session_id().value()};
+  const std::string home{pane.window_id().value()};
   if (!is_canonical_tmux_id(target, '%')) {
     return unexpected(rejected("break-pane requires a stable numeric pane id"));
   }
@@ -1342,19 +1510,20 @@ break_out_named(const Pane& pane, std::string_view name,
   if (!broken.has_value()) {
     return unexpected(broken.error());
   }
-  auto created = named_break_report(executor, *std::move(broken), pane.id(), {}, owner);
+  auto created =
+      named_break_report(executor, *std::move(broken), pane.id().value(), {}, owner);
   if (!created.has_value()) {
     return unexpected(created.error());
   }
 
   const bool raw_tmux_37 = created->version == Version{.major = 3, .minor = 7};
-  const bool retained_window = created->window.id() == pane.window_id();
+  const bool retained_window = created->window.id().value() == pane.window_id().value();
   if (!raw_tmux_37 || (retained_window && !created->automatic_rename)) {
     return std::move(created->window);
   }
 
-  const std::string created_window{created->window.id()};
-  const std::string created_session{created->window.session_id()};
+  const std::string created_window{created->window.id().value()};
+  const std::string created_session{created->window.session_id().value()};
   const std::string repair_target = window_command_target(created->window);
   CommandBatch repair;
   static_cast<void>(
@@ -1377,13 +1546,13 @@ break_out_named(const Pane& pane, std::string_view name,
       failure.delivery = DeliveryStatus::replied;
     }
     failure.diagnostic =
-        "break-pane moved pane " + std::string{pane.id()} + " into window " +
+        "break-pane moved pane " + std::string{pane.id().value()} + " into window " +
         created_window +
         ", but its raw tmux 3.7 name repair failed: " + std::move(failure.diagnostic);
     return unexpected(std::move(failure));
   }
 
-  auto final = named_break_report(executor, *std::move(repaired), pane.id(),
+  auto final = named_break_report(executor, *std::move(repaired), pane.id().value(),
                                   created_window, created_session);
   if (!final.has_value()) {
     return unexpected(final.error());
@@ -1393,7 +1562,7 @@ break_out_named(const Pane& pane, std::string_view name,
         .kind = FailureKind::refused,
         .delivery = DeliveryStatus::replied,
         .exit_code = 0,
-        .diagnostic = "break-pane moved pane " + std::string{pane.id()} +
+        .diagnostic = "break-pane moved pane " + std::string{pane.id().value()} +
                       " into window " + created_window +
                       ", but its raw tmux 3.7 name repair was not durable"});
   }
@@ -1535,8 +1704,8 @@ expected<void, CommandFailure> Pane::show_message(std::string_view text) const {
 }
 
 expected<std::string, CommandFailure> Pane::expand(std::string_view format) const {
-  return detail::expand_format<Pane>(backend(), pane_target(*this), format, id(),
-                                     session_route(*this));
+  return detail::expand_format<Pane>(backend(), pane_target(*this), format,
+                                     id().value(), session_route(*this));
 }
 
 expected<void, CommandFailure> Pane::kill() const {
@@ -1548,7 +1717,7 @@ expected<void, CommandFailure> Pane::kill() const {
 }
 
 expected<Pane, CommandFailure> Pane::refresh() const {
-  return detail::describe<Pane>(backend(), pane_target(*this), id(),
+  return detail::describe<Pane>(backend(), pane_target(*this), id().value(),
                                 session_route(*this));
 }
 
@@ -1667,7 +1836,7 @@ expected<void, CommandFailure> Client::refresh() const {
 // One renderer per entity, so the streamed and the returned text cannot drift.
 std::string to_string(const Session& session) {
   std::string text{"Session("};
-  text += session.id();
+  text += session.id().value();
   text += ' ';
   text += session.name();
   text += ')';
@@ -1676,7 +1845,7 @@ std::string to_string(const Session& session) {
 
 std::string to_string(const Window& window) {
   std::string text{"Window("};
-  text += window.id();
+  text += window.id().value();
   text += ' ';
   text += std::to_string(window.index());
   text += ':';
@@ -1687,7 +1856,7 @@ std::string to_string(const Window& window) {
 
 std::string to_string(const Pane& pane) {
   std::string text{"Pane("};
-  text += pane.id();
+  text += pane.id().value();
   text += ' ';
   text += pane.command();
   text += ')';
@@ -1741,28 +1910,30 @@ std::size_t hash_identity(std::string_view connection,
 
 std::size_t
 std::hash<libtmux::Session>::operator()(const libtmux::Session& value) const noexcept {
-  return hash_identity<libtmux::Session>(value.connection_identity(), value.id());
+  return hash_identity<libtmux::Session>(value.connection_identity(),
+                                         value.id().value());
 }
 
 std::size_t
 std::hash<libtmux::Window>::operator()(const libtmux::Window& value) const noexcept {
 #if defined(_WIN32)
-  return hash_mix(
-      hash_identity<libtmux::Window>(value.connection_identity(), value.session_id()),
-      std::hash<std::string_view>{}(value.id()));
+  return hash_mix(hash_identity<libtmux::Window>(value.connection_identity(),
+                                                 value.session_id().value()),
+                  std::hash<std::string_view>{}(value.id().value()));
 #else
-  return hash_identity<libtmux::Window>(value.connection_identity(), value.id());
+  return hash_identity<libtmux::Window>(value.connection_identity(),
+                                        value.id().value());
 #endif
 }
 
 std::size_t
 std::hash<libtmux::Pane>::operator()(const libtmux::Pane& value) const noexcept {
 #if defined(_WIN32)
-  return hash_mix(
-      hash_identity<libtmux::Pane>(value.connection_identity(), value.session_id()),
-      std::hash<std::string_view>{}(value.id()));
+  return hash_mix(hash_identity<libtmux::Pane>(value.connection_identity(),
+                                               value.session_id().value()),
+                  std::hash<std::string_view>{}(value.id().value()));
 #else
-  return hash_identity<libtmux::Pane>(value.connection_identity(), value.id());
+  return hash_identity<libtmux::Pane>(value.connection_identity(), value.id().value());
 #endif
 }
 

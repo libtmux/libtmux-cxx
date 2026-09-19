@@ -1,0 +1,4 @@
+# Review is the maintainer's by default. A path with no owner still reaches
+# them through this line, so an entry below is only worth adding when it would
+# route somewhere else.
+*       @tony

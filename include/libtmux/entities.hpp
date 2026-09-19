@@ -8,6 +8,13 @@
 // function with nothing to keep alive alongside it, while still costing no
 // per-row allocation and no tmux call to read.
 //
+// The other side of that: keeping one entity keeps its whole listing. A pane
+// held from a thousand-pane server retains all thousand rows and the bytes
+// tmux sent for them, and ten panes from one listing retain it once, not ten
+// times. For the sizes tmux serves this is the cheaper trade — but a program
+// that holds handles across large servers for a long time should hold the id
+// it needs and look the entity up again, rather than hold the entity.
+//
 // Reading a field is local and cannot fail. Every method returning `expected`
 // runs tmux, and a returned entity describes the moment that command ran:
 // entities do not update themselves, `refresh` takes a new snapshot.
@@ -43,6 +50,7 @@
 #include "libtmux/filter_expr.hpp"
 #include "libtmux/options.hpp"
 #include "libtmux/snapshot.hpp"
+#include "libtmux/wait.hpp"
 
 LIBTMUX_NAMESPACE_BEGIN
 
@@ -160,6 +168,54 @@ struct CaptureOptions {
   std::optional<std::size_t> output_limit{};
 };
 
+// A tmux object id, typed by what it names.
+//
+// tmux spells these `$0`, `@1` and `%2`. The prefix says which kind it is, and
+// nothing in the type did: six accessors returned `std::string_view`, so a
+// window id compiled wherever a pane id belonged, and `pane.id() ==
+// window.id()` was a comparison that can never be true but always built.
+//
+// The string is reached through `value()` rather than through a conversion.
+// A conversion is what let the mix-up through in the first place: with one,
+// every `std::string_view` parameter accepts any id again, and this would read
+// as type safety while providing none.
+//
+// Comparing an id to plain text still works, because that cannot confuse two
+// kinds — `pane.id() == "%0"` asks something answerable. Comparing two ids of
+// different kinds does not compile.
+template <typename Kind> class EntityId {
+public:
+  EntityId() = default;
+  explicit constexpr EntityId(std::string_view value) noexcept : value_{value} {}
+
+  [[nodiscard]] constexpr std::string_view value() const noexcept { return value_; }
+  [[nodiscard]] constexpr bool empty() const noexcept { return value_.empty(); }
+
+  [[nodiscard]] friend constexpr bool operator==(EntityId left,
+                                                 EntityId right) noexcept {
+    return left.value_ == right.value_;
+  }
+  [[nodiscard]] friend constexpr bool operator==(EntityId left,
+                                                 std::string_view right) noexcept {
+    return left.value_ == right;
+  }
+  [[nodiscard]] friend constexpr auto operator<=>(EntityId left,
+                                                  EntityId right) noexcept {
+    return left.value_ <=> right.value_;
+  }
+
+private:
+  std::string_view value_{};
+};
+
+// Distinct types, not aliases of one: `Kind` is only ever named here.
+using SessionId = EntityId<struct SessionIdKind>;
+using WindowId = EntityId<struct WindowIdKind>;
+using PaneId = EntityId<struct PaneIdKind>;
+
+template <typename Kind>
+std::ostream& operator<<(std::ostream& stream, EntityId<Kind> id);
+
 namespace detail {
 
 // tmux renders every value as text. These read the three shapes it uses, and
@@ -182,17 +238,25 @@ namespace detail {
   return std::chrono::sys_seconds{std::chrono::seconds{to_number(text)}};
 }
 
-[[nodiscard]] inline bool same_entity_id(std::string_view left_id,
+// Whether two ids name the same object.
+//
+// `scoped_by_session` is the server's answer, not the build's: tmux numbers
+// panes and windows uniquely across the whole server, so the id settles it and
+// a pane that moves between sessions stays the same pane. psmux numbers them
+// within a session, so the same id in two sessions is two objects. Asking the
+// server rather than the platform is what keeps two builds of this source
+// agreeing about identity — and what keeps a psmux-like transport reached
+// through `Server::over` from being treated as tmux because it happens to run
+// on POSIX.
+[[nodiscard]] inline bool same_entity_id(bool scoped_by_session,
+                                         std::string_view left_id,
                                          std::string_view left_session_id,
                                          std::string_view right_id,
                                          std::string_view right_session_id) noexcept {
-#if defined(_WIN32)
-  return left_id == right_id && left_session_id == right_session_id;
-#else
-  static_cast<void>(left_session_id);
-  static_cast<void>(right_session_id);
-  return left_id == right_id;
-#endif
+  if (left_id != right_id) {
+    return false;
+  }
+  return !scoped_by_session || left_session_id == right_session_id;
 }
 
 // The storage every entity has, in one place: the snapshot that owns the bytes
@@ -204,14 +268,24 @@ public:
       : snapshot_{std::move(snapshot)}, row_{row} {}
 
 protected:
+  // Absent reads as empty, which every field decodes as its own zero.
+  //
+  // The bound is not defensive programming: `from_recording` takes whatever
+  // field list a caller passes, and entity constructors are public, so a
+  // recording made against an older schema — one field list shorter than the
+  // entity now names — is an ordinary value a caller can hold. Indexing it
+  // unchecked read past the row, which the by-name overload below never did.
   [[nodiscard]] std::string_view value(std::size_t index) const noexcept {
-    return snapshot_->rows()[row_][index];
+    const auto& rows = snapshot_->rows();
+    if (row_ >= rows.size()) {
+      return {};
+    }
+    const auto& row = rows[row_];
+    return index < row.size() ? row[index] : std::string_view{};
   }
 
   [[nodiscard]] std::string_view value(std::string_view field) const noexcept {
-    const std::size_t index = snapshot_->index_of(field);
-    const auto& row = snapshot_->rows()[row_];
-    return index < row.size() ? row[index] : std::string_view{};
+    return value(snapshot_->index_of(field));
   }
 
   [[nodiscard]] const std::shared_ptr<const Backend>& backend() const noexcept {
@@ -248,6 +322,12 @@ protected:
   // Whether another value came from the same tmux server. Out of line because
   // answering it needs the connection type, which no installed header sees.
   [[nodiscard]] bool same_connection(const Row& other) const noexcept;
+
+  // Whether this server scopes pane and window ids within a session, so that
+  // an id alone does not name an object. Out of line for the same reason as
+  // `same_connection`: answering it needs the backend. False for a value read
+  // out of a recording, which is on no server and can only be compared by id.
+  [[nodiscard]] bool ids_scoped_by_session() const noexcept;
 
 private:
   std::shared_ptr<const Snapshot> snapshot_;
@@ -292,7 +372,7 @@ public:
   using Row::connection_identity;
   using Row::server;
 
-  [[nodiscard]] std::string_view id() const noexcept { return value(0); }
+  [[nodiscard]] SessionId id() const noexcept { return SessionId{value(0)}; }
   [[nodiscard]] std::string_view name() const noexcept { return value(1); }
   // `session_attached` counts clients rather than rendering a flag, so any
   // count other than zero means attached.
@@ -422,12 +502,12 @@ public:
   using Row::connection_identity;
   using Row::server;
 
-  [[nodiscard]] std::string_view id() const noexcept { return value(0); }
+  [[nodiscard]] WindowId id() const noexcept { return WindowId{value(0)}; }
   [[nodiscard]] std::string_view name() const noexcept { return value(1); }
   [[nodiscard]] bool active() const noexcept { return detail::to_flag(value(2)); }
   // The link to the parent, carried in the row so traversal upward costs
   // nothing until the parent itself is wanted.
-  [[nodiscard]] std::string_view session_id() const noexcept { return value(3); }
+  [[nodiscard]] SessionId session_id() const noexcept { return SessionId{value(3)}; }
   // Position within its session, which `base-index` is free to start anywhere.
   [[nodiscard]] long long index() const noexcept { return detail::to_number(value(4)); }
   [[nodiscard]] long long pane_count() const noexcept {
@@ -437,7 +517,16 @@ public:
   [[nodiscard]] long long height() const noexcept {
     return detail::to_number(value(7));
   }
-  // tmux's own layout description, which `select-layout` accepts back.
+  // An opaque token: hand it back to `select_layout` exactly as received,
+  // and do not parse its shape. tmux 3.8+ reports JSON here for a plain
+  // client, and keeps the classic layout string for a control client
+  // unless that client has asked tmux for JSON with `refresh-client -f
+  // new-layouts` — which `Connection::connect` sends on every connection,
+  // so control mode through this library gets JSON on 3.8+ too.
+  //
+  // A version's own `layout()` output round-trips through its own
+  // `select_layout` on that version; see that method's comment for what
+  // "round-trips" promises and what it does not.
   [[nodiscard]] std::string_view layout() const noexcept { return value(8); }
   [[nodiscard]] bool zoomed() const noexcept { return detail::to_flag(value(9)); }
   [[nodiscard]] bool bell() const noexcept { return detail::to_flag(value(10)); }
@@ -459,7 +548,9 @@ public:
   // window refreshed after a rename equals the one it was refreshed from.
   [[nodiscard]] bool operator==(const Window& other) const noexcept {
     return same_connection(other) &&
-           detail::same_entity_id(id(), session_id(), other.id(), other.session_id());
+           detail::same_entity_id(ids_scoped_by_session(), id().value(),
+                                  session_id().value(), other.id().value(),
+                                  other.session_id().value());
   }
 
   // How to address this window, and the reason a window id alone will not do.
@@ -483,9 +574,21 @@ public:
   [[nodiscard]] expected<Pane, CommandFailure> split(SplitOptions options) const;
   [[nodiscard]] expected<void, CommandFailure> rename(std::string_view name) const;
 
-  // Rearrange the panes. tmux names five layouts and also accepts the layout
-  // description `layout()` returns, which is how a saved arrangement is
-  // restored exactly.
+  // Rearrange the panes. tmux names five layouts, plus two mirrored ones on
+  // tmux 3.5+, and also accepts the layout description `layout()` returns.
+  //
+  // Restoring one exactly — the same pane back at the same position, not
+  // only the same shape — holds on tmux 3.8+, where the saved string is
+  // JSON and carries each pane's id. On tmux 3.7 and earlier the classic
+  // layout string restores the shape but can rotate which pane lands in
+  // which cell (measured against raw tmux; not a choice this library
+  // makes). A JSON layout is refused before 3.8, and a mirrored preset
+  // before 3.5.
+  //
+  // Anything not shaped like one of those — a leading `-`, a name tmux
+  // does not know, or an incomplete layout string — is refused before
+  // reaching tmux rather than passed through: on tmux 3.3 and 3.3a, that
+  // shape crashes the server outright rather than being refused.
   [[nodiscard]] expected<void, CommandFailure>
   select_layout(std::string_view layout) const;
   [[nodiscard]] expected<void, CommandFailure> resize(long long width,
@@ -572,7 +675,8 @@ public:
       std::string_view{"pane_dead"},    std::string_view{"pane_in_mode"},
       std::string_view{"pane_at_top"},  std::string_view{"pane_at_bottom"},
       std::string_view{"pane_at_left"}, std::string_view{"pane_at_right"},
-      std::string_view{"pane_pipe"}};
+      std::string_view{"pane_pipe"},    std::string_view{"pane_left"},
+      std::string_view{"pane_top"},     std::string_view{"pane_dead_status"}};
 
   Pane(std::shared_ptr<const Snapshot> snapshot, std::size_t row) noexcept
       : Row{std::move(snapshot), row} {}
@@ -580,12 +684,12 @@ public:
   using Row::connection_identity;
   using Row::server;
 
-  [[nodiscard]] std::string_view id() const noexcept { return value(0); }
+  [[nodiscard]] PaneId id() const noexcept { return PaneId{value(0)}; }
   // What is running in the pane now, which is not what started it.
   [[nodiscard]] std::string_view command() const noexcept { return value(1); }
   [[nodiscard]] bool active() const noexcept { return detail::to_flag(value(2)); }
-  [[nodiscard]] std::string_view window_id() const noexcept { return value(3); }
-  [[nodiscard]] std::string_view session_id() const noexcept { return value(4); }
+  [[nodiscard]] WindowId window_id() const noexcept { return WindowId{value(3)}; }
+  [[nodiscard]] SessionId session_id() const noexcept { return SessionId{value(4)}; }
   [[nodiscard]] long long index() const noexcept { return detail::to_number(value(5)); }
   [[nodiscard]] std::string_view title() const noexcept { return value(6); }
   [[nodiscard]] long long pid() const noexcept { return detail::to_number(value(7)); }
@@ -608,6 +712,31 @@ public:
   [[nodiscard]] bool at_right() const noexcept { return detail::to_flag(value(17)); }
   // Whether this pane's output is currently being copied to a command.
   [[nodiscard]] bool piping() const noexcept { return detail::to_flag(value(18)); }
+  // Position within the window, in cells from its top-left corner — the
+  // geometry `select_layout`'s saved arrangement places panes at.
+  [[nodiscard]] long long left() const noexcept { return detail::to_number(value(19)); }
+  // Its counterpart along the other axis.
+  [[nodiscard]] long long top() const noexcept { return detail::to_number(value(20)); }
+  // What the pane's process exited with, once it has.
+  //
+  // Optional rather than a number because zero is a real exit status and
+  // "still running" is not a status at all — tmux renders the field empty
+  // until the process is gone. Only a pane held on screen by `remain-on-exit`
+  // can report one: without it tmux destroys the pane, and there is nothing
+  // left to ask.
+  [[nodiscard]] std::optional<int> exit_status() const noexcept {
+    const std::string_view raw = value(21);
+    if (raw.empty()) {
+      return std::nullopt;
+    }
+    int status = 0;
+    const char* const end = raw.data() + raw.size();
+    const auto [stopped, code] = std::from_chars(raw.data(), end, status);
+    if (code != std::errc{} || stopped != end) {
+      return std::nullopt;
+    }
+    return status;
+  }
   // The owning psmux route carried by Windows live snapshots. Empty on POSIX
   // and in recordings made from the backward-compatible `kFields` schema.
   [[nodiscard]] std::string_view session_name() const noexcept {
@@ -619,7 +748,9 @@ public:
   // pane refreshed after a rename equals the one it was refreshed from.
   [[nodiscard]] bool operator==(const Pane& other) const noexcept {
     return same_connection(other) &&
-           detail::same_entity_id(id(), session_id(), other.id(), other.session_id());
+           detail::same_entity_id(ids_scoped_by_session(), id().value(),
+                                  session_id().value(), other.id().value(),
+                                  other.session_id().value());
   }
 
   [[nodiscard]] expected<Window, CommandFailure> window() const;
@@ -656,9 +787,28 @@ public:
   [[nodiscard]] expected<std::string, CommandFailure>
   capture(CaptureOptions options) const;
 
+  // Wait until this pane produces `wanted`, rather than until it merely
+  // appears on screen. Prefers the control stream's `%output` and falls back
+  // to re-reading the screen when no connection can be opened; `WaitOptions`
+  // says which, and `WaitResult::path` says which answered. A caller that
+  // typed the text it is waiting for names it in `WaitOptions::sent`, or the
+  // shell's echo of its own command is credited to the pane as output.
+  [[nodiscard]] expected<WaitResult, CommandFailure>
+  wait_for_text(std::string_view wanted, const WaitOptions& options = {}) const;
+
   [[nodiscard]] expected<void, CommandFailure> set_width(long long width) const;
   [[nodiscard]] expected<void, CommandFailure> set_height(long long height) const;
   [[nodiscard]] expected<void, CommandFailure> swap_with(const Pane& other) const;
+
+  // Toggle whether this pane's window is zoomed onto it — the whole window
+  // given over to one pane, full size. Zoom is window state, which
+  // `Window::zoomed()` reads; naming a pane here is how tmux picks which one
+  // to give the window to.
+  //
+  // Only the zoom-in direction reads this pane: a window already zoomed
+  // unzooms on any target, this pane included, and stays on whichever pane
+  // it was zoomed onto (measured against raw tmux).
+  [[nodiscard]] expected<void, CommandFailure> toggle_zoom() const;
 
   // Take this pane out into a window of its own, which is returned. If it is
   // already the window's only pane, return that window without moving it.
@@ -674,8 +824,6 @@ public:
   // why the target is named rather than inferred from where this pane is.
   [[nodiscard]] expected<void, CommandFailure> join(const Window& target) const;
 
-  // Forget the scrollback, which is the only way to bound a pane's memory
-  // without restarting what is running in it.
   // Put this pane into copy mode, where its contents can be scrolled and
   // selected rather than typed into.
   //
@@ -715,6 +863,8 @@ public:
   respawn(bool replace_running = false) const;
   [[nodiscard]] expected<void, CommandFailure> respawn(RespawnOptions options) const;
 
+  // Forget the scrollback, which is the only way to bound a pane's memory
+  // without restarting what is running in it.
   [[nodiscard]] expected<void, CommandFailure> clear_history() const;
 
   // Ask tmux to expand a format against this pane. `#{pane_current_command}`
@@ -903,7 +1053,7 @@ std::ostream& operator<<(std::ostream& stream, const Client& client);
 namespace session {
 
 inline constexpr StringFieldHandle<Session> id{
-    {Session::kFields[0], [](const Session& row) { return row.id(); }}};
+    {Session::kFields[0], [](const Session& row) { return row.id().value(); }}};
 inline constexpr StringFieldHandle<Session> name{
     {Session::kFields[1], [](const Session& row) { return row.name(); }}};
 inline constexpr BoolFieldHandle<Session> attached{
@@ -918,19 +1068,26 @@ inline constexpr NumberFieldHandle<Session> client_count{
     {Session::kFields[2], [](const Session& row) { return row.client_count(); }}};
 inline constexpr NumberFieldHandle<Session> window_count{
     {Session::kFields[3], [](const Session& row) { return row.window_count(); }}};
+// tmux renders a timestamp as epoch seconds, which is what a filter compares
+// and what `-f` would compare on the server. The accessor beside this one
+// answers `sys_seconds` because that is what a caller wants to hold.
+inline constexpr NumberFieldHandle<Session> created{
+    {Session::kFields[5], [](const Session& row) {
+       return static_cast<long long>(row.created().time_since_epoch().count());
+     }}};
 
 } // namespace session
 
 namespace window {
 
 inline constexpr StringFieldHandle<Window> id{
-    {Window::kFields[0], [](const Window& row) { return row.id(); }}};
+    {Window::kFields[0], [](const Window& row) { return row.id().value(); }}};
 inline constexpr StringFieldHandle<Window> name{
     {Window::kFields[1], [](const Window& row) { return row.name(); }}};
 inline constexpr BoolFieldHandle<Window> active{
     {Window::kFields[2], [](const Window& row) { return row.active(); }}};
 inline constexpr StringFieldHandle<Window> session_id{
-    {Window::kFields[3], [](const Window& row) { return row.session_id(); }}};
+    {Window::kFields[3], [](const Window& row) { return row.session_id().value(); }}};
 inline constexpr StringFieldHandle<Window> session_name{
     {Window::kSessionNameField, [](const Window& row) { return row.session_name(); }}};
 inline constexpr StringFieldHandle<Window> layout{
@@ -949,21 +1106,23 @@ inline constexpr NumberFieldHandle<Window> width{
     {Window::kFields[6], [](const Window& row) { return row.width(); }}};
 inline constexpr NumberFieldHandle<Window> height{
     {Window::kFields[7], [](const Window& row) { return row.height(); }}};
+inline constexpr NumberFieldHandle<Window> linked_sessions{
+    {Window::kFields[12], [](const Window& row) { return row.linked_sessions(); }}};
 
 } // namespace window
 
 namespace pane {
 
 inline constexpr StringFieldHandle<Pane> id{
-    {Pane::kFields[0], [](const Pane& row) { return row.id(); }}};
+    {Pane::kFields[0], [](const Pane& row) { return row.id().value(); }}};
 inline constexpr StringFieldHandle<Pane> command{
     {Pane::kFields[1], [](const Pane& row) { return row.command(); }}};
 inline constexpr BoolFieldHandle<Pane> active{
     {Pane::kFields[2], [](const Pane& row) { return row.active(); }}};
 inline constexpr StringFieldHandle<Pane> window_id{
-    {Pane::kFields[3], [](const Pane& row) { return row.window_id(); }}};
+    {Pane::kFields[3], [](const Pane& row) { return row.window_id().value(); }}};
 inline constexpr StringFieldHandle<Pane> session_id{
-    {Pane::kFields[4], [](const Pane& row) { return row.session_id(); }}};
+    {Pane::kFields[4], [](const Pane& row) { return row.session_id().value(); }}};
 inline constexpr StringFieldHandle<Pane> session_name{
     {Pane::kSessionNameField, [](const Pane& row) { return row.session_name(); }}};
 inline constexpr StringFieldHandle<Pane> title{
@@ -984,6 +1143,29 @@ inline constexpr NumberFieldHandle<Pane> width{
     {Pane::kFields[10], [](const Pane& row) { return row.width(); }}};
 inline constexpr NumberFieldHandle<Pane> height{
     {Pane::kFields[11], [](const Pane& row) { return row.height(); }}};
+inline constexpr BoolFieldHandle<Pane> at_top{
+    {Pane::kFields[14], [](const Pane& row) { return row.at_top(); }}};
+inline constexpr BoolFieldHandle<Pane> at_bottom{
+    {Pane::kFields[15], [](const Pane& row) { return row.at_bottom(); }}};
+inline constexpr BoolFieldHandle<Pane> at_left{
+    {Pane::kFields[16], [](const Pane& row) { return row.at_left(); }}};
+inline constexpr BoolFieldHandle<Pane> at_right{
+    {Pane::kFields[17], [](const Pane& row) { return row.at_right(); }}};
+inline constexpr BoolFieldHandle<Pane> piping{
+    {Pane::kFields[18], [](const Pane& row) { return row.piping(); }}};
+inline constexpr NumberFieldHandle<Pane> left{
+    {Pane::kFields[19], [](const Pane& row) { return row.left(); }}};
+inline constexpr NumberFieldHandle<Pane> top{
+    {Pane::kFields[20], [](const Pane& row) { return row.top(); }}};
+// A pane that has not exited reads -1, which tmux cannot report: the field is
+// `WEXITSTATUS` and so is 0 through 255, or empty. That makes
+// `pane::exit_status == 0` exactly the panes that exited cleanly and
+// `pane::exit_status >= 0` exactly the ones that exited at all, rather than
+// folding "still running" into status zero.
+inline constexpr NumberFieldHandle<Pane> exit_status{
+    {Pane::kFields[21], [](const Pane& row) {
+       return static_cast<long long>(row.exit_status().value_or(-1));
+     }}};
 
 } // namespace pane
 
@@ -1005,8 +1187,49 @@ inline constexpr NumberFieldHandle<Client> width{
     {Client::kFields[4], [](const Client& row) { return row.width(); }}};
 inline constexpr NumberFieldHandle<Client> height{
     {Client::kFields[5], [](const Client& row) { return row.height(); }}};
+inline constexpr NumberFieldHandle<Client> created{
+    {Client::kFields[6], [](const Client& row) {
+       return static_cast<long long>(row.created().time_since_epoch().count());
+     }}};
+inline constexpr NumberFieldHandle<Client> last_activity{
+    {Client::kFields[7], [](const Client& row) {
+       return static_cast<long long>(row.last_activity().time_since_epoch().count());
+     }}};
 
 } // namespace client
+
+// `Server::commands()` and `Server::buffers()` list like anything else, so
+// they filter like anything else. Without these two namespaces `matching(...)`
+// reached four of the six types the server can list, and the two it could not
+// reach were the two whose listings a caller is most likely to search: which
+// commands this tmux understands, and which buffer holds what.
+namespace command {
+
+inline constexpr StringFieldHandle<Command> name{
+    {Command::kFields[0], [](const Command& row) { return row.name(); }}};
+inline constexpr StringFieldHandle<Command> alias{
+    {Command::kFields[1], [](const Command& row) { return row.alias(); }}};
+inline constexpr StringFieldHandle<Command> usage{
+    {Command::kFields[2], [](const Command& row) { return row.usage(); }}};
+
+} // namespace command
+
+namespace buffer {
+
+inline constexpr StringFieldHandle<Buffer> name{
+    {Buffer::kFields[0], [](const Buffer& row) { return row.name(); }}};
+inline constexpr NumberFieldHandle<Buffer> size{
+    {Buffer::kFields[1], [](const Buffer& row) { return row.size(); }}};
+inline constexpr StringFieldHandle<Buffer> sample{
+    {Buffer::kFields[2], [](const Buffer& row) { return row.sample(); }}};
+// Epoch seconds, as tmux renders it and as `-f` would compare it; the accessor
+// beside this one answers `sys_seconds` because that is what a caller holds.
+inline constexpr NumberFieldHandle<Buffer> created{
+    {Buffer::kFields[3], [](const Buffer& row) {
+       return static_cast<long long>(row.created().time_since_epoch().count());
+     }}};
+
+} // namespace buffer
 
 LIBTMUX_NAMESPACE_END
 

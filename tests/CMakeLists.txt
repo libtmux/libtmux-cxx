@@ -458,10 +458,8 @@ if(NOT WIN32)
     PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
   target_compile_options(
     libtmux_spawn_descriptors_test PRIVATE -fno-sanitize-recover=undefined)
-  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    target_compile_definitions(
-      libtmux_spawn_descriptors_test
-      PRIVATE LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
+  # The interposer this wraps is compiled only with the seam.
+  if(LIBTMUX_ENABLE_FAULT_INJECTION AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(
       libtmux_spawn_descriptors_test PRIVATE "-Wl,--wrap=getrlimit")
   endif()
@@ -497,10 +495,6 @@ if(NOT WIN32)
     PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
   target_compile_options(
     libtmux_posix_child_test PRIVATE -fno-sanitize-recover=undefined)
-  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    target_compile_definitions(
-      libtmux_posix_child_test PRIVATE LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
-  endif()
 
   gtest_discover_tests(
     libtmux_posix_child_test
@@ -541,6 +535,13 @@ if(NOT WIN32)
     TEST_PREFIX libtmux.process_engine.
     PROPERTIES LABELS "concurrency" TIMEOUT 60)
 
+  # `--wrap` binds at the link of this executable, so it redirects only calls
+  # the linker still has to resolve. A shared libtmux has already bound its own
+  # `posix_spawnp` internally, and the wrappers below then intercept nothing —
+  # every one of these cases reports the success it was asked to fail. Building
+  # them against a shared library would produce eleven confident, meaningless
+  # passes, so the whole group is skipped there instead.
+  if(NOT BUILD_SHARED_LIBS)
   add_executable(
     libtmux_process_engine_failure_test process_engine_failure_test.cpp)
   target_include_directories(
@@ -568,6 +569,7 @@ if(NOT WIN32)
     libtmux_process_engine_failure_test
     TEST_PREFIX libtmux.process_engine_failure.
     PROPERTIES LABELS "concurrency" TIMEOUT 60)
+  endif()
 endif()
 
 add_executable(libtmux_backend_seam_test backend_seam_test.cpp)
@@ -742,11 +744,6 @@ foreach(control_case parser integration)
 endforeach()
 target_include_directories(
   libtmux_control_integration_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  target_compile_definitions(
-    libtmux_control_integration_test
-    PRIVATE LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
-endif()
 
 include(GoogleTest)
 gtest_discover_tests(
@@ -803,6 +800,7 @@ foreach(
   capture_lines_refuses_a_temporary
   parse_refuses_a_temporary
   relation_join_refuses_a_temporary
+  entity_ids_do_not_mix
   no_implicit_submit)
   add_library(libtmux_compile_${probe} OBJECT EXCLUDE_FROM_ALL compile/${probe}.cpp)
   target_link_libraries(
@@ -823,3 +821,41 @@ foreach(
       # parallel CTest run.
       RESOURCE_LOCK build_tree)
 endforeach()
+
+# What ships carries no way to break itself.
+#
+# The fault-injection seams are entry points and process-wide mutable state
+# that exist for this suite alone, so a build without
+# `LIBTMUX_ENABLE_FAULT_INJECTION` must not contain them — and because that is
+# the default, this runs in every ordinary lane against the very archive a
+# consumer would link. `nm` is POSIX; a toolchain without it is not asserted
+# about rather than silently passing.
+if(NOT LIBTMUX_ENABLE_FAULT_INJECTION AND NOT WIN32)
+  find_program(LIBTMUX_NM NAMES nm)
+  if(LIBTMUX_NM)
+    add_test(
+      NAME libtmux.archive.carries_no_test_seams
+      COMMAND
+        "${CMAKE_COMMAND}" "-DNM=${LIBTMUX_NM}"
+        "-DARCHIVE=$<TARGET_FILE:libtmux>" -P
+        "${CMAKE_CURRENT_SOURCE_DIR}/archive_symbols.cmake")
+    set_tests_properties(
+      libtmux.archive.carries_no_test_seams
+      PROPERTIES LABELS "libtmux;package" TIMEOUT 60)
+  endif()
+endif()
+
+# Deliberately no `src/` on the include path: the point of this suite is that a
+# consumer can supply a transport through the installed headers alone.
+add_executable(libtmux_executor_seam_test executor_seam_test.cpp)
+target_link_libraries(
+  libtmux_executor_seam_test
+  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+          libtmux_test_support)
+target_compile_options(
+  libtmux_executor_seam_test PRIVATE -fno-sanitize-recover=undefined)
+
+gtest_discover_tests(
+  libtmux_executor_seam_test
+  TEST_PREFIX libtmux.executor.
+  PROPERTIES LABELS real-tmux TIMEOUT 60)

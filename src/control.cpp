@@ -429,6 +429,23 @@ ParsedNotification parse(const Notification& notification) {
     }
     return parsed;
   }
+  // "%subscription-changed <name> <session> <window-or-'-'> <index-or-'-'>
+  // <pane-or-'-'> : <value>" (control.c) is fixed-position, unlike the
+  // id-then-text shape below: its own free-form subscription name is
+  // always the first argument, so the generic scan would stop right there
+  // and never reach the ids that follow it.
+  if (parsed.kind == NotificationKind::subscription_changed) {
+    constexpr std::size_t argument_count = 6U;
+    const auto fields = leading_fields(line, argument_count);
+    if (fields.size() < argument_count) {
+      return parsed;
+    }
+    place_argument(parsed, fields[2]);
+    place_argument(parsed, fields[3]);
+    place_argument(parsed, fields[5]);
+    parsed.text = line.substr(static_cast<std::size_t>(fields[1].data() - line.data()));
+    return parsed;
+  }
 
   // Everything else is `%name` then space-separated arguments, with any free
   // text — a session or window or buffer name — last.
@@ -449,6 +466,17 @@ ParsedNotification parse(const Notification& notification) {
   }
   static_cast<void>(placed);
   return parsed;
+}
+
+std::optional<bool> layout_contains_pane(std::string_view layout_change_text,
+                                         std::string_view pane_id) {
+  const auto space = layout_change_text.find(' ');
+  const std::string_view layout = layout_change_text.substr(0, space);
+  if (pane_id.empty() || !layout.starts_with(R"({"V":)")) {
+    return std::nullopt;
+  }
+  const std::string needle = "\"I\":\"" + std::string{pane_id} + "\"";
+  return layout.find(needle) != std::string_view::npos;
 }
 
 LIBTMUX_NAMESPACE_END
