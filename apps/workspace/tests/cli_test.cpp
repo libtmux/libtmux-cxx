@@ -783,6 +783,24 @@ TEST(WorkspaceCli, FileServicesKeepTypesAndUseNativeWholeWordMatching) {
   EXPECT_EQ(Json::parse(debug.out).at("port"), "cxx");
 }
 
+// save_or_return builds the destination with mkstemp, which POSIX pins at
+// rw for the owner alone; left as-is, a document meant for a shared repo
+// comes out unreadable by anyone else regardless of the caller's umask.
+// The permissive end of the umask range makes the point: a save with a
+// wide-open mask should not still come out owner-only.
+TEST(WorkspaceCli, SavedDestinationHonoursTheCallersUmask) {
+  Files files;
+  std::ofstream{"team.yaml"} << "session_name: team\nwindows: [{}]\n";
+  const auto previous = ::umask(0);
+  const auto saved =
+      invoke({"convert", "team.yaml", "--save-to", "team.json", "--json"});
+  ::umask(previous);
+  ASSERT_EQ(saved.code, 0) << saved.err;
+  struct stat metadata {};
+  ASSERT_EQ(::stat("team.json", &metadata), 0);
+  EXPECT_EQ(metadata.st_mode & 0777, 0666U);
+}
+
 TEST(WorkspaceCli, VersionNamesTheToolAndJsonOutputIsOneCompactLine) {
   const auto version = invoke({"--version"});
   EXPECT_EQ(version.code, 0);
