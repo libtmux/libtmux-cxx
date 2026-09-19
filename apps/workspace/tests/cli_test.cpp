@@ -2013,6 +2013,48 @@ TEST(WorkspaceCliTmux, AppendKeepsItsBorrowedSessionAndReportsRetainedWindows) {
   EXPECT_TRUE(missing.out.empty());
 }
 
+// Reuse compares the document against the session that is already there; it
+// does not rebuild. A session missing a window the document asks for is
+// reported by name, the session is left as it was, and a document the session
+// does satisfy still reuses it and reports success.
+TEST(WorkspaceCliTmux, ReusedSessionMissingWindowsIsPartialAndNamesThem) {
+  Files files;
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-reuse")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto socket = fixture->socket_path().string();
+  const auto server = libtmux::Server::at_socket_path(socket);
+  ASSERT_TRUE(server.has_value());
+  std::ofstream{"one.yaml"} << "session_name: reuse\nwindows:\n"
+                               "  - window_name: one\n    panes: [echo A]\n";
+  std::ofstream{"three.yaml"} << "session_name: reuse\nwindows:\n"
+                                 "  - window_name: one\n    panes: [echo A]\n"
+                                 "  - window_name: two\n    panes: [echo B]\n"
+                                 "  - window_name: three\n    panes: [echo C]\n";
+  const auto created = invoke({"load", "one.yaml", "-d", "-S", socket, "--json"});
+  ASSERT_EQ(created.code, 0) << created.err;
+
+  const auto reused = invoke({"load", "three.yaml", "-d", "-S", socket, "--json"});
+  EXPECT_EQ(reused.code, 1) << reused.out << reused.err;
+  const auto summary = Json::parse(reused.out);
+  EXPECT_EQ(summary.at("status"), "partial") << summary.dump();
+  ASSERT_EQ(summary.at("errors").size(), 1U) << summary.dump();
+  const auto& problem = summary.at("errors")[0];
+  EXPECT_EQ(problem.at("code"), "destination_exists") << summary.dump();
+  const auto message = problem.at("message").get<std::string>();
+  EXPECT_NE(message.find("two"), std::string::npos) << message;
+  EXPECT_NE(message.find("three"), std::string::npos) << message;
+  const auto session = server->session("=reuse:");
+  ASSERT_TRUE(session.has_value());
+  const auto windows = session->windows();
+  ASSERT_TRUE(windows.has_value());
+  EXPECT_EQ(windows->size(), 1U);
+
+  const auto satisfied = invoke({"load", "one.yaml", "-d", "-S", socket, "--json"});
+  EXPECT_EQ(satisfied.code, 0) << satisfied.out << satisfied.err;
+  EXPECT_EQ(Json::parse(satisfied.out).at("status"), "ok");
+}
+
 // Every way the invoking context can be unusable -- a server that has since
 // restarted, a socket that is gone, a pane that is not there or not a pane
 // id, and a TMUX that does not parse -- is refused the same way, before
