@@ -38,10 +38,6 @@ was recorded as it landed.
   Before: `options.tmux_binary.string()`
   After:  `options.tmux_binary.value_or("tmux").string()`
 
-- `Pane::wait_for_text` and `Server::wait_for_text` take `WaitOptions` by
-  `const&` rather than by value. No source change required, but callers must
-  relink. (#18)
-
 ### Asynchronous commands
 
 - `CommandRuntime::wait_ready` and `wait_ready_for` replace observer
