@@ -32,6 +32,7 @@
 namespace {
 
 using libtmux::CommandFailure;
+using libtmux::CommandReport;
 using libtmux::Server;
 using libtmux::detail::Argument;
 using libtmux::detail::Exited;
