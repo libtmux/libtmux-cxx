@@ -21,6 +21,7 @@
 #include <utility>
 #include <vector>
 
+#include "libtmux/format.hpp"
 #include "libtmux/server.hpp"
 #include "libtmux/target.hpp"
 
@@ -380,11 +381,14 @@ build_windows(const Server& server, const Workspace& description,
     if ((borrowed || index != 0) && window.index.has_value()) {
       command.back() += ":" + std::to_string(*window.index);
     }
+    // tmux expands formats in both, and both are text from a document, so
+    // they are escaped here exactly as the library escapes them for the
+    // split that makes every pane after the first.
     if (!window.name.empty()) {
-      command.insert(command.end(), {"-n", window.name});
+      command.insert(command.end(), {"-n", escape_literal(window.name)});
     }
     if (const auto path = directory(window, first); !path.empty()) {
-      command.insert(command.end(), {"-c", path});
+      command.insert(command.end(), {"-c", escape_literal(path)});
     }
     for (const auto& [name, value] : environment(window, first)) {
       if (auto error = notify(BuildPhase::waiting, index, 0))
