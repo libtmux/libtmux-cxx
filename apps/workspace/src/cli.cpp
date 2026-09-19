@@ -14,11 +14,9 @@
 #include <string_view>
 
 #include <CLI/CLI.hpp>
-#ifndef _WIN32
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#endif
 
 namespace libtmux::workspace::cli {
 namespace {
@@ -45,14 +43,11 @@ class DiagnosticLog {
         omit_capture(child);
   }
   void close() noexcept {
-#ifndef _WIN32
     if (descriptor_ >= 0 && ::close(descriptor_) != 0 && failure_ == 0)
       failure_ = errno;
-#endif
     descriptor_ = -1;
   }
   void write(const Json& record) {
-#ifndef _WIN32
     const auto bytes = encoded(record) + '\n';
     std::size_t offset{};
     while (offset < bytes.size()) {
@@ -67,9 +62,6 @@ class DiagnosticLog {
       }
       offset += static_cast<std::size_t>(count);
     }
-#else
-    (void)record;
-#endif
   }
 
 public:
@@ -86,7 +78,6 @@ public:
     level_ = rank(request_.value("log-level", "warning"));
     if (!request_.flag("log-file"))
       return;
-#ifndef _WIN32
     const auto path = request_.value("log-file");
     if (path.find('\0') != std::string::npos)
       throw Failure{1, "log_file_unavailable", "log path contains a null byte"};
@@ -112,10 +103,6 @@ public:
                                   : "opened log destination is not a regular file"};
     }
     descriptor_ = file;
-#else
-    throw Failure{1, "log_file_unavailable",
-                  "log files require POSIX file descriptors"};
-#endif
   }
   void event(const std::string& name, const Json& data, std::size_t sequence) noexcept {
     const std::string_view severity = name == "script-output" ? "debug"
@@ -388,12 +375,7 @@ bool colour_enabled(const Request& request, std::ostream& output) {
     return false;
   if (policy == "always" || environment("FORCE_COLOR"))
     return true;
-#ifndef _WIN32
   return &output == &std::cout && ::isatty(STDOUT_FILENO) != 0;
-#else
-  (void)output;
-  return false;
-#endif
 }
 } // namespace
 int run(std::vector<std::string> arguments, std::istream& input, std::ostream& output,
@@ -412,10 +394,8 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
   Request request;
   // A supplied input stream does not authorize borrowing the process terminal.
   request.terminal_allowed = &input == &std::cin;
-#ifndef _WIN32
   request.stdout_terminal = &output == &std::cout && ::isatty(STDOUT_FILENO) != 0;
   request.stdin_terminal = request.terminal_allowed && ::isatty(STDIN_FILENO) != 0;
-#endif
   // Machine mode is read from the parsed model below; this answers only for a
   // usage error raised before parsing finishes. An option's value is skipped,
   // so a session named `--json` stays a name.

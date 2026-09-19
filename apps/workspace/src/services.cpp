@@ -367,11 +367,7 @@ std::optional<Json> record(const WorkspaceFile& file, bool full) {
       modified - fs::file_time_type::clock::now() + std::chrono::system_clock::now());
   const std::time_t stamp = std::chrono::system_clock::to_time_t(system);
   std::tm utc{};
-#ifdef _WIN32
-  gmtime_s(&utc, &stamp);
-#else
   gmtime_r(&stamp, &utc);
-#endif
   std::ostringstream time;
   time << std::put_time(&utc, "%Y-%m-%dT%H:%M:%SZ");
   Json config = nullptr;
