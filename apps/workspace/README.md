@@ -2,12 +2,14 @@
 
 This optional C++ application manages tmux workspaces using CLI11, yaml-cpp
 and nlohmann JSON. The implementation is partial. Core libtmux remains free of
-these dependencies. It builds workspaces through the builder in
-`examples/workspace/`, not through one of its own, so a program calling that
-builder and this command line build a workspace the same way; the builder is
-part of this repository rather than of the installed library. The pinned CLI11 fallback builds as a static library to
+these dependencies. The pinned CLI11 fallback builds as a static library to
 reduce repeated CLI compilation. An installed CLI11 package keeps its supplied
 compiled or header-only form.
+
+It builds workspaces through the builder in `examples/workspace/` rather than
+through one of its own, so a program calling that builder and this command
+line build a workspace the same way and a fix to one is a fix to both. That
+builder is part of this repository, not of the installed library.
 
 Build the application with the pinned development toolchain:
 
@@ -135,11 +137,14 @@ each parsed configuration as indented JSON; unreadable configurations show
 controls while preserving Unicode. JSON and NDJSON retain their data values;
 `--tree` changes only human presentation.
 
-Load starts tmux when needed, creates sessions or reuses exact existing names.
-A session-name override
+Load starts tmux when needed and creates sessions. A session already running
+under the name a document asks for is compared against that document rather
+than rebuilt: one missing a window the document describes stops the load and
+is named, and is left as it was found. A session-name override
 applies to the final input. New sessions retain explicit window indexes,
 created object identities, command settings, environments and layouts. Failed
-builds remove their own session and preserve earlier successful inputs.
+builds remove their own session and preserve earlier successful inputs; a
+build cancelled by a signal keeps what it made and names it instead.
 Layout names, checksums, tree syntax and pane counts are validated before any
 input runs a startup script or changes tmux. Named abbreviations follow the
 running daemon's version. A handle opened on an absent socket may use the
