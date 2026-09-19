@@ -43,10 +43,7 @@ struct Row {
 // missing row and an unavailable transport are different claims.
 const std::vector<std::pair<std::string, std::string>>& unimplemented_lanes() {
   static const std::vector<std::pair<std::string, std::string>> lanes{
-      {"connection",
-       "this workload splits windows, and split-window is one of the twelve "
-       "commands that can return CMD_RETURN_WAIT, so tmux may close the "
-       "guarded block before the command has finished"},
+      {"connection", "not built yet: needs a control-mode CommandExecutor"},
       {"concurrent x4", "requires a dispatching control connection"},
       {"chained + connection", "requires a dispatching control connection"},
   };

@@ -55,14 +55,12 @@ comparable against the other libtmux ports.
 **Count invocations, not milliseconds.** Wall clock moves with the machine. The
 process column does not.
 
-Three lanes are reported as unimplemented rather than left out, and the reason
-is tmux's rather than this library's. `libtmux::Connection` does dispatch —
-`execute()` is public — and `Server::over` will now put a Server on any
-transport a caller writes. What stops this table is the workload: it splits
-windows five times, and `split-window` is one of exactly twelve commands that
-can return `CMD_RETURN_WAIT`, so tmux may write `%end` before the split has
-finished. A timing taken there would compare a wire acknowledgement against a
-finished command.
+Three lanes are reported as unimplemented rather than left out. An earlier
+version of this note said tmux itself forbade them, because `split-window` is
+one of the twelve commands that can return `CMD_RETURN_WAIT`. That overstated
+it: `split-window` defers only under `-I` or `-W`, and this workload sends
+neither, so its guarded block is the whole answer. The lanes are unbuilt, not
+unbuildable.
 
 The distinction matters because it is narrow. No `list-*` command can defer,
 and `display-message` defers only under `-I`, so a listing *is* answered
