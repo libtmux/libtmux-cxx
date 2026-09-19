@@ -205,6 +205,21 @@ private:
   std::size_t index_{0};
 };
 
+// One held-open control client.
+//
+// Shared freely between threads. `execute`, `take_notifications`,
+// `wait_for_notifications`, `watch_notifications`, `set_pane_output` and the
+// muting pair may all be called at once: writes are serialized, and each
+// reply is matched to its own request through a private boundary, which is
+// what lets concurrent callers tell their blocks apart even though tmux puts
+// no request id on a guard.
+//
+// Moving from a connection, or destroying one, may not race with any of
+// those — the same rule `CommandRuntime` states for itself.
+//
+// It remains one FIFO client, so a command that waits on the server also
+// delays whatever another thread asked for next. That is why `Server::run`
+// stays the surface for a command whose final result matters.
 class Connection final {
 public:
   static expected<Connection, ProtocolError> connect(ConnectionOptions options);
