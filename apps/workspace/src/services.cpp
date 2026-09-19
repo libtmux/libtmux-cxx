@@ -761,6 +761,15 @@ Json capture(const Request& request) {
   // same answer here, and neither reads as one in the library's own words.
   if (!session)
     throw Failure{1, "session_not_found", "no session named " + name};
+  // Never write a document load would refuse. tmux reads "." and ":" in a
+  // target as separators, so a session whose name carries one cannot be
+  // addressed by name at all -- including by the workspace this would save.
+  if (!libtmux::session_target(session->name()))
+    throw Failure{1, "invalid_workspace",
+                  "session " + std::string{session->name()} +
+                      " cannot be captured: tmux reads \".\" and \":\" in a "
+                      "session name as target separators, so a workspace naming "
+                      "it could not be loaded"};
   const auto windows = session->windows();
   if (!windows)
     throw Failure{1, "tmux_failed", windows.error().diagnostic};
