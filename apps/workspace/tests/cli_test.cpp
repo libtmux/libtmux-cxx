@@ -2090,6 +2090,40 @@ TEST(WorkspaceCliTmux, AppendKeepsItsBorrowedSessionAndReportsRetainedWindows) {
   EXPECT_TRUE(missing.out.empty());
 }
 
+// tmux expands #{...} in the arguments naming a new window and its
+// directory, so text a document supplies is escaped there as it is
+// everywhere else: a window this builder splits already was.
+TEST(WorkspaceCliTmux, WindowNamesAndDirectoriesAreNotFormatStrings) {
+  Files files;
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-fmt")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto socket = fixture->socket_path().string();
+  const auto server = libtmux::Server::at_socket_path(socket);
+  ASSERT_TRUE(server.has_value());
+  const auto directory = files.directory / "#{session_name}";
+  std::filesystem::create_directories(directory);
+  std::ofstream{"fmt.yaml"} << "session_name: fmt\nwindows:\n"
+                               "  - window_name: \"#{session_name}-w\"\n"
+                               "    start_directory: \""
+                            << directory.string()
+                            << "\"\n    panes: [echo A, echo B]\n";
+
+  const auto loaded = invoke({"load", "fmt.yaml", "-d", "-S", socket, "--json"});
+  ASSERT_EQ(loaded.code, 0) << loaded.out << loaded.err;
+  const auto session = server->session("=fmt:");
+  ASSERT_TRUE(session.has_value());
+  const auto windows = session->windows();
+  ASSERT_TRUE(windows.has_value());
+  ASSERT_EQ(windows->size(), 1U);
+  EXPECT_EQ(windows->front().name(), "#{session_name}-w");
+  const auto panes = windows->front().panes();
+  ASSERT_TRUE(panes.has_value());
+  ASSERT_EQ(panes->size(), 2U);
+  for (const auto& pane : *panes)
+    EXPECT_EQ(pane.path(), directory.string());
+}
+
 // tmux keeps some options in its window table, and routes a set against a
 // session to whichever window is current -- the bootstrap window a build
 // then kills. A document that writes one under the session's options gets it
