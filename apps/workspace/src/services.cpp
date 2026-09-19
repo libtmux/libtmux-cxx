@@ -20,6 +20,7 @@
 #include <set>
 #include <sstream>
 #include <sys/ioctl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "libtmux/server.hpp"
@@ -916,6 +917,14 @@ Json save_or_return(const Request& request, const Json& document, std::string fo
   auto temporary_name =
       (path.parent_path() / ("." + path.filename().string() + ".XXXXXX")).string();
   int descriptor = ::mkstemp(temporary_name.data());
+  if (descriptor >= 0) {
+    // mkstemp always creates the file rw-owner-only, whatever the umask; a
+    // document is not a secret log, so it takes the permissions a plain
+    // `open()` would have given it instead.
+    const mode_t mask = ::umask(0);
+    ::umask(mask);
+    (void)::fchmod(descriptor, 0666 & ~mask);
+  }
   if (descriptor < 0) {
     // A destination this process cannot open because of the path it was
     // given -- no such directory, not a directory, no permission -- is a
