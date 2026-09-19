@@ -1206,6 +1206,15 @@ int main() {
                "typed psmux sessions did not retain their durable registry IDs")) {
     return EXIT_FAILURE;
   }
+  // "=name:" is the spelling apps/workspace uses to reach a name tmux would
+  // otherwise split on: Server::session must strip both the leading "=" and
+  // the trailing ":" before comparing, not just the "=".
+  const auto colon_addressed = server.session("=alpha:");
+  if (!require(colon_addressed.has_value() &&
+                   colon_addressed->id() == first_session->id(),
+               "\"=name:\" must resolve the same session as a bare name")) {
+    return EXIT_FAILURE;
+  }
 
   const auto registry = psmux_data_directory();
   if (!registry.has_value()) {

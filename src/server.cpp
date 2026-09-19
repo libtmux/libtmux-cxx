@@ -815,7 +815,10 @@ expected<Session, CommandFailure> Server::session(std::string_view target) const
   if (!owned.has_value()) {
     return unexpected(owned.error());
   }
-  const std::string_view exact = target.starts_with('=') ? target.substr(1U) : target;
+  std::string_view exact = target.starts_with('=') ? target.substr(1U) : target;
+  if (exact.ends_with(':')) {
+    exact.remove_suffix(1U);
+  }
   const bool by_id =
       exact.size() > 1U && exact.starts_with('$') &&
       exact.find_first_not_of("0123456789", 1U) == std::string_view::npos;
