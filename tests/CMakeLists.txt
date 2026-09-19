@@ -535,6 +535,13 @@ if(NOT WIN32)
     TEST_PREFIX libtmux.process_engine.
     PROPERTIES LABELS "concurrency" TIMEOUT 60)
 
+  # `--wrap` binds at the link of this executable, so it redirects only calls
+  # the linker still has to resolve. A shared libtmux has already bound its own
+  # `posix_spawnp` internally, and the wrappers below then intercept nothing —
+  # every one of these cases reports the success it was asked to fail. Building
+  # them against a shared library would produce eleven confident, meaningless
+  # passes, so the whole group is skipped there instead.
+  if(NOT BUILD_SHARED_LIBS)
   add_executable(
     libtmux_process_engine_failure_test process_engine_failure_test.cpp)
   target_include_directories(
@@ -562,6 +569,7 @@ if(NOT WIN32)
     libtmux_process_engine_failure_test
     TEST_PREFIX libtmux.process_engine_failure.
     PROPERTIES LABELS "concurrency" TIMEOUT 60)
+  endif()
 endif()
 
 add_executable(libtmux_backend_seam_test backend_seam_test.cpp)

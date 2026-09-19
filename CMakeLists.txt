@@ -87,6 +87,16 @@ endif()
 if(WIN32 AND LIBTMUX_BUILD_FUZZERS)
   message(FATAL_ERROR "LIBTMUX_BUILD_FUZZERS is not supported on Windows")
 endif()
+# A shared build needs every symbol a consumer links to be exported, and the
+# Windows preview has no export annotations at all — it would produce a DLL
+# with an empty import library and fail at link rather than at configure.
+# Refusing here says so while the builder can still act on it.
+if(BUILD_SHARED_LIBS AND WIN32)
+  message(
+    FATAL_ERROR
+      "BUILD_SHARED_LIBS is not supported on Windows: the psmux preview "
+      "carries no symbol export annotations, so the DLL would export nothing.")
+endif()
 if(WIN32 AND (LIBTMUX_ENABLE_SANITIZERS OR LIBTMUX_ENABLE_THREAD_SANITIZER OR
               LIBTMUX_ENABLE_COVERAGE))
   message(

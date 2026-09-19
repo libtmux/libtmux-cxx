@@ -12,7 +12,11 @@ else()
   list(APPEND LIBTMUX_SOURCES process.cpp posix_child.cpp process_engine.cpp
        connection.cpp notification_stream.cpp spawn_descriptors.cpp)
 endif()
-add_library(libtmux STATIC ${LIBTMUX_SOURCES})
+# No STATIC keyword, so `BUILD_SHARED_LIBS` decides — which is what the
+# design note promised and what a distribution packaging this will reach for.
+# The sources are already built position-independent below, so a shared build
+# needs nothing else here on ELF or Mach-O.
+add_library(libtmux ${LIBTMUX_SOURCES})
 add_library(libtmux::libtmux ALIAS libtmux)
 # Public, not private: the tests reach these seams through the same headers,
 # so one definition keeps the library and its suite agreeing about whether the
@@ -111,6 +115,7 @@ endif()
 
 if(LIBTMUX_INSTALL)
   include(CMakePackageConfigHelpers)
+
 
   install(
     TARGETS libtmux
