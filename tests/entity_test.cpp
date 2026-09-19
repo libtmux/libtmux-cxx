@@ -1215,6 +1215,7 @@ TEST(Entity, TheServerEnvironmentIsReadAndWrittenByName) {
   ASSERT_TRUE(server.set_environment("LIBTMUX_EMPTY", "").has_value());
   // Remembered, as an instruction to keep it out of a child.
   ASSERT_TRUE(server.remove_environment("LIBTMUX_GONE").has_value());
+  ASSERT_TRUE(server.set_environment("-r", "LIBTMUX_PROBE").has_value());
 
   const auto environment = server.environment();
   ASSERT_TRUE(environment.has_value()) << environment.error().diagnostic;
@@ -1239,6 +1240,13 @@ TEST(Entity, TheServerEnvironmentIsReadAndWrittenByName) {
   ASSERT_NE(gone, environment->end());
   EXPECT_FALSE(gone->value.has_value());
 
+  const auto dashed = find("-r");
+  ASSERT_NE(dashed, environment->end());
+  ASSERT_TRUE(dashed->value.has_value());
+  EXPECT_EQ(*dashed->value, "LIBTMUX_PROBE");
+  ASSERT_TRUE(server.unset_environment("-r").has_value());
+  ASSERT_TRUE(server.remove_environment("-u").has_value());
+
   // Forgetting takes the name out of the listing altogether.
   ASSERT_TRUE(server.unset_environment("LIBTMUX_PROBE").has_value());
   const auto after = server.environment();
@@ -1246,6 +1254,12 @@ TEST(Entity, TheServerEnvironmentIsReadAndWrittenByName) {
   EXPECT_EQ(
       std::ranges::find(*after, "LIBTMUX_PROBE", &libtmux::EnvironmentEntry::name),
       after->end());
+  EXPECT_EQ(std::ranges::find(*after, "-r", &libtmux::EnvironmentEntry::name),
+            after->end());
+  const auto removed_dash =
+      std::ranges::find(*after, "-u", &libtmux::EnvironmentEntry::name);
+  ASSERT_NE(removed_dash, after->end());
+  EXPECT_FALSE(removed_dash->value.has_value());
 }
 
 TEST(Entity, ANewSessionComesBackAsASession) {

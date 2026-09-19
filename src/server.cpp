@@ -877,7 +877,7 @@ Server::wait_for(std::string_view channel,
   // the request here; the policy's floor exists for calls that should have
   // answered by now, and this one has not been asked yet.
   const auto waited =
-      backend_->run({"wait-for", std::string{channel}}, timeout, std::nullopt);
+      backend_->run({"wait-for", "--", std::string{channel}}, timeout, std::nullopt);
   if (!waited.has_value()) {
     return unexpected(waited.error());
   }
@@ -903,7 +903,7 @@ expected<void, CommandFailure> Server::signal(std::string_view channel) const {
   if (refuses(ServerFeature::wait_channels)) {
     return unexpected(unsupported_psmux_state("wait channels"));
   }
-  return applied(run({"wait-for", "-S", std::string{channel}}));
+  return applied(run({"wait-for", "-S", "--", std::string{channel}}));
 }
 
 expected<std::vector<Command>, CommandFailure> Server::commands() const {
@@ -1236,7 +1236,7 @@ expected<void, CommandFailure> Server::set_server_option(std::string_view name,
   if (refuses(ServerFeature::server_state)) {
     return unexpected(unsupported_psmux_state("server options"));
   }
-  CommandRequest command{"set-option", "-s", std::string{name}};
+  CommandRequest command{"set-option", "-s", "--", std::string{name}};
   command.push_back(CommandArgument::sensitive(std::string{value}));
   return applied(run(command));
 }
@@ -1253,7 +1253,7 @@ expected<void, CommandFailure> Server::set_global_option(std::string_view name,
   if (refuses(ServerFeature::server_state)) {
     return unexpected(unsupported_psmux_state("global options"));
   }
-  CommandRequest command{"set-option", "-g", std::string{name}};
+  CommandRequest command{"set-option", "-g", "--", std::string{name}};
   command.push_back(CommandArgument::sensitive(std::string{value}));
   return applied(run(command));
 }
@@ -1278,7 +1278,7 @@ expected<void, CommandFailure> Server::set_global_hook(std::string_view name,
   if (refuses(ServerFeature::server_state)) {
     return unexpected(unsupported_psmux_state("global hooks"));
   }
-  CommandRequest request{"set-hook", "-g", std::string{name}};
+  CommandRequest request{"set-hook", "-g", "--", std::string{name}};
   request.push_back(CommandArgument::sensitive(std::string{command}));
   return applied(run(request));
 }
@@ -1299,15 +1299,13 @@ expected<std::vector<EnvironmentEntry>, CommandFailure> Server::environment() co
     if (line.empty()) {
       continue;
     }
-    // `-NAME` is a name tmux will take out of a child's environment, and
-    // `NAME=value` is one it will put in. A name cannot begin with `-`, so
-    // the leading byte settles which this is without splitting first.
-    if (line.front() == '-') {
+    const auto equals = line.find('=');
+    // Bound names may start with '-'; only entries without '=' are removed.
+    if (line.front() == '-' && equals == std::string_view::npos) {
       entries.push_back(
           EnvironmentEntry{.name = std::string{line.substr(1)}, .value = std::nullopt});
       continue;
     }
-    const auto equals = line.find('=');
     if (equals == std::string_view::npos) {
       // tmux prints no such line; keeping it as a bound name rather than
       // dropping it means an unexpected shape is visible instead of missing.
@@ -1323,15 +1321,16 @@ expected<std::vector<EnvironmentEntry>, CommandFailure> Server::environment() co
 
 expected<void, CommandFailure> Server::set_environment(std::string_view name,
                                                        std::string_view value) const {
-  return applied(run({"set-environment", "-g", std::string{name}, std::string{value}}));
+  return applied(
+      run({"set-environment", "-g", "--", std::string{name}, std::string{value}}));
 }
 
 expected<void, CommandFailure> Server::unset_environment(std::string_view name) const {
-  return applied(run({"set-environment", "-g", "-u", std::string{name}}));
+  return applied(run({"set-environment", "-g", "-u", "--", std::string{name}}));
 }
 
 expected<void, CommandFailure> Server::remove_environment(std::string_view name) const {
-  return applied(run({"set-environment", "-g", "-r", std::string{name}}));
+  return applied(run({"set-environment", "-g", "-r", "--", std::string{name}}));
 }
 
 expected<std::vector<OptionEntry>, CommandFailure>

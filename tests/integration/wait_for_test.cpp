@@ -32,6 +32,21 @@ TEST(WaitFor, ASignalSentBeforeTheWaitStillReleasesIt) {
       << (released.has_value() ? "" : released.error().diagnostic);
 }
 
+TEST(WaitFor, LeadingDashesBelongToTheChannelName) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+
+  ASSERT_TRUE(server.run({"wait-for", "-S", "--", "-L"}).has_value());
+  const auto waited = server.wait_for("-L", 250ms);
+  EXPECT_TRUE(waited.has_value())
+      << (waited.has_value() ? "" : waited.error().diagnostic);
+
+  const auto signalled = server.signal("-S");
+  ASSERT_TRUE(signalled.has_value()) << signalled.error().diagnostic;
+  EXPECT_TRUE(server.run({"wait-for", "--", "-S"}, 250ms).has_value());
+}
+
 TEST(WaitFor, ASignalFromAnotherThreadReleasesTheWaiter) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();

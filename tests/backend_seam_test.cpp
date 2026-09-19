@@ -262,8 +262,9 @@ TEST(BackendSeam, EveryOperationSendsTheArgvItClaimsTo) {
   // `--` because a name is data: tmux reads a leading dash as a flag.
   EXPECT_EQ(backend->issued[1],
             (std::vector<std::string>{"rename-session", "-t", "$0", "--", "renamed"}));
-  EXPECT_EQ(backend->issued[2], (std::vector<std::string>{"set-option", "-t", "$0",
-                                                          "status-position", "top"}));
+  EXPECT_EQ(backend->issued[2],
+            (std::vector<std::string>{"set-option", "-t", "$0", "--", "status-position",
+                                      "top"}));
   EXPECT_EQ(backend->issued[3], (std::vector<std::string>{"kill-session", "-t", "$0"}));
 }
 

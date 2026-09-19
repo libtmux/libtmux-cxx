@@ -406,8 +406,8 @@ expected<OptionEntry, CommandFailure> Session::option(std::string_view name) con
                              "psmux cannot atomically read a session option")) {
     return unexpected(std::move(*refusal));
   }
-  return named(run(scoped("show-options", {}, session_target(*this), {"-A", name})),
-               name);
+  return named(
+      run(scoped("show-options", {}, session_target(*this), {"-A", "--", name})), name);
 }
 
 expected<void, CommandFailure> Session::set_option(std::string_view name,
@@ -416,7 +416,8 @@ expected<void, CommandFailure> Session::set_option(std::string_view name,
                              "psmux cannot atomically set a session option")) {
     return unexpected(std::move(*refusal));
   }
-  CommandRequest command = scoped("set-option", {}, session_target(*this), {name});
+  CommandRequest command =
+      scoped("set-option", {}, session_target(*this), {"--", name});
   command.push_back(CommandArgument::sensitive(std::string{value}));
   return effect(run(command));
 }
@@ -426,7 +427,8 @@ expected<void, CommandFailure> Session::unset_option(std::string_view name) cons
                              "psmux cannot atomically unset a session option")) {
     return unexpected(std::move(*refusal));
   }
-  return effect(run(scoped("set-option", {}, session_target(*this), {"-u", name})));
+  return effect(
+      run(scoped("set-option", {}, session_target(*this), {"-u", "--", name})));
 }
 
 expected<std::string, CommandFailure> Session::expand(std::string_view format) const {
@@ -480,7 +482,8 @@ expected<void, CommandFailure> Session::set_hook(std::string_view name,
                              "psmux cannot atomically set a session hook")) {
     return unexpected(std::move(*refusal));
   }
-  CommandRequest request{"set-hook", "-t", session_target(*this), std::string{name}};
+  CommandRequest request{"set-hook", "-t", session_target(*this), "--",
+                         std::string{name}};
   request.push_back(CommandArgument::sensitive(std::string{command}));
   return effect(run(request));
 }
@@ -958,9 +961,9 @@ expected<OptionEntry, CommandFailure> Window::option(std::string_view name) cons
                              "psmux does not provide window-scoped options")) {
     return unexpected(std::move(*refusal));
   }
-  return named(
-      run(scoped("show-options", "-w", window_command_target(*this), {"-A", name})),
-      name);
+  return named(run(scoped("show-options", "-w", window_command_target(*this),
+                          {"-A", "--", name})),
+               name);
 }
 
 expected<void, CommandFailure> Window::set_option(std::string_view name,
@@ -970,7 +973,7 @@ expected<void, CommandFailure> Window::set_option(std::string_view name,
     return unexpected(std::move(*refusal));
   }
   CommandRequest command =
-      scoped("set-option", "-w", window_command_target(*this), {name});
+      scoped("set-option", "-w", window_command_target(*this), {"--", name});
   command.push_back(CommandArgument::sensitive(std::string{value}));
   return effect(run(command));
 }
@@ -980,8 +983,8 @@ expected<void, CommandFailure> Window::unset_option(std::string_view name) const
                              "psmux does not provide window-scoped options")) {
     return unexpected(std::move(*refusal));
   }
-  return effect(
-      run(scoped("set-option", "-w", window_command_target(*this), {"-u", name})));
+  return effect(run(
+      scoped("set-option", "-w", window_command_target(*this), {"-u", "--", name})));
 }
 
 // --- Pane ------------------------------------------------------------------
@@ -1734,8 +1737,8 @@ expected<OptionEntry, CommandFailure> Pane::option(std::string_view name) const 
                              "psmux does not implement pane options")) {
     return unexpected(std::move(*refusal));
   }
-  return named(run(scoped("show-options", "-p", pane_target(*this), {"-A", name})),
-               name);
+  return named(
+      run(scoped("show-options", "-p", pane_target(*this), {"-A", "--", name})), name);
 }
 
 expected<void, CommandFailure> Pane::set_option(std::string_view name,
@@ -1744,7 +1747,7 @@ expected<void, CommandFailure> Pane::set_option(std::string_view name,
                              "psmux does not implement pane options")) {
     return unexpected(std::move(*refusal));
   }
-  CommandRequest command = scoped("set-option", "-p", pane_target(*this), {name});
+  CommandRequest command = scoped("set-option", "-p", pane_target(*this), {"--", name});
   command.push_back(CommandArgument::sensitive(std::string{value}));
   return effect(run(command));
 }
@@ -1754,7 +1757,8 @@ expected<void, CommandFailure> Pane::unset_option(std::string_view name) const {
                              "psmux does not implement pane options")) {
     return unexpected(std::move(*refusal));
   }
-  return effect(run(scoped("set-option", "-p", pane_target(*this), {"-u", name})));
+  return effect(
+      run(scoped("set-option", "-p", pane_target(*this), {"-u", "--", name})));
 }
 
 // --- Client ----------------------------------------------------------------
