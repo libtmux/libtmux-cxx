@@ -122,13 +122,105 @@ decode_messages(const libtmux::expected<std::string, std::string>& finished) {
   return messages;
 }
 
-std::vector<json>
-converse_with(std::vector<std::string> arguments, std::vector<std::string> environment,
-              const std::vector<json>& requests,
-              std::chrono::milliseconds linger = std::chrono::milliseconds{250}) {
-  auto finished = libtmux::mcp::test::run_server(
+const json* response(const std::vector<json>& messages, const json& id) {
+  for (const json& message : messages) {
+    if (message.is_array()) {
+      const auto found = std::ranges::find_if(message, [&id](const json& item) {
+        const auto identifier = item.find("id");
+        return identifier != item.end() && *identifier == id;
+      });
+      if (found != message.end()) {
+        return &*found;
+      }
+      continue;
+    }
+    const auto identifier = message.find("id");
+    if (identifier != message.end() && *identifier == id) {
+      return &message;
+    }
+  }
+  return nullptr;
+}
+
+// Whether every one of `ids` has been answered in `output` so far. Only whole
+// lines count: a reply still arriving is not a reply yet.
+std::function<bool(std::string_view)> replied(std::vector<json> ids) {
+  return [ids = std::move(ids)](std::string_view output) {
+    std::vector<json> messages;
+    std::size_t start = 0U;
+    for (std::size_t end = output.find('\n'); end != std::string_view::npos;
+         end = output.find('\n', start)) {
+      json parsed = json::parse(output.substr(start, end - start), nullptr, false);
+      if (!parsed.is_discarded()) {
+        messages.push_back(std::move(parsed));
+      }
+      start = end + 1U;
+    }
+    return std::ranges::all_of(
+        ids, [&](const json& id) { return response(messages, id) != nullptr; });
+  };
+}
+
+// The requests the server owes a reply: well-formed calls with an ordinary id,
+// less any the same input cancels. Anything unusual is left out rather than
+// waited for, so a test sending a malformed request still sees its old timing.
+std::vector<json> awaited_ids(const std::vector<json>& requests) {
+  std::vector<json> ids;
+  std::vector<json> cancelled;
+  const auto visit = [&](const json& message, const auto& self) -> void {
+    if (message.is_array()) {
+      for (const json& item : message) {
+        self(item, self);
+      }
+      return;
+    }
+    if (!message.is_object()) {
+      return;
+    }
+    const auto method = message.find("method");
+    if (method == message.end() || !method->is_string()) {
+      return;
+    }
+    if (*method == "notifications/cancelled") {
+      const auto params = message.find("params");
+      if (params != message.end() && params->is_object() &&
+          params->contains("requestId")) {
+        cancelled.push_back(params->at("requestId"));
+      }
+      return;
+    }
+    const auto id = message.find("id");
+    const auto version = message.find("jsonrpc");
+    if (id == message.end() || version == message.end() || *version != "2.0") {
+      return;
+    }
+    if (id->is_number_integer() ||
+        (id->is_string() && id->get_ref<const std::string&>().size() <= 64U)) {
+      ids.push_back(*id);
+    }
+  };
+  for (const json& request : requests) {
+    visit(request, visit);
+  }
+  std::erase_if(ids, [&](const json& id) {
+    return std::ranges::find(cancelled, id) != cancelled.end();
+  });
+  return ids;
+}
+
+// Holds the server's input open until every request it owes a reply has one.
+// Closing it sooner is shutdown, which cancels a call still running — a fixed
+// linger lost slow answers to the clock on a loaded machine.
+std::vector<json> converse_with(std::vector<std::string> arguments,
+                                std::vector<std::string> environment,
+                                const std::vector<json>& requests,
+                                std::chrono::milliseconds linger = {}) {
+  auto finished = libtmux::mcp::test::run_server_steps(
       LIBTMUX_MCP_SERVER_PATH, std::move(arguments), std::move(environment),
-      encode_requests(requests), std::chrono::seconds{60}, linger);
+      {{.text = encode_requests(requests),
+        .pause_after = linger,
+        .until = replied(awaited_ids(requests))}},
+      std::chrono::seconds{60});
   return decode_messages(finished);
 }
 
@@ -181,58 +273,19 @@ struct PrivateTmuxEndpointCleanup final {
   }
 };
 
-std::vector<json>
-converse(const std::filesystem::path& socket, const std::vector<json>& requests,
-         std::chrono::milliseconds linger = std::chrono::milliseconds{250}) {
+std::vector<json> converse(const std::filesystem::path& socket,
+                           const std::vector<json>& requests,
+                           std::chrono::milliseconds linger = {}) {
   return converse_with({"--socket-path", socket.string()},
                        libtmux::test::current_environment(), requests, linger);
 }
 
-std::vector<json>
-converse_ready(const std::filesystem::path& socket, std::vector<json> requests,
-               std::chrono::milliseconds linger = std::chrono::milliseconds{250}) {
+std::vector<json> converse_ready(const std::filesystem::path& socket,
+                                 std::vector<json> requests,
+                                 std::chrono::milliseconds linger = {}) {
   requests.insert(requests.begin(), initialized_notification());
   requests.insert(requests.begin(), initialize_request());
   return converse(socket, requests, linger);
-}
-
-const json* response(const std::vector<json>& messages, const json& id) {
-  for (const json& message : messages) {
-    if (message.is_array()) {
-      const auto found = std::ranges::find_if(message, [&id](const json& item) {
-        const auto identifier = item.find("id");
-        return identifier != item.end() && *identifier == id;
-      });
-      if (found != message.end()) {
-        return &*found;
-      }
-      continue;
-    }
-    const auto identifier = message.find("id");
-    if (identifier != message.end() && *identifier == id) {
-      return &message;
-    }
-  }
-  return nullptr;
-}
-
-// Whether every one of `ids` has been answered in `output` so far. Only whole
-// lines count: a reply still arriving is not a reply yet.
-std::function<bool(std::string_view)> replied(std::vector<json> ids) {
-  return [ids = std::move(ids)](std::string_view output) {
-    std::vector<json> messages;
-    std::size_t start = 0U;
-    for (std::size_t end = output.find('\n'); end != std::string_view::npos;
-         end = output.find('\n', start)) {
-      json parsed = json::parse(output.substr(start, end - start), nullptr, false);
-      if (!parsed.is_discarded()) {
-        messages.push_back(std::move(parsed));
-      }
-      start = end + 1U;
-    }
-    return std::ranges::all_of(
-        ids, [&](const json& id) { return response(messages, id) != nullptr; });
-  };
 }
 
 const json& require_response(const std::vector<json>& messages, const json& id) {
