@@ -1590,10 +1590,22 @@ static Execution execute_impl(const Request& request, const EventSink& event,
     try {
       auto server = endpoint(request);
       for (const auto& plan : plans)
-        if (auto error = validate_layouts(server, plan.workspace))
-          throw Failure{1, "invalid_workspace",
+        if (auto error = validate_layouts(server, plan.workspace)) {
+          // A layout this daemon is too old for is the daemon's limit, not a
+          // defect in the document; a layout no tmux would take is the
+          // document's.
+          const auto& refused = plan.workspace.windows[error->window_index].layout;
+          const auto trimmed = refused.find_first_not_of(" \t\r\n");
+          const bool saved_json =
+              trimmed != std::string::npos && refused[trimmed] == '{';
+          throw Failure{1,
+                        saved_json &&
+                                error->reason.find("require tmux") != std::string::npos
+                            ? "tmux_failed"
+                            : "invalid_workspace",
                         "windows[" + std::to_string(error->window_index) +
                             "].layout: " + error->reason};
+        }
       // Interactive, unforced: ask before moving the user, never in machine
       // mode and never without a terminal to answer from.
       if (interactive && !request.flag("yes") && !request.machine() && !plans.empty()) {
@@ -1665,7 +1677,7 @@ static Execution execute_impl(const Request& request, const EventSink& event,
         // been rolled back.
         std::string attempted_session_id;
         const BuildObserver observer =
-            [&](const BuildEvent& update) -> std::optional<std::string> {
+            [&](const BuildEvent& update) -> std::optional<BuildStop> {
           try {
             check_interruption();
             if (update.phase == BuildPhase::waiting)
@@ -1709,7 +1721,9 @@ static Execution execute_impl(const Request& request, const EventSink& event,
           } catch (const std::exception& error) {
             observer_error.emplace(1, "tmux_failed", error.what());
           }
-          return observer_error->what();
+          // A cancellation keeps what the build has made; a failure does not.
+          return BuildStop{observer_error->what(),
+                           observer_error->code == "interrupted"};
         };
         const auto existing =
             borrowed ? libtmux::expected<Session, CommandFailure>{*borrowed}
@@ -1751,7 +1765,7 @@ static Execution execute_impl(const Request& request, const EventSink& event,
         std::optional<Failure> script_error;
         BeforeBuild before;
         if (!plan.before_script.empty()) {
-          before = [&](const Session& session) -> std::optional<std::string> {
+          before = [&](const Session& session) -> std::optional<BuildStop> {
             stage = "before-script";
             try {
               event("script-started",
@@ -1780,13 +1794,15 @@ static Execution execute_impl(const Request& request, const EventSink& event,
                                          {"truncated", child.truncated},
                                          {"script_output", script_output}});
               if (script_error)
-                return script_error->what();
+                return BuildStop{script_error->what(),
+                                 script_error->code == "interrupted"};
             } catch (const Failure& error) {
               if (!script_error)
                 script_error = error;
               if (script_output.is_null())
                 script_output = error.child_output;
-              return script_error->what();
+              return BuildStop{script_error->what(),
+                               script_error->code == "interrupted"};
             }
             stage = "load";
             return std::nullopt;
@@ -1823,6 +1839,17 @@ static Execution execute_impl(const Request& request, const EventSink& event,
             problem["retained_state"] = {{"session_id", borrowed->id()},
                                          {"session_name", borrowed->name()},
                                          {"ownership", "borrowed"},
+                                         {"window_ids", built.error().retained_windows},
+                                         {"settings_may_have_changed", true}};
+          } else if (script_error && script_error->code == "interrupted" &&
+                     !attempted_session_id.empty()) {
+            // A cancelled build keeps what it made and says so. Removing a
+            // session on a keystroke is worse than leaving one behind, and
+            // the removal could itself be interrupted.
+            retained_changes = true;
+            problem["retained_state"] = {{"session_id", attempted_session_id},
+                                         {"session_name", plan.workspace.session_name},
+                                         {"ownership", "created"},
                                          {"window_ids", built.error().retained_windows},
                                          {"settings_may_have_changed", true}};
           }

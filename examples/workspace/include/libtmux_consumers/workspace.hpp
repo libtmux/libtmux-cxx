@@ -128,9 +128,22 @@ struct BuildError {
   std::vector<std::string> retained_windows{};
 };
 
-// Runs after session selection and before settings or windows. A returned error
+// What a callback says when it stops a build: the sentence for the caller,
+// and whether what the build has made so far is kept. A cancellation keeps
+// it -- tidying up after a signal can itself be interrupted, and destroying a
+// session on a keystroke is worse than leaving one behind. A failure does
+// not: a session this build created and could not finish is removed.
+struct BuildStop {
+  std::string reason;
+  bool retain{false};
+  BuildStop(const char* text) : reason{text} {}
+  BuildStop(std::string text, bool keep = false)
+      : reason{std::move(text)}, retain{keep} {}
+};
+
+// Runs after session selection and before settings or windows. A returned stop
 // uses the builder's owned-session rollback and borrowed-session preservation.
-using BeforeBuild = std::function<std::optional<std::string>(const libtmux::Session&)>;
+using BeforeBuild = std::function<std::optional<BuildStop>(const libtmux::Session&)>;
 
 enum class BuildPhase {
   session_started,
@@ -150,7 +163,7 @@ struct BuildEvent {
   std::string pane_id{};
 };
 // A refusal uses owned-session rollback or reports retained borrowed windows.
-using BuildObserver = std::function<std::optional<std::string>(const BuildEvent&)>;
+using BuildObserver = std::function<std::optional<BuildStop>(const BuildEvent&)>;
 
 // Check all layouts before sessions, settings, or before-build callbacks change.
 inline std::optional<BuildError> validate_layouts(const Server& server,
@@ -233,12 +246,12 @@ build_windows(const Server& server, const Workspace& description,
     return libtmux::unexpected(BuildError{0, built.error().diagnostic});
   }
   std::vector<std::string> created_windows;
-  const auto fail =
-      [&built, &borrowed, &created_windows](
-          std::size_t index,
-          std::string reason) -> libtmux::expected<libtmux::Session, BuildError> {
+  const auto fail = [&built, &borrowed, &created_windows](
+                        std::size_t index, std::string reason,
+                        bool retain =
+                            false) -> libtmux::expected<libtmux::Session, BuildError> {
     reason = sentence(reason);
-    if (borrowed)
+    if (borrowed || retain)
       return libtmux::unexpected(BuildError{index, std::move(reason), created_windows});
     if (const auto killed = built->kill(); !killed.has_value()) {
       reason += "; session cleanup failed: " + sentence(killed.error().diagnostic);
@@ -251,9 +264,9 @@ build_windows(const Server& server, const Workspace& description,
     if (!observer)
       return std::nullopt;
     try {
-      if (auto reason = observer({phase, window, pane, std::move(session_id),
-                                  std::move(window_id), std::move(pane_id)}))
-        return fail(window, std::move(*reason)).error();
+      if (auto stop = observer({phase, window, pane, std::move(session_id),
+                                std::move(window_id), std::move(pane_id)}))
+        return fail(window, std::move(stop->reason), stop->retain).error();
     } catch (const std::exception& error) {
       return fail(window, error.what()).error();
     } catch (...) {
@@ -324,8 +337,8 @@ build_windows(const Server& server, const Workspace& description,
     return libtmux::unexpected(std::move(*error));
   if (before) {
     try {
-      if (auto error = before(*built))
-        return fail(0, std::move(*error));
+      if (auto stop = before(*built))
+        return fail(0, std::move(stop->reason), stop->retain);
     } catch (...) {
       (void)fail(0, "before-build callback failed");
       throw;

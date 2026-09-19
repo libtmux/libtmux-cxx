@@ -1201,6 +1201,8 @@ TEST(WorkspaceCliTmux, ErrorCodesMatchTheSharedLowerSnakeCaseVocabulary) {
       {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-codes")});
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const auto socket = fixture->socket_path().string();
+  const auto server = libtmux::Server::at_socket_path(socket);
+  ASSERT_TRUE(server.has_value());
 
   const auto missing = invoke({"load", "missing.yaml", "-d", "-S", socket, "--json"});
   EXPECT_NE(missing.code, 0);
@@ -1223,6 +1225,40 @@ TEST(WorkspaceCliTmux, ErrorCodesMatchTheSharedLowerSnakeCaseVocabulary) {
   record = Json::parse(bogus.err);
   EXPECT_EQ(record.at("schema_version"), 1) << record.dump();
   EXPECT_EQ(record.at("code"), "unsupported_key") << record.dump();
+
+  // A layout the running daemon is too old for is the daemon's limit, not a
+  // defect in the document; a layout no tmux would take is the document's.
+  std::ofstream{"v2.yaml"}
+      << "session_name: v2\nwindows:\n  - window_name: w\n    layout: "
+         "'{\"V\":2,\"L\":{\"t\":\"p\",\"w\":80,\"h\":24,\"x\":0,\"y\":0,\"i\":0,"
+         "\"a\":true}}'\n    panes: [echo A]\n";
+  const auto version = server->tmux_version();
+  ASSERT_TRUE(version.has_value());
+  if (*version < libtmux::Version{.major = 3, .minor = 9, .prerelease = true}) {
+    const auto saved = invoke({"load", "v2.yaml", "-d", "-S", socket, "--json"});
+    EXPECT_NE(saved.code, 0) << saved.out;
+    record = Json::parse(saved.err);
+    EXPECT_EQ(record.at("code"), "tmux_failed") << record.dump();
+  }
+  std::ofstream{"named.yaml"} << "session_name: nolayout\nwindows:\n"
+                                 "  - window_name: w\n    layout: no-such-layout\n"
+                                 "    panes: [echo A]\n";
+  const auto named = invoke({"load", "named.yaml", "-d", "-S", socket, "--json"});
+  EXPECT_NE(named.code, 0) << named.out;
+  record = Json::parse(named.err);
+  EXPECT_EQ(record.at("code"), "invalid_workspace") << record.dump();
+
+  // A setting this builder knows carrying a value it could not act on is the
+  // document's defect; an unknown setting beside it is only a warning.
+  std::ofstream{"badvalue.yaml"} << "session_name: badvalue\n"
+                                    "workspace_builder_options:\n"
+                                    "  pane_readiness: {a: 1}\n"
+                                    "windows:\n  - window_name: w\n"
+                                    "    panes: [echo A]\n";
+  const auto value = invoke({"load", "badvalue.yaml", "-d", "-S", socket, "--json"});
+  EXPECT_NE(value.code, 0) << value.out;
+  record = Json::parse(value.err);
+  EXPECT_EQ(record.at("code"), "invalid_workspace") << record.dump();
 
   // A pattern that does not compile is a usage error like any other refusal
   // about the arguments, not a vocabulary of its own.
@@ -3298,7 +3334,10 @@ TEST(WorkspaceCliTmux, ProgressKeepsStdoutOnItsDesignatedTerminal) {
   }
 }
 
-TEST(WorkspaceCliTmux, InterruptedPaneDelayClearsProgressAndRollsBackOnlyOwnedSession) {
+// A cancellation is not a failure: what the load had built when the signal
+// arrived stays, because tidying up after a signal can itself be interrupted
+// and destroying a session on a keystroke is worse than leaving one behind.
+TEST(WorkspaceCliTmux, InterruptedPaneDelayClearsProgressAndKeepsWhatItBuilt) {
   Files files;
   auto fixture = libtmux::test::ScopedTmuxServer::start(
       {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-pg")});
@@ -3323,7 +3362,7 @@ TEST(WorkspaceCliTmux, InterruptedPaneDelayClearsProgressAndRollsBackOnlyOwnedSe
   EXPECT_NE(child.err.find("\r\033[JError: workspace load interrupted"),
             std::string::npos)
       << child.err;
-  EXPECT_FALSE(server->session("interrupted"));
+  EXPECT_TRUE(server->session("interrupted"));
   EXPECT_TRUE(server->session(fixture->session_name()));
 }
 
