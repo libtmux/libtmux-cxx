@@ -2558,6 +2558,11 @@ TEST(WorkspaceCliTmux, PromptedLoadRoutesEachAnswerToItsOwnPath) {
       EXPECT_TRUE(execution.value.at("results").empty());
       EXPECT_TRUE(execution.value.at("errors").empty());
       EXPECT_FALSE(execution.handoff);
+      // Declining is a normal outcome, not silence: the envelope says
+      // plainly what was left alone.
+      EXPECT_EQ(execution.value.at("note"),
+                "prompt-existing is unchanged; nothing was built")
+          << execution.value.dump();
     } else {
       EXPECT_EQ(execution.exit_code, 2) << execution.value.dump();
       ASSERT_EQ(execution.value.at("errors").size(), 1U);

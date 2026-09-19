@@ -140,7 +140,9 @@ controls while preserving Unicode. JSON and NDJSON retain their data values;
 Load starts tmux when needed and creates sessions. A session already running
 under the name a document asks for is compared against that document rather
 than rebuilt: one missing a window the document describes stops the load and
-is named, and is left as it was found. A session-name override
+is named, and is left as it was found. A window the document leaves unnamed is
+not compared, since tmux names a window after whatever it runs rather than
+what the document called it. A session-name override
 applies to the final input. New sessions retain explicit window indexes,
 created object identities, command settings, environments and layouts. Failed
 builds remove their own session and preserve earlier successful inputs; a
