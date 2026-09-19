@@ -128,6 +128,12 @@ bool detail::Row::same_connection(const Row& other) const noexcept {
   return detail::same_server(backend().get(), other.backend().get());
 }
 
+bool detail::Row::ids_scoped_by_session() const noexcept {
+  const auto& connection = backend();
+  return connection != nullptr &&
+         connection->capabilities().implementation == ServerImplementation::psmux;
+}
+
 expected<Server, CommandFailure> detail::Row::server() const {
   if (backend() == nullptr) {
     return unexpected(detail::disconnected());

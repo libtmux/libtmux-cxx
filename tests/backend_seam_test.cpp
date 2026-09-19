@@ -339,6 +339,37 @@ TEST(BackendSeam, AnEntityTargetsItsIdRatherThanItsName) {
   EXPECT_EQ(killed[2], "$7");
 }
 
+// Two panes carry the same id in different sessions. Whether that is one pane
+// or two is the server's answer, not the build's: tmux numbers panes uniquely
+// across the whole server, so a pane that moves between sessions is still that
+// pane; psmux numbers them within a session, so the same id twice is two
+// objects. Deciding it with `#if defined(_WIN32)` made two builds of this
+// source disagree, and made a psmux-like transport reached through
+// `Server::over` read as tmux for running on POSIX.
+TEST(BackendSeam, EntityIdentityFollowsTheServerRatherThanTheBuildPlatform) {
+  const auto same_pane_twice = [](libtmux::ServerImplementation implementation) {
+    auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{
+        pane_row("%1", "@1", "$0") + pane_row("%1", "@2", "$1")});
+    backend->declared = libtmux::ServerCapabilities{.implementation = implementation};
+    const auto snapshot = libtmux::Snapshot::take(
+        backend, libtmux::Pane::kFields, {"list-panes"}, libtmux::FormatArgument::flag);
+    EXPECT_TRUE(snapshot.has_value());
+    EXPECT_EQ((*snapshot)->rows().size(), 2U);
+    const libtmux::Pane first{*snapshot, 0};
+    const libtmux::Pane second{*snapshot, 1};
+    EXPECT_EQ(first.id(), second.id());
+    EXPECT_NE(first.session_id(), second.session_id());
+    return first == second;
+  };
+
+  EXPECT_TRUE(same_pane_twice(libtmux::ServerImplementation::tmux))
+      << "tmux pane ids are unique across the server, so the session cannot "
+         "make one pane into two";
+  EXPECT_FALSE(same_pane_twice(libtmux::ServerImplementation::psmux))
+      << "psmux scopes pane ids to a session, so the same id in two sessions "
+         "is two panes";
+}
+
 TEST(BackendSeam, RawTmux37RepairsABrokenOutWindowByStableId) {
   auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{
       pane_row("%7", "@3", "$2"), named_window_row("@9", "sh", "$2", "3.7", "1"),

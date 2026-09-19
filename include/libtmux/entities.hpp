@@ -183,17 +183,25 @@ namespace detail {
   return std::chrono::sys_seconds{std::chrono::seconds{to_number(text)}};
 }
 
-[[nodiscard]] inline bool same_entity_id(std::string_view left_id,
+// Whether two ids name the same object.
+//
+// `scoped_by_session` is the server's answer, not the build's: tmux numbers
+// panes and windows uniquely across the whole server, so the id settles it and
+// a pane that moves between sessions stays the same pane. psmux numbers them
+// within a session, so the same id in two sessions is two objects. Asking the
+// server rather than the platform is what keeps two builds of this source
+// agreeing about identity — and what keeps a psmux-like transport reached
+// through `Server::over` from being treated as tmux because it happens to run
+// on POSIX.
+[[nodiscard]] inline bool same_entity_id(bool scoped_by_session,
+                                         std::string_view left_id,
                                          std::string_view left_session_id,
                                          std::string_view right_id,
                                          std::string_view right_session_id) noexcept {
-#if defined(_WIN32)
-  return left_id == right_id && left_session_id == right_session_id;
-#else
-  static_cast<void>(left_session_id);
-  static_cast<void>(right_session_id);
-  return left_id == right_id;
-#endif
+  if (left_id != right_id) {
+    return false;
+  }
+  return !scoped_by_session || left_session_id == right_session_id;
 }
 
 // The storage every entity has, in one place: the snapshot that owns the bytes
@@ -259,6 +267,12 @@ protected:
   // Whether another value came from the same tmux server. Out of line because
   // answering it needs the connection type, which no installed header sees.
   [[nodiscard]] bool same_connection(const Row& other) const noexcept;
+
+  // Whether this server scopes pane and window ids within a session, so that
+  // an id alone does not name an object. Out of line for the same reason as
+  // `same_connection`: answering it needs the backend. False for a value read
+  // out of a recording, which is on no server and can only be compared by id.
+  [[nodiscard]] bool ids_scoped_by_session() const noexcept;
 
 private:
   std::shared_ptr<const Snapshot> snapshot_;
@@ -479,7 +493,8 @@ public:
   // window refreshed after a rename equals the one it was refreshed from.
   [[nodiscard]] bool operator==(const Window& other) const noexcept {
     return same_connection(other) &&
-           detail::same_entity_id(id(), session_id(), other.id(), other.session_id());
+           detail::same_entity_id(ids_scoped_by_session(), id(), session_id(),
+                                  other.id(), other.session_id());
   }
 
   // How to address this window, and the reason a window id alone will not do.
@@ -677,7 +692,8 @@ public:
   // pane refreshed after a rename equals the one it was refreshed from.
   [[nodiscard]] bool operator==(const Pane& other) const noexcept {
     return same_connection(other) &&
-           detail::same_entity_id(id(), session_id(), other.id(), other.session_id());
+           detail::same_entity_id(ids_scoped_by_session(), id(), session_id(),
+                                  other.id(), other.session_id());
   }
 
   [[nodiscard]] expected<Window, CommandFailure> window() const;
