@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import pathlib
+import re
 import subprocess
 import tarfile
 import unittest
@@ -59,6 +60,47 @@ class ArchiveContents(unittest.TestCase):
             self.assertIn(
                 required, paths, f"{required} is needed to build or read the library"
             )
+
+
+class ConsumerDependencies(unittest.TestCase):
+    """What a consumer of the library takes on by consuming it."""
+
+    def test_the_library_does_not_carry_the_mcp_servers_parser(self) -> None:
+        """The MCP server needs a JSON parser; the library must not inherit it."""
+        root = pathlib.Path(__file__).resolve().parents[2]
+        carrying = [
+            str(path.relative_to(root))
+            for directory in ("include", "src")
+            for path in (root / directory).rglob("*")
+            if path.is_file()
+            and path.suffix in {".hpp", ".cpp", ".txt", ".in"}
+            and "nlohmann" in path.read_text(errors="ignore")
+        ]
+        self.assertEqual(
+            carrying,
+            [],
+            "the library reaches the MCP server's parser; a consumer that never "
+            "asked for the server would inherit it",
+        )
+
+    def test_the_mcp_server_is_not_built_by_default(self) -> None:
+        """A library build does not become a program build without being asked."""
+        root = pathlib.Path(__file__).resolve().parents[2]
+        declaration = (root / "CMakeLists.txt").read_text()
+        # The one line, not the whole file: an assertion that dumps 200 lines
+        # of CMake to say one option changed is not a readable failure.
+        option = re.search(
+            r"^option\(LIBTMUX_BUILD_MCP_SERVER .*?\)$",
+            declaration,
+            re.MULTILINE | re.DOTALL,
+        )
+        self.assertIsNotNone(option, "LIBTMUX_BUILD_MCP_SERVER is no longer declared")
+        assert option is not None
+        self.assertTrue(
+            option.group().rstrip().endswith("OFF)"),
+            "the MCP server is opt-in; defaulting it on hands every consumer a "
+            f"program and its parser: {option.group()}",
+        )
 
 
 if __name__ == "__main__":
