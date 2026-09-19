@@ -388,6 +388,15 @@ public:
   [[nodiscard]] expected<Window, CommandFailure> window(std::string_view target) const;
   [[nodiscard]] expected<Pane, CommandFailure> pane(std::string_view target) const;
 
+  // Wait until the pane `target` names produces `wanted`. For a caller holding
+  // a target rather than a `Pane` — `Pane::wait_for_text` is the same wait
+  // without the lookup. One deadline covers both: a target that will not
+  // resolve cannot spend the whole budget and leave nothing for waiting, and
+  // `WaitPath::pane_lookup` says that is what happened.
+  [[nodiscard]] expected<WaitResult, CommandFailure>
+  wait_for_text(std::string_view target, std::string_view wanted,
+                WaitOptions options = {}) const;
+
   // Created detached, and returned, because tmux prints what it made. Windows
   // psmux rejects typed creation: concurrent creators cannot prove ownership.
   [[nodiscard]] expected<Session, CommandFailure>

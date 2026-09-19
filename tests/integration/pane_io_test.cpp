@@ -3,6 +3,8 @@
 // Behavior evidence for the pane-io shard of the parity ledger.
 
 #include <string>
+#include <string_view>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -142,7 +144,9 @@ TEST(PaneIo, WaitForTextSeesOutputThatArrivesAfterTheWaitBegins) {
 
   libtmux::WaitOptions options;
   options.timeout = std::chrono::seconds{5};
-  options.sent = {command};
+  options.sent = [&command](std::string_view) {
+    return std::vector<std::string>{command};
+  };
   const auto waited = pane->wait_for_text("delayed-marker", options);
   ASSERT_TRUE(waited.has_value()) << waited.error().diagnostic;
   EXPECT_TRUE(waited->matched) << waited->text;
@@ -162,12 +166,16 @@ TEST(PaneIo, WaitForTextCreditsTextAlreadyOnScreenAtEntry) {
   ASSERT_TRUE(pane->send_line(command).has_value());
   libtmux::WaitOptions settle;
   settle.timeout = std::chrono::seconds{5};
-  settle.sent = {command};
+  settle.sent = [&command](std::string_view) {
+    return std::vector<std::string>{command};
+  };
   ASSERT_TRUE(pane->wait_for_text("settled-marker", settle).has_value());
 
   libtmux::WaitOptions options;
   options.timeout = std::chrono::seconds{5};
-  options.sent = {command};
+  options.sent = [&command](std::string_view) {
+    return std::vector<std::string>{command};
+  };
   const auto waited = pane->wait_for_text("settled-marker", options);
   ASSERT_TRUE(waited.has_value()) << waited.error().diagnostic;
   EXPECT_TRUE(waited->matched) << waited->text;
@@ -193,7 +201,7 @@ TEST(PaneIo, WaitForTextDoesNotCreditACallersOwnEchoAsOutput) {
 
   libtmux::WaitOptions options;
   options.timeout = std::chrono::milliseconds{1500};
-  options.sent = {typed};
+  options.sent = [&typed](std::string_view) { return std::vector<std::string>{typed}; };
   const auto waited = pane->wait_for_text(typed, options);
   ASSERT_TRUE(waited.has_value()) << waited.error().diagnostic;
   EXPECT_FALSE(waited->matched)

@@ -98,6 +98,7 @@ The connection root.  A Server names which tmux server to talk to and how to rea
   - [`Server::session`](#libtmux-server-hpp-server-session)
   - [`Server::window`](#libtmux-server-hpp-server-window)
   - [`Server::pane`](#libtmux-server-hpp-server-pane)
+  - [`Server::wait_for_text`](#libtmux-server-hpp-server-wait-for-text)
   - [`Server::new_session`](#libtmux-server-hpp-server-new-session)
   - [`Server::new_session`](#libtmux-server-hpp-server-new-session-2)
   - [`Server::options`](#libtmux-server-hpp-server-options)
@@ -487,6 +488,14 @@ One object by target, for a caller holding an id or a `session:window` path that
 ```cpp
 [[nodiscard]] expected<Pane, CommandFailure> pane(std::string_view target) const;
 ```
+
+<a id="libtmux-server-hpp-server-wait-for-text"></a>
+#### `Server::wait_for_text`
+
+```cpp
+[[nodiscard]] expected<WaitResult, CommandFailure> wait_for_text(std::string_view target, std::string_view wanted, WaitOptions options = {}) const;
+```
+Wait until the pane `target` names produces `wanted`. For a caller holding a target rather than a `Pane` — `Pane::wait_for_text` is the same wait without the lookup. One deadline covers both: a target that will not resolve cannot spend the whole budget and leave nothing for waiting, and `WaitPath::pane_lookup` says that is what happened.
 
 <a id="libtmux-server-hpp-server-new-session"></a>
 #### `Server::new_session`
@@ -6870,6 +6879,7 @@ Wait for a pane to say something.  This is the first thing a supervising program
 **Symbols:**
 
 - [`WaitPath`](#libtmux-wait-hpp-waitpath)
+  - [`WaitPath::pane_lookup`](#libtmux-wait-hpp-waitpath-pane-lookup)
   - [`WaitPath::capture_at_entry`](#libtmux-wait-hpp-waitpath-capture-at-entry)
   - [`WaitPath::capture_after_control_connect`](#libtmux-wait-hpp-waitpath-capture-after-control-connect)
   - [`WaitPath::capture_before_control`](#libtmux-wait-hpp-waitpath-capture-before-control)
@@ -6882,6 +6892,7 @@ Wait for a pane to say something.  This is the first thing a supervising program
   - [`WaitResult::present_unconfirmed`](#libtmux-wait-hpp-waitresult-present-unconfirmed)
   - [`WaitResult::elapsed`](#libtmux-wait-hpp-waitresult-elapsed)
   - [`WaitResult::path`](#libtmux-wait-hpp-waitresult-path)
+  - [`WaitResult::pane_id`](#libtmux-wait-hpp-waitresult-pane-id)
   - [`WaitResult::text`](#libtmux-wait-hpp-waitresult-text)
 - [`WaitOptions`](#libtmux-wait-hpp-waitoptions)
   - [`WaitOptions::timeout`](#libtmux-wait-hpp-waitoptions-timeout)
@@ -6900,6 +6911,11 @@ Which path answered the wait. A caller that reports on how it learned something 
 ```cpp
 enum class WaitPath : std::uint8_t;
 ```
+
+<a id="libtmux-wait-hpp-waitpath-pane-lookup"></a>
+#### `WaitPath::pane_lookup` — `pane_lookup,`
+
+The target never resolved to a pane, so nothing was ever waited on. Only the `Server` overload can answer this: a `Pane` is already resolved.
 
 <a id="libtmux-wait-hpp-waitpath-capture-at-entry"></a>
 #### `WaitPath::capture_at_entry` — `capture_at_entry,`
@@ -6978,6 +6994,14 @@ std::chrono::milliseconds elapsed{};
 WaitPath path{};
 ```
 
+<a id="libtmux-wait-hpp-waitresult-pane-id"></a>
+#### `WaitResult::pane_id`
+
+```cpp
+std::string pane_id{};
+```
+The pane that was waited on. Empty only when the target never resolved, which the schema of a caller reporting this must allow for.
+
 <a id="libtmux-wait-hpp-waitresult-text"></a>
 #### `WaitResult::text`
 
@@ -7004,9 +7028,9 @@ std::chrono::milliseconds timeout{std::chrono::seconds{10}};
 #### `WaitOptions::sent`
 
 ```cpp
-std::vector<std::string> sent{};
+std::function<std::vector<std::string>(std::string_view pane_id)> sent{};
 ```
-What the calling program itself typed into this pane and has not had confirmed. Every occurrence is erased before the wanted text is looked for, so a command's own echo is never credited to the pane as its output. See `output_confirms`.
+What the calling program itself typed into this pane and has not had confirmed. Every occurrence is erased before the wanted text is looked for, so a command's own echo is never credited to the pane as its output. See `output_confirms`.  Asked once, with the pane the wait settled on, because a caller that keys its record by pane cannot answer for a target it has not resolved — and resolving it twice is what this saves. A caller holding a plain list writes `[list](std::string_view) { return list; }`.
 
 <a id="libtmux-wait-hpp-waitoptions-match-budget"></a>
 #### `WaitOptions::match_budget`

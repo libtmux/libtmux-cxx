@@ -3,8 +3,11 @@
 #include "libtmux/capture.hpp"
 #include "libtmux/control.hpp"
 #include "libtmux/entities.hpp"
+#include "libtmux/format.hpp"
 #include "libtmux/notification.hpp"
 #include "libtmux/server.hpp"
+#include "libtmux/snapshot.hpp"
+#include <array>
 
 #include <algorithm>
 #include <chrono>
@@ -76,6 +79,14 @@ struct Wait {
   const WaitOptions& options;
   Deadline deadline;
   std::size_t match_budget;
+  // Asked of the caller once, when the pane is known, rather than on every
+  // capture: the answer is the same all the way through and the caller may be
+  // taking a lock to produce it.
+  std::vector<std::string> sent{};
+  // Empty until looked up, and only looked up when a connection is about to
+  // open. The `Server` entry point already has it and fills it in.
+  std::string session_name{};
+  bool session_known{};
   bool matched_at_entry{};
 };
 
@@ -123,13 +134,11 @@ using BoundedOutput = expected<std::optional<std::string>, CommandFailure>;
                                                            std::string_view text) {
   if (text.size() > wait.match_budget ||
       wait.wanted.size() > wait.match_budget - text.size()) {
-    return unexpected(CommandFailure{.kind = FailureKind::truncated,
-                                     .delivery = DeliveryStatus::replied,
-                                     .exit_code = 0,
-                                     .diagnostic =
-                                         "the wait read more pane text than its match "
-                                         "budget allows, so the search was abandoned "
-                                         "rather than cut short silently"});
+    return unexpected(
+        CommandFailure{.kind = FailureKind::truncated,
+                       .delivery = DeliveryStatus::replied,
+                       .exit_code = 0,
+                       .diagnostic = "wait matching work limit exceeded"});
   }
   wait.match_budget -= text.size() + wait.wanted.size();
   return text.find(wait.wanted) != std::string_view::npos;
@@ -141,6 +150,7 @@ using BoundedOutput = expected<std::optional<std::string>, CommandFailure>;
                     .matched_at_entry = wait.matched_at_entry,
                     .elapsed = wait.deadline.elapsed(),
                     .path = path,
+                    .pane_id = wait.pane_id,
                     .text = std::move(text)};
 }
 
@@ -151,7 +161,7 @@ using BoundedOutput = expected<std::optional<std::string>, CommandFailure>;
 // separately instead, so a caller can tell "I saw it but could not credit it"
 // apart from a plain silent timeout.
 [[nodiscard]] WaitResult timed_out(const Wait& wait, WaitPath path, std::string text) {
-  if (!wait.wanted.empty() && output_confirms(text, wait.wanted, wait.options.sent)) {
+  if (!wait.wanted.empty() && output_confirms(text, wait.wanted, wait.sent)) {
     return matched_result(wait, path, std::move(text));
   }
   const bool present =
@@ -161,6 +171,7 @@ using BoundedOutput = expected<std::optional<std::string>, CommandFailure>;
                     .present_unconfirmed = present,
                     .elapsed = wait.deadline.elapsed(),
                     .path = path,
+                    .pane_id = wait.pane_id,
                     .text = std::move(text)};
 }
 
@@ -192,7 +203,7 @@ poll_for_text(Wait& wait, WaitPath path, std::string last) {
     if (!present.has_value()) {
       return unexpected(std::move(present.error()));
     }
-    if (*present && output_confirms(last, wait.wanted, wait.options.sent)) {
+    if (*present && output_confirms(last, wait.wanted, wait.sent)) {
       return matched_result(wait, path, std::move(last));
     }
     if (std::chrono::steady_clock::now() >= next_progress) {
@@ -267,7 +278,7 @@ stream_for_text(Wait& wait, std::string_view session_name, std::string screen) {
   if (!present.has_value()) {
     return unexpected(std::move(present.error()));
   }
-  if (*present && output_confirms(screen, wait.wanted, wait.options.sent)) {
+  if (*present && output_confirms(screen, wait.wanted, wait.sent)) {
     return matched_result(wait, WaitPath::capture_after_control_connect,
                           std::move(screen));
   }
@@ -318,7 +329,7 @@ stream_for_text(Wait& wait, std::string_view session_name, std::string screen) {
       if (!found.has_value()) {
         return unexpected(std::move(found.error()));
       }
-      if (*found && output_confirms(screen, wait.wanted, wait.options.sent)) {
+      if (*found && output_confirms(screen, wait.wanted, wait.sent)) {
         return matched_result(wait, WaitPath::control_output, std::move(screen));
       }
     }
@@ -328,6 +339,56 @@ stream_for_text(Wait& wait, std::string_view session_name, std::string screen) {
     }
   }
   return timed_out(wait, WaitPath::control_output, std::move(screen));
+}
+
+// Both entry points meet here, with the deadline already running and the pane
+// settled: a wait that had to resolve its target first has already spent part
+// of its budget doing so, and must not start over.
+[[nodiscard]] expected<WaitResult, CommandFailure> perform(Wait& wait) {
+  if (wait.options.sent) {
+    wait.sent = wait.options.sent(wait.pane_id);
+  }
+  auto captured = capture_before_deadline(wait);
+  if (!captured.has_value()) {
+    return unexpected(std::move(captured.error()));
+  }
+  if (!captured->has_value()) {
+    return timed_out(wait, WaitPath::capture_at_entry, {});
+  }
+  std::string screen = *std::move(*captured);
+  // The screen at entry is read before anything else runs, so a later capture
+  // that merely rediscovers text that was already here is never reported as
+  // fresh output.
+  auto present = within_budget(wait, screen);
+  if (!present.has_value()) {
+    return unexpected(std::move(present.error()));
+  }
+  wait.matched_at_entry = *present;
+  if (wait.deadline.expired()) {
+    return timed_out(wait, WaitPath::capture_at_entry, std::move(screen));
+  }
+  if (*present && output_confirms(screen, wait.wanted, wait.sent)) {
+    return matched_result(wait, WaitPath::capture_at_entry, std::move(screen));
+  }
+
+  // Only now, and only for the connection: `-t =name` matches a session by
+  // exact name, so a pane or session id will not do, and a wait the entry
+  // capture answers should not pay for a lookup it never needed. The `Server`
+  // entry point learned the name with the pane and has already filled it in.
+  if (!wait.session_known) {
+    if (auto owning =
+            run_before_deadline(wait, {"display-message", "-p", "-t", wait.pane_id,
+                                       "--", "#{session_name}"});
+        owning.has_value() && owning->has_value()) {
+      wait.session_name = *std::move(*owning);
+      while (!wait.session_name.empty() &&
+             (wait.session_name.back() == '\n' || wait.session_name.back() == '\r')) {
+        wait.session_name.pop_back();
+      }
+    }
+    wait.session_known = true;
+  }
+  return stream_for_text(wait, wait.session_name, std::move(screen));
 }
 
 } // namespace
@@ -349,38 +410,62 @@ expected<WaitResult, CommandFailure> Pane::wait_for_text(std::string_view wanted
             .options = options,
             .deadline = Deadline{options.timeout},
             .match_budget = options.match_budget};
+  return perform(wait);
+}
 
-  auto captured = capture_before_deadline(wait);
-  if (!captured.has_value()) {
-    return unexpected(std::move(captured.error()));
-  }
-  if (!captured->has_value()) {
-    return timed_out(wait, WaitPath::capture_at_entry, {});
-  }
-  std::string screen = *std::move(*captured);
-  // The screen at entry is read before anything else runs, so a later capture
-  // that merely rediscovers text that was already here is never reported as
-  // fresh output.
-  auto present = within_budget(wait, screen);
-  if (!present.has_value()) {
-    return unexpected(std::move(present.error()));
-  }
-  wait.matched_at_entry = *present;
-  if (wait.deadline.expired()) {
-    return timed_out(wait, WaitPath::capture_at_entry, std::move(screen));
-  }
-  if (*present && output_confirms(screen, wanted, options.sent)) {
-    return matched_result(wait, WaitPath::capture_at_entry, std::move(screen));
-  }
-
-  // Only now, and only for the connection: `-t =name` matches a session by
-  // exact name, so the id this pane already carries will not do, and a wait
-  // answered by the entry capture should not pay for a lookup it never needed.
+expected<WaitResult, CommandFailure> Server::wait_for_text(std::string_view target,
+                                                           std::string_view wanted,
+                                                           WaitOptions options) const {
+  // One deadline covers the lookup and the wait, because the caller's budget is
+  // for the whole question: a target that will not resolve must not be able to
+  // spend it all and leave nothing for waiting.
+  Deadline deadline{options.timeout};
+  std::string pane_id;
   std::string session_name;
-  if (auto owning = session(); owning.has_value()) {
-    session_name = std::string{owning->name()};
+  {
+    // Both fields in one command. The pane is what gets captured; the session
+    // is what the control connection attaches to, and asking separately would
+    // pay a second round trip for something tmux will answer at the same time.
+    constexpr std::array fields{std::string_view{"pane_id"},
+                                std::string_view{"session_name"}};
+    Wait lookup{.server = *this,
+                .pane_id = pane_id,
+                .wanted = wanted,
+                .options = options,
+                .deadline = deadline,
+                .match_budget = options.match_budget};
+    auto reply =
+        run_before_deadline(lookup, {"display-message", "-p", "-t", std::string{target},
+                                     "--", std::string{format_request(fields)}});
+    if (!reply.has_value()) {
+      return unexpected(std::move(reply.error()));
+    }
+    if (!reply->has_value()) {
+      return WaitResult{.timed_out = true,
+                        .elapsed = deadline.elapsed(),
+                        .path = WaitPath::pane_lookup};
+    }
+    auto snapshot = Snapshot::from_recording(fields, *std::move(*reply));
+    if (snapshot == nullptr || snapshot->rows().size() != 1U ||
+        snapshot->rows().front()[0].empty()) {
+      return unexpected(CommandFailure{
+          .kind = FailureKind::missing,
+          .delivery = DeliveryStatus::replied,
+          .exit_code = 0,
+          .diagnostic = "tmux could not resolve the pane " + std::string{target}});
+    }
+    pane_id = std::string{snapshot->rows().front()[0]};
+    session_name = std::string{snapshot->rows().front()[1]};
   }
-  return stream_for_text(wait, session_name, std::move(screen));
+  Wait wait{.server = *this,
+            .pane_id = pane_id,
+            .wanted = wanted,
+            .options = options,
+            .deadline = deadline,
+            .match_budget = options.match_budget,
+            .session_name = session_name,
+            .session_known = true};
+  return perform(wait);
 }
 
 LIBTMUX_NAMESPACE_END

@@ -23,6 +23,9 @@ LIBTMUX_NAMESPACE_BEGIN
 // Which path answered the wait. A caller that reports on how it learned
 // something needs this; a caller that does not can ignore it.
 enum class WaitPath : std::uint8_t {
+  // The target never resolved to a pane, so nothing was ever waited on. Only
+  // the `Server` overload can answer this: a `Pane` is already resolved.
+  pane_lookup,
   // Already on screen when the wait began, and credited to the pane.
   capture_at_entry,
   // Found by the capture taken right after the control connection opened,
@@ -51,6 +54,9 @@ struct WaitResult {
   bool present_unconfirmed{};
   std::chrono::milliseconds elapsed{};
   WaitPath path{};
+  // The pane that was waited on. Empty only when the target never resolved,
+  // which the schema of a caller reporting this must allow for.
+  std::string pane_id{};
   // The last capture taken, matched or not.
   std::string text{};
 };
@@ -61,7 +67,12 @@ struct WaitOptions {
   // confirmed. Every occurrence is erased before the wanted text is looked
   // for, so a command's own echo is never credited to the pane as its output.
   // See `output_confirms`.
-  std::vector<std::string> sent{};
+  //
+  // Asked once, with the pane the wait settled on, because a caller that keys
+  // its record by pane cannot answer for a target it has not resolved — and
+  // resolving it twice is what this saves. A caller holding a plain list
+  // writes `[list](std::string_view) { return list; }`.
+  std::function<std::vector<std::string>(std::string_view pane_id)> sent{};
   // How much text this wait will search before giving up. A pane that prints
   // faster than the search can read it would otherwise spin until the
   // deadline; this reports instead. Counted across every capture, not per
