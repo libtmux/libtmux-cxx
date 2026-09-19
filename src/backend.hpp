@@ -139,7 +139,13 @@ public:
   // so the executor answers.
   [[nodiscard]] virtual expected<Version, CommandFailure> version() const = 0;
 
-  [[nodiscard]] virtual bool allows_layout_client_version() const noexcept {
+  // Whether this backend's own client binary is a trustworthy stand-in for
+  // the daemon's version while the socket is cold -- true only when this
+  // backend would itself start that daemon from the same binary it would
+  // query, so the two are guaranteed to match. A backend fronting a
+  // connection to somebody else's already-chosen daemon cannot promise that
+  // and answers false.
+  [[nodiscard]] virtual bool allows_cold_socket_version_fallback() const noexcept {
     return false;
   }
 
@@ -326,7 +332,7 @@ public:
   // no server on it.
   [[nodiscard]] expected<Version, CommandFailure> version() const override;
 
-  [[nodiscard]] bool allows_layout_client_version() const noexcept override {
+  [[nodiscard]] bool allows_cold_socket_version_fallback() const noexcept override {
     return socket_missing_.load(std::memory_order_acquire);
   }
 
