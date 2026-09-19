@@ -796,6 +796,12 @@ Json capture(const Request& request) {
   // exist under that literal name.
   if (!by_id && !libtmux::session_target(name))
     unaddressable(name);
+  // "=name:" is an exact, non-prefix match and survives a "." in the name --
+  // unlike a bare "name" or "=name", which tmux can resolve as a prefix of
+  // an unrelated longer name. It is still not colon-safe: a name containing
+  // ":" splits the target regardless of the "=". A session id is the only
+  // spelling that addresses a name uncritically; this port refuses "." and
+  // ":" in names before reaching this call, so the gap cannot arise here.
   const auto session = server.session(by_id ? name : "=" + name + ":");
   // A lookup that finds nothing and a socket with no server behind it are the
   // same answer here, and neither reads as one in the library's own words.
@@ -1647,6 +1653,7 @@ static Execution execute_impl(const Request& request, const EventSink& event,
       // mode and never without a terminal to answer from.
       if (interactive && !request.flag("yes") && !request.machine() && !plans.empty()) {
         const auto& target_name = plans.back().workspace.session_name;
+        // "=name:" caveats: see the lookup in capture() above.
         if (auto found = server.session("=" + target_name + ":")) {
           const auto typed =
               prompt ? prompt(target_name + " is already running. Attach? [Y/n]") : "";
@@ -1783,6 +1790,7 @@ static Execution execute_impl(const Request& request, const EventSink& event,
           return BuildStop{observer_error->what(),
                            observer_error->code == "interrupted"};
         };
+        // "=name:" caveats: see the lookup in capture() above.
         const auto existing =
             borrowed ? libtmux::expected<Session, CommandFailure>{*borrowed}
                      : server.session("=" + plan.workspace.session_name + ":");
