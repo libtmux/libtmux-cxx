@@ -1174,7 +1174,12 @@ TEST(Entity, ADeadPaneReportsWhatItExitedWith) {
   for (int attempt = 0; attempt < 300; ++attempt) {
     auto current = pane.refresh();
     ASSERT_TRUE(current.has_value()) << current.error().diagnostic;
-    if (current->dead()) {
+    // Before tmux 3.7, `pane_dead` read only wp->fd == -1, while
+    // `pane_dead_status` also required PANE_STATUSREADY -- so a pane could
+    // report dead with no status yet (tmux/tmux@5865001e). The status
+    // implies deadness on every version; deadness does not imply a status
+    // on the older ones, so wait on the status.
+    if (current->exit_status().has_value()) {
       dead = *std::move(current);
       break;
     }
