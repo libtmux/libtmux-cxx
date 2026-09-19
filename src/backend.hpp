@@ -368,6 +368,14 @@ private:
   bool startable_{};
   std::optional<std::string> startup_configuration_;
   mutable std::mutex startup_mutex_;
+  // `tmux -V` asks the executable, and the policy fixes which executable this
+  // handle runs for its lifetime, so the answer cannot change under it.
+  // Probing once keeps a version check — `select_layout` takes one to resolve
+  // a preset — from costing a second process launch every time. Only a
+  // successful probe is kept: a failure is usually transient, and caching one
+  // would make a handle that met a busy machine once stay broken.
+  mutable std::mutex version_mutex_;
+  mutable std::optional<Version> version_;
 };
 
 // Build a Server over any backend. The only way to reach the private

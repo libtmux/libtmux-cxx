@@ -777,6 +777,12 @@ SubprocessBackend::interpret_reply(const CommandRequest& command,
 }
 
 expected<Version, CommandFailure> SubprocessBackend::version() const {
+  {
+    const std::lock_guard cached{version_mutex_};
+    if (version_.has_value()) {
+      return *version_;
+    }
+  }
   auto output = run({"-V"}, policy().timeout, policy().output_limit);
   if (!output.has_value()) {
     return unexpected(output.error());
@@ -788,6 +794,8 @@ expected<Version, CommandFailure> SubprocessBackend::version() const {
                                      .exit_code = 0,
                                      .diagnostic = "tmux -V printed " + *output});
   }
+  const std::lock_guard cached{version_mutex_};
+  version_ = *version;
   return *version;
 }
 
