@@ -1112,6 +1112,41 @@ TEST(Entity, ARecordingOfAnOlderSchemaReadsItsAbsentFieldsAsZero) {
   EXPECT_EQ(absent.left(), 0);
 }
 
+// The two listings a caller is most likely to search are the two that could
+// not be searched: which commands this tmux understands, and which buffer
+// holds what. Both list like every other entity, so both filter like one.
+TEST(Entity, CommandsAndBuffersFilterLikeEveryOtherListing) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+
+  const auto commands = server.commands();
+  ASSERT_TRUE(commands.has_value()) << commands.error().diagnostic;
+  ASSERT_FALSE(commands->empty());
+
+  auto listing = *commands | matching(libtmux::command::name == "list-panes");
+  const auto listed = libtmux::first(listing);
+  ASSERT_TRUE(listed.has_value()) << "every supported tmux has list-panes";
+  EXPECT_EQ(listed->get().name(), "list-panes");
+  // `lsp` is its alias on every version in the supported range.
+  EXPECT_EQ(listed->get().alias(), "lsp");
+
+  ASSERT_TRUE(server.set_buffer("greeting", "hello").has_value());
+  ASSERT_TRUE(server.set_buffer("other", "xy").has_value());
+
+  const auto buffers = server.buffers();
+  ASSERT_TRUE(buffers.has_value()) << buffers.error().diagnostic;
+
+  auto named = *buffers | matching(libtmux::buffer::name == "greeting");
+  const auto greeting = libtmux::first(named);
+  ASSERT_TRUE(greeting.has_value());
+  EXPECT_EQ(greeting->get().size(), 5);
+
+  // A number compares as a number, which is the point of the typed handle.
+  auto larger = *buffers | matching(libtmux::buffer::size > 2);
+  EXPECT_EQ(std::ranges::distance(larger), 1);
+}
+
 TEST(Entity, ANewSessionComesBackAsASession) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();

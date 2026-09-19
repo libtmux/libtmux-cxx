@@ -1086,6 +1086,39 @@ inline constexpr NumberFieldHandle<Client> last_activity{
 
 } // namespace client
 
+// `Server::commands()` and `Server::buffers()` list like anything else, so
+// they filter like anything else. Without these two namespaces `matching(...)`
+// reached four of the six types the server can list, and the two it could not
+// reach were the two whose listings a caller is most likely to search: which
+// commands this tmux understands, and which buffer holds what.
+namespace command {
+
+inline constexpr StringFieldHandle<Command> name{
+    {Command::kFields[0], [](const Command& row) { return row.name(); }}};
+inline constexpr StringFieldHandle<Command> alias{
+    {Command::kFields[1], [](const Command& row) { return row.alias(); }}};
+inline constexpr StringFieldHandle<Command> usage{
+    {Command::kFields[2], [](const Command& row) { return row.usage(); }}};
+
+} // namespace command
+
+namespace buffer {
+
+inline constexpr StringFieldHandle<Buffer> name{
+    {Buffer::kFields[0], [](const Buffer& row) { return row.name(); }}};
+inline constexpr NumberFieldHandle<Buffer> size{
+    {Buffer::kFields[1], [](const Buffer& row) { return row.size(); }}};
+inline constexpr StringFieldHandle<Buffer> sample{
+    {Buffer::kFields[2], [](const Buffer& row) { return row.sample(); }}};
+// Epoch seconds, as tmux renders it and as `-f` would compare it; the accessor
+// beside this one answers `sys_seconds` because that is what a caller holds.
+inline constexpr NumberFieldHandle<Buffer> created{
+    {Buffer::kFields[3], [](const Buffer& row) {
+       return static_cast<long long>(row.created().time_since_epoch().count());
+     }}};
+
+} // namespace buffer
+
 LIBTMUX_NAMESPACE_END
 
 // Hashing an entity uses exactly what its equality compares, so values from

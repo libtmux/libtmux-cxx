@@ -235,13 +235,14 @@ TEST(ValueSemantics, AFailureComposesAndCanBeNamed) {
 
 // Reading a field and filtering on it are one contract, not two.
 //
-// Nothing tied them together, so seven pane accessors and one window accessor
-// had no handle beside them: `pane.left()` read, `pane::left` did not exist,
-// and the gap showed up as a filter a caller simply could not write rather
-// than as anything that failed. Timestamps had no handle at all.
+// Nothing tied them together, so accessors existed with no handle beside them:
+// `pane.left()` read while `pane::left` did not exist, and the gap showed up as
+// a filter a caller simply could not write rather than as anything that failed.
 //
-// Keyed on `kFields` because that array is what a new field is added to. Add
-// one, forget the handle, and this names the field that lost its half.
+// Every type the server can list appears below, which is the part that matters.
+// An earlier version walked the namespaces that existed instead, so the two
+// types with no namespace at all — `Command` and `Buffer` — could not fail it:
+// a gate that enumerates what is present is blind to what is absent.
 TEST(ValueSemantics, EveryEntityFieldIsReachableFromAFilter) {
   const auto unreachable = [](const std::vector<std::string_view>& handled,
                               const auto& fields) {
@@ -255,6 +256,8 @@ TEST(ValueSemantics, EveryEntityFieldIsReachableFromAFilter) {
     return absent;
   };
 
+  namespace buffer = libtmux::buffer;
+  namespace command = libtmux::command;
   namespace session = libtmux::session;
   namespace window = libtmux::window;
   namespace pane = libtmux::pane;
@@ -303,6 +306,18 @@ TEST(ValueSemantics, EveryEntityFieldIsReachableFromAFilter) {
                         libtmux::Client::kFields),
             "")
       << "namespace client has no handle for these";
+
+  EXPECT_EQ(unreachable({command::name.field.name, command::alias.field.name,
+                         command::usage.field.name},
+                        libtmux::Command::kFields),
+            "")
+      << "namespace command has no handle for these";
+
+  EXPECT_EQ(unreachable({buffer::name.field.name, buffer::size.field.name,
+                         buffer::sample.field.name, buffer::created.field.name},
+                        libtmux::Buffer::kFields),
+            "")
+      << "namespace buffer has no handle for these";
 }
 
 TEST(ValueSemantics, CapabilitiesReportWhetherControlCanBeOpened) {

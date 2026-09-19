@@ -1457,6 +1457,13 @@ The tmux object hierarchy.  A Session, Window, Pane or Client is one row of a sn
   - [`client::height`](#libtmux-entities-hpp-free-symbols-client-height)
   - [`client::created`](#libtmux-entities-hpp-free-symbols-client-created)
   - [`client::last_activity`](#libtmux-entities-hpp-free-symbols-client-last-activity)
+  - [`command::name`](#libtmux-entities-hpp-free-symbols-command-name)
+  - [`command::alias`](#libtmux-entities-hpp-free-symbols-command-alias)
+  - [`command::usage`](#libtmux-entities-hpp-free-symbols-command-usage)
+  - [`buffer::name`](#libtmux-entities-hpp-free-symbols-buffer-name)
+  - [`buffer::size`](#libtmux-entities-hpp-free-symbols-buffer-size)
+  - [`buffer::sample`](#libtmux-entities-hpp-free-symbols-buffer-sample)
+  - [`buffer::created`](#libtmux-entities-hpp-free-symbols-buffer-created)
 
 <a id="libtmux-entities-hpp-splitoptions"></a>
 ### `SplitOptions`
@@ -3764,6 +3771,56 @@ inline constexpr NumberFieldHandle<Client> created{ {Client::kFields[6], [](cons
 ```cpp
 inline constexpr NumberFieldHandle<Client> last_activity{ {Client::kFields[7], [](const Client& row) { /* implementation omitted */ }}};
 ```
+
+<a id="libtmux-entities-hpp-free-symbols-command-name"></a>
+#### `command::name`
+
+```cpp
+inline constexpr StringFieldHandle<Command> name{ {Command::kFields[0], [](const Command& row) { /* implementation omitted */ }}};
+```
+
+<a id="libtmux-entities-hpp-free-symbols-command-alias"></a>
+#### `command::alias`
+
+```cpp
+inline constexpr StringFieldHandle<Command> alias{ {Command::kFields[1], [](const Command& row) { /* implementation omitted */ }}};
+```
+
+<a id="libtmux-entities-hpp-free-symbols-command-usage"></a>
+#### `command::usage`
+
+```cpp
+inline constexpr StringFieldHandle<Command> usage{ {Command::kFields[2], [](const Command& row) { /* implementation omitted */ }}};
+```
+
+<a id="libtmux-entities-hpp-free-symbols-buffer-name"></a>
+#### `buffer::name`
+
+```cpp
+inline constexpr StringFieldHandle<Buffer> name{ {Buffer::kFields[0], [](const Buffer& row) { /* implementation omitted */ }}};
+```
+
+<a id="libtmux-entities-hpp-free-symbols-buffer-size"></a>
+#### `buffer::size`
+
+```cpp
+inline constexpr NumberFieldHandle<Buffer> size{ {Buffer::kFields[1], [](const Buffer& row) { /* implementation omitted */ }}};
+```
+
+<a id="libtmux-entities-hpp-free-symbols-buffer-sample"></a>
+#### `buffer::sample`
+
+```cpp
+inline constexpr StringFieldHandle<Buffer> sample{ {Buffer::kFields[2], [](const Buffer& row) { /* implementation omitted */ }}};
+```
+
+<a id="libtmux-entities-hpp-free-symbols-buffer-created"></a>
+#### `buffer::created`
+
+```cpp
+inline constexpr NumberFieldHandle<Buffer> created{ {Buffer::kFields[3], [](const Buffer& row) { /* implementation omitted */ }}};
+```
+Epoch seconds, as tmux renders it and as `-f` would compare it; the accessor beside this one answers `sys_seconds` because that is what a caller holds.
 
 <a id="libtmux-snapshot-hpp"></a>
 ## `libtmux/snapshot.hpp`
