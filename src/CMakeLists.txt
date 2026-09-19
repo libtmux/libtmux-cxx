@@ -116,6 +116,20 @@ endif()
 if(LIBTMUX_INSTALL)
   include(CMakePackageConfigHelpers)
 
+  # A consumer reaching this through pkg-config gets no CMake target and so no
+  # `target_compile_definitions`. The C++20 build selects a different ABI
+  # namespace through `LIBTMUX_USE_TL_EXPECTED`, so a translation unit that
+  # does not define it links against symbols that are not there — the pc file
+  # carries it rather than leaving that to be discovered at link time.
+  set(LIBTMUX_PC_CFLAGS "-std=c++${LIBTMUX_CXX_STANDARD}")
+  if(LIBTMUX_CXX_STANDARD STREQUAL "20")
+    string(APPEND LIBTMUX_PC_CFLAGS " -DLIBTMUX_USE_TL_EXPECTED")
+  endif()
+  configure_file(
+    "${PROJECT_SOURCE_DIR}/cmake/libtmux.pc.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/libtmux.pc" @ONLY)
+  install(FILES "${CMAKE_CURRENT_BINARY_DIR}/libtmux.pc"
+          DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig")
 
   install(
     TARGETS libtmux
