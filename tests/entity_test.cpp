@@ -1191,6 +1191,51 @@ TEST(Entity, ADeadPaneReportsWhatItExitedWith) {
   EXPECT_EQ(std::ranges::distance(one | matching(pane::exit_status == 0)), 0);
 }
 
+// The environment a new process starts with was reachable only as raw argv,
+// which is why the MCP server issued `show-environment` by hand.
+TEST(Entity, TheServerEnvironmentIsReadAndWrittenByName) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+
+  ASSERT_TRUE(server.set_environment("LIBTMUX_PROBE", "seven").has_value());
+  // Empty is a value, not an absence.
+  ASSERT_TRUE(server.set_environment("LIBTMUX_EMPTY", "").has_value());
+  // Remembered, as an instruction to keep it out of a child.
+  ASSERT_TRUE(server.remove_environment("LIBTMUX_GONE").has_value());
+
+  const auto environment = server.environment();
+  ASSERT_TRUE(environment.has_value()) << environment.error().diagnostic;
+
+  const auto find = [&](std::string_view name) {
+    return std::ranges::find(*environment, name, &libtmux::EnvironmentEntry::name);
+  };
+
+  const auto probe = find("LIBTMUX_PROBE");
+  ASSERT_NE(probe, environment->end());
+  ASSERT_TRUE(probe->value.has_value());
+  EXPECT_EQ(*probe->value, "seven");
+
+  const auto empty = find("LIBTMUX_EMPTY");
+  ASSERT_NE(empty, environment->end());
+  ASSERT_TRUE(empty->value.has_value()) << "an empty value is still a value";
+  EXPECT_TRUE(empty->value->empty());
+
+  // tmux prints this one as `-LIBTMUX_GONE`; it is a name with no value
+  // rather than a name bound to nothing.
+  const auto gone = find("LIBTMUX_GONE");
+  ASSERT_NE(gone, environment->end());
+  EXPECT_FALSE(gone->value.has_value());
+
+  // Forgetting takes the name out of the listing altogether.
+  ASSERT_TRUE(server.unset_environment("LIBTMUX_PROBE").has_value());
+  const auto after = server.environment();
+  ASSERT_TRUE(after.has_value()) << after.error().diagnostic;
+  EXPECT_EQ(
+      std::ranges::find(*after, "LIBTMUX_PROBE", &libtmux::EnvironmentEntry::name),
+      after->end());
+}
+
 TEST(Entity, ANewSessionComesBackAsASession) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();

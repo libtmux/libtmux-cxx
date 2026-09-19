@@ -410,6 +410,30 @@ public:
   set_global_option(std::string_view name, std::string_view value) const;
   [[nodiscard]] expected<std::vector<OptionEntry>, CommandFailure>
   hooks(std::string_view target = {}) const;
+
+  // The environment every new process on this server starts with.
+  //
+  // Server-global here; a session has its own. tmux keeps hidden entries
+  // apart from these, and this asks for neither `-h` nor the shell form, so
+  // what comes back is the plain listing a caller means.
+  [[nodiscard]] expected<std::vector<EnvironmentEntry>, CommandFailure>
+  environment() const;
+
+  // Bind a name. An empty value binds it to empty, which is not the same as
+  // not binding it at all.
+  [[nodiscard]] expected<void, CommandFailure>
+  set_environment(std::string_view name, std::string_view value) const;
+
+  // Forget the name, so a new process inherits whatever the tmux server
+  // itself has. This is tmux's `-u`.
+  [[nodiscard]] expected<void, CommandFailure>
+  unset_environment(std::string_view name) const;
+
+  // Keep the name and take it out of what a new process inherits — tmux's
+  // `-r`, which a listing then prints as `-NAME`. Different from forgetting
+  // it: this one is remembered, as an instruction to remove.
+  [[nodiscard]] expected<void, CommandFailure>
+  remove_environment(std::string_view name) const;
   // A hook set globally is not reported by the unscoped listing, so reading it
   // back needs the scope it was set with.
   [[nodiscard]] expected<std::vector<OptionEntry>, CommandFailure> global_hooks() const;

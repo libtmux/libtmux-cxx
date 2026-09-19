@@ -1063,6 +1063,57 @@ expected<void, CommandFailure> Server::set_global_hook(std::string_view name,
   return applied(run(request));
 }
 
+expected<std::vector<EnvironmentEntry>, CommandFailure> Server::environment() const {
+  auto output = run({"show-environment", "-g"});
+  if (!output.has_value()) {
+    return unexpected(output.error());
+  }
+  std::vector<EnvironmentEntry> entries;
+  std::size_t start = 0;
+  while (start < output->size()) {
+    const auto stop = output->find('\n', start);
+    const std::string_view line{output->data() + start,
+                                (stop == std::string::npos ? output->size() : stop) -
+                                    start};
+    start = stop == std::string::npos ? output->size() : stop + 1;
+    if (line.empty()) {
+      continue;
+    }
+    // `-NAME` is a name tmux will take out of a child's environment, and
+    // `NAME=value` is one it will put in. A name cannot begin with `-`, so
+    // the leading byte settles which this is without splitting first.
+    if (line.front() == '-') {
+      entries.push_back(
+          EnvironmentEntry{.name = std::string{line.substr(1)}, .value = std::nullopt});
+      continue;
+    }
+    const auto equals = line.find('=');
+    if (equals == std::string_view::npos) {
+      // tmux prints no such line; keeping it as a bound name rather than
+      // dropping it means an unexpected shape is visible instead of missing.
+      entries.push_back(
+          EnvironmentEntry{.name = std::string{line}, .value = std::string{}});
+      continue;
+    }
+    entries.push_back(EnvironmentEntry{.name = std::string{line.substr(0, equals)},
+                                       .value = std::string{line.substr(equals + 1)}});
+  }
+  return entries;
+}
+
+expected<void, CommandFailure> Server::set_environment(std::string_view name,
+                                                       std::string_view value) const {
+  return applied(run({"set-environment", "-g", std::string{name}, std::string{value}}));
+}
+
+expected<void, CommandFailure> Server::unset_environment(std::string_view name) const {
+  return applied(run({"set-environment", "-g", "-u", std::string{name}}));
+}
+
+expected<void, CommandFailure> Server::remove_environment(std::string_view name) const {
+  return applied(run({"set-environment", "-g", "-r", std::string{name}}));
+}
+
 expected<std::vector<OptionEntry>, CommandFailure>
 Server::show(std::vector<std::string> request, std::string_view target) const {
   if (!target.empty()) {

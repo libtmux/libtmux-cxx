@@ -105,6 +105,10 @@ The connection root.  A Server names which tmux server to talk to and how to rea
   - [`Server::global_options`](#libtmux-server-hpp-server-global-options)
   - [`Server::set_global_option`](#libtmux-server-hpp-server-set-global-option)
   - [`Server::hooks`](#libtmux-server-hpp-server-hooks)
+  - [`Server::environment`](#libtmux-server-hpp-server-environment)
+  - [`Server::set_environment`](#libtmux-server-hpp-server-set-environment)
+  - [`Server::unset_environment`](#libtmux-server-hpp-server-unset-environment)
+  - [`Server::remove_environment`](#libtmux-server-hpp-server-remove-environment)
   - [`Server::global_hooks`](#libtmux-server-hpp-server-global-hooks)
   - [`Server::set_global_hook`](#libtmux-server-hpp-server-set-global-hook)
 
@@ -541,6 +545,38 @@ Sets the value every session inherits, rather than one session's own.
 ```cpp
 [[nodiscard]] expected<std::vector<OptionEntry>, CommandFailure> hooks(std::string_view target = {}) const;
 ```
+
+<a id="libtmux-server-hpp-server-environment"></a>
+#### `Server::environment`
+
+```cpp
+[[nodiscard]] expected<std::vector<EnvironmentEntry>, CommandFailure> environment() const;
+```
+The environment every new process on this server starts with.  Server-global here; a session has its own. tmux keeps hidden entries apart from these, and this asks for neither `-h` nor the shell form, so what comes back is the plain listing a caller means.
+
+<a id="libtmux-server-hpp-server-set-environment"></a>
+#### `Server::set_environment`
+
+```cpp
+[[nodiscard]] expected<void, CommandFailure> set_environment(std::string_view name, std::string_view value) const;
+```
+Bind a name. An empty value binds it to empty, which is not the same as not binding it at all.
+
+<a id="libtmux-server-hpp-server-unset-environment"></a>
+#### `Server::unset_environment`
+
+```cpp
+[[nodiscard]] expected<void, CommandFailure> unset_environment(std::string_view name) const;
+```
+Forget the name, so a new process inherits whatever the tmux server itself has. This is tmux's `-u`.
+
+<a id="libtmux-server-hpp-server-remove-environment"></a>
+#### `Server::remove_environment`
+
+```cpp
+[[nodiscard]] expected<void, CommandFailure> remove_environment(std::string_view name) const;
+```
+Keep the name and take it out of what a new process inherits — tmux's `-r`, which a listing then prints as `-NAME`. Different from forgetting it: this one is remembered, as an instruction to remove.
 
 <a id="libtmux-server-hpp-server-global-hooks"></a>
 #### `Server::global_hooks`
@@ -5476,6 +5512,9 @@ Parse `show-options`-shaped output.  tmux prints one option per line as `name va
 
 **Symbols:**
 
+- [`EnvironmentEntry`](#libtmux-options-hpp-environmententry)
+  - [`EnvironmentEntry::name`](#libtmux-options-hpp-environmententry-name)
+  - [`EnvironmentEntry::value`](#libtmux-options-hpp-environmententry-value)
 - [`OptionEntry`](#libtmux-options-hpp-optionentry)
   - [`OptionEntry::name`](#libtmux-options-hpp-optionentry-name)
   - [`OptionEntry::index`](#libtmux-options-hpp-optionentry-index)
@@ -5485,6 +5524,29 @@ Parse `show-options`-shaped output.  tmux prints one option per line as `name va
   - [`unquote`](#libtmux-options-hpp-free-symbols-unquote)
   - [`parse_option`](#libtmux-options-hpp-free-symbols-parse-option)
   - [`parse_options`](#libtmux-options-hpp-free-symbols-parse-options)
+
+<a id="libtmux-options-hpp-environmententry"></a>
+### `EnvironmentEntry`
+
+One name in the environment tmux gives processes it starts.  The value is optional because tmux distinguishes two things a listing shows side by side: a name bound to a value, printed `NAME=value`, and a name marked so that a child does *not* inherit it, printed `-NAME`. The second is an instruction rather than an empty value, and flattening it to `""` would tell a caller the child sees an empty string when it sees nothing at all.
+
+```cpp
+struct EnvironmentEntry;
+```
+
+<a id="libtmux-options-hpp-environmententry-name"></a>
+#### `EnvironmentEntry::name`
+
+```cpp
+std::string name;
+```
+
+<a id="libtmux-options-hpp-environmententry-value"></a>
+#### `EnvironmentEntry::value`
+
+```cpp
+std::optional<std::string> value;
+```
 
 <a id="libtmux-options-hpp-optionentry"></a>
 ### `OptionEntry`
