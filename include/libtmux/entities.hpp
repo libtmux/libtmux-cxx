@@ -8,6 +8,13 @@
 // function with nothing to keep alive alongside it, while still costing no
 // per-row allocation and no tmux call to read.
 //
+// The other side of that: keeping one entity keeps its whole listing. A pane
+// held from a thousand-pane server retains all thousand rows and the bytes
+// tmux sent for them, and ten panes from one listing retain it once, not ten
+// times. For the sizes tmux serves this is the cheaper trade — but a program
+// that holds handles across large servers for a long time should hold the id
+// it needs and look the entity up again, rather than hold the entity.
+//
 // Reading a field is local and cannot fail. Every method returning `expected`
 // runs tmux, and a returned entity describes the moment that command ran:
 // entities do not update themselves, `refresh` takes a new snapshot.
