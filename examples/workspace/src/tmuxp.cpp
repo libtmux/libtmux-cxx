@@ -438,7 +438,14 @@ libtmux::expected<Workspace, ParseError> parse_tmuxp(std::string_view document) 
           continue;
         }
         const auto key = entry.first.as<std::string>();
-        if (key != "pane_readiness" && !key.starts_with("x-")) {
+        if (key == "pane_readiness") {
+          // A setting this builder knows must carry a value it could act on,
+          // even where -- as here -- it already behaves that way always.
+          if (!entry.second.IsScalar()) {
+            return fail("workspace_builder_options.pane_readiness",
+                        "a pane readiness setting is a name");
+          }
+        } else if (!key.starts_with("x-")) {
           workspace.warnings.emplace_back("workspace_builder_options." + key +
                                           " is not a setting this builder has; it "
                                           "was ignored");
