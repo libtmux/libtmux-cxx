@@ -214,7 +214,7 @@ the vocabulary the libtmux workspace ports share: `workspace_not_found`,
 `session_mismatch`, `tmux_unavailable`, `tmux_failed`, `script_failed`,
 `destination_exists` and `usage`. A command that ends because this tool's own
 plumbing broke reports it separately, and those codes are local to this port:
-`write_failed` (the destination could not be written), `output_closed` (this
+`write_failed` (the destination could not be written, where the path itself is usable), `output_closed` (this
 command's own output stream closed), `output_limit` (a child wrote more than
 1 MiB to one stream), `log_file_unavailable` (`--log-file` could not be
 opened), `interrupted` (a signal ended the command), `terminal_settings` and
