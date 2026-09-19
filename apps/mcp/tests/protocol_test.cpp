@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -214,6 +215,25 @@ const json* response(const std::vector<json>& messages, const json& id) {
   return nullptr;
 }
 
+// Whether every one of `ids` has been answered in `output` so far. Only whole
+// lines count: a reply still arriving is not a reply yet.
+std::function<bool(std::string_view)> replied(std::vector<json> ids) {
+  return [ids = std::move(ids)](std::string_view output) {
+    std::vector<json> messages;
+    std::size_t start = 0U;
+    for (std::size_t end = output.find('\n'); end != std::string_view::npos;
+         end = output.find('\n', start)) {
+      json parsed = json::parse(output.substr(start, end - start), nullptr, false);
+      if (!parsed.is_discarded()) {
+        messages.push_back(std::move(parsed));
+      }
+      start = end + 1U;
+    }
+    return std::ranges::all_of(
+        ids, [&](const json& id) { return response(messages, id) != nullptr; });
+  };
+}
+
 const json& require_response(const std::vector<json>& messages, const json& id) {
   const json* reply = response(messages, id);
   if (reply == nullptr) {
@@ -386,12 +406,59 @@ protected:
     return std::move(*connected);
   }
 
-  [[nodiscard]] json
-  invoke(std::string name, json arguments, int id,
-         std::chrono::milliseconds linger = std::chrono::milliseconds{250}) const {
-    const auto messages =
-        converse_ready(socket(), {call(name, std::move(arguments), id)}, linger);
+  // Holds the server's input open until the reply arrives. Closing it sooner
+  // is shutdown, which cancels a call still running — so under load a slow
+  // tool used to lose its answer to a fixed linger, not to anything it did.
+  [[nodiscard]] json invoke(std::string name, json arguments, int id) const {
+    const std::vector<json> requests{initialize_request(), initialized_notification(),
+                                     call(name, std::move(arguments), id)};
+    const auto messages = converse_steps(
+        socket(), {{.text = encode_requests(requests), .until = replied({id})}});
     return require_response(messages, id);
+  }
+
+  // Barriers for `converse_steps`: each waits on an event, never a guess.
+  [[nodiscard]] static std::function<libtmux::expected<void, std::string>()>
+  signalled(const libtmux::Server& server, std::string channel) {
+    return [&server,
+            channel = std::move(channel)]() -> libtmux::expected<void, std::string> {
+      const auto waited = server.wait_for(channel, std::chrono::seconds{20});
+      if (!waited.has_value()) {
+        return libtmux::unexpected(waited.error().diagnostic);
+      }
+      return {};
+    };
+  }
+
+  [[nodiscard]] static std::function<libtmux::expected<void, std::string>()>
+  shows(libtmux::Pane pane, std::string text) {
+    return [pane = std::move(pane),
+            text = std::move(text)]() -> libtmux::expected<void, std::string> {
+      libtmux::WaitOptions options;
+      options.timeout = std::chrono::seconds{20};
+      const auto waited = pane.wait_for_text(text, options);
+      if (!waited.has_value()) {
+        return libtmux::unexpected(waited.error().diagnostic);
+      }
+      if (!waited->matched) {
+        return libtmux::unexpected("the pane never showed " + text);
+      }
+      return {};
+    };
+  }
+
+  // Released by the test, then waited on until the run's own completion record
+  // is on screen: that record is what proves the run over.
+  [[nodiscard]] static std::function<libtmux::expected<void, std::string>()>
+  released(const libtmux::Server& server, const libtmux::Pane& pane,
+           std::string channel) {
+    return [&server, completed = shows(pane, "__:0"),
+            channel = std::move(channel)]() -> libtmux::expected<void, std::string> {
+      if (const auto sent = server.signal(channel); !sent.has_value()) {
+        return libtmux::unexpected(sent.error().diagnostic);
+      }
+      return completed();
+    };
   }
 
   [[nodiscard]] std::string captured(const libtmux::Pane& pane) const {
@@ -934,7 +1001,7 @@ TEST_F(McpProtocol, RunShellCommandWaitsForItsOwnValidCompletionRecord) {
               {"command", "printf '\\n%s:0\\n' \"$__libtmux_mcp_marker\"; sleep 1; "
                           "sh -c 'exit 23'"},
               {"timeoutMs", 5000}},
-             1, std::chrono::milliseconds{1500});
+             1);
   ASSERT_FALSE(reply["result"]["isError"].get<bool>()) << reply.dump();
   EXPECT_EQ(reply["result"]["structuredContent"]["exit_code"], 23);
 
@@ -944,7 +1011,7 @@ TEST_F(McpProtocol, RunShellCommandWaitsForItsOwnValidCompletionRecord) {
               {"command", "printf() { command printf '\\n%s%s%s:%s\\n' \"$2\" \"$3\" "
                           "\"$4\" 0; }; sh -c 'exit 23'"},
               {"timeoutMs", 1000}},
-             2, std::chrono::milliseconds{1500});
+             2);
   ASSERT_FALSE(shadowed["result"]["isError"].get<bool>()) << shadowed.dump();
   EXPECT_EQ(shadowed["result"]["structuredContent"]["exit_code"], 23);
 
@@ -959,7 +1026,7 @@ TEST_F(McpProtocol, RunShellCommandWaitsForItsOwnValidCompletionRecord) {
        {"command", "i=0; while [ \"$i\" -lt 300 ]; do printf 'eviction-%s\\n' \"$i\"; "
                    "i=$((i+1)); done; sh -c 'exit 19'"},
        {"timeoutMs", 1000}},
-      3, std::chrono::milliseconds{1500});
+      3);
   ASSERT_FALSE(evicted["result"]["isError"].get<bool>()) << evicted.dump();
   EXPECT_EQ(evicted["result"]["structuredContent"]["exit_code"], 19);
   EXPECT_NE(evicted["result"]["structuredContent"]["text"].get<std::string>().find(
@@ -967,42 +1034,58 @@ TEST_F(McpProtocol, RunShellCommandWaitsForItsOwnValidCompletionRecord) {
             std::string::npos);
 }
 
+// A run that times out keeps its pane until the command it started has ended,
+// and gives it back once it has — however long after the timeout that is.
+// Every step waits on an event rather than a guess: the command holds on a
+// channel this test releases, so "still running" and "finished" are states the
+// test chooses rather than ones a loaded machine races.
 TEST_F(McpProtocol, KeepsTimedOutRunInputReservedUntilCompletion) {
   const libtmux::Server server = connect_server();
   auto pane = server.pane("mcp");
   ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
+  const auto tmux_executable = executable_on_path("tmux");
+  ASSERT_TRUE(tmux_executable.has_value());
   const std::string pane_id{pane->id()};
-  const std::string start =
-      encode_requests({initialize_request(), initialized_notification(),
-                       call("run_shell_command",
-                            {{"paneId", pane_id},
-                             {"command", "sleep 1; printf run-finished"},
-                             {"timeoutMs", 50}},
-                            1)});
+  const std::string started = "mcp-timed-out-run-started";
+  const std::string proceed = "mcp-timed-out-run-proceed";
+  const std::string tmux = shell_quote(tmux_executable->string()) + " -N -S " +
+                           shell_quote(socket().string()) + " wait-for ";
+  // `printf 'run-%s'` so the command line on screen never holds the text the
+  // final capture looks for.
+  const std::string command = tmux + "-S " + shell_quote(started) + "; " + tmux +
+                              shell_quote(proceed) + "; printf 'run-%s' finished";
+  const std::string start = encode_requests(
+      {initialize_request(), initialized_notification(),
+       call("run_shell_command",
+            {{"paneId", pane_id}, {"command", command}, {"timeoutMs", 50}}, 1)});
   const std::string blocked = encode_requests(
       {call("paste_text", {{"paneId", pane_id}, {"text", "blocked-input"}}, 2)});
   const std::string after = encode_requests(
       {call("paste_text", {{"paneId", pane_id}, {"text", "after-run"}}, 3)});
-  const auto messages =
-      converse_steps(socket(), {{start, std::chrono::milliseconds{150}},
-                                {blocked, std::chrono::milliseconds{1200}},
-                                {after, std::chrono::milliseconds{300}}});
+  // Reserved before the command was sent, so running means reserved; released
+  // only once the refusal is in hand.
+  const auto messages = converse_steps(
+      socket(), {{.text = start,
+                  .barrier_after_write = signalled(server, started),
+                  .until = replied({1})},
+                 {.text = blocked,
+                  .barrier_after_write = released(server, *pane, proceed),
+                  .until = replied({2})},
+                 {.text = after, .until = replied({3})}});
 
-  const json* timed_out = response(messages, 1);
-  const json* refused = response(messages, 2);
-  const json* accepted = response(messages, 3);
-  ASSERT_NE(timed_out, nullptr);
-  ASSERT_NE(refused, nullptr);
-  ASSERT_NE(accepted, nullptr);
-  EXPECT_TRUE((*timed_out)["result"]["isError"].get<bool>());
+  const json& timed_out = require_response(messages, 1);
+  const json& refused = require_response(messages, 2);
+  const json& accepted = require_response(messages, 3);
+  EXPECT_TRUE(timed_out["result"]["isError"].get<bool>());
   EXPECT_NE(
-      (*timed_out)["result"]["content"][0]["text"].get<std::string>().find("timed out"),
+      timed_out["result"]["content"][0]["text"].get<std::string>().find("timed out"),
       std::string::npos);
-  EXPECT_TRUE((*refused)["result"]["isError"].get<bool>());
-  EXPECT_NE((*refused)["result"]["content"][0]["text"].get<std::string>().find(
-                "still active"),
-            std::string::npos);
-  EXPECT_FALSE((*accepted)["result"]["isError"].get<bool>());
+  EXPECT_TRUE(refused["result"]["isError"].get<bool>());
+  EXPECT_NE(
+      refused["result"]["content"][0]["text"].get<std::string>().find("still active"),
+      std::string::npos);
+  EXPECT_FALSE(accepted["result"]["isError"].get<bool>())
+      << accepted["result"]["content"][0]["text"];
   const std::string capture = captured(*pane);
   EXPECT_EQ(capture.find("blocked-input"), std::string::npos);
   EXPECT_NE(capture.find("run-finished"), std::string::npos);
@@ -1017,16 +1100,20 @@ TEST_F(McpProtocol, KeepsCancelledRunInputReservedUntilCompletion) {
   ASSERT_TRUE(tmux_executable.has_value());
   const std::string pane_id{pane->id()};
   const std::string started = "mcp-cancelled-run-started";
-  const std::string signal_started = shell_quote(tmux_executable->string()) +
-                                     " -N -S " + shell_quote(socket().string()) +
-                                     " wait-for -S " + shell_quote(started) + "; ";
-  const std::string start = encode_requests(
-      {initialize_request(), initialized_notification(),
-       call("run_shell_command",
-            {{"paneId", pane_id},
-             {"command", signal_started + "sleep 1; printf cancelled-run-finished"},
-             {"timeoutMs", 5000}},
-            10)});
+  const std::string proceed = "mcp-cancelled-run-proceed";
+  const std::string tmux = shell_quote(tmux_executable->string()) + " -N -S " +
+                           shell_quote(socket().string()) + " wait-for ";
+  // `printf 'cancelled-run-%s'` so the command line on screen never holds the
+  // text the final capture looks for.
+  const std::string start =
+      encode_requests({initialize_request(), initialized_notification(),
+                       call("run_shell_command",
+                            {{"paneId", pane_id},
+                             {"command", tmux + "-S " + shell_quote(started) + "; " +
+                                             tmux + shell_quote(proceed) +
+                                             "; printf 'cancelled-run-%s' finished"},
+                             {"timeoutMs", 5000}},
+                            10)});
   const std::string cancel_and_block = encode_requests(
       {json{{"jsonrpc", "2.0"},
             {"method", "notifications/cancelled"},
@@ -1034,18 +1121,12 @@ TEST_F(McpProtocol, KeepsCancelledRunInputReservedUntilCompletion) {
        call("send_keys", {{"paneId", pane_id}, {"keys", "Escape"}}, 11)});
   const std::string after = encode_requests(
       {call("paste_text", {{"paneId", pane_id}, {"text", "after-cancel"}}, 12)});
-  const auto wait_until_started = [&]() -> libtmux::expected<void, std::string> {
-    const auto ready = server.wait_for(started, std::chrono::seconds{2});
-    if (!ready.has_value()) {
-      return libtmux::unexpected(ready.error().diagnostic);
-    }
-    return {};
-  };
   const auto messages = converse_steps(
-      socket(),
-      {{.text = start, .barrier_after_write = wait_until_started},
-       {.text = cancel_and_block, .pause_after = std::chrono::milliseconds{1200}},
-       {.text = after, .pause_after = std::chrono::milliseconds{300}}});
+      socket(), {{.text = start, .barrier_after_write = signalled(server, started)},
+                 {.text = cancel_and_block,
+                  .barrier_after_write = released(server, *pane, proceed),
+                  .until = replied({11})},
+                 {.text = after, .until = replied({12})}});
 
   EXPECT_EQ(response(messages, 10), nullptr);
   const json* refused = response(messages, 11);
@@ -1801,10 +1882,9 @@ TEST_F(McpProtocol, RefusesShellCommandsForANonShellForegroundProcess) {
   ASSERT_EQ(*command, "cat");
 
   const std::string marker = "non-shell-payload-marker";
-  const json reply =
-      invoke("run_shell_command",
-             {{"paneId", pane_id}, {"command", "printf " + marker}, {"timeoutMs", 100}},
-             1, std::chrono::milliseconds{250});
+  const json reply = invoke(
+      "run_shell_command",
+      {{"paneId", pane_id}, {"command", "printf " + marker}, {"timeoutMs", 100}}, 1);
   ASSERT_TRUE(reply["result"]["isError"].get<bool>()) << reply.dump();
   EXPECT_NE(reply["result"]["content"][0]["text"].get<std::string>().find(
                 "supported POSIX shell"),
