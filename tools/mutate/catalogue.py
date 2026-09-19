@@ -133,7 +133,7 @@ CATALOGUE: t.Final = (
     Mutation(
         mutation_id="unnamed-break-report-keeps-source-session",
         path="src/entities.cpp",
-        find="      created.session_id() != owner) {",
+        find="      created.session_id().value() != owner) {",
         replace="        false) {",
         target="libtmux_backend_seam_test",
         test_regex=r"^libtmux[.]backend_seam$",
@@ -144,12 +144,13 @@ CATALOGUE: t.Final = (
         mutation_id="named-break-report-keeps-source-session",
         path="src/entities.cpp",
         find=(
-            "  auto created = named_break_report(executor, *std::move(broken), "
-            "pane.id(), {}, owner);"
+            "  auto created =\n"
+            "      named_break_report(executor, *std::move(broken), "
+            "pane.id().value(), {}, owner);"
         ),
         replace=(
-            "  auto created = named_break_report(executor, *std::move(broken), "
-            "pane.id());"
+            "  auto created =\n"
+            "      named_break_report(executor, *std::move(broken), pane.id().value());"
         ),
         target="libtmux_backend_seam_test",
         test_regex=r"^libtmux[.]backend_seam$",
@@ -506,10 +507,11 @@ CATALOGUE: t.Final = (
     ),
     Mutation(
         mutation_id="mcp-wait-shares-one-deadline",
-        path="apps/mcp/src/wait_for_text.cpp",
-        find="  auto reply = server.run(command, *remaining);",
+        path="src/wait.cpp",
+        find="  auto reply = wait.server.run(command, *remaining);",
         replace=(
-            "  auto reply = server.run(command, std::chrono::milliseconds{60000});"
+            "  auto reply = "
+            "wait.server.run(command, std::chrono::milliseconds{60000});"
         ),
         target="mcp_tools_test",
         test_regex=r"^consumer[.]mcp$",
@@ -518,7 +520,7 @@ CATALOGUE: t.Final = (
     Mutation(
         mutation_id="mcp-wait-omits-unresolved-pane",
         path="apps/mcp/src/wait_for_text.cpp",
-        find="  if (!answer.pane_id.empty()) {",
+        find="  if (!pane_id.empty()) {",
         replace="  if (true) {",
         target="mcp_schema_test",
         test_regex=r"^consumer[.]mcp[.]schema$",
@@ -952,38 +954,38 @@ CATALOGUE: t.Final = (
     ),
     Mutation(
         mutation_id="wait-for-text-defers-active-row-match",
-        path="apps/mcp/src/wait_for_text.cpp",
-        find="  if (*matched && "
-        "confirmed_by_output(initial_capture, wanted, pending_input)) {\n"
-        "    return wait_output(WaitAnswer{.matched = true,",
-        replace="  if (*matched) {\n    return wait_output(WaitAnswer{.matched = true,",
-        target="mcp_tools_test",
-        test_regex=r"^consumer[.]mcp[.]real-tmux$",
-        guards="wait_for_text does not report a match confined to the pane's "
+        path="include/libtmux/capture.hpp",
+        find="  if (active_row.find(wanted) != std::string_view::npos &&\n"
+        "      above.find(wanted) == std::string_view::npos) {",
+        replace="  if (false && active_row.find(wanted) != std::string_view::npos &&\n"
+        "      above.find(wanted) == std::string_view::npos) {",
+        target="libtmux_value_semantics_test",
+        test_regex=r"^libtmux[.]value_semantics[.]",
+        guards="output_confirms does not report a match confined to the pane's "
         "active row, which is a caller's own just-submitted command echoed "
         "back rather than output the shell produced by running it",
     ),
     Mutation(
         mutation_id="wait-for-text-timeout-marks-an-unconfirmed-match",
-        path="apps/mcp/src/wait_for_text.cpp",
-        find="  const bool still_pending = "
-        "!wanted.empty() && text.find(wanted) != std::string::npos;",
-        replace="  const bool still_pending = false;",
-        target="mcp_tools_test",
-        test_regex=r"^consumer[.]mcp[.]real-tmux$",
+        path="src/wait.cpp",
+        find="  const bool present =\n"
+        "      !wait.wanted.empty() && text.find(wait.wanted) != std::string::npos;",
+        replace="  const bool present = false;",
+        target="libtmux_pane_io_test",
+        test_regex=r"^libtmux[.]pane[.]io[.]",
         guards="a timeout whose last capture still shows the wanted text says "
         "so in its mode, so a caller can tell text this server typed and the "
         "shell never ran apart from a pane that stayed silent",
     ),
     Mutation(
         mutation_id="wait-for-text-capture-joins-wrapped-lines",
-        path="apps/mcp/src/wait_for_text.cpp",
-        find="  return run_before_deadline(server, "
-        '{"capture-pane", "-p", "-J", "-t", target.pane_id},',
-        replace="  return run_before_deadline(server, "
-        '{"capture-pane", "-p", "-t", target.pane_id},',
-        target="mcp_tools_test",
-        test_regex=(r"^consumer[.]mcp[.]real-tmux$"),
+        path="src/wait.cpp",
+        find='  return run_before_deadline(wait, {"capture-pane", "-p", "-J", "-t", '
+        "wait.pane_id});",
+        replace='  return run_before_deadline(wait, {"capture-pane", "-p", "-t", '
+        "wait.pane_id});",
+        target="libtmux_pane_io_test",
+        test_regex=r"^libtmux[.]pane[.]io[.]",
         guards="wait_for_text's capture rejoins a line tmux only wrapped for "
         "display (-J), so a wanted string straddling the pane's width still "
         "matches instead of being split by an inserted line break — found "
