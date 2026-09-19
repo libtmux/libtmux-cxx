@@ -638,7 +638,7 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
       retained_state = error.retained_state;
     return fail(error.exit_code, error.code, error.what());
   } catch (const std::exception& error) {
-    return fail(1, "operation_failed", error.what());
+    return fail(1, "tmux_failed", error.what());
   }
 }
 } // namespace libtmux::workspace::cli

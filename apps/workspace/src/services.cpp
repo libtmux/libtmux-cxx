@@ -225,7 +225,7 @@ Json from_yaml(const YAML::Node& node, int depth = 0) {
 Json read_document(const fs::path& path, bool reject_erb = false) {
   std::ifstream file{path, std::ios::binary};
   if (!file)
-    throw Failure{1, "read_failed", "cannot read " + private_path(path)};
+    throw Failure{1, "invalid_workspace", "cannot read " + private_path(path)};
   std::string contents;
   char buffer[8192];
   while (file.read(buffer, sizeof buffer) || file.gcount() != 0) {
@@ -687,10 +687,9 @@ Server start_endpoint(const Request& request, Bootstrap& bootstrap) {
     try {
       reply = run_child(command);
     } catch (Failure& spawn) {
-      // run_child()'s own "process_failed" is generic (it also spawns
-      // EDITOR, tmuxp, before_script); here it specifically means tmux
-      // itself could not be started.
-      if (spawn.code == "process_failed")
+      // A child this tool could not start is reported as the script it was;
+      // here that child is tmux itself.
+      if (spawn.code == "script_failed")
         spawn.code = "tmux_unavailable";
       throw;
     }
@@ -702,15 +701,14 @@ Server start_endpoint(const Request& request, Bootstrap& bootstrap) {
         identity.front() != '$' ||
         identity.find_first_not_of("0123456789", 1) != std::string::npos ||
         pid.empty() || pid.find_first_not_of("0123456789") != std::string::npos)
-      throw Failure{1, "startup_identity", "tmux returned an invalid startup identity"};
+      throw Failure{1, "tmux_failed", "tmux returned an invalid startup identity"};
     const auto server = endpoint(request);
     const auto current_pid = server.run({"display-message", "-p", "#{pid}"});
     if (!current_pid || *current_pid != pid + "\n")
-      throw Failure{1, "startup_identity", "tmux server changed during startup"};
+      throw Failure{1, "tmux_failed", "tmux server changed during startup"};
     const auto owned = server.session(identity);
     if (!owned || owned->name() != name)
-      throw Failure{1, "startup_identity",
-                    "tmux bootstrap session changed during startup"};
+      throw Failure{1, "tmux_failed", "tmux bootstrap session changed during startup"};
     bootstrap.session = *owned;
     return server;
   } catch (Failure& error) {
@@ -730,7 +728,7 @@ Json capture_options(const Server& server, std::string target, bool window = fal
   command.push_back(std::move(target));
   const auto reply = server.run(command);
   if (!reply)
-    throw Failure{1, "capture_failed", reply.error().diagnostic};
+    throw Failure{1, "tmux_failed", reply.error().diagnostic};
   Json options = Json::object();
   for (const auto& entry : parse_options(*reply)) {
     std::string name = entry.name;
@@ -765,12 +763,12 @@ Json capture(const Request& request) {
     throw Failure{1, "session_not_found", "no session named " + name};
   const auto windows = session->windows();
   if (!windows)
-    throw Failure{1, "capture_failed", windows.error().diagnostic};
+    throw Failure{1, "tmux_failed", windows.error().diagnostic};
   // A pane sitting at the shell tmux starts for it carries no command of its
   // own, and tmux starts `default-shell`, which is not one of a fixed few.
   const auto shell = session->option("default-shell");
   if (!shell)
-    throw Failure{1, "capture_failed", shell.error().diagnostic};
+    throw Failure{1, "tmux_failed", shell.error().diagnostic};
   const std::string login = fs::path{shell->value}.filename().string();
   Json document{{"session_name", session->name()},
                 {"options", capture_options(server, std::string{session->id()})},
@@ -778,7 +776,7 @@ Json capture(const Request& request) {
   for (const auto& window : *windows) {
     const auto panes = window.panes();
     if (!panes)
-      throw Failure{1, "capture_failed", panes.error().diagnostic};
+      throw Failure{1, "tmux_failed", panes.error().diagnostic};
     Json item{{"window_name", window.name()},
               {"window_index", window.index()},
               {"layout", window.layout()},
@@ -860,7 +858,7 @@ std::string yaml(const Json& document) {
   YAML::Emitter output;
   emit_yaml(output, document);
   if (!output.good())
-    throw Failure{1, "encode_failed", output.GetLastError()};
+    throw Failure{1, "invalid_workspace", output.GetLastError()};
   return std::string{output.c_str()} + "\n";
 }
 Json save_or_return(const Request& request, const Json& document, std::string format,
@@ -1175,7 +1173,7 @@ std::vector<Pattern> patterns(const Request& request) {
     try {
       result.push_back({fields, std::regex{query, flags}});
     } catch (const std::regex_error& error) {
-      throw Failure{2, "invalid_pattern", error.what()};
+      throw Failure{2, "usage", error.what()};
     }
   }
   return result;
@@ -1649,7 +1647,7 @@ static Execution execute_impl(const Request& request, const EventSink& event,
           } catch (const Failure& error) {
             observer_error = error;
           } catch (const std::exception& error) {
-            observer_error.emplace(1, "operation_failed", error.what());
+            observer_error.emplace(1, "tmux_failed", error.what());
           }
           return observer_error->what();
         };
@@ -1730,15 +1728,8 @@ static Execution execute_impl(const Request& request, const EventSink& event,
               if (script_error)
                 return script_error->what();
             } catch (const Failure& error) {
-              if (!script_error) {
+              if (!script_error)
                 script_error = error;
-                // A before_script that cannot even be started (missing, not
-                // executable) is a before_script failure -- matching
-                // tmuxp's BeforeLoadScriptNotExists -- not run_child()'s
-                // generic process_failed.
-                if (script_error->code == "process_failed")
-                  script_error->code = "script_failed";
-              }
               if (script_output.is_null())
                 script_output = error.child_output;
               return script_error->what();
@@ -1831,7 +1822,7 @@ static Execution execute_impl(const Request& request, const EventSink& event,
         problem["retained_state"] = error.retained_state;
       errors.push_back(std::move(problem));
     } catch (const std::exception& error) {
-      errors.push_back({{"code", "operation_failed"},
+      errors.push_back({{"code", "tmux_failed"},
                         {"message", error.what()},
                         {"input_index", active_input},
                         {"failed_stage", stage}});
@@ -1840,7 +1831,7 @@ static Execution execute_impl(const Request& request, const EventSink& event,
       const auto cleaned = bootstrap.session->kill();
       bootstrap.session.reset();
       if (!cleaned)
-        errors.push_back({{"code", "bootstrap_cleanup_failed"},
+        errors.push_back({{"code", "tmux_failed"},
                           {"message", cleaned.error().diagnostic},
                           {"failed_stage", "cleanup"}});
     }
@@ -1870,7 +1861,7 @@ static Execution execute_impl(const Request& request, const EventSink& event,
     }
     return execution;
   }
-  throw Failure{1, "feature_unavailable", "command is not implemented"};
+  throw Failure{2, "usage", "command is not implemented"};
 }
 Execution execute(const Request& request, const EventSink& event,
                   const PromptSink& prompt) {

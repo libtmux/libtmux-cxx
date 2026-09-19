@@ -261,7 +261,7 @@ ChildOutput run_child(const std::vector<std::string>& arguments, ChildOptions op
               text(reply.error().stderr_bytes), reply.error().output_truncated};
     const bool limited =
         reply.error().kind == libtmux::detail::ProcessError::Kind::output_limit;
-    Failure failure{1, limited ? "output_limit" : "process_failed",
+    Failure failure{1, limited ? "output_limit" : "script_failed",
                     limited ? "child output exceeds 1 MiB per stream"
                             : reply.error().diagnostic};
     failure.child_output =
