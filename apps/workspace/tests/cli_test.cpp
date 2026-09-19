@@ -2555,13 +2555,18 @@ TEST(WorkspaceCliTmux, PromptedLoadRoutesEachAnswerToItsOwnPath) {
     EXPECT_EQ(seen[0], "prompt-existing is already running. Attach? [Y/n]");
     if (answer == "n") {
       EXPECT_EQ(execution.exit_code, 0) << execution.value.dump();
-      EXPECT_TRUE(execution.value.at("results").empty());
+      // A decline is scoped to the input it was about, not the whole
+      // load, so that one input still gets a result record -- left alone
+      // rather than silently dropped.
+      ASSERT_EQ(execution.value.at("results").size(), 1U) << execution.value.dump();
+      EXPECT_EQ(execution.value.at("results")[0].at("action"), "left");
+      EXPECT_EQ(execution.value.at("results")[0].at("session_id"), existing->id());
       EXPECT_TRUE(execution.value.at("errors").empty());
       EXPECT_FALSE(execution.handoff);
       // Declining is a normal outcome, not silence: the envelope says
-      // plainly what was left alone.
-      EXPECT_EQ(execution.value.at("note"),
-                "prompt-existing is unchanged; nothing was built")
+      // plainly what was left alone, without claiming the rest of the load
+      // (of which there is none here) built nothing.
+      EXPECT_EQ(execution.value.at("note"), "prompt-existing is unchanged")
           << execution.value.dump();
     } else {
       EXPECT_EQ(execution.exit_code, 2) << execution.value.dump();
@@ -2603,6 +2608,72 @@ TEST(WorkspaceCliTmux, PromptedLoadRoutesEachAnswerToItsOwnPath) {
     });
     EXPECT_EQ(asked, 0U);
   }
+}
+
+// The attach prompt is asked only about the last input, and a decline
+// is scoped to that one input, not the whole load. With one input this is
+// indistinguishable from aborting the load outright -- both leave nothing
+// built -- so it takes two inputs, where only the second prompts, to tell
+// them apart. Reverting to an early return on decline makes this fail: the
+// first session goes missing.
+TEST(WorkspaceCliTmux, DeclinedAttachScopesToItsOwnInputAndStillBuildsEarlierOnes) {
+  using libtmux::workspace::cli::execute;
+  using libtmux::workspace::cli::Failure;
+  using libtmux::workspace::cli::PromptSink;
+  using libtmux::workspace::cli::Request;
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-scope")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value());
+  const auto noop = [](const std::string&, const libtmux::workspace::cli::Json&) {};
+  const auto run = [&](const Request& request, const PromptSink& prompt) {
+    try {
+      return execute(request, noop, prompt);
+    } catch (const Failure& error) {
+      ADD_FAILURE() << "unexpected exception: " << error.what();
+      throw;
+    }
+  };
+  const auto second = server->new_session("second");
+  ASSERT_TRUE(second.has_value());
+  const auto before_windows = second->windows();
+  ASSERT_TRUE(before_windows.has_value());
+  const auto first_file = fixture->socket_path().parent_path() / "scope-first.yaml";
+  const auto second_file = fixture->socket_path().parent_path() / "scope-second.yaml";
+  std::ofstream{first_file} << "session_name: first\nwindows: [{}]\n";
+  std::ofstream{second_file} << "session_name: second\nwindows: [{}]\n";
+  std::vector<std::string> seen;
+  const Request request{
+      .command = "load",
+      .importer = {},
+      .values = {{"workspace-file", {first_file.string(), second_file.string()}},
+                 {"S", {fixture->socket_path().string()}}}};
+  const auto execution = run(request, [&](std::string_view message) {
+    seen.emplace_back(message);
+    return "n";
+  });
+  ASSERT_EQ(seen.size(), 1U);
+  EXPECT_EQ(seen[0], "second is already running. Attach? [Y/n]");
+  EXPECT_EQ(execution.exit_code, 0) << execution.value.dump();
+  EXPECT_TRUE(execution.value.at("errors").empty()) << execution.value.dump();
+  EXPECT_FALSE(execution.handoff);
+  ASSERT_EQ(execution.value.at("results").size(), 2U) << execution.value.dump();
+  const auto& first_result = execution.value.at("results")[0];
+  EXPECT_EQ(first_result.at("input_index"), 0);
+  EXPECT_EQ(first_result.at("session_name"), "first");
+  EXPECT_EQ(first_result.at("action"), "created");
+  const auto& second_result = execution.value.at("results")[1];
+  EXPECT_EQ(second_result.at("input_index"), 1);
+  EXPECT_EQ(second_result.at("action"), "left");
+  EXPECT_EQ(second_result.at("session_id"), second->id());
+  EXPECT_EQ(execution.value.at("note"), "second is unchanged")
+      << execution.value.dump();
+  // The earlier input actually built, and the declined one is untouched.
+  EXPECT_TRUE(server->session("=first:").has_value());
+  const auto after_windows = second->windows();
+  ASSERT_TRUE(after_windows.has_value());
+  EXPECT_EQ(after_windows->size(), before_windows->size());
 }
 
 // Human output is for humans. A cold-start failure retains an
