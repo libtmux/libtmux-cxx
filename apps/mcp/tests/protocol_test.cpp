@@ -10,6 +10,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -368,7 +369,11 @@ std::size_t line_occurrences(std::string_view text, std::string_view expected) {
   return count;
 }
 
-std::vector<std::string> run_shell_trap_files() {
+// Trap files holding `traps`, which the calling test installed and nothing else
+// does. The framing writes them to a fixed `/tmp` prefix, where every
+// concurrent run on the machine writes its own — so counting all of them
+// measured whoever else was running, not whether this run cleaned up.
+std::vector<std::string> run_shell_trap_files(std::string_view traps) {
   std::vector<std::string> files;
   std::error_code error;
   const std::filesystem::path temporary = std::filesystem::temp_directory_path(error);
@@ -379,7 +384,15 @@ std::vector<std::string> run_shell_trap_files() {
   for (; !error && entries != std::filesystem::directory_iterator{};
        entries.increment(error)) {
     const std::string name = entries->path().filename().string();
-    if (name.starts_with("libtmux-mcp-traps-")) {
+    if (!name.starts_with("libtmux-mcp-traps-")) {
+      continue;
+    }
+    // Another run's file can vanish between listing and reading; it was not
+    // this run's to begin with.
+    std::ifstream file{entries->path()};
+    const std::string content{std::istreambuf_iterator<char>{file},
+                              std::istreambuf_iterator<char>{}};
+    if (content.find(traps) != std::string::npos) {
       files.push_back(name);
     }
   }
@@ -1435,7 +1448,7 @@ TEST_F(McpProtocol, PreservesInheritedErrorAndDebugTrapsAcrossBashAndZsh) {
 
     const std::string parent_before = parent_shell_state(
         server, *pane, *tmux_executable, "traps-before-" + std::string{name});
-    const auto files_before = run_shell_trap_files();
+    const auto files_before = run_shell_trap_files(debug_out);
     const std::string success_marker = "trap-success-" + std::string{name};
     const json success = invoke("run_shell_command",
                                 {{"paneId", pane_id},
@@ -1507,7 +1520,7 @@ TEST_F(McpProtocol, PreservesInheritedErrorAndDebugTrapsAcrossBashAndZsh) {
     const std::string parent_after = parent_shell_state(
         server, *pane, *tmux_executable, "traps-after-" + std::string{name});
     EXPECT_EQ(parent_after, parent_before) << name;
-    EXPECT_EQ(run_shell_trap_files(), files_before) << name;
+    EXPECT_EQ(run_shell_trap_files(debug_out), files_before) << name;
   }
 }
 
