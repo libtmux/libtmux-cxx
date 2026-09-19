@@ -8,8 +8,10 @@
 #include <array>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <ranges>
 #include <string>
+#include <sys/stat.h>
 #include <thread>
 #include <vector>
 
@@ -1156,7 +1158,13 @@ TEST(Entity, ADeadPaneReportsWhatItExitedWith) {
   const Server server = connect(*fixture);
   const Session session = only_session(server);
 
-  const auto window = session.new_window("exiting");
+  const auto gate_path = fixture->tmux_tmpdir() / "exit-gate";
+  ASSERT_EQ(::mkfifo(gate_path.c_str(), 0600), 0);
+  std::fstream gate{gate_path, std::ios::in | std::ios::out};
+  ASSERT_TRUE(gate.is_open());
+
+  const auto window = session.new_window(
+      {.name = "exiting", .start_directory = fixture->tmux_tmpdir().string()});
   ASSERT_TRUE(window.has_value()) << window.error().diagnostic;
   const auto panes = window->panes();
   ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
@@ -1168,35 +1176,22 @@ TEST(Entity, ADeadPaneReportsWhatItExitedWith) {
 
   // Without this tmux destroys the pane and there is nothing left to ask.
   ASSERT_TRUE(pane.set_option("remain-on-exit", "on").has_value());
-  ASSERT_TRUE(pane.send_line("exit 7").has_value());
+  ASSERT_TRUE(server
+                  .run({"set-hook", "-p", "-t", pane.id().value(), "pane-died",
+                        "wait-for -S exited"})
+                  .has_value());
 
-  std::optional<Pane> dead;
-  for (int attempt = 0; attempt < 300; ++attempt) {
-    auto current = pane.refresh();
-    ASSERT_TRUE(current.has_value()) << current.error().diagnostic;
-    // Before tmux 3.7, `pane_dead` read only wp->fd == -1, while
-    // `pane_dead_status` also required PANE_STATUSREADY -- so a pane could
-    // report dead with no status yet (tmux/tmux@5865001e). The status
-    // implies deadness on every version; deadness does not imply a status
-    // on the older ones, so wait on the status.
-    if (current->exit_status().has_value()) {
-      dead = *std::move(current);
-      break;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds{10});
-  }
-  if (!dead.has_value()) {
-    // The wait above gave up; ask tmux directly what it thinks happened to
-    // this pane, since a raw read is the fastest way to tell "never
-    // finished exiting" apart from "reports something this accessor does
-    // not expect" without guessing again.
-    const auto raw = server.run({"display-message", "-p", "-t", pane.id().value(),
-                                 "dead=#{pane_dead} status=#{pane_dead_status} "
-                                 "signal=#{pane_dead_signal} "
-                                 "command=#{pane_current_command} pid=#{pane_pid}"});
-    FAIL() << "the pane never exited; tmux reports: "
-           << (raw.has_value() ? *raw : raw.error().diagnostic);
-  }
+  // tmux 3.4 can lose SIGCHLD in libutempter's PTY teardown.
+  // Hold the PTY until the shell's exit status is recorded.
+  ASSERT_TRUE(pane.send_line("trap '' HUP; exec 3< exit-gate; "
+                             "{ read -r release <&3; } & exit 7")
+                  .has_value());
+  const auto exited = server.wait_for("exited", std::chrono::seconds{1});
+  ASSERT_TRUE(exited.has_value()) << exited.error().diagnostic;
+  gate.close();
+
+  const auto dead = pane.refresh();
+  ASSERT_TRUE(dead.has_value()) << dead.error().diagnostic;
 
   const auto status = dead->exit_status();
   ASSERT_TRUE(status.has_value()) << "a dead pane reported no status";
