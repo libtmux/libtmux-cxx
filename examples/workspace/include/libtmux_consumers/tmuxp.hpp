@@ -17,7 +17,6 @@
 // worse failure: a dropped `shell_command_before` builds panes that never
 // activate their environment, and nothing about the session says why.
 
-#include <expected>
 #include <string>
 #include <string_view>
 

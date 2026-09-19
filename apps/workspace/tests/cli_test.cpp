@@ -2236,10 +2236,10 @@ TEST(WorkspaceCliTmux, AbsentStartDirectoryBuildsAndWarns) {
 }
 
 // Reuse compares the document against the session that is already there; it
-// does not rebuild. A session missing a window the document asks for is
-// reported by name, the session is left as it was, and a document the session
-// does satisfy still reuses it and reports success.
-TEST(WorkspaceCliTmux, ReusedSessionMissingWindowsIsPartialAndNamesThem) {
+// does not rebuild. A session missing a window the document asks for stops
+// the load and is named, the session is left as it was, and a document the
+// session does satisfy still reuses it and reports success.
+TEST(WorkspaceCliTmux, ReusedSessionMissingWindowsStopsTheLoadAndNamesThem) {
   Files files;
   auto fixture = libtmux::test::ScopedTmuxServer::start(
       {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-reuse")});
@@ -2259,13 +2259,16 @@ TEST(WorkspaceCliTmux, ReusedSessionMissingWindowsIsPartialAndNamesThem) {
   const auto reused = invoke({"load", "three.yaml", "-d", "-S", socket, "--json"});
   EXPECT_EQ(reused.code, 1) << reused.out << reused.err;
   const auto summary = Json::parse(reused.out);
-  EXPECT_EQ(summary.at("status"), "partial") << summary.dump();
+  // Nothing was built and nothing was changed, so there is no retained
+  // effect for "partial" to describe.
+  EXPECT_EQ(summary.at("status"), "error") << summary.dump();
   ASSERT_EQ(summary.at("errors").size(), 1U) << summary.dump();
   const auto& problem = summary.at("errors")[0];
-  EXPECT_EQ(problem.at("code"), "destination_exists") << summary.dump();
-  const auto message = problem.at("message").get<std::string>();
-  EXPECT_NE(message.find("two"), std::string::npos) << message;
-  EXPECT_NE(message.find("three"), std::string::npos) << message;
+  EXPECT_EQ(problem.at("code"), "session_mismatch") << summary.dump();
+  EXPECT_NE(problem.at("message").get<std::string>().find("two"), std::string::npos)
+      << summary.dump();
+  EXPECT_EQ(problem.at("missing_windows"), Json::array({"two", "three"}))
+      << summary.dump();
   const auto session = server->session("=reuse:");
   ASSERT_TRUE(session.has_value());
   const auto windows = session->windows();
