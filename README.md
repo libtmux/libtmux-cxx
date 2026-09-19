@@ -876,7 +876,7 @@ It links no test framework, so GoogleTest, Catch2 and doctest all work.
 tmux 3.2a and newer, matching the Python package. `Version` orders releases
 correctly: `3.7 < 3.7a < 3.7b`, `next-3.8` precedes `3.8`, and `master` sorts
 above every numbered release. CI builds and tests pinned compatibility cells
-from 3.2a through 3.7b, plus `master`, on every pull request and master change.
+from 3.2a through 3.7c, plus `master`, on every pull request and master change.
 
 Across that range tmux does not answer identically, and where it cannot the
 library cannot either. These are the exceptions, each covered by a test that
@@ -1124,7 +1124,7 @@ Pull requests and master changes run against real tmux under clang with
 libc++, GCC with libstdc++, the C++20 build over `tl::expected`, address and
 undefined-behaviour sanitizers, the thread sanitizer, a locale that is not
 UTF-8, and macOS with Apple Clang. The tmux matrix spans pinned compatibility
-cells from 3.2a through 3.7b, plus `master`. The examples run as tests, and so
+cells from 3.2a through 3.7c, plus `master`. The examples run as tests, and so
 do the programs that must fail to compile.
 
 The four core parsers for tmux-controlled text — rows, options, version output,

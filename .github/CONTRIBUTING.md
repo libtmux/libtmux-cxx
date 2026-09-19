@@ -288,7 +288,7 @@ with a command the notes give them.
 ## Compatibility
 
 tmux 3.2a and newer, through `master`, matching the Python package. CI builds
-and tests pinned compatibility cells from 3.2a through 3.7b, plus `master`, on
+and tests pinned compatibility cells from 3.2a through 3.7c, plus `master`, on
 every pull request and every change to master; the handful of capabilities that
 need a later tmux are covered by tests that skip below the release providing
 them — [the README](../README.md#compatibility) lists them.
