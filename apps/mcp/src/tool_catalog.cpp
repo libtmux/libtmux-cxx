@@ -973,6 +973,10 @@ retain_run_until_proven_complete(PaneInputLease lease, Server server, Pane pane,
       }
     }
 
+    void prove_completion_with(std::function<bool()> proves_complete) {
+      lease_.prove_completion_with(std::move(proves_complete));
+    }
+
   private:
     PaneInputLease lease_;
     std::atomic_bool settled_{};
@@ -1006,7 +1010,8 @@ retain_run_until_proven_complete(PaneInputLease lease, Server server, Pane pane,
       }
     };
 
-    launch([server, pane_id, marker = std::move(marker), same_endpoint] {
+    const auto command_finished = [server, pane_id, marker = std::move(marker),
+                                   same_endpoint] {
       if (!same_endpoint()) {
         return false;
       }
@@ -1015,9 +1020,10 @@ retain_run_until_proven_complete(PaneInputLease lease, Server server, Pane pane,
                      kPaneInputSettlementProofTimeout);
       return captured.has_value() && same_endpoint() &&
              shell_command_completion(*captured, marker).has_value();
-    });
-    launch([server, pane_id, server_pid = preflight.server_pid,
-            server_start_time = preflight.server_start_time, same_endpoint] {
+    };
+    const auto pane_replaced = [server, pane_id, server_pid = preflight.server_pid,
+                                server_start_time = preflight.server_start_time,
+                                same_endpoint] {
       if (!same_endpoint()) {
         return false;
       }
@@ -1027,12 +1033,22 @@ retain_run_until_proven_complete(PaneInputLease lease, Server server, Pane pane,
                                     kPaneInputSettlementProofTimeout);
       return panes.has_value() && same_endpoint() &&
              pane_identity_settled(*panes, pane_id, server_pid, server_start_time);
-    });
-    launch([server_pid = preflight.server_pid,
-            server_start_time = preflight.server_start_time,
-            process_generation = preflight.server_process_generation] {
+    };
+    const auto server_gone = [server_pid = preflight.server_pid,
+                              server_start_time = preflight.server_start_time,
+                              process_generation =
+                                  preflight.server_process_generation] {
       return process_identity_absent(server_pid, server_start_time, process_generation);
+    };
+    // The watchers below give up after about a second. A run that finishes
+    // later is proved by whichever request next wants the pane, so it is never
+    // locked for the life of this process by a command that has already ended.
+    settlement->prove_completion_with([command_finished, pane_replaced, server_gone] {
+      return command_finished() || pane_replaced() || server_gone();
     });
+    launch(command_finished);
+    launch(pane_replaced);
+    launch(server_gone);
   } catch (...) {
     lease.abandon();
   }

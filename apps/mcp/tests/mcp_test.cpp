@@ -1071,6 +1071,48 @@ TEST(McpTools, PaneInputSettlementRetryScheduleIsFinite) {
   EXPECT_EQ(waited.size(), 3U);
 }
 
+// A run that outlived its answer holds its panes until something proves it
+// finished; the request that next wants one of them asks. Its watchers give up
+// after about a second, so proving completion cannot wait on them alone.
+TEST(McpToolsTmux, AFinishedRunReleasesItsPanesToTheNextRequest) {
+  using libtmux::mcp::detail::PaneInputReservationKind;
+  using libtmux::mcp::detail::reserve_pane_input;
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const std::string endpoint = fixture->socket_path().string();
+  constexpr std::uint64_t start_time = 1700000000U;
+
+  auto run = reserve_pane_input(endpoint, 101U, start_time, {"%1", "%2"},
+                                PaneInputReservationKind::run, "run_shell_command");
+  ASSERT_TRUE(run.has_value()) << run.error().message;
+  // Shared rather than referenced: the registry holds the proof, and must not
+  // be left calling into a finished test if an assertion stops this one early.
+  const auto finished = std::make_shared<std::atomic_bool>(false);
+  const auto asked = std::make_shared<std::atomic<int>>(0);
+  run->prove_completion_with([finished, asked] {
+    ++*asked;
+    return finished->load();
+  });
+
+  const auto refused =
+      reserve_pane_input(endpoint, 101U, start_time, {"%2"},
+                         PaneInputReservationKind::input, "paste_text");
+  ASSERT_FALSE(refused.has_value()) << "a run still going keeps its pane";
+  EXPECT_NE(refused.error().message.find("still active"), std::string::npos);
+  EXPECT_EQ(asked->load(), 1);
+
+  finished->store(true);
+  const auto accepted =
+      reserve_pane_input(endpoint, 101U, start_time, {"%2"},
+                         PaneInputReservationKind::input, "paste_text");
+  EXPECT_TRUE(accepted.has_value())
+      << "the run finished, so its pane is free: " << accepted.error().message;
+  EXPECT_TRUE(reserve_pane_input(endpoint, 101U, start_time, {"%1"},
+                                 PaneInputReservationKind::input, "paste_text")
+                  .has_value())
+      << "every pane the run reserved is released, not only the one asked about";
+}
+
 TEST(McpToolsTmux, PaneInputReservationsAreProcessWideAndNonqueueing) {
   using libtmux::mcp::detail::PaneInputReservationKind;
   using libtmux::mcp::detail::reserve_pane_input;
