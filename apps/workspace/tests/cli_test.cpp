@@ -740,15 +740,16 @@ TEST(WorkspaceCli, FileServicesKeepTypesAndUseNativeWholeWordMatching) {
   EXPECT_EQ(records[0].at("config").at("custom").at("count"), 3);
   const auto grouped = invoke({"search", "session:dev|ops", "-w", "--json"});
   ASSERT_EQ(grouped.code, 0) << grouped.err;
-  EXPECT_TRUE(Json::parse(grouped.out).empty());
+  EXPECT_TRUE(Json::parse(grouped.out).at("results").empty());
   const auto found = invoke({"search", "pane:marker", "--json"});
   ASSERT_EQ(found.code, 0) << found.err;
-  const auto matches = Json::parse(found.out);
+  const auto matches = Json::parse(found.out).at("results");
   ASSERT_EQ(matches.size(), 1U);
   EXPECT_EQ(matches[0].at("matched_fields"), Json::array({"pane"}));
   const auto repeated = invoke({"search", "pane:marker", "pane:marker", "--json"});
   ASSERT_EQ(repeated.code, 0) << repeated.err;
-  EXPECT_EQ(Json::parse(repeated.out)[0].at("matches").at("pane").size(), 1U);
+  EXPECT_EQ(Json::parse(repeated.out).at("results")[0].at("matches").at("pane").size(),
+            1U);
   const auto converted = invoke({"convert", "dev.yaml", "--json"});
   ASSERT_EQ(converted.code, 0) << converted.err;
   EXPECT_EQ(Json::parse(converted.out).at("custom").at("enabled"), true);
@@ -876,7 +877,12 @@ TEST(WorkspaceCli, ListingEscapesHumanControlsWithoutChangingMachineValues) {
         machine_arguments.emplace_back(mode);
         const auto machine = invoke(machine_arguments);
         ASSERT_EQ(machine.code, 0) << machine.err;
-        const auto payload = Json::parse(machine.out);
+        // NDJSON streams one record per workspace and ends with its own
+        // completed record; --json carries the same rows in one envelope.
+        std::istringstream records{machine.out};
+        std::string first;
+        ASSERT_TRUE(static_cast<bool>(std::getline(records, first)));
+        const auto payload = Json::parse(first);
         const auto row = std::string_view{mode} == "--json"
                              ? payload.at("workspaces").at(0)
                              : payload;
@@ -888,6 +894,41 @@ TEST(WorkspaceCli, ListingEscapesHumanControlsWithoutChangingMachineValues) {
         }
       }
     }
+  }
+}
+
+// Machine output carries the same envelope whatever the command asked for,
+// and every NDJSON stream ends with a record of its own: no rows and a clean
+// exit is otherwise the same zero bytes a process that died before writing
+// its first row produces.
+TEST(WorkspaceCli, EveryMachineOutputCarriesTheSameEnvelope) {
+  Files files;
+  const std::vector<std::vector<std::string>> commands{
+      {"ls"}, {"search", "nothing-matches-this"}, {"debug-info"}};
+  for (const auto& command : commands) {
+    SCOPED_TRACE(command.front());
+    auto structured = command;
+    structured.emplace_back("--json");
+    const auto json = invoke(structured);
+    ASSERT_EQ(json.code, 0) << json.err;
+    const auto envelope = Json::parse(json.out);
+    EXPECT_EQ(envelope.at("schema_version"), 1) << json.out;
+    EXPECT_EQ(envelope.at("command"), command.front()) << json.out;
+    EXPECT_EQ(envelope.at("status"), "ok") << json.out;
+
+    auto streamed = command;
+    streamed.emplace_back("--ndjson");
+    const auto ndjson = invoke(streamed);
+    ASSERT_EQ(ndjson.code, 0) << ndjson.err;
+    ASSERT_FALSE(ndjson.out.empty());
+    std::istringstream lines{ndjson.out};
+    std::string line, last;
+    while (std::getline(lines, line))
+      last = line;
+    const auto terminal = Json::parse(last);
+    EXPECT_EQ(terminal.at("schema_version"), 1) << last;
+    EXPECT_EQ(terminal.at("command"), command.front()) << last;
+    EXPECT_EQ(terminal.at("event"), "completed") << last;
   }
 }
 

@@ -194,9 +194,14 @@ and environment are omitted. It warns that arguments, history, scripts and
 plugins cannot be recovered.
 
 Each command accepts `--json` and `--ndjson` before or after its name. NDJSON
-wins when both are present. Load flushes operation events before creating
-sessions and ends with one completed or failed result. Machine diagnostics use
-stderr. Captured control bytes stay inside escaped JSON strings. Saving uses
+wins when both are present. Every `--json` result carries `schema_version`,
+`command` and `status`, and every `--ndjson` stream ends with one `completed`
+or `failed` record, so a stream that produced no rows still says it finished:
+zero bytes means the process died. Load flushes operation events before
+creating sessions; `ls` and `search` stream one record per row ahead of their
+own terminal record. `convert` and `import` writing to stdout are the
+exception: what they print there is the converted document itself, which is
+what a document conversion is for. Machine diagnostics use stderr. Captured control bytes stay inside escaped JSON strings. Saving uses
 an exclusively created temporary file; replacing an existing destination
 requires `--force`.
 Closed event output keeps completed input results and borrowed-session effects

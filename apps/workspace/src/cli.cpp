@@ -612,16 +612,19 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
     if (!request.ndjson && process_command)
       diagnostics.event(failed ? "failed" : "completed", result, ++sequence);
     if (request.ndjson) {
+      // Every stream ends with one completed or failed record, whatever the
+      // command: no rows and a clean exit is otherwise the same zero bytes a
+      // process that died before writing produces.
       if (process_command)
         emit(failed ? "failed" : "completed", result);
-      else if (request.command == "ls") {
-        for (const auto& item : result.at("workspaces"))
-          output << encoded(item) << '\n';
-      } else if (request.command == "search") {
-        for (const auto& item : result)
-          output << encoded(item) << '\n';
+      else if (request.command == "ls" || request.command == "search") {
+        const auto& rows =
+            result.at(request.command == "ls" ? "workspaces" : "results");
+        for (const auto& item : rows)
+          emit(request.command == "ls" ? "workspace" : "match", item);
+        emit("completed", {{"status", result.at("status")}, {"count", rows.size()}});
       } else
-        output << encoded(result) << '\n';
+        emit("completed", result);
     } else if (request.json)
       // Compact: a machine reads this, and five of the seven libtmux
       // workspace ports already agree on one line per record.

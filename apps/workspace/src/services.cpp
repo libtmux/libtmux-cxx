@@ -1455,12 +1455,22 @@ static Execution execute_impl(const Request& request, const EventSink& event,
     for (const auto& directory : global_directories())
       dirs.push_back(
           {{"path", private_path(directory)}, {"exists", fs::is_directory(directory)}});
-    return {.value = {{"workspaces", workspaces}, {"global_workspace_dirs", dirs}}};
+    return {.value = {{"schema_version", 1},
+                      {"command", "ls"},
+                      {"status", "ok"},
+                      {"workspaces", workspaces},
+                      {"global_workspace_dirs", dirs}}};
   }
   if (request.command == "search")
-    return {.value = search(request)};
+    return {.value = {{"schema_version", 1},
+                      {"command", "search"},
+                      {"status", "ok"},
+                      {"results", search(request)}}};
   if (request.command == "debug-info") {
-    return {.value = {{"port", "cxx"},
+    return {.value = {{"schema_version", 1},
+                      {"command", "debug-info"},
+                      {"status", "ok"},
+                      {"port", "cxx"},
                       {"version", LIBTMUX_WORKSPACE_VERSION},
                       {"compiler", __VERSION__},
                       {"cwd", private_path(fs::current_path())},
@@ -1937,7 +1947,7 @@ std::string human_result(const Request& request, const Json& result, bool colour
   if (request.command == "shell")
     return {};
   if (request.command == "ls" || request.command == "search") {
-    const auto& rows = request.command == "ls" ? result.at("workspaces") : result;
+    const auto& rows = result.at(request.command == "ls" ? "workspaces" : "results");
     const auto write = [&](const Json& row, std::string_view branch,
                            std::string_view continuation) {
       output << branch << role("1;35", row.at("name").get<std::string>()) << "  "
@@ -2001,11 +2011,15 @@ std::string human_result(const Request& request, const Json& result, bool colour
       output << role("32", "Saved") << ' '
              << role("36", result.at("destination").get<std::string>()) << '\n';
   } else if (request.command == "debug-info") {
-    // Human mode never emits JSON; `--json` is what keeps the object.
-    for (const auto& [key, value] : result.items())
+    // Human mode never emits JSON; `--json` is what keeps the object, and
+    // the envelope it shares with every other command is for that reader.
+    for (const auto& [key, value] : result.items()) {
+      if (key == "schema_version" || key == "command" || key == "status")
+        continue;
       output << role("1;35", key) << ": "
              << role("36", value.is_string() ? value.get<std::string>() : value.dump())
              << '\n';
+    }
   } else
     output << encoded(result, 2) << '\n';
   return output.str();
