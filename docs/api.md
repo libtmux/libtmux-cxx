@@ -5918,8 +5918,9 @@ struct ConnectionOptions;
 #### `ConnectionOptions::tmux_binary`
 
 ```cpp
-std::filesystem::path tmux_binary{"tmux"};
+std::optional<std::filesystem::path> tmux_binary{};
 ```
+Which tmux to run. Absent means `tmux` from `PATH` — or, through `Server::control`, the tmux that Server's policy names. Absent rather than defaulting to `tmux`, so that a caller who writes `tmux` here gets it, instead of being indistinguishable from one who wrote nothing.
 
 <a id="libtmux-control-hpp-connectionoptions-socket-path"></a>
 #### `ConnectionOptions::socket_path`

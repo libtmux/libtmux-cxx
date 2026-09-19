@@ -26,11 +26,10 @@ routed_control_options(ConnectionOptions options, std::string socket_path,
                        std::string session, const std::filesystem::path& tmux_binary) {
   options.socket_path = std::move(socket_path);
   options.session_name = std::move(session);
-  // The Server's executable, unless this caller named one here. Both fields
-  // default to a bare `tmux`, so a caller who set neither gets one answer and
-  // a caller who set either gets the one they wrote — and a Server pinned to a
-  // particular tmux does not open a connection to whatever `PATH` finds.
-  if (options.tmux_binary == std::filesystem::path{"tmux"}) {
+  // The Server's executable, unless this caller named one here — `tmux`
+  // included — so a Server pinned to a particular tmux does not open a
+  // connection to whatever `PATH` finds.
+  if (!options.tmux_binary.has_value()) {
     options.tmux_binary = tmux_binary;
   }
   return options;

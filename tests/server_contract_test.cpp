@@ -1950,6 +1950,17 @@ TEST(ServerContract, AServerRunsTheTmuxItsPolicyNames) {
   EXPECT_EQ(listed.error().kind, libtmux::FailureKind::spawn);
   EXPECT_EQ(listed.error().delivery, DeliveryStatus::not_started);
 
+  // A connection opened through this Server inherits the same tmux, unless the
+  // caller names one — `tmux` included. Writing `tmux` means `PATH`'s tmux,
+  // and must not read as having written nothing.
+  EXPECT_FALSE(misdirected->control(fixture->session_name()).has_value())
+      << "an untouched connection inherits the policy's tmux";
+  const auto chosen = misdirected->control_with_options(
+      fixture->session_name(), libtmux::ConnectionOptions{.tmux_binary = "tmux"});
+  EXPECT_TRUE(chosen.has_value())
+      << "the caller named tmux and got the policy's instead: "
+      << (chosen.has_value() ? std::string{} : chosen.error().message);
+
   // The same socket through a tmux named by absolute path, to show the refusal
   // above was the policy rather than a broken fixture — and that a path is run
   // as given rather than searched for.

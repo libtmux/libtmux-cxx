@@ -351,7 +351,7 @@ expected<SpawnedClient, ProtocolError> spawn_client(const ConnectionOptions& opt
     flags += flag;
   }
 
-  std::vector<std::string> arguments{options.tmux_binary.string(),
+  std::vector<std::string> arguments{options.tmux_binary.value_or("tmux").string(),
                                      "-N",
                                      "-u",
                                      "-S",
@@ -1003,8 +1003,11 @@ Connection& Connection::operator=(Connection&& other) noexcept {
 }
 
 expected<Connection, ProtocolError> Connection::connect(ConnectionOptions options) {
-  if (options.tmux_binary.empty()) {
+  if (options.tmux_binary.has_value() && options.tmux_binary->empty()) {
     return unexpected(not_started_error("tmux binary path is empty"));
+  }
+  if (!options.tmux_binary.has_value()) {
+    options.tmux_binary = "tmux";
   }
   if (options.socket_path.empty()) {
     return unexpected(not_started_error("tmux socket path is empty"));
@@ -1012,7 +1015,7 @@ expected<Connection, ProtocolError> Connection::connect(ConnectionOptions option
   if (options.session_name.empty()) {
     return unexpected(not_started_error("tmux session name is empty"));
   }
-  if (contains_nul(options.tmux_binary.native()) ||
+  if (contains_nul(options.tmux_binary->native()) ||
       contains_nul(options.socket_path.native()) ||
       contains_nul(options.session_name)) {
     return unexpected(not_started_error("connection option contains NUL"));
