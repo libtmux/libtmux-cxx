@@ -825,6 +825,11 @@ jobs:
             --include include/libtmux/testing --output docs/api-testing.md \
             --page testing --check
 
+      - name: Check what including the library costs
+        run: |
+          python3 -m tools.include_cost --check
+          python3 -m tools.include_cost --compiler g++ --check
+
       - name: Check Python tooling
         run: |
           uvx --from ruff==0.16.1 ruff format --check .
