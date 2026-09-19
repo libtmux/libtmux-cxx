@@ -3534,7 +3534,7 @@ TEST(WorkspaceCliTmux, LoadNdjsonEmitsTypedWindowAndPaneEvents) {
     if (name == "pane-created" && pane_created.is_null())
       pane_created = record;
   }
-  // SPEC 2's fixed vocabulary replaces the untyped events cxx used to send.
+  // A fixed event vocabulary replaces the untyped events cxx used to send.
   EXPECT_EQ(std::ranges::count(events, "build-progress"), 0);
   for (const auto* required :
        {"window-created", "window-completed", "pane-created", "pane-completed"})
