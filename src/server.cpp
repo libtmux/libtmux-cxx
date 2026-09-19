@@ -195,7 +195,7 @@ class ExecutorBackend final : public detail::Backend {
 public:
   ExecutorBackend(std::shared_ptr<const CommandExecutor> executor,
                   ExecutorOptions options, CommandObserver observer,
-                  ExecutionPolicy policy, BackendKind kind = BackendKind::custom)
+                  const ExecutionPolicy& policy, BackendKind kind = BackendKind::custom)
       : Backend{std::move(observer), policy}, executor_{std::move(executor)},
         options_{std::move(options)}, kind_{kind} {}
 
