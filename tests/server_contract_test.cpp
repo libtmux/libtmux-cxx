@@ -63,7 +63,7 @@ struct ObserverTeardownState final {
 struct BlockingObserverTeardown final {
   std::shared_ptr<ObserverTeardownState> state;
 
-  void operator()(std::string_view, const libtmux::CommandFailure*) const {}
+  void operator()(const libtmux::CommandReport&) const {}
 
   ~BlockingObserverTeardown() {
     if (state && state->armed.exchange(false)) {
@@ -222,9 +222,8 @@ TEST(ServerContract, RuntimeReadinessWaitNeverDispatchesAnObserver) {
   const auto caller = std::this_thread::get_id();
   std::optional<std::thread::id> observed;
   auto server = Server::at_socket_path(
-      fixture->socket_path(), [&](std::string_view, const libtmux::CommandFailure*) {
-        observed = std::this_thread::get_id();
-      });
+      fixture->socket_path(),
+      [&](const libtmux::CommandReport&) { observed = std::this_thread::get_id(); });
   ASSERT_TRUE(server.has_value());
   auto runtime = start_runtime();
   auto operation = server->try_submit(runtime, {"wait-for", "readiness"}, 5s);
@@ -284,8 +283,8 @@ TEST(ServerContract, RuntimeReadinessWakesEveryWaitingCaller) {
   using namespace std::chrono_literals;
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
-  auto server = Server::at_socket_path(
-      fixture->socket_path(), [](std::string_view, const libtmux::CommandFailure*) {});
+  auto server = Server::at_socket_path(fixture->socket_path(),
+                                       [](const libtmux::CommandReport&) {});
   ASSERT_TRUE(server.has_value());
   auto runtime = start_runtime();
   auto operation = server->try_submit(runtime, {"wait-for", "all-waiters"}, 5s);
@@ -321,7 +320,7 @@ TEST(ServerContract, ReadyDescriptorTracksWhatWaitReadyWouldAnswer) {
   std::size_t observed = 0U;
   const auto server = Server::at_socket_path(
       fixture->socket_path(),
-      [&observed](std::string_view, const libtmux::CommandFailure*) { ++observed; });
+      [&observed](const libtmux::CommandReport&) { ++observed; });
   ASSERT_TRUE(server.has_value());
   auto runtime = start_runtime();
 
@@ -353,19 +352,68 @@ TEST(ServerContract, ReadyDescriptorTracksWhatWaitReadyWouldAnswer) {
   EXPECT_TRUE(readable());
 }
 
+// The observer is the only way to see what this library ran. A rendered line
+// is enough to read; it is not enough to build telemetry from, which needs the
+// argv unrendered and how long the command took.
+TEST(ServerContract, TheObserverReportsArgvAndDuration) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  std::vector<std::vector<std::string>> argvs;
+  std::vector<std::optional<std::chrono::nanoseconds>> durations;
+  auto server = Server::at_socket_path(
+      fixture->socket_path().string(),
+      [&argvs, &durations](const libtmux::CommandReport& report) {
+        argvs.emplace_back(report.argv.begin(), report.argv.end());
+        durations.push_back(report.elapsed);
+      });
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+
+  ASSERT_TRUE(server
+                  ->run({"display-message", "-p", "-t", fixture->session_name(), "--",
+                         "observed"})
+                  .has_value());
+  ASSERT_EQ(argvs.size(), 1U);
+  ASSERT_FALSE(argvs.front().empty()) << "the report carries the argv, not just a line";
+  EXPECT_EQ(argvs.front().front(), "display-message")
+      << "the argv is structured, not one rendered line";
+  EXPECT_EQ(argvs.front().back(), "observed");
+  ASSERT_TRUE(durations.front().has_value()) << "a command that ran took time";
+  EXPECT_GT(*durations.front(), std::chrono::nanoseconds::zero());
+  // Bounded too: a duration measured from the wrong place — process start, or
+  // the handle's own creation — would be far larger than one command.
+  EXPECT_LT(*durations.front(), std::chrono::seconds{60});
+
+  // A tmux that does not exist: nothing was dispatched, so there is no
+  // duration to give. Zero would read as an immeasurably fast command.
+  std::vector<std::optional<std::chrono::nanoseconds>> unstarted;
+  auto misdirected = Server::at_socket_path(
+      fixture->socket_path().string(),
+      [&unstarted](const libtmux::CommandReport& report) {
+        unstarted.push_back(report.elapsed);
+      },
+      {.tmux_binary = fixture->socket_path().parent_path() / "no-tmux-here"});
+  ASSERT_TRUE(misdirected.has_value()) << misdirected.error().diagnostic;
+  const auto refused = misdirected->sessions();
+  ASSERT_FALSE(refused.has_value());
+  ASSERT_EQ(refused.error().delivery, DeliveryStatus::not_started);
+  ASSERT_EQ(unstarted.size(), 1U);
+  EXPECT_FALSE(unstarted.front().has_value())
+      << "a command that never ran reports no duration";
+}
+
 #if defined(__cpp_lib_jthread) && __cpp_lib_jthread >= 201911L
 TEST(ServerContract, StopTokenCancelsThroughAMovedOperationWithoutDispatch) {
   using namespace std::chrono_literals;
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   std::optional<libtmux::CommandFailure> observed;
-  auto server = Server::at_socket_path(
-      fixture->socket_path(),
-      [&](std::string_view, const libtmux::CommandFailure* failure) {
-        if (failure) {
-          observed = *failure;
-        }
-      });
+  auto server = Server::at_socket_path(fixture->socket_path(),
+                                       [&](const libtmux::CommandReport& report) {
+                                         const auto* const failure = report.failure;
+                                         if (failure) {
+                                           observed = *failure;
+                                         }
+                                       });
   ASSERT_TRUE(server.has_value());
   auto runtime = start_runtime();
   auto operation = server->try_submit(runtime, {"wait-for", "stop-token"}, 5s);
@@ -483,13 +531,14 @@ TEST(ServerContract, ASubmittedFailureCarriesWhatTmuxSaid) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   std::optional<libtmux::FailureKind> observed_failure;
-  auto server = Server::at_socket_path(
-      fixture->socket_path().string(),
-      [&observed_failure](std::string_view, const libtmux::CommandFailure* failure) {
-        if (failure != nullptr) {
-          observed_failure = failure->kind;
-        }
-      });
+  auto server =
+      Server::at_socket_path(fixture->socket_path().string(),
+                             [&observed_failure](const libtmux::CommandReport& report) {
+                               const auto* const failure = report.failure;
+                               if (failure != nullptr) {
+                                 observed_failure = failure->kind;
+                               }
+                             });
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
   auto runtime = start_runtime();
 
@@ -514,7 +563,7 @@ TEST(ServerContract, WaitingDoesNotDispatchTheGlobalObserver) {
   std::size_t observed = 0U;
   auto server = Server::at_socket_path(
       fixture->socket_path().string(),
-      [&observed](std::string_view, const libtmux::CommandFailure*) { ++observed; });
+      [&observed](const libtmux::CommandReport&) { ++observed; });
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
   auto runtime = start_runtime({.capacity = 1U});
 
@@ -541,7 +590,7 @@ TEST(ServerContract, DroppingAnOperationKeepsItsGlobalObservation) {
   std::size_t observed = 0U;
   auto server = Server::at_socket_path(
       fixture->socket_path().string(),
-      [&observed](std::string_view, const libtmux::CommandFailure*) { ++observed; });
+      [&observed](const libtmux::CommandReport&) { ++observed; });
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
   auto runtime = start_runtime({.capacity = 1U});
 
@@ -564,9 +613,8 @@ TEST(ServerContract, DroppingAnOperationKeepsItsGlobalObservation) {
 TEST(ServerContract, AdmissionRemainsChargedUntilObservationDispatch) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
-  auto server =
-      Server::at_socket_path(fixture->socket_path().string(),
-                             [](std::string_view, const libtmux::CommandFailure*) {});
+  auto server = Server::at_socket_path(fixture->socket_path().string(),
+                                       [](const libtmux::CommandReport&) {});
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
   auto runtime = start_runtime({.capacity = 1U});
 
@@ -594,7 +642,7 @@ TEST(ServerContract, DetachingAnOperationKeepsOnlyItsGlobalObservation) {
   std::size_t observed = 0U;
   auto server = Server::at_socket_path(
       fixture->socket_path().string(),
-      [&observed](std::string_view, const libtmux::CommandFailure*) { ++observed; });
+      [&observed](const libtmux::CommandReport&) { ++observed; });
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
   auto runtime = start_runtime({.capacity = 1U});
 
@@ -614,9 +662,8 @@ TEST(ServerContract, DetachingAnOperationKeepsOnlyItsGlobalObservation) {
 TEST(ServerContract, SnapshotCountersCoverEveryAdmissionDisposition) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
-  auto server =
-      Server::at_socket_path(fixture->socket_path().string(),
-                             [](std::string_view, const libtmux::CommandFailure*) {});
+  auto server = Server::at_socket_path(fixture->socket_path().string(),
+                                       [](const libtmux::CommandReport&) {});
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
   auto runtime = start_runtime({.capacity = 1U});
 
@@ -672,7 +719,7 @@ TEST(ServerContract, ImmediateFailuresNeverConsumeAdmissionOrObservation) {
   std::size_t observed = 0U;
   auto server = Server::at_socket_path(
       fixture->socket_path().string(),
-      [&observed](std::string_view, const libtmux::CommandFailure*) { ++observed; });
+      [&observed](const libtmux::CommandReport&) { ++observed; });
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
   auto runtime = start_runtime({.capacity = 1U});
 
@@ -724,7 +771,7 @@ TEST(ServerContract, WindowsStructuralRefusalPrecedesRuntimeAdmission) {
   std::size_t observed = 0U;
   auto server = Server::at_socket_path(
       fixture->socket_path().string(),
-      [&observed](std::string_view, const libtmux::CommandFailure*) { ++observed; });
+      [&observed](const libtmux::CommandReport&) { ++observed; });
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
   auto runtime = start_runtime({.capacity = 1U});
   const RuntimeWindowsValidation windows_rules;
@@ -834,13 +881,14 @@ TEST(ServerContract, PostAcceptanceSubscriptionFailuresAreIndeterminate) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   std::optional<libtmux::CommandFailure> observed;
-  auto server = Server::at_socket_path(
-      fixture->socket_path().string(),
-      [&observed](std::string_view, const libtmux::CommandFailure* failure) {
-        if (failure != nullptr) {
-          observed = *failure;
-        }
-      });
+  auto server =
+      Server::at_socket_path(fixture->socket_path().string(),
+                             [&observed](const libtmux::CommandReport& report) {
+                               const auto* const failure = report.failure;
+                               if (failure != nullptr) {
+                                 observed = *failure;
+                               }
+                             });
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
   auto runtime = start_runtime();
   libtmux::detail::fail_next_runtime_subscription_for_test();
@@ -869,13 +917,14 @@ TEST(ServerContract, PostAdmissionPublicationFailuresAreIndeterminate) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   std::optional<libtmux::CommandFailure> observed;
-  auto server = Server::at_socket_path(
-      fixture->socket_path().string(),
-      [&observed](std::string_view, const libtmux::CommandFailure* failure) {
-        if (failure != nullptr) {
-          observed = *failure;
-        }
-      });
+  auto server =
+      Server::at_socket_path(fixture->socket_path().string(),
+                             [&observed](const libtmux::CommandReport& report) {
+                               const auto* const failure = report.failure;
+                               if (failure != nullptr) {
+                                 observed = *failure;
+                               }
+                             });
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
   auto runtime = start_runtime();
   libtmux::detail::fail_next_runtime_action_for_test(
@@ -942,7 +991,7 @@ TEST(ServerContract, ObserverQueueFailuresRemainTerminalObligations) {
   std::size_t observed = 0U;
   auto server = Server::at_socket_path(
       fixture->socket_path().string(),
-      [&observed](std::string_view, const libtmux::CommandFailure*) { ++observed; });
+      [&observed](const libtmux::CommandReport&) { ++observed; });
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
   auto runtime = start_runtime();
   libtmux::detail::fail_next_runtime_action_for_test(
@@ -979,7 +1028,7 @@ TEST(ServerContract, CompletedMeansResultAndObservationAreReady) {
   std::size_t observed = 0U;
   auto server = Server::at_socket_path(
       fixture->socket_path().string(),
-      [&observed](std::string_view, const libtmux::CommandFailure*) { ++observed; });
+      [&observed](const libtmux::CommandReport&) { ++observed; });
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
   std::binary_semaphore completion_reached{0};
   std::binary_semaphore release_completion{0};
@@ -1126,14 +1175,13 @@ TEST(ServerContract, ObserverExceptionsReleaseCapacityBeforeLeavingDispatch) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   std::size_t calls = 0U;
-  auto server = Server::at_socket_path(
-      fixture->socket_path().string(),
-      [&calls](std::string_view, const libtmux::CommandFailure*) {
-        ++calls;
-        if (calls == 1U) {
-          throw ObserverFailure{};
-        }
-      });
+  auto server = Server::at_socket_path(fixture->socket_path().string(),
+                                       [&calls](const libtmux::CommandReport&) {
+                                         ++calls;
+                                         if (calls == 1U) {
+                                           throw ObserverFailure{};
+                                         }
+                                       });
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
   auto runtime = start_runtime({.capacity = 2U});
   auto first = server->try_submit(runtime, {"display-message", "-p", "first"});
@@ -1158,7 +1206,7 @@ TEST(ServerContract, CloseDoesNotDispatchGlobalObservers) {
   std::size_t observed = 0U;
   auto server = Server::at_socket_path(
       fixture->socket_path().string(),
-      [&observed](std::string_view, const libtmux::CommandFailure*) { ++observed; });
+      [&observed](const libtmux::CommandReport&) { ++observed; });
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
   auto runtime = start_runtime();
   auto submitted = server->try_submit(runtime, {"display-message", "-p", "close"});
@@ -1184,13 +1232,12 @@ TEST(ServerContract, CloseIsNotSafeToUnloadWhileAnObserverCallbackRuns) {
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   std::binary_semaphore callback_started{0};
   std::binary_semaphore release_callback{0};
-  auto server =
-      Server::at_socket_path(fixture->socket_path().string(),
-                             [&callback_started, &release_callback](
-                                 std::string_view, const libtmux::CommandFailure*) {
-                               callback_started.release();
-                               release_callback.acquire();
-                             });
+  auto server = Server::at_socket_path(
+      fixture->socket_path().string(),
+      [&callback_started, &release_callback](const libtmux::CommandReport&) {
+        callback_started.release();
+        release_callback.acquire();
+      });
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
   auto runtime = start_runtime();
   auto submitted =
@@ -1268,7 +1315,7 @@ TEST(ServerContract, ConcurrentCloseCallersReceiveOneTerminalReport) {
   std::size_t observed = 0U;
   auto server = Server::at_socket_path(
       fixture->socket_path().string(),
-      [&observed](std::string_view, const libtmux::CommandFailure*) { ++observed; });
+      [&observed](const libtmux::CommandReport&) { ++observed; });
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
   auto runtime = start_runtime();
   auto submitted = server->try_submit(runtime, {"wait-for", "libtmux-runtime-close"},
@@ -1353,7 +1400,7 @@ TEST(ServerContract, AnOperationOutlivesItsRuntimeWithoutOwningRuntimeThreads) {
   std::size_t observed = 0U;
   auto server = Server::at_socket_path(
       fixture->socket_path().string(),
-      [&observed](std::string_view, const libtmux::CommandFailure*) { ++observed; });
+      [&observed](const libtmux::CommandReport&) { ++observed; });
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
   std::optional<libtmux::CommandOperation> operation;
   {
@@ -1452,11 +1499,11 @@ TEST(ServerContract, SynchronousObserversRunOnTheCallingThread) {
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const auto caller = std::this_thread::get_id();
   std::optional<std::thread::id> observer_thread;
-  auto server = Server::at_socket_path(
-      fixture->socket_path().string(),
-      [&observer_thread](std::string_view, const libtmux::CommandFailure*) {
-        observer_thread = std::this_thread::get_id();
-      });
+  auto server =
+      Server::at_socket_path(fixture->socket_path().string(),
+                             [&observer_thread](const libtmux::CommandReport&) {
+                               observer_thread = std::this_thread::get_id();
+                             });
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
 
   ASSERT_TRUE(server->run({"display-message", "-p", "sync"}).has_value());
@@ -1745,8 +1792,9 @@ TEST(ServerContract, AnObserverSeesEveryCommandAndWhyOneFailed) {
   std::vector<std::string> failed;
   auto server =
       Server::at_socket_path(fixture->socket_path().string(),
-                             [&seen, &failed](std::string_view command,
-                                              const libtmux::CommandFailure* failure) {
+                             [&seen, &failed](const libtmux::CommandReport& report) {
+                               const std::string_view command = report.command;
+                               const auto* const failure = report.failure;
                                seen.emplace_back(command);
                                if (failure != nullptr) {
                                  failed.emplace_back(command);
@@ -1771,8 +1819,9 @@ TEST(ServerContract, AnObserverNeverSeesAnEnvironmentValue) {
   std::vector<std::string> diagnostics;
   auto server = Server::at_socket_path(
       fixture->socket_path().string(),
-      [&seen, &diagnostics](std::string_view command,
-                            const libtmux::CommandFailure* failure) {
+      [&seen, &diagnostics](const libtmux::CommandReport& report) {
+        const std::string_view command = report.command;
+        const auto* const failure = report.failure;
         seen.emplace_back(command);
         if (failure != nullptr) {
           diagnostics.push_back(failure->diagnostic);

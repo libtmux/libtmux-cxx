@@ -201,10 +201,17 @@ public:
   [[nodiscard]] expected<std::string, CommandFailure>
   run(const CommandRequest& command, std::optional<std::chrono::milliseconds> timeout,
       std::optional<std::size_t> output_limit) const override {
+    const auto started = std::chrono::steady_clock::now();
     auto answer = executor_->run(command, timeout, output_limit);
+    const auto elapsed = std::chrono::steady_clock::now() - started;
     if (const auto observer = command_observer(); observer.has_value()) {
       const std::string rendered = detail::rendered_command(command);
-      (*observer)(rendered, answer.has_value() ? nullptr : &answer.error());
+      const std::vector<std::string> argv = command.argv();
+      (*observer)(
+          CommandReport{.command = rendered,
+                        .argv = argv,
+                        .failure = answer.has_value() ? nullptr : &answer.error(),
+                        .elapsed = elapsed});
     }
     return answer;
   }

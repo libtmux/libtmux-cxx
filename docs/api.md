@@ -5143,6 +5143,11 @@ Why a tmux command produced no answer.  `refused` means tmux ran and said no; `m
   - [`CommandRequest::push_back`](#libtmux-command-hpp-commandrequest-push-back)
   - [`CommandRequest::arguments`](#libtmux-command-hpp-commandrequest-arguments)
   - [`CommandRequest::argv`](#libtmux-command-hpp-commandrequest-argv)
+- [`CommandReport`](#libtmux-command-hpp-commandreport)
+  - [`CommandReport::command`](#libtmux-command-hpp-commandreport-command)
+  - [`CommandReport::argv`](#libtmux-command-hpp-commandreport-argv)
+  - [`CommandReport::failure`](#libtmux-command-hpp-commandreport-failure)
+  - [`CommandReport::elapsed`](#libtmux-command-hpp-commandreport-elapsed)
 - [`ExecutionPolicy`](#libtmux-command-hpp-executionpolicy)
   - [`ExecutionPolicy::timeout`](#libtmux-command-hpp-executionpolicy-timeout)
   - [`ExecutionPolicy::output_limit`](#libtmux-command-hpp-executionpolicy-output-limit)
@@ -5414,6 +5419,47 @@ void push_back(CommandArgument argument);
 [[nodiscard]] std::vector<std::string> argv() const;
 ```
 
+<a id="libtmux-command-hpp-commandreport"></a>
+### `CommandReport`
+
+Told about every command, as it finishes.  There is otherwise no way to see what this library ran: a caller debugging a tmux interaction has only the failures, and nothing at all when things succeed. The command is rendered as tmux received it, with any argument marked sensitive replaced.  Synchronous calls invoke it on their caller's thread. Asynchronous calls invoke it only on the thread calling `CommandRuntime::dispatch_ready`. No internal lock is held; a shared observer must synchronise itself.
+
+```cpp
+struct CommandReport;
+```
+
+<a id="libtmux-command-hpp-commandreport-command"></a>
+#### `CommandReport::command`
+
+```cpp
+std::string_view command;
+```
+As tmux received it, with any argument marked sensitive replaced. For a human reading a log.
+
+<a id="libtmux-command-hpp-commandreport-argv"></a>
+#### `CommandReport::argv`
+
+```cpp
+std::span<const std::string> argv;
+```
+The same command unrendered, for a caller building structured telemetry rather than a line of text. Empty when the report has no argv to give.
+
+<a id="libtmux-command-hpp-commandreport-failure"></a>
+#### `CommandReport::failure`
+
+```cpp
+const CommandFailure* failure;
+```
+Nothing when the command succeeded.
+
+<a id="libtmux-command-hpp-commandreport-elapsed"></a>
+#### `CommandReport::elapsed`
+
+```cpp
+std::optional<std::chrono::nanoseconds> elapsed;
+```
+How long the command took, measured around its dispatch. Absent when nothing was dispatched — a request rejected before it ran took no time, and reporting zero would read as an immeasurably fast command.
+
 <a id="libtmux-command-hpp-executionpolicy"></a>
 ### `ExecutionPolicy`
 
@@ -5544,9 +5590,9 @@ One line naming what happened, what tmux said, and — through the delivery stat
 #### `CommandObserver`
 
 ```cpp
-using CommandObserver = std::function<void(std::string_view command, const CommandFailure* failure)>;
+using CommandObserver = std::function<void(const CommandReport&)>;
 ```
-Told about every command, as it finishes.  There is otherwise no way to see what this library ran: a caller debugging a tmux interaction has only the failures, and nothing at all when things succeed. The command is rendered as tmux received it, with any argument marked sensitive replaced.  Synchronous calls invoke it on their caller's thread. Asynchronous calls invoke it only on the thread calling `CommandRuntime::dispatch_ready`. No internal lock is held; a shared observer must synchronise itself. Both callback arguments expire on return.
+Every member expires on return; a caller keeping any of it copies it.
 
 <a id="libtmux-options-hpp"></a>
 ## `libtmux/options.hpp`

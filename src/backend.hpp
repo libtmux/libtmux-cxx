@@ -151,11 +151,35 @@ public:
 
 protected:
   [[nodiscard]] expected<std::string, CommandFailure>
-  report_failure(const CommandRequest& command, CommandFailure failure) const;
+  report_failure(const CommandRequest& command, CommandFailure failure,
+                 std::optional<std::chrono::nanoseconds> elapsed = std::nullopt) const;
 
   // Render a command the way tmux received it and hand it to the observer, if
   // there is one. Called after the command finishes and outside any lock.
-  void observe(const CommandRequest& command, const CommandFailure* failure) const;
+  void observe(const CommandRequest& command, const CommandFailure* failure,
+               std::optional<std::chrono::nanoseconds> elapsed = std::nullopt) const;
+
+  // Marks the span a command is actually dispatched over, so `observe` can
+  // report its duration without every layer between the two passing a clock
+  // reading down. Per thread and restoring on exit, so one command run while
+  // another is being prepared on the same thread times itself rather than the
+  // command around it.
+  class Dispatching final {
+  public:
+    Dispatching() noexcept;
+    ~Dispatching() noexcept;
+    Dispatching(const Dispatching&) = delete;
+    Dispatching& operator=(const Dispatching&) = delete;
+    Dispatching(Dispatching&&) = delete;
+    Dispatching& operator=(Dispatching&&) = delete;
+
+  private:
+    std::optional<std::chrono::steady_clock::time_point> previous_;
+  };
+
+  // How long this thread's current dispatch has been running, or nothing when
+  // it is not inside one.
+  [[nodiscard]] static std::optional<std::chrono::nanoseconds> dispatch_elapsed();
   [[nodiscard]] CommandFailure redact(CommandFailure failure,
                                       const CommandRequest& command) const;
 

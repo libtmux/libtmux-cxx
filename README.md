@@ -552,8 +552,7 @@ both builds. Nothing in the library throws it for them.
 // Given: const libtmux::Server& server
 std::size_t observed = 0U;
 auto async_server = libtmux::Server::at_socket_path(
-    server.socket_path(),
-    [&observed](std::string_view, const libtmux::CommandFailure*) { ++observed; });
+    server.socket_path(), [&observed](const libtmux::CommandReport&) { ++observed; });
 if (!async_server.has_value()) {
   std::cerr << std::format("{}\n", async_server.error());
   return 1;

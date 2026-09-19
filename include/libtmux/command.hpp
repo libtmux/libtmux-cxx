@@ -18,6 +18,7 @@
 #include <functional>
 #include <initializer_list>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -206,10 +207,24 @@ private:
 //
 // Synchronous calls invoke it on their caller's thread. Asynchronous calls
 // invoke it only on the thread calling `CommandRuntime::dispatch_ready`.
-// No internal lock is held; a shared observer must synchronise itself. Both
-// callback arguments expire on return.
-using CommandObserver =
-    std::function<void(std::string_view command, const CommandFailure* failure)>;
+// No internal lock is held; a shared observer must synchronise itself.
+struct CommandReport {
+  // As tmux received it, with any argument marked sensitive replaced. For a
+  // human reading a log.
+  std::string_view command;
+  // The same command unrendered, for a caller building structured telemetry
+  // rather than a line of text. Empty when the report has no argv to give.
+  std::span<const std::string> argv;
+  // Nothing when the command succeeded.
+  const CommandFailure* failure;
+  // How long the command took, measured around its dispatch. Absent when
+  // nothing was dispatched — a request rejected before it ran took no time,
+  // and reporting zero would read as an immeasurably fast command.
+  std::optional<std::chrono::nanoseconds> elapsed;
+};
+
+// Every member expires on return; a caller keeping any of it copies it.
+using CommandObserver = std::function<void(const CommandReport&)>;
 
 // What a call waits and holds when the caller did not say.
 //

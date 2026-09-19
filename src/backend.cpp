@@ -180,12 +180,42 @@ std::string rendered_command(const CommandRequest& command) {
   return rendered;
 }
 
-void Backend::observe(const CommandRequest& command,
-                      const CommandFailure* failure) const {
+namespace {
+// Per thread, not per Backend: a Backend is shared between threads, and this
+// marks where one thread is in one command.
+thread_local std::optional<std::chrono::steady_clock::time_point> dispatch_started;
+} // namespace
+
+Backend::Dispatching::Dispatching() noexcept : previous_{dispatch_started} {
+  dispatch_started = std::chrono::steady_clock::now();
+}
+
+Backend::Dispatching::~Dispatching() noexcept { dispatch_started = previous_; }
+
+std::optional<std::chrono::nanoseconds> Backend::dispatch_elapsed() {
+  if (!dispatch_started.has_value()) {
+    return std::nullopt;
+  }
+  return std::chrono::steady_clock::now() - *dispatch_started;
+}
+
+void Backend::observe(const CommandRequest& command, const CommandFailure* failure,
+                      std::optional<std::chrono::nanoseconds> elapsed) const {
   if (!observer_) {
     return;
   }
-  observer_(rendered_command(command), failure);
+  const std::vector<std::string> argv = command.argv();
+  // `not_started` is this library's own word for nothing having been
+  // dispatched, so there is no duration to report however far into the
+  // dispatch the refusal happened.
+  const bool ran =
+      failure == nullptr || failure->delivery != DeliveryStatus::not_started;
+  observer_(CommandReport{.command = rendered_command(command),
+                          .argv = argv,
+                          .failure = failure,
+                          .elapsed =
+                              ran ? (elapsed.has_value() ? elapsed : dispatch_elapsed())
+                                  : std::nullopt});
 }
 
 CommandFailure Backend::redact(CommandFailure failure,
@@ -195,9 +225,10 @@ CommandFailure Backend::redact(CommandFailure failure,
 }
 
 expected<std::string, CommandFailure>
-Backend::report_failure(const CommandRequest& command, CommandFailure failure) const {
+Backend::report_failure(const CommandRequest& command, CommandFailure failure,
+                        std::optional<std::chrono::nanoseconds> elapsed) const {
   failure = redact(std::move(failure), command);
-  observe(command, &failure);
+  observe(command, &failure, elapsed);
   return unexpected(std::move(failure));
 }
 
@@ -633,6 +664,9 @@ SubprocessBackend::run_scoped(const CommandRequest& command,
                 "this handle predates the socket; reopen it after the server starts"});
   }
   ProcessRequest request = build_request(command, session, timeout, output_limit);
+  // From here down the command is actually dispatched, so this is what its
+  // duration means. Everything refused above it never ran, and reports none.
+  const Dispatching dispatching;
 
   // `CommandObserver` is told about every command, and these two are the
   // commands most worth seeing: one where tmux never started, and one where

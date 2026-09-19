@@ -392,8 +392,7 @@ void report_command(std::string_view message, const CommandFailure& failure) {
 [[nodiscard]] bool test_runtime_validation(std::string_view socket_name) {
   std::size_t observed = 0U;
   auto observed_server = Server::at_socket_name(
-      socket_name,
-      [&observed](std::string_view, const CommandFailure*) { ++observed; });
+      socket_name, [&observed](const CommandReport&) { ++observed; });
   if (!observed_server.has_value()) {
     report_command("could not construct observed validation server",
                    observed_server.error());
@@ -438,8 +437,7 @@ void report_command(std::string_view message, const CommandFailure& failure) {
   const std::string malformed_selector =
       std::string{socket_name} + std::string{"-\xff", 2U};
   auto selector_server = Server::at_socket_name(
-      malformed_selector,
-      [&observed](std::string_view, const CommandFailure*) { ++observed; });
+      malformed_selector, [&observed](const CommandReport&) { ++observed; });
   if (!selector_server.has_value()) {
     report_command("could not construct malformed-selector server",
                    selector_server.error());

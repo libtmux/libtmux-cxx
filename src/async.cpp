@@ -253,10 +253,21 @@ private:
 struct Observation final {
   CommandObserver callback;
   std::string command;
+  std::vector<std::string> argv;
   CommandFailure failure;
   bool failed{};
+  // Measured from admission to the result being ready, which for an
+  // asynchronous command is the wait a caller actually paid — not the span
+  // the dispatching thread spent inside tmux.
+  std::chrono::steady_clock::time_point started{std::chrono::steady_clock::now()};
+  std::optional<std::chrono::nanoseconds> elapsed{};
 
-  void dispatch() const { callback(command, failed ? &failure : nullptr); }
+  void dispatch() const {
+    callback(CommandReport{.command = command,
+                           .argv = argv,
+                           .failure = failed ? &failure : nullptr,
+                           .elapsed = elapsed});
+  }
 };
 
 class ObserverRecord final {
@@ -600,6 +611,7 @@ struct CommandRuntime::State final {
       observation = std::make_shared<Observation>(
           Observation{.callback = std::move(*observer),
                       .command = detail::rendered_command(command),
+                      .argv = command.argv(),
                       .failure = accepted_internal_failure(
                           "the runtime could not translate this command result"),
                       .failed = false});
@@ -900,6 +912,7 @@ private:
     try {
       if (observation) {
         observation->failed = !answer.has_value();
+        observation->elapsed = std::chrono::steady_clock::now() - observation->started;
         if (!answer.has_value()) {
           observation->failure = answer.error();
         }

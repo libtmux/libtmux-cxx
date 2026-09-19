@@ -2569,9 +2569,8 @@ TEST(McpToolsTmux, ReportsAPaneThatDisappearsDuringSearch) {
   const std::string path = fixture->socket_path().string();
   bool stopped = false;
   auto server = Server::at_socket_path(
-      path,
-      [&fixture, &stopped](std::string_view command, const libtmux::CommandFailure*) {
-        if (!stopped && command.find("list-panes") != std::string_view::npos) {
+      path, [&fixture, &stopped](const libtmux::CommandReport& report) {
+        if (!stopped && report.command.find("list-panes") != std::string_view::npos) {
           stopped = true;
           fixture.reset();
         }

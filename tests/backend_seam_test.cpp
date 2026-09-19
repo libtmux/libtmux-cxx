@@ -32,6 +32,7 @@
 namespace {
 
 using libtmux::CommandFailure;
+using libtmux::CommandReport;
 using libtmux::expected;
 using libtmux::FailureKind;
 using libtmux::Server;
@@ -946,9 +947,7 @@ TEST(BackendSeam, SubprocessCapabilitiesAreLocal) {
   std::size_t observed_commands = 0U;
   const auto opened = Server::at_socket_name(
       "libtmux-capabilities-only",
-      [&observed_commands](std::string_view, const CommandFailure*) {
-        ++observed_commands;
-      });
+      [&observed_commands](const CommandReport&) { ++observed_commands; });
   ASSERT_TRUE(opened.has_value());
 
   const auto capabilities = opened->capabilities();
