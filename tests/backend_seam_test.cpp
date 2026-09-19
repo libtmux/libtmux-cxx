@@ -346,6 +346,41 @@ TEST(BackendSeam, AnEntityTargetsItsIdRatherThanItsName) {
 // objects. Deciding it with `#if defined(_WIN32)` made two builds of this
 // source disagree, and made a psmux-like transport reached through
 // `Server::over` read as tmux for running on POSIX.
+// A transport answering a number field with something that is not a number is
+// refused, naming the field, rather than read as a real-looking zero. An empty
+// field still reads as zero: that is tmux having nothing to say.
+TEST(BackendSeam, ANumberTmuxDidNotRenderIsRefusedRatherThanReadAsZero) {
+  const auto pane_with_index = [](std::string_view index) {
+    return entity_row(std::array<std::string_view, libtmux::Pane::kFields.size()>{
+        "%1", "sh", "1", "@1", "$0", index, "", "123", "/dev/pts/1", "/tmp", "80", "24",
+        "0", "0", "1", "1", "1", "1", "0"});
+  };
+  const auto listed =
+      libtmux::detail::server_over(std::make_shared<ScriptedBackend>(
+                                       std::vector<std::string>{pane_with_index("x")}))
+          .panes();
+  ASSERT_FALSE(listed.has_value()) << "a garbled index read as a pane";
+  EXPECT_EQ(listed.error().kind, FailureKind::refused);
+  EXPECT_NE(listed.error().diagnostic.find("pane_index"), std::string::npos)
+      << listed.error().diagnostic;
+  EXPECT_NE(listed.error().diagnostic.find("\"x\""), std::string::npos);
+
+  const auto described =
+      libtmux::detail::server_over(std::make_shared<ScriptedBackend>(
+                                       std::vector<std::string>{pane_with_index("7x")}))
+          .pane("%1");
+  ASSERT_FALSE(described.has_value()) << "one object is read the same way as a listing";
+  EXPECT_EQ(described.error().kind, FailureKind::refused);
+
+  const auto empty =
+      libtmux::detail::server_over(std::make_shared<ScriptedBackend>(
+                                       std::vector<std::string>{pane_with_index("")}))
+          .panes();
+  ASSERT_TRUE(empty.has_value()) << empty.error().diagnostic;
+  ASSERT_EQ(empty->size(), 1U);
+  EXPECT_EQ(empty->front().index(), 0);
+}
+
 TEST(BackendSeam, EntityIdentityFollowsTheServerRatherThanTheBuildPlatform) {
   const auto same_pane_twice = [](libtmux::ServerImplementation implementation) {
     auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{
