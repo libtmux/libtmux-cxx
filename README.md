@@ -1118,6 +1118,23 @@ sends is pinned.
 | [`versions/`](versions/) | The registry's versions database. Generated, never edited by hand. |
 | [`cmake/`](cmake/README.md) | Helper modules and the package config template. |
 
+### What it is called
+
+One artifact, four spellings, because each namespace has its own rules and
+none of them can be the same string.
+
+| Spelling | Where it is the name |
+|---|---|
+| `libtmux-cxx` | the repository and its directory |
+| `libtmux_cxx` | the CMake project |
+| `libtmux::libtmux` | the CMake target to link, and `libtmux` the vcpkg port |
+| `libtmuxpp` | the built library — `libtmuxpp.a`, `-ltmuxpp` |
+
+Link the target, not the file: `find_package(libtmux)` then
+`target_link_libraries(you PRIVATE libtmux::libtmux)`. Outside CMake the
+installed `libtmux.pc` carries the same answer, including the standard and the
+`LIBTMUX_USE_TL_EXPECTED` the C++20 build needs.
+
 ## How it is checked
 
 Pull requests and master changes run against real tmux under clang with
