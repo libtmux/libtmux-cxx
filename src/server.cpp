@@ -350,12 +350,32 @@ Server::control_with_options(std::string_view session,
         ProtocolError{.message = "this server has no socket to connect to",
                       .delivery = DeliveryStatus::not_started});
   }
+  // The attach this opens addresses the session as "=name", which is exact
+  // but still splits on a "." or ":" in the name before comparing. A session
+  // id has no such split, so resolve to one for a name that could hit it; a
+  // name that turns out not to exist still reaches tmux's own answer below.
+  std::string target{session};
+  if (target.find_first_of(".:") != std::string::npos) {
+    if (const auto owned = sessions(); owned.has_value()) {
+      for (const Session& candidate : *owned) {
+        if (candidate.name() == session) {
+          target = std::string{candidate.id()};
+          break;
+        }
+      }
+    }
+  }
   return Connection::connect(routed_control_options(
-      std::move(options), std::string{socket_path}, std::string{session}));
+      std::move(options), std::string{socket_path}, std::move(target)));
 }
 
 expected<Version, CommandFailure> Server::tmux_version() const {
   return backend_->version();
+}
+
+expected<void, LayoutFailure>
+Server::validate_layouts(std::span<const LayoutRequest> layouts) const {
+  return detail::validate_layouts(*backend_, layouts, true);
 }
 
 bool Server::is_alive(std::chrono::milliseconds timeout) const {
@@ -795,7 +815,10 @@ expected<Session, CommandFailure> Server::session(std::string_view target) const
   if (!owned.has_value()) {
     return unexpected(owned.error());
   }
-  const std::string_view exact = target.starts_with('=') ? target.substr(1U) : target;
+  std::string_view exact = target.starts_with('=') ? target.substr(1U) : target;
+  if (exact.ends_with(':')) {
+    exact.remove_suffix(1U);
+  }
   const bool by_id =
       exact.size() > 1U && exact.starts_with('$') &&
       exact.find_first_not_of("0123456789", 1U) == std::string_view::npos;

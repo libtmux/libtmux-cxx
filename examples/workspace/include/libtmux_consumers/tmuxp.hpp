@@ -17,7 +17,6 @@
 // worse failure: a dropped `shell_command_before` builds panes that never
 // activate their environment, and nothing about the session says why.
 
-#include <expected>
 #include <string>
 #include <string_view>
 
@@ -30,6 +29,10 @@ struct ParseError {
   // points at the line a reader has to change.
   std::string where;
   std::string reason;
+  // Set when this is specifically a refused key, reported as
+  // `unsupported_key`, as opposed to any other malformed document
+  // (`invalid_workspace`).
+  bool unsupported_key{false};
 };
 
 [[nodiscard]] libtmux::expected<Workspace, ParseError>

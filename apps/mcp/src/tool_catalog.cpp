@@ -1566,6 +1566,33 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
   return detail::output({{"panes", StructuredValue{std::move(rows)}}});
 }
 
+// A bare or "="-prefixed name is a tmux target, which tmux resolves by
+// prefix when no session carries it exactly -- "alpha" can silently answer
+// "alphabet". Every tool here documents "one session by stable ID or name",
+// so list and compare names exactly instead of handing tmux a target string
+// it may resolve to a different session. An id already names one session
+// unambiguously and needs none of this.
+[[nodiscard]] expected<Session, CommandFailure>
+resolve_session(const Server& server, std::string_view target) {
+  if (is_session_id(target)) {
+    return server.session(target);
+  }
+  const auto sessions = server.sessions();
+  if (!sessions.has_value()) {
+    return unexpected(sessions.error());
+  }
+  for (const Session& session : *sessions) {
+    if (session.name() == target) {
+      return session;
+    }
+  }
+  return unexpected(
+      CommandFailure{.kind = FailureKind::missing,
+                     .delivery = DeliveryStatus::replied,
+                     .exit_code = 0,
+                     .diagnostic = "tmux has no session " + std::string{target}});
+}
+
 [[nodiscard]] std::vector<ToolDefinition> definitions() {
   std::vector<ToolDefinition> tools;
   tools.reserve(45U);
@@ -1596,7 +1623,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
       OutputShape::windows,
       [](const Server& server, const Arguments& arguments,
          const CallContext&) -> ToolResult {
-        const auto session = server.session(required(arguments, "session"));
+        const auto session = resolve_session(server, required(arguments, "session"));
         if (!session.has_value()) {
           return failure(session.error());
         }
@@ -1674,7 +1701,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
       OutputShape::object,
       [](const Server& server, const Arguments& arguments,
          const CallContext&) -> ToolResult {
-        const auto session = server.session(required(arguments, "session"));
+        const auto session = resolve_session(server, required(arguments, "session"));
         return session.has_value()
                    ? detail::output({{"session", detail::session_value(*session)}})
                    : failure(session.error());
@@ -2146,7 +2173,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
              NestedAuthority::controlled, InputControl::double_hash_once)},
       [](const Server& server, const Arguments& arguments,
          const CallContext&) -> ToolResult {
-        const auto session = server.session(required(arguments, "session"));
+        const auto session = resolve_session(server, required(arguments, "session"));
         if (!session.has_value()) {
           return failure(session.error());
         }
@@ -2211,19 +2238,24 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
       "select_layout", "Select a tmux layout",
       {field("windowId", "Stable window ID.", InputSink::tmux_lookup, true,
              ArgumentType::string, {}, {}, detail::kTargetCharacters),
-       field("layout", "Named or saved tmux layout.", InputSink::tmux_state, true,
-             ArgumentType::string, {}, {}, 4096U)},
+       field("layout", "Built-in name, unambiguous abbreviation or saved tmux layout.",
+             InputSink::tmux_state, true, ArgumentType::string, {}, {}, 4096U)},
       [](const Server& server, const Arguments& arguments,
          const CallContext&) -> ToolResult {
+        const auto& layout = required(arguments, "layout");
+        if (auto checked = validate_layout(layout); !checked)
+          return failure(checked.error());
         const auto window = server.window(required(arguments, "windowId"));
         if (!window.has_value()) {
           return failure(window.error());
         }
-        const auto answer = window->select_layout(required(arguments, "layout"));
+        const auto answer = window->select_layout(layout);
         return answer.has_value() ? changed("window_id", window->id())
                                   : failure(answer.error());
       },
-      "Replace the pane layout of one window.");
+      "Replace the pane layout of one window. Names and mirrored layouts follow "
+      "the selected daemon version. Saved layouts accept v1 checksums and v2 JSON; "
+      "v2 requires tmux 3.9 (including next-3.9) or newer.");
 
   manage(
       "resize_window", "Resize a tmux window",
@@ -2394,7 +2426,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
              ArgumentType::integer, 0, 10000000)},
       [](const Server& server, const Arguments& arguments,
          const CallContext&) -> ToolResult {
-        const auto session = server.session(required(arguments, "session"));
+        const auto session = resolve_session(server, required(arguments, "session"));
         if (!session.has_value()) {
           return failure(session.error());
         }
@@ -2465,7 +2497,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
       [](const Server& server, const Arguments& arguments,
          const CallContext&) -> ToolResult {
         static std::atomic_uint64_t sequence{0U};
-        const auto session = server.session(required(arguments, "session"));
+        const auto session = resolve_session(server, required(arguments, "session"));
         if (!session.has_value()) {
           return failure(session.error());
         }
@@ -2995,7 +3027,7 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
              ArgumentType::string, {}, {}, detail::kTargetCharacters)},
       [](const Server& server, const Arguments& arguments,
          const CallContext&) -> ToolResult {
-        const auto session = server.session(required(arguments, "session"));
+        const auto session = resolve_session(server, required(arguments, "session"));
         if (!session.has_value()) {
           return failure(session.error());
         }

@@ -377,6 +377,21 @@ void report_command(std::string_view message, const CommandFailure& failure) {
   std::cerr << "FAIL: " << message << ": " << failure.diagnostic << '\n';
 }
 
+// `wait()` returning only proves the result leg finished: the runtime marks a
+// command "completed" after the observer leg too, so a check right after
+// `wait()` can still race the completion callback becoming dispatchable.
+[[nodiscard]] bool wait_for_runtime_completion(libtmux::CommandRuntime& runtime,
+                                               std::chrono::milliseconds timeout) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  do {
+    if (runtime.snapshot().completed >= 1U) {
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds{5});
+  } while (std::chrono::steady_clock::now() < deadline);
+  return runtime.snapshot().completed >= 1U;
+}
+
 [[nodiscard]] bool exact_pre_admission_refusal(libtmux::CommandRuntime& runtime,
                                                std::size_t observed,
                                                std::string_view description) {
@@ -427,6 +442,8 @@ void report_command(std::string_view message, const CommandFailure& failure) {
   auto available_answer = std::move(*available).wait();
   if (!require(available_answer.has_value(),
                "the command admitted after refusal must complete") ||
+      !require(wait_for_runtime_completion(*malformed_runtime, std::chrono::seconds{2}),
+               "the post-refusal command must become dispatchable") ||
       !require(malformed_runtime->dispatch_ready() == 1U && observed == 1U,
                "the post-refusal command must queue exactly one callback") ||
       !require(malformed_runtime->close().safe_to_unload,
@@ -1187,6 +1204,15 @@ int main() {
   if (!require(first_session->id() == "$" + std::to_string(alpha_identity->id) &&
                    second_session->id() == "$" + std::to_string(beta_identity->id),
                "typed psmux sessions did not retain their durable registry IDs")) {
+    return EXIT_FAILURE;
+  }
+  // "=name:" is the spelling apps/workspace uses to reach a name tmux would
+  // otherwise split on: Server::session must strip both the leading "=" and
+  // the trailing ":" before comparing, not just the "=".
+  const auto colon_addressed = server.session("=alpha:");
+  if (!require(colon_addressed.has_value() &&
+                   colon_addressed->id() == first_session->id(),
+               "\"=name:\" must resolve the same session as a bare name")) {
     return EXIT_FAILURE;
   }
 

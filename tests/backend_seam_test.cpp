@@ -65,6 +65,8 @@ public:
     command_timeouts.push_back(timeout);
     command_output_limits.push_back(output_limit);
     std::this_thread::sleep_for(delay);
+    if (refused_reply)
+      return unexpected(*refused_reply);
     if (replies_.empty()) {
       return unexpected(CommandFailure{.kind = FailureKind::refused,
                                        .delivery = libtmux::DeliveryStatus::replied,
@@ -114,6 +116,7 @@ public:
   mutable std::vector<std::optional<std::size_t>> version_output_limits;
   mutable std::size_t version_queries{};
   std::chrono::milliseconds delay{};
+  std::optional<CommandFailure> refused_reply;
 
 private:
   mutable std::vector<std::string> replies_;
@@ -202,6 +205,273 @@ TEST(BackendSeam, TheWholeSurfaceRunsOverASubstitutedExecutor) {
   ASSERT_EQ(backend->issued.size(), 1U);
   EXPECT_EQ(backend->issued.front().at(0), "list-sessions");
   EXPECT_EQ(backend->issued.front().at(1), "-F");
+}
+
+TEST(BackendSeam, InvalidWindowLayoutsNeverReachTheExecutor) {
+  for (const auto* layout :
+       {"unknown-layout", "main-", "0000,80x24,0,0", "d404,80x24,0,0[]"}) {
+    auto backend = std::make_shared<ScriptedBackend>(
+        std::vector<std::string>{window_row("@3", "work", "$2"), ""});
+    const auto windows = libtmux::detail::server_over(backend).windows();
+    ASSERT_TRUE(windows.has_value()) << windows.error().diagnostic;
+    ASSERT_EQ(windows->size(), 1U);
+    backend->issued.clear();
+    const auto selected = windows->front().select_layout(layout);
+    ASSERT_FALSE(selected.has_value()) << layout;
+    EXPECT_EQ(selected.error().kind, FailureKind::validation);
+    EXPECT_EQ(selected.error().delivery, libtmux::DeliveryStatus::not_started);
+    EXPECT_TRUE(backend->issued.empty()) << layout;
+    EXPECT_EQ(backend->version_queries, 0U);
+  }
+}
+
+TEST(BackendSeam, WindowLayoutNamesUseTheSelectedDaemonVersion) {
+  for (const auto* version : {"3.2a", "3.7c"}) {
+    auto backend = std::make_shared<ScriptedBackend>(
+        std::vector<std::string>{window_row("@3", "work", "$2"), version, ""});
+    const auto windows = libtmux::detail::server_over(backend).windows();
+    ASSERT_TRUE(windows.has_value()) << windows.error().diagnostic;
+    ASSERT_EQ(windows->size(), 1U);
+    backend->issued.clear();
+    const auto selected = windows->front().select_layout("main-h");
+    EXPECT_EQ(selected.has_value(), std::string_view{version} == "3.2a");
+    ASSERT_FALSE(backend->issued.empty());
+    EXPECT_EQ(backend->issued[0],
+              (std::vector<std::string>{"display-message", "-p", "#{version}"}));
+    EXPECT_EQ(backend->issued.size(), std::string_view{version} == "3.2a" ? 2U : 1U);
+    EXPECT_EQ(backend->version_queries, 0U);
+  }
+}
+
+TEST(BackendSeam, LayoutBatchChecksEveryInputBeforeQuerying) {
+  auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{"3.2a"});
+  const auto server = libtmux::detail::server_over(backend);
+  const std::array requests{libtmux::LayoutRequest{"main-h"},
+                            libtmux::LayoutRequest{"tiled"},
+                            libtmux::LayoutRequest{"32d2,80x24,0,0{}"}};
+  const auto checked = server.validate_layouts(requests);
+  ASSERT_FALSE(checked.has_value());
+  EXPECT_EQ(checked.error().index, 2U);
+  EXPECT_EQ(checked.error().cause.kind, FailureKind::validation);
+  EXPECT_TRUE(backend->issued.empty());
+  EXPECT_EQ(backend->version_queries, 0U);
+}
+
+TEST(BackendSeam, LayoutBatchQueriesOnceAndKeepsTheInvalidIndex) {
+  for (const auto* version : {"3.2a", "3.7c"}) {
+    const libtmux::ExecutionPolicy policy{.timeout = std::chrono::milliseconds{73},
+                                          .output_limit = 8096};
+    auto backend = std::make_shared<ScriptedBackend>(
+        std::vector<std::string>{version}, libtmux::Version{.major = 9}, policy);
+    const std::array requests{libtmux::LayoutRequest{"tiled"},
+                              libtmux::LayoutRequest{"main-h"},
+                              libtmux::LayoutRequest{"main-v"}};
+    const auto checked =
+        libtmux::detail::server_over(backend).validate_layouts(requests);
+    EXPECT_EQ(checked.has_value(), std::string_view{version} == "3.2a");
+    if (!checked) {
+      EXPECT_EQ(checked.error().index, 1U);
+      EXPECT_EQ(checked.error().cause.kind, FailureKind::validation);
+    }
+    ASSERT_EQ(backend->issued.size(), 1U);
+    EXPECT_EQ(backend->issued.front().front(), "display-message");
+    EXPECT_EQ(backend->command_timeouts.front(), policy.timeout);
+    EXPECT_EQ(backend->command_output_limits.front(), policy.output_limit);
+    EXPECT_EQ(backend->version_queries, 0U);
+  }
+}
+
+TEST(BackendSeam, StableLayoutsNeedNoVersionQuery) {
+  auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{});
+  const std::array requests{
+      libtmux::LayoutRequest{"tiled"}, libtmux::LayoutRequest{"even-h"},
+      libtmux::LayoutRequest{"203f,80x24,0,0{39x24,0,0,40x24,40,0}", 2}};
+  const auto checked = libtmux::detail::server_over(backend).validate_layouts(requests);
+  ASSERT_TRUE(checked.has_value()) << checked.error().cause.diagnostic;
+  EXPECT_TRUE(backend->issued.empty());
+  EXPECT_EQ(backend->version_queries, 0U);
+  EXPECT_FALSE(libtmux::validate_layout(requests.back().layout, 3));
+  EXPECT_FALSE(libtmux::validate_layout(""));
+}
+
+constexpr std::string_view json_pane =
+    R"({"V":2,"L":{"t":"p","w":80,"h":24,"x":0,"y":0,"i":0}})";
+
+TEST(BackendSeam, JsonLayoutsKeepTheirPayloadAndUseTheSelectedDaemonVersion) {
+  for (const auto* version : {"3.7c", "next-3.9", "3.9"}) {
+    auto backend = std::make_shared<ScriptedBackend>(
+        std::vector<std::string>{window_row("@3", "work", "$2"), version, ""});
+    const auto windows = libtmux::detail::server_over(backend).windows();
+    ASSERT_TRUE(windows.has_value());
+    backend->issued.clear();
+    const auto selected = windows->front().select_layout(json_pane);
+    const bool supported = std::string_view{version} != "3.7c";
+    ASSERT_EQ(selected.has_value(), supported);
+    ASSERT_EQ(backend->issued.size(), supported ? 2U : 1U);
+    EXPECT_EQ(backend->issued.front(),
+              (std::vector<std::string>{"display-message", "-p", "#{version}"}));
+    EXPECT_EQ(backend->version_queries, 0U);
+    if (supported)
+      EXPECT_EQ(backend->issued.back().back(), json_pane);
+    else
+      EXPECT_EQ(selected.error().delivery, libtmux::DeliveryStatus::not_started);
+  }
+}
+
+TEST(BackendSeam, JsonLayoutsCheckEveryInputBeforeMetadata) {
+  auto backend =
+      std::make_shared<ScriptedBackend>(std::vector<std::string>{"next-3.9"});
+  const std::array requests{libtmux::LayoutRequest{"main-h"},
+                            libtmux::LayoutRequest{json_pane},
+                            libtmux::LayoutRequest{R"({"V":2,"L":{}})"}};
+  const auto checked = libtmux::detail::server_over(backend).validate_layouts(requests);
+  ASSERT_FALSE(checked.has_value());
+  EXPECT_EQ(checked.error().index, 2U);
+  EXPECT_TRUE(backend->issued.empty());
+  EXPECT_EQ(backend->version_queries, 0U);
+}
+
+TEST(BackendSeam, JsonLayoutBatchKeepsTheIndexAndTransportFailure) {
+  const std::array requests{libtmux::LayoutRequest{"tiled"},
+                            libtmux::LayoutRequest{json_pane},
+                            libtmux::LayoutRequest{"even-h"}};
+  for (const auto* version : {"3.7c", "next-3.9", "invalid"}) {
+    auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{version});
+    const auto checked =
+        libtmux::detail::server_over(backend).validate_layouts(requests);
+    EXPECT_EQ(checked.has_value(), std::string_view{version} == "next-3.9");
+    if (!checked) {
+      EXPECT_EQ(checked.error().index, 1U);
+    }
+    EXPECT_EQ(backend->issued.size(), 1U);
+    EXPECT_EQ(backend->version_queries, 0U);
+  }
+  for (const auto kind : {FailureKind::missing, FailureKind::timeout, FailureKind::pipe,
+                          FailureKind::refused}) {
+    auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{});
+    backend->refused_reply =
+        CommandFailure{.kind = kind,
+                       .delivery = libtmux::DeliveryStatus::not_started,
+                       .exit_code = 19,
+                       .diagnostic = "original failure"};
+    const auto checked =
+        libtmux::detail::server_over(backend).validate_layouts(requests);
+    ASSERT_FALSE(checked.has_value());
+    EXPECT_EQ(checked.error().index, 1U);
+    EXPECT_EQ(checked.error().cause.kind, kind);
+    EXPECT_EQ(checked.error().cause.exit_code, 19);
+    EXPECT_EQ(checked.error().cause.diagnostic, "original failure");
+    EXPECT_EQ(backend->issued.size(), 1U);
+    EXPECT_EQ(backend->version_queries, 0U);
+  }
+}
+
+TEST(BackendSeam, JsonLayoutFieldsRespectNativeBoundsAndRawKeys) {
+  const auto replaced = [](std::string_view old_value, std::string_view value) {
+    auto layout = std::string{json_pane};
+    layout.replace(layout.find(old_value), old_value.size(), value);
+    return layout;
+  };
+  for (const auto* value : {R"("w":1)", R"("w":10000)"})
+    EXPECT_TRUE(libtmux::validate_layout(replaced(R"("w":80)", value)));
+  for (const auto* value : {R"("w":0)", R"("w":10001)", R"("w":true)"})
+    EXPECT_FALSE(libtmux::validate_layout(replaced(R"("w":80)", value)));
+  for (const auto* value : {R"("x":-10000)", R"("x":10000)"})
+    EXPECT_TRUE(libtmux::validate_layout(replaced(R"("x":0)", value)));
+  for (const auto* value : {R"("x":-10001)", R"("x":10001)"})
+    EXPECT_FALSE(libtmux::validate_layout(replaced(R"("x":0)", value)));
+  EXPECT_TRUE(libtmux::validate_layout(replaced(R"("i":0)", R"("i":2147483647)")));
+  EXPECT_FALSE(libtmux::validate_layout(replaced(R"("i":0)", R"("i":2147483648)")));
+  EXPECT_FALSE(libtmux::validate_layout(replaced(R"("V":2)", R"("V":3)")));
+  EXPECT_FALSE(libtmux::validate_layout(replaced(R"("t":"p")", R"("t":"\u0070")")));
+  EXPECT_TRUE(libtmux::validate_layout(
+      replaced(R"("t":"p")", R"("t":"p","\u0074":"distinct key")")));
+  EXPECT_TRUE(libtmux::validate_layout(
+      R"({"V":2,"L":{"t":"h","w":80,"h":24,"x":0,"y":0,"a":[],"l":"ignored","i":false,"z":{},"c":[{"t":"p","w":39,"h":24,"x":0,"y":0,"i":0},{"t":"p","w":40,"h":24,"x":40,"y":0,"i":9}]}})"));
+  for (const auto* children : {"[]", "[{}]"})
+    EXPECT_FALSE(libtmux::validate_layout(
+        std::string{R"({"V":2,"L":{"t":"h","w":80,"h":24,"x":0,"y":0,"c":)"} +
+        children + "}}"));
+}
+
+TEST(BackendSeam, JsonLayoutSyntaxChecksMetadataWithoutArrangingGeometry) {
+  ASSERT_TRUE(libtmux::validate_layout(json_pane));
+  EXPECT_FALSE(libtmux::validate_layout(json_pane, 2));
+  EXPECT_TRUE(libtmux::validate_layout("\f\v " + std::string{json_pane} + "\t\r\n"));
+  for (const char whitespace : {'\f', '\v'}) {
+    EXPECT_FALSE(libtmux::validate_layout(std::string{json_pane} + whitespace));
+    auto internal = std::string{json_pane};
+    internal.insert(5, 1, whitespace);
+    EXPECT_FALSE(libtmux::validate_layout(internal));
+  }
+  for (const auto* suffix :
+       {R"(,"a":false,"l":"ignored","I":{"future":true})",
+        R"(,"z":2147483646,"l":2147483647)",
+        R"(,"unknown":[{}, {"x":"\u0041"}],"low":-9223372036854775808)",
+        R"(,"high":9223372036854775807,"negativeZero":-0)"}) {
+    std::string layout{json_pane};
+    layout.insert(layout.size() - 2, suffix);
+    const auto checked = libtmux::validate_layout(layout);
+    EXPECT_TRUE(checked.has_value()) << layout << ": " << checked.error().diagnostic;
+  }
+  for (const auto* suffix :
+       {R"(,"a":1)", R"(,"z":2147483647)", R"(,"l":-1)", R"(,"c":[])", R"(,"i":1)",
+        R"(,"unknown":null)", R"(,"unknown":"")", R"(,"unknown":[1])",
+        R"(,"unknown":1.5)", R"(,"unknown":1e2)", R"(,"unknown":01)",
+        R"(,"unknown":9223372036854775808)", R"(,"unknown":"\q")",
+        R"(,"unknown":"\u12xz")"}) {
+    std::string layout{json_pane};
+    layout.insert(layout.size() - 2, suffix);
+    EXPECT_FALSE(libtmux::validate_layout(layout).has_value()) << layout;
+  }
+  const std::string first = R"({"t":"p","w":39,"h":23,"x":0,"y":0,"i":0})";
+  const std::string second = R"({"t":"p","w":40,"h":24,"x":40,"y":0,"i":1})";
+  const auto tree = [&](std::string left, std::string right) {
+    return R"({"V":2,"L":{"t":"h","w":1,"h":1,"x":0,"y":0,"c":[)" + left + "," + right +
+           "]}}";
+  };
+  // tmux corrects root dimensions and may prune before checking inner geometry.
+  EXPECT_TRUE(libtmux::validate_layout(tree(first, second), 2).has_value());
+  EXPECT_FALSE(libtmux::validate_layout(tree(first, first)).has_value());
+  for (const auto* field : {R"(,"z":0)", R"(,"l":0)", R"(,"a":true)"}) {
+    auto left = first;
+    auto right = second;
+    left.insert(left.size() - 1, field);
+    right.insert(right.size() - 1, field);
+    EXPECT_FALSE(libtmux::validate_layout(tree(left, right)).has_value()) << field;
+  }
+  std::string nested = "{}";
+  for (unsigned depth = 1; depth <= 200; ++depth) {
+    std::string layout{json_pane};
+    layout.insert(layout.size() - 1, ",\"unknown\":" + nested);
+    EXPECT_EQ(libtmux::validate_layout(layout).has_value(), depth < 200) << depth;
+    nested = "{\"next\":" + nested + "}";
+  }
+}
+
+TEST(BackendSeam, LayoutBatchPreservesTransportFailuresWithoutClientFallback) {
+  for (const auto kind : {FailureKind::missing, FailureKind::timeout, FailureKind::pipe,
+                          FailureKind::refused}) {
+    auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{});
+    backend->refused_reply =
+        CommandFailure{.kind = kind,
+                       .delivery = libtmux::DeliveryStatus::not_started,
+                       .exit_code = 19,
+                       .diagnostic = "original failure"};
+    const std::array requests{libtmux::LayoutRequest{"tiled"},
+                              libtmux::LayoutRequest{"main-h"}};
+    const auto checked =
+        libtmux::detail::server_over(backend).validate_layouts(requests);
+    ASSERT_FALSE(checked.has_value());
+    EXPECT_EQ(checked.error().index, 1U);
+    const auto& cause = checked.error().cause;
+    EXPECT_EQ(cause.kind, kind);
+    EXPECT_EQ(cause.delivery, libtmux::DeliveryStatus::not_started);
+    EXPECT_EQ(cause.exit_code, 19);
+    EXPECT_EQ(cause.diagnostic, "original failure");
+    EXPECT_EQ(backend->issued.size(), 1U);
+    EXPECT_EQ(backend->version_queries, 0U);
+  }
 }
 
 TEST(BackendSeam, RuntimeBackendMismatchesAreRejectedBeforeAdmission) {
