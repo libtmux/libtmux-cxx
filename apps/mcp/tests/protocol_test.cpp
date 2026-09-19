@@ -1139,9 +1139,9 @@ TEST_F(McpProtocol, KeepsTimedOutRunInputReservedUntilCompletion) {
                   .until = replied({2})},
                  {.text = after, .until = replied({3})}});
 
-  const json& timed_out = require_response(messages, 1);
-  const json& refused = require_response(messages, 2);
-  const json& accepted = require_response(messages, 3);
+  const json timed_out = require_response(messages, 1);
+  const json refused = require_response(messages, 2);
+  const json accepted = require_response(messages, 3);
   EXPECT_TRUE(timed_out["result"]["isError"].get<bool>());
   EXPECT_NE(
       timed_out["result"]["content"][0]["text"].get<std::string>().find("timed out"),
