@@ -501,6 +501,29 @@ bool same_socket(std::string_view left, std::string_view right) {
   return fs::weakly_canonical(fs::path{left}, ignored) ==
          fs::weakly_canonical(fs::path{right}, ignored);
 }
+// The document's windows that a session already running under that name does
+// not have. Empty means the session holds everything the document asks for;
+// std::nullopt means its windows could not be read. A window the document
+// leaves unnamed is not compared: tmux names it after whatever it runs.
+std::optional<std::vector<std::string>> absent_windows(const Session& session,
+                                                       const Workspace& description) {
+  const auto present = session.windows();
+  if (!present)
+    return std::nullopt;
+  std::multiset<std::string> live;
+  for (const auto& window : *present)
+    live.emplace(window.name());
+  std::vector<std::string> absent;
+  for (const auto& window : description.windows) {
+    if (window.name.empty())
+      continue;
+    if (const auto found = live.find(window.name); found != live.end())
+      live.erase(found);
+    else
+      absent.push_back(window.name);
+  }
+  return absent;
+}
 Server endpoint(const Request& request) {
   auto server =
       !request.value("S").empty()   ? Server::at_socket_path(expand(request.value("S")))
@@ -1633,6 +1656,45 @@ static Execution execute_impl(const Request& request, const EventSink& event,
         const auto existing =
             borrowed ? libtmux::expected<Session, CommandFailure>{*borrowed}
                      : server.session("=" + plan.workspace.session_name + ":");
+        // Reusing a session compares it against the document; converging on
+        // the document is a separate operation this one does not perform. A
+        // session that is missing what the document asks for is reported with
+        // the names it lacks, and is left exactly as it was found.
+        if (!borrowed && existing) {
+          const auto absent = absent_windows(*existing, plan.workspace);
+          if (!absent || !absent->empty()) {
+            retained_changes = true;
+            failure_status = 1;
+            std::string named;
+            for (const auto& window : absent.value_or(std::vector<std::string>{}))
+              named += (named.empty() ? "" : ", ") + window;
+            Json problem{{"code", absent ? "destination_exists" : "tmux_failed"},
+                         {"message",
+                          absent
+                              ? "session " + plan.workspace.session_name +
+                                    " is already running without the windows this "
+                                    "workspace describes: " +
+                                    named
+                              : "the windows of the session already running as " +
+                                    plan.workspace.session_name + " could not be read"},
+                         {"input_index", index},
+                         {"failed_stage", stage}};
+            problem["retained_state"] = {{"session_id", existing->id()},
+                                         {"session_name", existing->name()},
+                                         {"ownership", "existing"},
+                                         {"settings_may_have_changed", false}};
+            if (absent)
+              problem["retained_state"]["missing_windows"] = *absent;
+            errors.push_back(std::move(problem));
+            results.push_back({{"input", private_path(plan.path)},
+                               {"input_index", index},
+                               {"session_id", existing->id()},
+                               {"session_name", plan.workspace.session_name},
+                               {"reused", true},
+                               {"action", "reused"}});
+            break;
+          }
+        }
         Json script_output;
         std::optional<Failure> script_error;
         BeforeBuild before;
