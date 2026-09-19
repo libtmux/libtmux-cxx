@@ -1864,6 +1864,36 @@ TEST(WorkspaceCliTmux, CaptureTreatsAnyOrdinaryShellAsTheDefaultOne) {
   EXPECT_FALSE(pane.contains("shell_command")) << pane;
 }
 
+// tmux runs a session whose name carries a target separator, but no
+// workspace can name it: freeze refuses that session instead of writing a
+// document load would then reject.
+TEST(WorkspaceCliTmux, FreezeRefusesASessionNameLoadWouldReject) {
+  Files files;
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cap-dot")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto socket = fixture->socket_path().string();
+  const auto server = libtmux::Server::at_socket_path(socket);
+  ASSERT_TRUE(server.has_value());
+  ASSERT_TRUE(server->new_session("my.proj").has_value());
+  ASSERT_TRUE(server->new_session("ordinary").has_value());
+
+  const auto refused =
+      invoke({"freeze", "my.proj", "-S", socket, "--save-to", "dotted.yaml", "--json"});
+  EXPECT_EQ(refused.code, 1) << refused.out << refused.err;
+  EXPECT_TRUE(refused.out.empty());
+  const auto record = Json::parse(refused.err);
+  EXPECT_EQ(record.at("code"), "invalid_workspace") << record.dump();
+  EXPECT_NE(record.at("message").get<std::string>().find("my.proj"), std::string::npos)
+      << record.dump();
+  EXPECT_FALSE(std::filesystem::exists("dotted.yaml"));
+
+  const auto saved =
+      invoke({"freeze", "ordinary", "-S", socket, "--save-to", "plain.yaml", "--json"});
+  ASSERT_EQ(saved.code, 0) << saved.out << saved.err;
+  EXPECT_TRUE(std::filesystem::exists("plain.yaml"));
+}
+
 TEST(WorkspaceCliTmux, FreezeSavesBlockStyleYaml) {
   auto fixture = libtmux::test::ScopedTmuxServer::start(
       {.socket_namespace = libtmux::test::SocketNamespace::consumer("capblk")});
