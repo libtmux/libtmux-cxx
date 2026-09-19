@@ -1628,12 +1628,16 @@ static Execution execute_impl(const Request& request, const EventSink& event,
           const char answer =
               typed.empty() ? 'y' : static_cast<char>(std::tolower(typed.front()));
           if (answer != 'y')
-            return {.value = {{"schema_version", 1},
-                              {"command", "load"},
-                              {"status", "ok"},
-                              {"results", Json::array()},
-                              {"errors", Json::array()}},
-                    .exit_code = 0};
+            // Declining is a normal outcome, not a warning or an error: say
+            // plainly what was left alone rather than answering in silence.
+            return {
+                .value = {{"schema_version", 1},
+                          {"command", "load"},
+                          {"status", "ok"},
+                          {"results", Json::array()},
+                          {"errors", Json::array()},
+                          {"note", target_name + " is unchanged; nothing was built"}},
+                .exit_code = 0};
         } else if (!environment("TMUX").empty()) {
           const auto typed =
               prompt ? prompt("Already inside tmux: switch (y), load detached (n), or "
@@ -1974,6 +1978,10 @@ std::string human_result(const Request& request, const Json& result, bool colour
     return result.at("format") == "json" ? encoded(result.at("workspace"), 2) + "\n"
                                          : yaml(result.at("workspace"));
   }
+  // A question the user answered gets a plain statement of what that answer
+  // left undone -- not a warning, not an error, an acknowledgement.
+  if (result.is_object() && result.contains("note"))
+    output << role("2", result.at("note").get<std::string>()) << '\n';
   if (request.command == "edit")
     return result.at("stdout").get<std::string>();
   if (request.command == "shell")
