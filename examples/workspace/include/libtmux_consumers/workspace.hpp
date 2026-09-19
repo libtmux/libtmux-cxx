@@ -13,7 +13,10 @@
 #include <expected>
 #include <functional>
 #include <optional>
+#include <ranges>
+#include <set>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -342,7 +345,23 @@ build_windows(const Server& server, const Workspace& description,
       return fail(0, set.error().diagnostic);
     }
   }
+  // tmux keeps some options in its window table and routes a set against a
+  // session to whichever window is current -- here the bootstrap window this
+  // build is about to kill. Those are applied to each window below instead,
+  // where the document that wrote them under the session can take effect.
+  std::set<std::string> window_scoped;
+  if (!description.options.empty()) {
+    if (const auto listed = server.run({"show-options", "-w", "-g"})) {
+      for (const auto line : *listed | std::views::split('\n')) {
+        const std::string_view text{line.begin(), line.end()};
+        if (const auto end = text.find(' '); end != 0 && !text.empty())
+          window_scoped.emplace(text.substr(0, end));
+      }
+    }
+  }
   for (const auto& [option, value] : description.options) {
+    if (window_scoped.contains(option))
+      continue;
     if (auto error = notify(BuildPhase::waiting, 0, 0))
       return libtmux::unexpected(std::move(*error));
     if (const auto set = built->set_option(option, value); !set.has_value()) {
@@ -419,6 +438,17 @@ build_windows(const Server& server, const Workspace& description,
         if (!moved.has_value()) {
           return fail(index, moved.error().diagnostic);
         }
+      }
+    }
+    // The session's window-scoped options first, so a window's own options
+    // still have the last word on the window it owns.
+    for (const auto& [option, value] : description.options) {
+      if (!window_scoped.contains(option))
+        continue;
+      if (auto error = notify(BuildPhase::waiting, index, 0))
+        return libtmux::unexpected(std::move(*error));
+      if (const auto set = target->set_option(option, value); !set.has_value()) {
+        return fail(index, set.error().diagnostic);
       }
     }
     for (const auto& [option, value] : window.options) {

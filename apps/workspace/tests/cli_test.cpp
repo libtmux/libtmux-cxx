@@ -2049,6 +2049,43 @@ TEST(WorkspaceCliTmux, AppendKeepsItsBorrowedSessionAndReportsRetainedWindows) {
   EXPECT_TRUE(missing.out.empty());
 }
 
+// tmux keeps some options in its window table, and routes a set against a
+// session to whichever window is current -- the bootstrap window a build
+// then kills. A document that writes one under the session's options gets it
+// on every window it builds instead of nowhere.
+TEST(WorkspaceCliTmux, WindowOptionsUnderSessionOptionsReachEveryWindow) {
+  Files files;
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-pbi")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto socket = fixture->socket_path().string();
+  const auto server = libtmux::Server::at_socket_path(socket);
+  ASSERT_TRUE(server.has_value());
+  std::ofstream{"pbi.yaml"} << "session_name: pbi\noptions:\n"
+                               "  pane-base-index: 1\n  status: 'off'\n"
+                               "windows:\n  - window_name: one\n"
+                               "    panes: [echo A, echo B]\n"
+                               "  - window_name: two\n    panes: [echo C]\n";
+
+  const auto loaded = invoke({"load", "pbi.yaml", "-d", "-S", socket, "--json"});
+  ASSERT_EQ(loaded.code, 0) << loaded.out << loaded.err;
+  const auto session = server->session("=pbi:");
+  ASSERT_TRUE(session.has_value());
+  const auto windows = session->windows();
+  ASSERT_TRUE(windows.has_value());
+  ASSERT_EQ(windows->size(), 2U);
+  for (const auto& window : *windows) {
+    const auto panes = window.panes();
+    ASSERT_TRUE(panes.has_value());
+    ASSERT_FALSE(panes->empty());
+    EXPECT_EQ(panes->front().index(), 1) << window.name();
+  }
+  // A session option stays a session option.
+  const auto status = session->option("status");
+  ASSERT_TRUE(status.has_value());
+  EXPECT_EQ(status->value, "off");
+}
+
 // A document written for the other libtmux workspace ports carries builder
 // settings this one has nothing to act on. It loads here, and a setting this
 // builder does not have is said out loud rather than refusing the document.
