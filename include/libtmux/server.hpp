@@ -46,6 +46,26 @@ namespace detail {
 [[nodiscard]] Server server_over(std::shared_ptr<const Backend> backend);
 } // namespace detail
 
+// What a caller-supplied transport tells the library about itself.
+//
+// `implementation` answers what a caller may rely on, and only that. Leaving it
+// `unknown` makes `capabilities().supports(...)` answer no for every feature —
+// the library will not promise what it cannot recognise — but it does not stop
+// a typed call: `refuses` asks a separate question from `supports` rather than
+// its negation, so that a transport reaching a real tmux is not blocked for
+// being unfamiliar. Name `tmux` when the executor really does reach a POSIX
+// tmux server, so a caller asking what it may rely on gets a useful answer.
+struct ExecutorOptions {
+  ServerImplementation implementation{ServerImplementation::unknown};
+  // What `Server::socket_path()` reports. Informational; the library never
+  // resolves it, because the executor has already decided where it is talking.
+  std::string socket_path{};
+  // The tmux this transport speaks to. Absent asks the executor by running
+  // `-V`, which a transport that only speaks tmux subcommands cannot answer —
+  // such an executor names the version here instead.
+  std::optional<Version> version{};
+};
+
 class Server {
 public:
   // `-S path`: the socket file, used verbatim.
@@ -124,6 +144,19 @@ public:
   // one a person means when they say "my tmux".
   [[nodiscard]] static expected<Server, CommandFailure>
   at_default(CommandObserver observer = {}, ExecutionPolicy policy = {});
+
+  // A Server over a transport the caller supplies.
+  //
+  // `BackendKind::custom` named this possibility from the first release and
+  // nothing could reach it: the interface a backend had to satisfy lived in a
+  // header this package does not install, so the only transport a consumer
+  // could get was the one that launches a subprocess per command. An executor
+  // answers one command; the library keeps session routing, batching, attach
+  // preparation and the rest on its own side rather than making them a
+  // promise.
+  [[nodiscard]] static expected<Server, CommandFailure>
+  over(std::shared_ptr<const CommandExecutor> executor, ExecutorOptions options = {},
+       CommandObserver observer = {}, ExecutionPolicy policy = {});
 
   // The local backend contract; no command runs. `tmux_version()` separately
   // queries the executable or the connected control server.

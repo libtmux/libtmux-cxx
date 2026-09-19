@@ -49,6 +49,10 @@ The connection root.  A Server names which tmux server to talk to and how to rea
 
 **Symbols:**
 
+- [`ExecutorOptions`](#libtmux-server-hpp-executoroptions)
+  - [`ExecutorOptions::implementation`](#libtmux-server-hpp-executoroptions-implementation)
+  - [`ExecutorOptions::socket_path`](#libtmux-server-hpp-executoroptions-socket-path)
+  - [`ExecutorOptions::version`](#libtmux-server-hpp-executoroptions-version)
 - [`Server`](#libtmux-server-hpp-server)
   - [`Server::at_socket_path`](#libtmux-server-hpp-server-at-socket-path)
   - [`Server::at_socket_path`](#libtmux-server-hpp-server-at-socket-path-2)
@@ -59,6 +63,7 @@ The connection root.  A Server names which tmux server to talk to and how to rea
   - [`Server::startable_at_default`](#libtmux-server-hpp-server-startable-at-default)
   - [`Server::from_env`](#libtmux-server-hpp-server-from-env)
   - [`Server::at_default`](#libtmux-server-hpp-server-at-default)
+  - [`Server::over`](#libtmux-server-hpp-server-over)
   - [`Server::capabilities`](#libtmux-server-hpp-server-capabilities)
   - [`Server::socket_path`](#libtmux-server-hpp-server-socket-path)
   - [`Server::run`](#libtmux-server-hpp-server-run)
@@ -102,6 +107,38 @@ The connection root.  A Server names which tmux server to talk to and how to rea
   - [`Server::hooks`](#libtmux-server-hpp-server-hooks)
   - [`Server::global_hooks`](#libtmux-server-hpp-server-global-hooks)
   - [`Server::set_global_hook`](#libtmux-server-hpp-server-set-global-hook)
+
+<a id="libtmux-server-hpp-executoroptions"></a>
+### `ExecutorOptions`
+
+What a caller-supplied transport tells the library about itself.  `implementation` answers what a caller may rely on, and only that. Leaving it `unknown` makes `capabilities().supports(...)` answer no for every feature — the library will not promise what it cannot recognise — but it does not stop a typed call: `refuses` asks a separate question from `supports` rather than its negation, so that a transport reaching a real tmux is not blocked for being unfamiliar. Name `tmux` when the executor really does reach a POSIX tmux server, so a caller asking what it may rely on gets a useful answer.
+
+```cpp
+struct ExecutorOptions;
+```
+
+<a id="libtmux-server-hpp-executoroptions-implementation"></a>
+#### `ExecutorOptions::implementation`
+
+```cpp
+ServerImplementation implementation{ServerImplementation::unknown};
+```
+
+<a id="libtmux-server-hpp-executoroptions-socket-path"></a>
+#### `ExecutorOptions::socket_path`
+
+```cpp
+std::string socket_path{};
+```
+What `Server::socket_path()` reports. Informational; the library never resolves it, because the executor has already decided where it is talking.
+
+<a id="libtmux-server-hpp-executoroptions-version"></a>
+#### `ExecutorOptions::version`
+
+```cpp
+std::optional<Version> version{};
+```
+The tmux this transport speaks to. Absent asks the executor by running `-V`, which a transport that only speaks tmux subcommands cannot answer — such an executor names the version here instead.
 
 <a id="libtmux-server-hpp-server"></a>
 ### `Server`
@@ -178,6 +215,14 @@ The server this process is running inside.  tmux exports `TMUX` to everything it
 [[nodiscard]] static expected<Server, CommandFailure> at_default(CommandObserver observer = {}, ExecutionPolicy policy = {});
 ```
 The server tmux would talk to with no `-L` or `-S` at all, which is the one a person means when they say "my tmux".
+
+<a id="libtmux-server-hpp-server-over"></a>
+#### `Server::over`
+
+```cpp
+[[nodiscard]] static expected<Server, CommandFailure> over(std::shared_ptr<const CommandExecutor> executor, ExecutorOptions options = {}, CommandObserver observer = {}, ExecutionPolicy policy = {});
+```
+A Server over a transport the caller supplies.  `BackendKind::custom` named this possibility from the first release and nothing could reach it: the interface a backend had to satisfy lived in a header this package does not install, so the only transport a consumer could get was the one that launches a subprocess per command. An executor answers one command; the library keeps session routing, batching, attach preparation and the rest on its own side rather than making them a promise.
 
 <a id="libtmux-server-hpp-server-capabilities"></a>
 #### `Server::capabilities`
@@ -5005,6 +5050,14 @@ Why a tmux command produced no answer.  `refused` means tmux ran and said no; `m
   - [`ExecutionPolicy::timeout`](#libtmux-command-hpp-executionpolicy-timeout)
   - [`ExecutionPolicy::output_limit`](#libtmux-command-hpp-executionpolicy-output-limit)
   - [`ExecutionPolicy::tmux_binary`](#libtmux-command-hpp-executionpolicy-tmux-binary)
+- [`CommandExecutor`](#libtmux-command-hpp-commandexecutor)
+  - [`CommandExecutor::CommandExecutor`](#libtmux-command-hpp-commandexecutor-commandexecutor)
+  - [`CommandExecutor::CommandExecutor`](#libtmux-command-hpp-commandexecutor-commandexecutor-2)
+  - [`CommandExecutor::operator=`](#libtmux-command-hpp-commandexecutor-operator)
+  - [`CommandExecutor::CommandExecutor`](#libtmux-command-hpp-commandexecutor-commandexecutor-3)
+  - [`CommandExecutor::operator=`](#libtmux-command-hpp-commandexecutor-operator-2)
+  - [`CommandExecutor::~CommandExecutor`](#libtmux-command-hpp-commandexecutor-commandexecutor-4)
+  - [`CommandExecutor::run`](#libtmux-command-hpp-commandexecutor-run)
 - [`std::formatter<libtmux::CommandFailure>`](#libtmux-command-hpp-std-formatter-libtmux-commandfailure)
   - [`std::formatter<libtmux::CommandFailure>::format`](#libtmux-command-hpp-std-formatter-libtmux-commandfailure-format)
 - [`Free symbols`](#libtmux-command-hpp-free-symbols)
@@ -5296,6 +5349,65 @@ Absent leaves the transport's own bound, which is one megabyte.
 std::filesystem::path tmux_binary{"tmux"};
 ```
 Which tmux to run. A bare name is resolved through `PATH`, as tmux's own documentation assumes; a path containing a separator is used as given.  Naming it is how a caller stops `PATH` deciding: a hermetic build, a pinned version under test, or a wrapper that reaches tmux on another machine. It rides the policy rather than the call because a Server's connection is immutable, and because a handle that changed which tmux it meant between two calls would make its own entities disagree.  `Server::control` passes this to the connection it opens, so both transports run the same executable unless the caller overrides it in `ConnectionOptions`.
+
+<a id="libtmux-command-hpp-commandexecutor"></a>
+### `CommandExecutor`
+
+A transport a caller supplies.  `BackendKind::custom` named this possibility from the first release, but nothing implemented it: the interface a backend had to satisfy lived in the library's private headers, so the only reachable transport was the one that launches a subprocess per command. This is the seam that makes the name true.  One method, deliberately. Everything else a backend does — routing an entity command through its owning psmux session, proving a session belongs, preparing an attach argv — is either psmux's problem or the library's, and freezing it here would make a private arrangement permanent. What a transport owes is an answer to one command; the library supplies the rest and asks this for the tmux version too, by running `-V` through it.  `run` is const and may be called from any thread, because a `Server` is copyable across threads and shares one executor. An implementation that keeps a connection or a buffer synchronises itself.  Returning the command's standard output is the whole contract: a listing answers its rows, a mutation answers whatever tmux printed, and a failure answers `CommandFailure` rather than throwing.  A batch arrives here too, as one request whose argv carries `;` between the grouped commands — there is no second method to implement, but the separators must reach tmux as they are. A transport that interprets or drops them turns one fail-fast group into something else without saying so.
+
+```cpp
+class CommandExecutor;
+```
+
+<a id="libtmux-command-hpp-commandexecutor-commandexecutor"></a>
+#### `CommandExecutor::CommandExecutor`
+
+```cpp
+CommandExecutor() = default;
+```
+
+<a id="libtmux-command-hpp-commandexecutor-commandexecutor-2"></a>
+#### `CommandExecutor::CommandExecutor`
+
+```cpp
+CommandExecutor(const CommandExecutor&) = delete;
+```
+
+<a id="libtmux-command-hpp-commandexecutor-operator"></a>
+#### `CommandExecutor::operator=`
+
+```cpp
+CommandExecutor& operator=(const CommandExecutor&) = delete;
+```
+
+<a id="libtmux-command-hpp-commandexecutor-commandexecutor-3"></a>
+#### `CommandExecutor::CommandExecutor`
+
+```cpp
+CommandExecutor(CommandExecutor&&) = delete;
+```
+
+<a id="libtmux-command-hpp-commandexecutor-operator-2"></a>
+#### `CommandExecutor::operator=`
+
+```cpp
+CommandExecutor& operator=(CommandExecutor&&) = delete;
+```
+
+<a id="libtmux-command-hpp-commandexecutor-commandexecutor-4"></a>
+#### `CommandExecutor::~CommandExecutor`
+
+```cpp
+virtual ~CommandExecutor() = default;
+```
+
+<a id="libtmux-command-hpp-commandexecutor-run"></a>
+#### `CommandExecutor::run`
+
+```cpp
+[[nodiscard]] virtual expected<std::string, CommandFailure> run(const CommandRequest& command, std::optional<std::chrono::milliseconds> timeout, std::optional<std::size_t> output_limit) const = 0;
+```
+Absent timeout means the caller named none; absent limit means the same. An implementation that cannot bound itself should refuse rather than wait forever, the way every transport here already does.
 
 <a id="libtmux-command-hpp-std-formatter-libtmux-commandfailure"></a>
 ### `std::formatter<libtmux::CommandFailure>`

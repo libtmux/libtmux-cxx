@@ -835,3 +835,18 @@ if(NOT LIBTMUX_ENABLE_FAULT_INJECTION AND NOT WIN32)
       PROPERTIES LABELS "libtmux;package" TIMEOUT 60)
   endif()
 endif()
+
+# Deliberately no `src/` on the include path: the point of this suite is that a
+# consumer can supply a transport through the installed headers alone.
+add_executable(libtmux_executor_seam_test executor_seam_test.cpp)
+target_link_libraries(
+  libtmux_executor_seam_test
+  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+          libtmux_test_support)
+target_compile_options(
+  libtmux_executor_seam_test PRIVATE -fno-sanitize-recover=undefined)
+
+gtest_discover_tests(
+  libtmux_executor_seam_test
+  TEST_PREFIX libtmux.executor.
+  PROPERTIES LABELS real-tmux TIMEOUT 60)

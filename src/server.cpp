@@ -182,6 +182,88 @@ startable_subprocess_server(std::vector<std::string> connection,
 
 } // namespace
 
+namespace {
+
+// Adapts a caller-supplied executor to the private backend interface.
+//
+// Every virtual the executor does not answer keeps its `Backend` default,
+// which is the point of the narrow seam: `run_in_session`, `session_belongs`,
+// batching and attach preparation stay the library's business rather than
+// becoming a promise a custom transport has to keep.
+class ExecutorBackend final : public detail::Backend {
+public:
+  ExecutorBackend(std::shared_ptr<const CommandExecutor> executor,
+                  ExecutorOptions options, CommandObserver observer,
+                  ExecutionPolicy policy)
+      : Backend{std::move(observer), policy}, executor_{std::move(executor)},
+        options_{std::move(options)} {}
+
+  [[nodiscard]] expected<std::string, CommandFailure>
+  run(const CommandRequest& command, std::optional<std::chrono::milliseconds> timeout,
+      std::optional<std::size_t> output_limit) const override {
+    auto answer = executor_->run(command, timeout, output_limit);
+    if (const auto observer = command_observer(); observer.has_value()) {
+      const std::string rendered = detail::rendered_command(command);
+      (*observer)(rendered, answer.has_value() ? nullptr : &answer.error());
+    }
+    return answer;
+  }
+
+  [[nodiscard]] const std::vector<std::string>& connection() const noexcept override {
+    static const std::vector<std::string> none;
+    return none;
+  }
+
+  [[nodiscard]] std::string_view socket_path() const noexcept override {
+    return options_.socket_path;
+  }
+
+  [[nodiscard]] ServerCapabilities capabilities() const noexcept override {
+    return ServerCapabilities{.implementation = options_.implementation,
+                              .backend = BackendKind::custom};
+  }
+
+  [[nodiscard]] expected<Version, CommandFailure> version() const override {
+    if (options_.version.has_value()) {
+      return *options_.version;
+    }
+    auto printed =
+        executor_->run(CommandRequest{{"-V"}}, policy().timeout, policy().output_limit);
+    if (!printed.has_value()) {
+      return unexpected(printed.error());
+    }
+    auto parsed = parse_version(*printed);
+    if (!parsed.has_value()) {
+      return unexpected(CommandFailure{
+          .kind = FailureKind::refused,
+          .delivery = DeliveryStatus::replied,
+          .exit_code = 0,
+          .diagnostic = "the executor answered -V with " + *printed +
+                        "; name the version in ExecutorOptions if it cannot"});
+    }
+    return *parsed;
+  }
+
+private:
+  std::shared_ptr<const CommandExecutor> executor_;
+  ExecutorOptions options_;
+};
+
+} // namespace
+
+expected<Server, CommandFailure>
+Server::over(std::shared_ptr<const CommandExecutor> executor, ExecutorOptions options,
+             CommandObserver observer, ExecutionPolicy policy) {
+  if (executor == nullptr) {
+    return unexpected(CommandFailure{.kind = FailureKind::validation,
+                                     .delivery = DeliveryStatus::not_started,
+                                     .exit_code = 0,
+                                     .diagnostic = "no executor was given"});
+  }
+  return detail::server_over(std::make_shared<const ExecutorBackend>(
+      std::move(executor), std::move(options), std::move(observer), policy));
+}
+
 expected<Server, CommandFailure> Server::at_socket_path(std::string_view path,
                                                         CommandObserver observer,
                                                         ExecutionPolicy policy) {

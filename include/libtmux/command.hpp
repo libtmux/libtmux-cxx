@@ -243,6 +243,50 @@ struct ExecutionPolicy {
   std::filesystem::path tmux_binary{"tmux"};
 };
 
+// A transport a caller supplies.
+//
+// `BackendKind::custom` named this possibility from the first release, but
+// nothing implemented it: the interface a backend had to satisfy lived in the
+// library's private headers, so the only reachable transport was the one that
+// launches a subprocess per command. This is the seam that makes the name
+// true.
+//
+// One method, deliberately. Everything else a backend does — routing an entity
+// command through its owning psmux session, proving a session belongs,
+// preparing an attach argv — is either psmux's problem or the library's, and
+// freezing it here would make a private arrangement permanent. What a
+// transport owes is an answer to one command; the library supplies the rest
+// and asks this for the tmux version too, by running `-V` through it.
+//
+// `run` is const and may be called from any thread, because a `Server` is
+// copyable across threads and shares one executor. An implementation that
+// keeps a connection or a buffer synchronises itself.
+//
+// Returning the command's standard output is the whole contract: a listing
+// answers its rows, a mutation answers whatever tmux printed, and a failure
+// answers `CommandFailure` rather than throwing.
+//
+// A batch arrives here too, as one request whose argv carries `;` between the
+// grouped commands — there is no second method to implement, but the
+// separators must reach tmux as they are. A transport that interprets or drops
+// them turns one fail-fast group into something else without saying so.
+class CommandExecutor {
+public:
+  CommandExecutor() = default;
+  CommandExecutor(const CommandExecutor&) = delete;
+  CommandExecutor& operator=(const CommandExecutor&) = delete;
+  CommandExecutor(CommandExecutor&&) = delete;
+  CommandExecutor& operator=(CommandExecutor&&) = delete;
+  virtual ~CommandExecutor() = default;
+
+  // Absent timeout means the caller named none; absent limit means the same.
+  // An implementation that cannot bound itself should refuse rather than wait
+  // forever, the way every transport here already does.
+  [[nodiscard]] virtual expected<std::string, CommandFailure>
+  run(const CommandRequest& command, std::optional<std::chrono::milliseconds> timeout,
+      std::optional<std::size_t> output_limit) const = 0;
+};
+
 LIBTMUX_NAMESPACE_END
 
 // Formatting a failure is how it reaches a log line, so the type every call
