@@ -27,6 +27,7 @@ HEADER_ORDER = [
     "relations.hpp",
     "cardinality.hpp",
     "delivery.hpp",
+    "error.hpp",
     "command.hpp",
     "options.hpp",
     "control.hpp",

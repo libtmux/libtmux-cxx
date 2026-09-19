@@ -19,6 +19,7 @@ is the prose there. Run it with `--check` to prove this page is current.
 - [`libtmux/relations.hpp`](#libtmux-relations-hpp)
 - [`libtmux/cardinality.hpp`](#libtmux-cardinality-hpp)
 - [`libtmux/delivery.hpp`](#libtmux-delivery-hpp)
+- [`libtmux/error.hpp`](#libtmux-error-hpp)
 - [`libtmux/command.hpp`](#libtmux-command-hpp)
 - [`libtmux/options.hpp`](#libtmux-options-hpp)
 - [`libtmux/control.hpp`](#libtmux-control-hpp)
@@ -5093,6 +5094,102 @@ enum class DeliveryStatus : std::uint8_t;
 ```cpp
 [[nodiscard]] constexpr std::string_view to_string(DeliveryStatus status) noexcept;
 ```
+
+<a id="libtmux-error-hpp"></a>
+## `libtmux/error.hpp`
+
+Crossing between this library's error types.  There are two runtime failure types, because the two transports answer different questions: `CommandFailure` says whether tmux acted, and `ProtocolError` says what the control wire did. A caller that handles both surfaces wants one type, and wrote the same adapter to get it.  The validation enums are a separate matter. Each names why a pure argument builder refused, and none of them ever reached tmux — which is why they are their own small types rather than failures with a delivery status. Folding one into a `CommandFailure` is always `validation` and `not_started`, and this is where that is written once.  Its own header, not `command.hpp`: only a caller that crosses surfaces pays for including every error type at once.
+
+**Symbols:**
+
+- [`Free symbols`](#libtmux-error-hpp-free-symbols)
+  - [`as_command_failure`](#libtmux-error-hpp-free-symbols-as-command-failure)
+  - [`as_protocol_error`](#libtmux-error-hpp-free-symbols-as-protocol-error)
+  - [`is_validation_reason`](#libtmux-error-hpp-free-symbols-is-validation-reason)
+  - [`TargetError`](#libtmux-error-hpp-free-symbols-targeterror)
+  - [`SocketError`](#libtmux-error-hpp-free-symbols-socketerror)
+  - [`CardinalityError`](#libtmux-error-hpp-free-symbols-cardinalityerror)
+  - [`LookupParseError`](#libtmux-error-hpp-free-symbols-lookupparseerror)
+  - [`VersionError`](#libtmux-error-hpp-free-symbols-versionerror)
+  - [`KeyError`](#libtmux-error-hpp-free-symbols-keyerror)
+  - [`as_command_failure`](#libtmux-error-hpp-free-symbols-as-command-failure-2)
+
+<a id="libtmux-error-hpp-free-symbols"></a>
+### `Free symbols`
+
+<a id="libtmux-error-hpp-free-symbols-as-command-failure"></a>
+#### `as_command_failure`
+
+```cpp
+[[nodiscard]] inline CommandFailure as_command_failure(ProtocolError error);
+```
+A control-wire failure as a command failure, keeping what it says about delivery — the one thing a caller cannot reconstruct. A protocol error that never started is a validation refusal; past that point the wire is what broke, which is `pipe`.
+
+<a id="libtmux-error-hpp-free-symbols-as-protocol-error"></a>
+#### `as_protocol_error`
+
+```cpp
+[[nodiscard]] inline ProtocolError as_protocol_error(CommandFailure failure);
+```
+The other direction, for a caller handing a command failure to a surface that speaks the wire's type. The kind is dropped because the wire has no word for it; the diagnostic carries what it said.
+
+<a id="libtmux-error-hpp-free-symbols-is-validation-reason"></a>
+#### `is_validation_reason`
+
+```cpp
+template <typename Reason> inline constexpr bool is_validation_reason = false;
+```
+Which error types name a validation reason rather than a runtime failure. Opted in one by one rather than matched on being an enum: `FailureKind` and `DeliveryStatus` are enums too, and neither is a reason a call was refused.
+
+<a id="libtmux-error-hpp-free-symbols-targeterror"></a>
+#### `TargetError`
+
+```cpp
+template <> inline constexpr bool is_validation_reason<TargetError> = true;
+```
+
+<a id="libtmux-error-hpp-free-symbols-socketerror"></a>
+#### `SocketError`
+
+```cpp
+template <> inline constexpr bool is_validation_reason<SocketError> = true;
+```
+
+<a id="libtmux-error-hpp-free-symbols-cardinalityerror"></a>
+#### `CardinalityError`
+
+```cpp
+template <> inline constexpr bool is_validation_reason<CardinalityError> = true;
+```
+
+<a id="libtmux-error-hpp-free-symbols-lookupparseerror"></a>
+#### `LookupParseError`
+
+```cpp
+template <> inline constexpr bool is_validation_reason<LookupParseError> = true;
+```
+
+<a id="libtmux-error-hpp-free-symbols-versionerror"></a>
+#### `VersionError`
+
+```cpp
+template <> inline constexpr bool is_validation_reason<VersionError> = true;
+```
+
+<a id="libtmux-error-hpp-free-symbols-keyerror"></a>
+#### `KeyError`
+
+```cpp
+template <> inline constexpr bool is_validation_reason<KeyError> = true;
+```
+
+<a id="libtmux-error-hpp-free-symbols-as-command-failure-2"></a>
+#### `as_command_failure`
+
+```cpp
+template <typename Reason> requires is_validation_reason<Reason> [[nodiscard]] CommandFailure as_command_failure(Reason reason);
+```
+Why a pure argument builder refused, as a command failure. Nothing was dispatched, so the delivery is `not_started` and there is no exit status.
 
 <a id="libtmux-command-hpp"></a>
 ## `libtmux/command.hpp`

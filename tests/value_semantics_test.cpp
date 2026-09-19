@@ -24,6 +24,7 @@
 #include "libtmux/capture.hpp"
 #include "libtmux/cardinality.hpp"
 #include "libtmux/entities.hpp"
+#include "libtmux/error.hpp"
 #include "libtmux/server.hpp"
 #include "libtmux/testing/scoped_server.hpp"
 #include "libtmux/version.hpp"
@@ -281,6 +282,55 @@ TEST(ValueSemantics, OutputIsToldApartFromWhatIsMerelyOnScreen) {
   EXPECT_FALSE(output_confirms("anything at all", ""));
 }
 
+// Two runtime failure types, because the two transports answer different
+// questions — and a caller handling both wrote the same adapter to get one.
+// What it must not lose is what each says about delivery.
+TEST(ValueSemantics, ErrorsCrossBetweenSurfacesWithoutAnAdapter) {
+  const auto broken = libtmux::as_command_failure(
+      libtmux::ProtocolError{.message = "the wire stopped answering",
+                             .delivery = libtmux::DeliveryStatus::written});
+  EXPECT_EQ(broken.kind, libtmux::FailureKind::pipe);
+  EXPECT_EQ(broken.delivery, libtmux::DeliveryStatus::written)
+      << "whether tmux may have acted is the one thing a caller cannot rebuild";
+  EXPECT_EQ(broken.diagnostic, "the wire stopped answering");
+
+  // Never started is a refusal, not a broken pipe.
+  const auto refused = libtmux::as_command_failure(
+      libtmux::ProtocolError{.message = "control request group is empty",
+                             .delivery = libtmux::DeliveryStatus::not_started});
+  EXPECT_EQ(refused.kind, libtmux::FailureKind::validation);
+  EXPECT_EQ(refused.delivery, libtmux::DeliveryStatus::not_started);
+
+  const auto wired = libtmux::as_protocol_error(
+      libtmux::CommandFailure{.kind = libtmux::FailureKind::timeout,
+                              .delivery = libtmux::DeliveryStatus::indeterminate,
+                              .exit_code = -1,
+                              .diagnostic = "tmux did not answer in time"});
+  EXPECT_EQ(wired.message, "tmux did not answer in time");
+  EXPECT_EQ(wired.delivery, libtmux::DeliveryStatus::indeterminate);
+
+  // A validation reason comes from a builder that never reached tmux, so it
+  // always folds the same way and keeps its own words.
+  const auto folded = libtmux::as_command_failure(libtmux::KeyError::unknown_name);
+  EXPECT_EQ(folded.kind, libtmux::FailureKind::validation);
+  EXPECT_EQ(folded.delivery, libtmux::DeliveryStatus::not_started);
+  EXPECT_EQ(folded.exit_code, 0);
+  EXPECT_EQ(folded.diagnostic, libtmux::to_string(libtmux::KeyError::unknown_name));
+  EXPECT_EQ(libtmux::as_command_failure(libtmux::SocketError::path_too_long).diagnostic,
+            libtmux::to_string(libtmux::SocketError::path_too_long));
+  EXPECT_EQ(libtmux::as_command_failure(libtmux::TargetError::empty_name).diagnostic,
+            libtmux::to_string(libtmux::TargetError::empty_name));
+
+  // Only a validation reason opts in. `FailureKind` is an enum too, and is not
+  // a reason a call was refused.
+  static_assert(libtmux::is_validation_reason<libtmux::VersionError>);
+  static_assert(!libtmux::is_validation_reason<libtmux::FailureKind>);
+}
+
+// Reading a field and filtering on it are one contract, not two. Every type
+// the server can list appears below, including `Command` and `Buffer`, which
+// have no namespace of their own: a gate that enumerates what is present is
+// blind to what is absent.
 TEST(ValueSemantics, EveryEntityFieldIsReachableFromAFilter) {
   const auto unreachable = [](const std::vector<std::string_view>& handled,
                               const auto& fields) {
