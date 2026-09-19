@@ -350,8 +350,23 @@ Server::control_with_options(std::string_view session,
         ProtocolError{.message = "this server has no socket to connect to",
                       .delivery = DeliveryStatus::not_started});
   }
+  // The attach this opens addresses the session as "=name", which is exact
+  // but still splits on a "." or ":" in the name before comparing. A session
+  // id has no such split, so resolve to one for a name that could hit it; a
+  // name that turns out not to exist still reaches tmux's own answer below.
+  std::string target{session};
+  if (target.find_first_of(".:") != std::string::npos) {
+    if (const auto owned = sessions(); owned.has_value()) {
+      for (const Session& candidate : *owned) {
+        if (candidate.name() == session) {
+          target = std::string{candidate.id()};
+          break;
+        }
+      }
+    }
+  }
   return Connection::connect(routed_control_options(
-      std::move(options), std::string{socket_path}, std::string{session}));
+      std::move(options), std::string{socket_path}, std::move(target)));
 }
 
 expected<Version, CommandFailure> Server::tmux_version() const {

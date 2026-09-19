@@ -160,6 +160,8 @@ public:
   control(std::string_view session) const;
   // The Server supplies the socket and `session` supplies the session name;
   // every other connection option is kept, including pane output policy.
+  // `session` matches its exact tmux session name even when it holds a "."
+  // or ":", which would otherwise be split as a window or pane target.
   [[nodiscard]] expected<Connection, ProtocolError>
   control_with_options(std::string_view session, ConnectionOptions options) const;
 

@@ -226,7 +226,7 @@ Open a control-mode connection to one session.  This is the streaming half of th
 ```cpp
 [[nodiscard]] expected<Connection, ProtocolError> control_with_options(std::string_view session, ConnectionOptions options) const;
 ```
-The Server supplies the socket and `session` supplies the session name; every other connection option is kept, including pane output policy.
+The Server supplies the socket and `session` supplies the session name; every other connection option is kept, including pane output policy. `session` matches its exact tmux session name even when it holds a "." or ":", which would otherwise be split as a window or pane target.
 
 <a id="libtmux-server-hpp-server-tmux-version"></a>
 #### `Server::tmux_version`
