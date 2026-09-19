@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -915,8 +916,19 @@ Json save_or_return(const Request& request, const Json& document, std::string fo
   auto temporary_name =
       (path.parent_path() / ("." + path.filename().string() + ".XXXXXX")).string();
   int descriptor = ::mkstemp(temporary_name.data());
-  if (descriptor < 0)
-    throw Failure{1, "write_failed", "cannot create a temporary output file"};
+  if (descriptor < 0) {
+    // A destination this process cannot open because of the path it was
+    // given -- no such directory, not a directory, no permission -- is a
+    // refusal about the argument. Anything else is this tool's own trouble.
+    const int cause = errno;
+    const bool argument = cause == ENOENT || cause == ENOTDIR || cause == EACCES ||
+                          cause == EPERM || cause == EROFS || cause == EISDIR ||
+                          cause == ELOOP || cause == ENAMETOOLONG;
+    throw Failure{argument ? 2 : 1, argument ? "usage" : "write_failed",
+                  argument ? "cannot write to " + private_path(path) + ": " +
+                                 std::strerror(cause)
+                           : std::string{"could not create the destination"}};
+  }
   const fs::path temporary{temporary_name};
   try {
     const auto bytes = format == "json" ? encoded(document, 2) + "\n" : yaml(document);

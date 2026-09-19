@@ -1328,6 +1328,15 @@ TEST(WorkspaceCliTmux, ErrorCodesMatchTheSharedLowerSnakeCaseVocabulary) {
   EXPECT_EQ(record.at("schema_version"), 1) << record.dump();
   EXPECT_EQ(record.at("code"), "destination_exists") << record.dump();
 
+  // A destination that cannot be written because of the path it names is a
+  // refusal about that argument, not this tool's own plumbing.
+  const auto unwritable =
+      invoke({"freeze", "ok", "-S", socket, "--json", "--save-to",
+              (files.directory / "no-such-directory" / "f.yaml").string()});
+  EXPECT_EQ(unwritable.code, 2) << unwritable.out << unwritable.err;
+  record = Json::parse(unwritable.err);
+  EXPECT_EQ(record.at("code"), "usage") << record.dump();
+
   const auto usage = invoke({"load", "ok.yaml", "-S", socket, "--json"});
   ASSERT_EQ(usage.code, 2) << usage.out << usage.err;
   record = Json::parse(usage.err);
