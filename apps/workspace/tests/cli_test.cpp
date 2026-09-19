@@ -1211,8 +1211,7 @@ TEST(WorkspaceCli, MachineModeFollowsTheParsedFlagsNotRawArguments) {
   EXPECT_EQ(Json::parse(machine.out).at("command"), "convert") << machine.out;
 }
 
-// Every port's machine error `code` for the same condition used to be
-// different. Every stderr error record carries "schema_version":1.
+// Every stderr error record carries "schema_version":1.
 TEST(WorkspaceCliTmux, ErrorCodesMatchTheSharedLowerSnakeCaseVocabulary) {
   Files files;
   auto fixture = libtmux::test::ScopedTmuxServer::start(
@@ -3549,7 +3548,6 @@ TEST(WorkspaceCliTmux, LoadNdjsonEmitsTypedWindowAndPaneEvents) {
     if (name == "pane-created" && pane_created.is_null())
       pane_created = record;
   }
-  // A fixed event vocabulary replaces the untyped events cxx used to send.
   EXPECT_EQ(std::ranges::count(events, "build-progress"), 0);
   for (const auto* required :
        {"window-created", "window-completed", "pane-created", "pane-completed"})

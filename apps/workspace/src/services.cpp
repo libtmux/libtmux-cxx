@@ -1982,9 +1982,8 @@ static Execution execute_impl(const Request& request, const EventSink& event,
                           {"message", cleaned.error().diagnostic},
                           {"failed_stage", "cleanup"}});
     }
-    // results.empty() no longer distinguishes this: a failed input now gets
-    // a results[] record too, so whether anything actually succeeded
-    // has its own counter.
+    // A failed input still gets a results[] record, so whether anything
+    // succeeded needs its own counter rather than results.empty().
     const auto status = errors.empty()                        ? "ok"
                         : succeeded == 0 && !retained_changes ? "error"
                                                               : "partial";
