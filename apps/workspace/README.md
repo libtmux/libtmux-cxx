@@ -2,7 +2,10 @@
 
 This optional C++ application manages tmux workspaces using CLI11, yaml-cpp
 and nlohmann JSON. The implementation is partial. Core libtmux remains free of
-these dependencies. The pinned CLI11 fallback builds as a static library to
+these dependencies. It builds workspaces through the builder in
+`examples/workspace/`, not through one of its own, so a program calling that
+builder and this command line build a workspace the same way; the builder is
+part of this repository rather than of the installed library. The pinned CLI11 fallback builds as a static library to
 reduce repeated CLI compilation. An installed CLI11 package keeps its supplied
 compiled or header-only form.
 
@@ -201,9 +204,23 @@ zero bytes means the process died. Load flushes operation events before
 creating sessions; `ls` and `search` stream one record per row ahead of their
 own terminal record. `convert` and `import` writing to stdout are the
 exception: what they print there is the converted document itself, which is
-what a document conversion is for. Machine diagnostics use stderr. Captured control bytes stay inside escaped JSON strings. Saving uses
-an exclusively created temporary file; replacing an existing destination
-requires `--force`.
+what a document conversion is for. Machine diagnostics use stderr. Captured
+control bytes stay inside escaped JSON strings. Saving uses an exclusively
+created temporary file; replacing an existing destination requires `--force`.
+
+An error record's `code` names what happened to the workspace operation, from
+the vocabulary the libtmux workspace ports share: `workspace_not_found`,
+`invalid_workspace`, `unsupported_key`, `session_not_found`,
+`session_mismatch`, `tmux_unavailable`, `tmux_failed`, `script_failed`,
+`destination_exists` and `usage`. A command that ends because this tool's own
+plumbing broke reports it separately, and those codes are local to this port:
+`write_failed` (the destination could not be written), `output_closed` (this
+command's own output stream closed), `output_limit` (a child wrote more than
+1 MiB to one stream), `log_file_unavailable` (`--log-file` could not be
+opened), `interrupted` (a signal ended the command), `terminal_settings` and
+`signal_handler` (the terminal could not be read back or the interruption
+handlers installed), and `compatibility_runtime` (`shell` needs tmuxp
+1.74.0).
 Closed event output keeps completed input results and borrowed-session effects
 in the failure summary. A known script failure keeps its status and captured
 output if the final script event cannot be delivered.
