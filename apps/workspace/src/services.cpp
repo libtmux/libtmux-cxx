@@ -1474,7 +1474,6 @@ static Execution execute_impl(const Request& request, const EventSink& event,
                       {"version", LIBTMUX_WORKSPACE_VERSION},
                       {"compiler", __VERSION__},
                       {"cwd", private_path(fs::current_path())},
-                      {"home", "~"},
                       {"regex", "ECMAScript"}}};
   }
   if (request.command == "convert" || request.command == "import") {

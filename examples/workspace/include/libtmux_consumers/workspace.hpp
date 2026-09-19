@@ -7,7 +7,14 @@
 // workspace as data rather than as YAML, because parsing a config file is a
 // serialization concern that belongs in an opt-in integration — the shape
 // below is what a tmuxp document would deserialize into.
+//
+// The `tmux-workspace` CLI links this builder rather than carrying one of its
+// own, so there is a single implementation of what a workspace means here:
+// the rebalance between splits, the wait for a pane's prompt, the rollback of
+// a session a failed build created. A fix to any of them is a fix for both.
+// It is not installed with the library; building it means building this repo.
 
+#include <algorithm>
 #include <charconv>
 #include <chrono>
 #include <functional>
@@ -288,8 +295,12 @@ build_windows(const Server& server, const Workspace& description,
       if (auto error = notify(BuildPhase::waiting, window, pane))
         return error;
       const auto cursor = target.expand("#{cursor_x},#{cursor_y}");
-      if (!cursor)
-        return std::nullopt;
+      // A query that fails says nothing about the prompt, so it is retried to
+      // the deadline rather than taken as permission to send at once.
+      if (!cursor) {
+        std::this_thread::sleep_for(std::chrono::milliseconds{50});
+        continue;
+      }
       if (*cursor == "0,0") {
         settled.clear();
         streak = 0;
@@ -559,6 +570,15 @@ build_windows(const Server& server, const Workspace& description,
               notify(BuildPhase::pane_completed, index, pane, std::string{built->id()},
                      std::string{windows[index].id()}, std::string{target.id()}))
         return libtmux::unexpected(std::move(*error));
+    }
+    // Nothing in this window asked for the cursor, so it is left in the pane
+    // built last, where tmuxp leaves it. Selecting a pane does not move which
+    // window the session is on, so this is per window and independent of it.
+    if (std::ranges::none_of(described.panes,
+                             [](const Pane& pane) { return pane.focus; })) {
+      if (const auto selected = panes.back().select(); !selected.has_value()) {
+        return fail(index, selected.error().diagnostic);
+      }
     }
     for (const auto& [option, value] : described.options_after) {
       if (auto error = notify(BuildPhase::waiting, index, 0))

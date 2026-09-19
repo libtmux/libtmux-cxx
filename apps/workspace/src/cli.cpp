@@ -120,6 +120,7 @@ public:
   void event(const std::string& name, const Json& data, std::size_t sequence) noexcept {
     const std::string_view severity = name == "script-output" ? "debug"
                                       : name == "failed"      ? "error"
+                                      : name == "warning"     ? "warning"
                                                               : "info";
     if (descriptor_ < 0 || !enabled(severity))
       return;

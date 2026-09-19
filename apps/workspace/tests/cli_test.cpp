@@ -2091,6 +2091,59 @@ TEST(WorkspaceCliTmux, AppendKeepsItsBorrowedSessionAndReportsRetainedWindows) {
   EXPECT_TRUE(missing.out.empty());
 }
 
+// With nothing declaring focus, a load leaves the last pane it built active,
+// which is where the reference implementation leaves the cursor; a pane that
+// declares focus still wins, and neither moves which window is current.
+TEST(WorkspaceCliTmux, LastPaneBuiltIsActiveWithoutAnExplicitFocus) {
+  Files files;
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-focus")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto socket = fixture->socket_path().string();
+  const auto server = libtmux::Server::at_socket_path(socket);
+  ASSERT_TRUE(server.has_value());
+  std::ofstream{"focusless.yaml"}
+      << "session_name: focusless\nwindows:\n"
+         "  - window_name: one\n    panes: [echo A, echo B, echo C]\n"
+         "  - window_name: two\n    panes: [echo D, echo E]\n";
+
+  ASSERT_EQ(invoke({"load", "focusless.yaml", "-d", "-S", socket, "--json"}).code, 0);
+  const auto session = server->session("=focusless:");
+  ASSERT_TRUE(session.has_value());
+  const auto windows = session->windows();
+  ASSERT_TRUE(windows.has_value());
+  ASSERT_EQ(windows->size(), 2U);
+  for (const auto& window : *windows) {
+    const auto panes = window.panes();
+    ASSERT_TRUE(panes.has_value());
+    ASSERT_FALSE(panes->empty());
+    const auto active = window.active_pane();
+    ASSERT_TRUE(active.has_value());
+    EXPECT_EQ(active->id(), panes->back().id()) << window.name();
+  }
+  const auto current = session->active_window();
+  ASSERT_TRUE(current.has_value());
+  EXPECT_EQ(current->name(), "one");
+
+  std::ofstream{"focused.yaml"}
+      << "session_name: focused\nwindows:\n"
+         "  - window_name: one\n    panes:\n"
+         "      - echo A\n"
+         "      - shell_command: echo B\n        focus: true\n"
+         "      - echo C\n";
+  ASSERT_EQ(invoke({"load", "focused.yaml", "-d", "-S", socket, "--json"}).code, 0);
+  const auto declared = server->session("=focused:");
+  ASSERT_TRUE(declared.has_value());
+  const auto window = declared->active_window();
+  ASSERT_TRUE(window.has_value());
+  const auto panes = window->panes();
+  ASSERT_TRUE(panes.has_value());
+  ASSERT_EQ(panes->size(), 3U);
+  const auto active = window->active_pane();
+  ASSERT_TRUE(active.has_value());
+  EXPECT_EQ(active->id(), (*panes)[1].id());
+}
+
 // tmux expands #{...} in the arguments naming a new window and its
 // directory, so text a document supplies is escaped there as it is
 // everywhere else: a window this builder splits already was.
@@ -2278,6 +2331,20 @@ TEST(WorkspaceCliTmux, ReusedSessionMissingWindowsStopsTheLoadAndNamesThem) {
   const auto satisfied = invoke({"load", "one.yaml", "-d", "-S", socket, "--json"});
   EXPECT_EQ(satisfied.code, 0) << satisfied.out << satisfied.err;
   EXPECT_EQ(Json::parse(satisfied.out).at("status"), "ok");
+
+  // A mismatch alongside an input that did build is partial, not error: that
+  // input's session is retained, which is what partial describes. The status
+  // follows what the results hold, not which codes the errors carry.
+  std::ofstream{"other.yaml"} << "session_name: reuse-other\nwindows:\n"
+                                 "  - window_name: only\n    panes: [echo A]\n";
+  const auto mixed =
+      invoke({"load", "other.yaml", "three.yaml", "-d", "-S", socket, "--json"});
+  EXPECT_EQ(mixed.code, 1) << mixed.out << mixed.err;
+  const auto both = Json::parse(mixed.out);
+  EXPECT_EQ(both.at("status"), "partial") << both.dump();
+  ASSERT_EQ(both.at("errors").size(), 1U) << both.dump();
+  EXPECT_EQ(both.at("errors")[0].at("code"), "session_mismatch") << both.dump();
+  EXPECT_TRUE(server->session("=reuse-other:").has_value());
 }
 
 // Every way the invoking context can be unusable -- a server that has since

@@ -108,7 +108,7 @@ public:
     if (previous_ != ::getpgrp()) {
       ::close(descriptor_);
       descriptor_ = -1;
-      throw Failure{1, "terminal_background", "command requires a foreground terminal"};
+      throw Failure{2, "usage", "command requires a foreground terminal"};
     }
     if (::tcgetattr(descriptor_, &settings_) != 0) {
       ::close(descriptor_);
@@ -222,7 +222,7 @@ ChildOutput run_child(const std::vector<std::string>& arguments, ChildOptions op
   SignalGuard signals;
   Terminal display{options.terminal, options.terminal_required};
   if (options.terminal_required && display.descriptor() < 0)
-    throw Failure{1, "terminal_unavailable", "controlling terminal is unavailable"};
+    throw Failure{2, "usage", "controlling terminal is unavailable"};
   libtmux::detail::ProcessRequest request;
   request.executable = arguments.front();
   request.timeout = options.timeout;
