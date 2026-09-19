@@ -604,7 +604,7 @@ public:
       std::string_view{"pane_at_top"},  std::string_view{"pane_at_bottom"},
       std::string_view{"pane_at_left"}, std::string_view{"pane_at_right"},
       std::string_view{"pane_pipe"},    std::string_view{"pane_left"},
-      std::string_view{"pane_top"}};
+      std::string_view{"pane_top"},     std::string_view{"pane_dead_status"}};
 
   Pane(std::shared_ptr<const Snapshot> snapshot, std::size_t row) noexcept
       : Row{std::move(snapshot), row} {}
@@ -645,6 +645,26 @@ public:
   [[nodiscard]] long long left() const noexcept { return detail::to_number(value(19)); }
   // Its counterpart along the other axis.
   [[nodiscard]] long long top() const noexcept { return detail::to_number(value(20)); }
+  // What the pane's process exited with, once it has.
+  //
+  // Optional rather than a number because zero is a real exit status and
+  // "still running" is not a status at all — tmux renders the field empty
+  // until the process is gone. Only a pane held on screen by `remain-on-exit`
+  // can report one: without it tmux destroys the pane, and there is nothing
+  // left to ask.
+  [[nodiscard]] std::optional<int> exit_status() const noexcept {
+    const std::string_view raw = value(21);
+    if (raw.empty()) {
+      return std::nullopt;
+    }
+    int status = 0;
+    const char* const end = raw.data() + raw.size();
+    const auto [stopped, code] = std::from_chars(raw.data(), end, status);
+    if (code != std::errc{} || stopped != end) {
+      return std::nullopt;
+    }
+    return status;
+  }
   // The owning psmux route carried by Windows live snapshots. Empty on POSIX
   // and in recordings made from the backward-compatible `kFields` schema.
   [[nodiscard]] std::string_view session_name() const noexcept {
@@ -1054,6 +1074,15 @@ inline constexpr NumberFieldHandle<Pane> left{
     {Pane::kFields[19], [](const Pane& row) { return row.left(); }}};
 inline constexpr NumberFieldHandle<Pane> top{
     {Pane::kFields[20], [](const Pane& row) { return row.top(); }}};
+// A pane that has not exited reads -1, which tmux cannot report: the field is
+// `WEXITSTATUS` and so is 0 through 255, or empty. That makes
+// `pane::exit_status == 0` exactly the panes that exited cleanly and
+// `pane::exit_status >= 0` exactly the ones that exited at all, rather than
+// folding "still running" into status zero.
+inline constexpr NumberFieldHandle<Pane> exit_status{
+    {Pane::kFields[21], [](const Pane& row) {
+       return static_cast<long long>(row.exit_status().value_or(-1));
+     }}};
 
 } // namespace pane
 

@@ -132,7 +132,7 @@ TEST(ValueSemantics, EntitiesKeyTheOrdinaryContainers) {
 TEST(ValueSemantics, AnEntityPrintsAsSomethingAReaderRecognises) {
   const auto recorded = libtmux::Snapshot::from_recording(
       Pane::kFields,
-      "%4␞nvim␞1␞@2␞$1␞0␞editor␞991␞/dev/pts/7␞/tmp␞80␞24␞0␞0␞1␞0␞1␞1␞0␞0␞0␞\n");
+      "%4␞nvim␞1␞@2␞$1␞0␞editor␞991␞/dev/pts/7␞/tmp␞80␞24␞0␞0␞1␞0␞1␞1␞0␞0␞0␞␞\n");
   ASSERT_NE(recorded, nullptr);
 
   std::ostringstream out;
@@ -293,7 +293,7 @@ TEST(ValueSemantics, EveryEntityFieldIsReachableFromAFilter) {
                          pane::at_top.field.name,     pane::at_bottom.field.name,
                          pane::at_left.field.name,    pane::at_right.field.name,
                          pane::piping.field.name,     pane::left.field.name,
-                         pane::top.field.name},
+                         pane::top.field.name,        pane::exit_status.field.name},
                         libtmux::Pane::kFields),
             "")
       << "namespace pane has no handle for these";

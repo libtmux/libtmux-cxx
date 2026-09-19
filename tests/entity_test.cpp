@@ -1027,12 +1027,12 @@ TEST(Entity, ARecordedSnapshotFiltersButCannotAct) {
     return line + "\n";
   };
   const std::string output =
-      recording({"%0",   "nvim",       "1",          "@0", "$0", "0", "editor",
-                 "4210", "/dev/pts/3", "/home/user", "80", "24", "0", "0",
-                 "1",    "0",          "1",          "1",  "0",  "0", "0"}) +
-      recording({"%1",   "zsh",        "0",          "@0", "$0", "1",  "shell",
-                 "4211", "/dev/pts/4", "/home/user", "80", "24", "0",  "0",
-                 "0",    "1",          "1",          "1",  "1",  "40", "0"});
+      recording({"%0",         "nvim",       "1",  "@0", "$0", "0", "editor", "4210",
+                 "/dev/pts/3", "/home/user", "80", "24", "0",  "0", "1",      "0",
+                 "1",          "1",          "0",  "0",  "0",  ""}) +
+      recording({"%1",         "zsh",        "0",  "@0", "$0", "1", "shell", "4211",
+                 "/dev/pts/4", "/home/user", "80", "24", "0",  "0", "0",     "1",
+                 "1",          "1",          "1",  "40", "0",  ""});
 
   const auto recorded = libtmux::Snapshot::from_recording(Pane::kFields, output);
   ASSERT_NE(recorded, nullptr);
@@ -1145,6 +1145,50 @@ TEST(Entity, CommandsAndBuffersFilterLikeEveryOtherListing) {
   // A number compares as a number, which is the point of the typed handle.
   auto larger = *buffers | matching(libtmux::buffer::size > 2);
   EXPECT_EQ(std::ranges::distance(larger), 1);
+}
+
+// A pane that has exited is the one a supervisor most wants to ask about, and
+// the status it exited with was the one thing an entity could not say.
+TEST(Entity, ADeadPaneReportsWhatItExitedWith) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const Session session = only_session(server);
+
+  const auto window = session.new_window("exiting");
+  ASSERT_TRUE(window.has_value()) << window.error().diagnostic;
+  const auto panes = window->panes();
+  ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
+  ASSERT_FALSE(panes->empty());
+  const Pane& pane = panes->front();
+
+  // Still running, so there is no status — not a status of zero.
+  EXPECT_FALSE(pane.exit_status().has_value());
+
+  // Without this tmux destroys the pane and there is nothing left to ask.
+  ASSERT_TRUE(pane.set_option("remain-on-exit", "on").has_value());
+  ASSERT_TRUE(pane.send_line("exit 7").has_value());
+
+  std::optional<Pane> dead;
+  for (int attempt = 0; attempt < 300; ++attempt) {
+    auto current = pane.refresh();
+    ASSERT_TRUE(current.has_value()) << current.error().diagnostic;
+    if (current->dead()) {
+      dead = *std::move(current);
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds{10});
+  }
+  ASSERT_TRUE(dead.has_value()) << "the pane never exited";
+
+  const auto status = dead->exit_status();
+  ASSERT_TRUE(status.has_value()) << "a dead pane reported no status";
+  EXPECT_EQ(*status, 7);
+
+  // And the same value is what a filter sees.
+  const std::vector<Pane> one{*dead};
+  EXPECT_EQ(std::ranges::distance(one | matching(pane::exit_status == 7)), 1);
+  EXPECT_EQ(std::ranges::distance(one | matching(pane::exit_status == 0)), 0);
 }
 
 TEST(Entity, ANewSessionComesBackAsASession) {

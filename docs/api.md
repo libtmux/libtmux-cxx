@@ -1344,6 +1344,7 @@ The tmux object hierarchy.  A Session, Window, Pane or Client is one row of a sn
   - [`Pane::piping`](#libtmux-entities-hpp-pane-piping)
   - [`Pane::left`](#libtmux-entities-hpp-pane-left)
   - [`Pane::top`](#libtmux-entities-hpp-pane-top)
+  - [`Pane::exit_status`](#libtmux-entities-hpp-pane-exit-status)
   - [`Pane::session_name`](#libtmux-entities-hpp-pane-session-name)
   - [`Pane::operator==`](#libtmux-entities-hpp-pane-operator)
   - [`Pane::window`](#libtmux-entities-hpp-pane-window)
@@ -1492,6 +1493,7 @@ The tmux object hierarchy.  A Session, Window, Pane or Client is one row of a sn
   - [`pane::piping`](#libtmux-entities-hpp-free-symbols-pane-piping)
   - [`pane::left`](#libtmux-entities-hpp-free-symbols-pane-left)
   - [`pane::top`](#libtmux-entities-hpp-free-symbols-pane-top)
+  - [`pane::exit_status`](#libtmux-entities-hpp-free-symbols-pane-exit-status)
   - [`client::name`](#libtmux-entities-hpp-free-symbols-client-name)
   - [`client::session_name`](#libtmux-entities-hpp-free-symbols-client-session-name)
   - [`client::read_only`](#libtmux-entities-hpp-free-symbols-client-read-only)
@@ -2497,7 +2499,7 @@ static constexpr std::string_view kSessionNameField{"session_name"};
 #### `Pane::kFields`
 
 ```cpp
-static constexpr std::array kFields{ std::string_view{"pane_id"}, std::string_view{"pane_current_command"}, std::string_view{"pane_active"}, std::string_view{"window_id"}, std::string_view{"session_id"}, std::string_view{"pane_index"}, std::string_view{"pane_title"}, std::string_view{"pane_pid"}, std::string_view{"pane_tty"}, std::string_view{"pane_current_path"}, std::string_view{"pane_width"}, std::string_view{"pane_height"}, std::string_view{"pane_dead"}, std::string_view{"pane_in_mode"}, std::string_view{"pane_at_top"}, std::string_view{"pane_at_bottom"}, std::string_view{"pane_at_left"}, std::string_view{"pane_at_right"}, std::string_view{"pane_pipe"}, std::string_view{"pane_left"}, std::string_view{"pane_top"}};
+static constexpr std::array kFields{ std::string_view{"pane_id"}, std::string_view{"pane_current_command"}, std::string_view{"pane_active"}, std::string_view{"window_id"}, std::string_view{"session_id"}, std::string_view{"pane_index"}, std::string_view{"pane_title"}, std::string_view{"pane_pid"}, std::string_view{"pane_tty"}, std::string_view{"pane_current_path"}, std::string_view{"pane_width"}, std::string_view{"pane_height"}, std::string_view{"pane_dead"}, std::string_view{"pane_in_mode"}, std::string_view{"pane_at_top"}, std::string_view{"pane_at_bottom"}, std::string_view{"pane_at_left"}, std::string_view{"pane_at_right"}, std::string_view{"pane_pipe"}, std::string_view{"pane_left"}, std::string_view{"pane_top"}, std::string_view{"pane_dead_status"}};
 ```
 
 <a id="libtmux-entities-hpp-pane-pane"></a>
@@ -2673,6 +2675,14 @@ Position within the window, in cells from its top-left corner — the geometry `
 [[nodiscard]] long long top() const noexcept;
 ```
 Its counterpart along the other axis.
+
+<a id="libtmux-entities-hpp-pane-exit-status"></a>
+#### `Pane::exit_status`
+
+```cpp
+[[nodiscard]] std::optional<int> exit_status() const noexcept;
+```
+What the pane's process exited with, once it has.  Optional rather than a number because zero is a real exit status and "still running" is not a status at all — tmux renders the field empty until the process is gone. Only a pane held on screen by `remain-on-exit` can report one: without it tmux destroys the pane, and there is nothing left to ask.
 
 <a id="libtmux-entities-hpp-pane-session-name"></a>
 #### `Pane::session_name`
@@ -3746,6 +3756,14 @@ inline constexpr NumberFieldHandle<Pane> left{ {Pane::kFields[19], [](const Pane
 ```cpp
 inline constexpr NumberFieldHandle<Pane> top{ {Pane::kFields[20], [](const Pane& row) { /* implementation omitted */ }}};
 ```
+
+<a id="libtmux-entities-hpp-free-symbols-pane-exit-status"></a>
+#### `pane::exit_status`
+
+```cpp
+inline constexpr NumberFieldHandle<Pane> exit_status{ {Pane::kFields[21], [](const Pane& row) { /* implementation omitted */ }}};
+```
+A pane that has not exited reads -1, which tmux cannot report: the field is `WEXITSTATUS` and so is 0 through 255, or empty. That makes `pane::exit_status == 0` exactly the panes that exited cleanly and `pane::exit_status >= 0` exactly the ones that exited at all, rather than folding "still running" into status zero.
 
 <a id="libtmux-entities-hpp-free-symbols-client-name"></a>
 #### `client::name`
