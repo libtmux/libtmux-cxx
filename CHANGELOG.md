@@ -9,6 +9,100 @@ was recorded as it landed.
 
 ## Unreleased
 
+### Breaking
+
+- Entity IDs now distinguish sessions, windows and panes. Use
+  `pane.id().value()` where a string is needed. Source- and ABI-breaking. (#18)
+- `CommandObserver` now receives a `CommandReport`, including arguments and
+  elapsed time. Read `report.command` and `report.failure` in existing
+  observers. Source- and ABI-breaking. (#18)
+- `Pane::kFields` gains position and exit-status fields. Update handwritten
+  rows to follow it. Wire-breaking for positional recordings. (#18)
+- `ExecutionPolicy::tmux_binary` selects the executable for commands and
+  control clients. `ConnectionOptions::tmux_binary` becomes optional; read it
+  with `value_or("tmux")`. Source- and ABI-breaking. (#18)
+
+### Entities
+
+- Numeric fields now reject malformed values instead of reading them as
+  zero. (#18)
+- Reading an older recording with fewer fields no longer reads beyond its
+  row. (#18)
+- Linked tmux windows and panes now compare equal across sessions. (#18)
+
+### Queries
+
+- Add `first_owned` and `exactly_one_owned` to retain a selected value after
+  its source range is gone. (#18)
+- Filters now cover every exposed entity field, including command and buffer
+  listings. (#18)
+
+### Errors
+
+- Add `as_command_failure` and `as_protocol_error` to convert between command
+  and control-mode failures. (#18)
+
+### Server
+
+- Socket-path constructors now accept filesystem paths directly. (#18)
+- Add `Server::over` to use a caller-supplied command transport. (#18)
+- Add `Server::over_control` to reuse control connections for supported
+  commands. (#18)
+- Add environment methods to read, set, forget or remove variables inherited
+  by new processes. (#18)
+- Startable servers now honour the requested socket selector when starting
+  the daemon. (#18)
+- Wait channels and option or hook names beginning with `-` now reach tmux
+  literally, preventing unintended option parsing. (#18)
+
+### Windows
+
+- `Window::select_layout` now rejects unsupported layouts before dispatch,
+  preventing daemon crashes on tmux 3.3 and 3.3a. (#18)
+
+### Pane
+
+- Add `Pane::exit_status` to read the status of an exited pane retained by
+  `remain-on-exit`. (#18)
+- Add `Pane::left` and `Pane::top` to read pane coordinates. (#18)
+- Add `Pane::toggle_zoom` to toggle a pane's zoom state. (#18)
+- Add `Pane::wait_for_text` and `Server::wait_for_text` to await confirmed
+  output; `output_confirms` checks text already captured. (#18)
+
+### Asynchronous commands
+
+- `CommandRuntime` adds blocking waits and a readable descriptor for completed
+  observations, replacing caller-side polling. (#18)
+- `CommandOperation` adds timed waits that preserve the operation, with
+  cancellation when stop tokens are available. (#18)
+
+### Control mode
+
+- `Connection::set_pane_output` now restores output after a pane was muted.
+  (#18)
+- Control-mode layout data now agrees with ordinary snapshots on tmux 3.8+.
+  (#18)
+- Subscription-change notifications now expose their session, window and
+  pane IDs. (#18)
+
+### MCP server
+
+- `wait_for_text` discounts echoed input from `send_keys`, `paste_text` and
+  `run_shell_command`, including submitted commands and wrapped lines. (#18)
+- Timed-out or cancelled `run_shell_command` calls now release the pane once
+  the command finishes. (#18)
+- Tool refusals now return tool error results instead of protocol errors.
+  (#18)
+
+### Build
+
+- Version macros let consumers check the library version when compiling.
+  (#18)
+- The installed pkg-config file supports consumers that do not use CMake.
+  (#18)
+- `BUILD_SHARED_LIBS` now selects static or shared libraries on POSIX;
+  Windows rejects shared builds at configure time. (#18)
+
 ## 0.1.0-alpha.8 (2026-09-12)
 
 This alpha reaches the standard library from the typed surface. An entity and a
