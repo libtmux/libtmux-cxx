@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <memory>
@@ -193,9 +194,9 @@ class ExecutorBackend final : public detail::Backend {
 public:
   ExecutorBackend(std::shared_ptr<const CommandExecutor> executor,
                   ExecutorOptions options, CommandObserver observer,
-                  ExecutionPolicy policy)
+                  ExecutionPolicy policy, BackendKind kind = BackendKind::custom)
       : Backend{std::move(observer), policy}, executor_{std::move(executor)},
-        options_{std::move(options)} {}
+        options_{std::move(options)}, kind_{kind} {}
 
   [[nodiscard]] expected<std::string, CommandFailure>
   run(const CommandRequest& command, std::optional<std::chrono::milliseconds> timeout,
@@ -219,7 +220,7 @@ public:
 
   [[nodiscard]] ServerCapabilities capabilities() const noexcept override {
     return ServerCapabilities{.implementation = options_.implementation,
-                              .backend = BackendKind::custom};
+                              .backend = kind_};
   }
 
   [[nodiscard]] expected<Version, CommandFailure> version() const override {
@@ -246,6 +247,178 @@ public:
 private:
   std::shared_ptr<const CommandExecutor> executor_;
   ExecutorOptions options_;
+  BackendKind kind_;
+};
+
+// What a control client answers completely inside a command's guarded block:
+// commands the typed surface issues that tmux cannot leave running after
+// `%end`. Checked against tmux, where only the twelve `cmd-*.c` files that
+// return `CMD_RETURN_WAIT` can defer. Left out on purpose, and launched instead:
+// those twelve; anything acting on the client itself (`attach-session`,
+// `detach-client`, `switch-client`, `refresh-client`), since a control client
+// is one; and anything able to end the connection it is sent on (`kill-*`,
+// `new-session`). Full names only, so an alias or an abbreviation launches too.
+constexpr std::array kAnsweredInBlock{
+    std::string_view{"capture-pane"},    std::string_view{"clear-history"},
+    std::string_view{"copy-mode"},       std::string_view{"delete-buffer"},
+    std::string_view{"join-pane"},       std::string_view{"last-window"},
+    std::string_view{"link-window"},     std::string_view{"list-buffers"},
+    std::string_view{"list-clients"},    std::string_view{"list-commands"},
+    std::string_view{"list-panes"},      std::string_view{"list-sessions"},
+    std::string_view{"list-windows"},    std::string_view{"move-window"},
+    std::string_view{"new-window"},      std::string_view{"next-layout"},
+    std::string_view{"next-window"},     std::string_view{"paste-buffer"},
+    std::string_view{"pipe-pane"},       std::string_view{"previous-layout"},
+    std::string_view{"previous-window"}, std::string_view{"rename-session"},
+    std::string_view{"rename-window"},   std::string_view{"resize-pane"},
+    std::string_view{"resize-window"},   std::string_view{"respawn-pane"},
+    std::string_view{"rotate-window"},   std::string_view{"select-layout"},
+    std::string_view{"select-pane"},     std::string_view{"select-window"},
+    std::string_view{"send-keys"},       std::string_view{"set-buffer"},
+    std::string_view{"set-environment"}, std::string_view{"set-hook"},
+    std::string_view{"set-option"},      std::string_view{"show-environment"},
+    std::string_view{"show-hooks"},      std::string_view{"show-options"},
+    std::string_view{"swap-pane"},       std::string_view{"swap-window"},
+    std::string_view{"unlink-window"}};
+
+// Whether any flag cluster before `--` sets one of `flags`. Over-matches an
+// option value that happens to look like a cluster, which only costs a launch.
+[[nodiscard]] bool sets_flag(const std::vector<std::string>& argv,
+                             std::string_view flags) {
+  for (std::size_t index = 1; index < argv.size(); ++index) {
+    const std::string_view argument = argv[index];
+    if (argument == "--") {
+      return false;
+    }
+    if (argument.size() > 1U && argument.front() == '-' &&
+        argument.find_first_of(flags) != std::string_view::npos) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// `display-message` defers only under `-I`, and `split-window` only under `-I`
+// or `-W` (`cmd-split-window.c`); as sent otherwise, their block is the answer.
+[[nodiscard]] bool answered_in_block(const std::vector<std::string>& argv) {
+  if (argv.empty()) {
+    return false;
+  }
+  const std::string_view name = argv.front();
+  if (name == "display-message") {
+    return !sets_flag(argv, "I");
+  }
+  if (name == "split-window") {
+    return !sets_flag(argv, "IW");
+  }
+  return std::ranges::find(kAnsweredInBlock, name) != kAnsweredInBlock.end();
+}
+
+// Splits a flattened batch at its `;` elements. Absent when an argument ends in
+// `;` without being one: tmux would split there too, and this cannot tell a
+// separator from data the way tmux's own parser does.
+[[nodiscard]] std::optional<std::vector<std::vector<std::string>>>
+commands_in(const std::vector<std::string>& argv) {
+  std::vector<std::vector<std::string>> commands(1);
+  for (const std::string& argument : argv) {
+    if (argument == ";") {
+      commands.emplace_back();
+      continue;
+    }
+    if (argument.ends_with(';')) {
+      return std::nullopt;
+    }
+    commands.back().push_back(argument);
+  }
+  return commands;
+}
+
+class ControlExecutor final : public CommandExecutor {
+public:
+  ControlExecutor(std::vector<std::shared_ptr<Connection>> connections,
+                  Server launching)
+      : connections_{std::move(connections)}, launching_{std::move(launching)} {}
+
+  [[nodiscard]] expected<std::string, CommandFailure>
+  run(const CommandRequest& command, std::optional<std::chrono::milliseconds> timeout,
+      std::optional<std::size_t> output_limit) const override {
+    const std::vector<std::string> argv = command.argv();
+    const auto commands = commands_in(argv);
+    if (!commands.has_value() || !std::ranges::all_of(*commands, [](const auto& each) {
+          return answered_in_block(each);
+        })) {
+      return launching_.run(command, timeout, output_limit);
+    }
+    ControlRequest request;
+    for (const auto& each : *commands) {
+      request.group.push_back(ControlCommand{.argv = each});
+    }
+    Connection& connection =
+        *connections_[next_.fetch_add(1U, std::memory_order_relaxed) %
+                      connections_.size()];
+    const auto deadline =
+        std::chrono::steady_clock::now() + timeout.value_or(std::chrono::seconds{30});
+    const ControlRequestResult result =
+        connection.execute(std::move(request), deadline);
+    if (result.connection_error.has_value()) {
+      // Nothing reached tmux, so launching is the same command, not a second
+      // one. Past that point a mutation may have happened, and running it again
+      // could do it twice.
+      if (result.connection_error->delivery == DeliveryStatus::not_started) {
+        return launching_.run(command, timeout, output_limit);
+      }
+      return unexpected(CommandFailure{
+          .kind = std::chrono::steady_clock::now() >= deadline ? FailureKind::timeout
+                                                               : FailureKind::pipe,
+          .delivery = result.connection_error->delivery,
+          .exit_code = -1,
+          .diagnostic = result.connection_error->message +
+                        " (running: " + detail::rendered_command(command) + ")"});
+    }
+    std::string answer;
+    for (const ControlBlock& block : result.blocks) {
+      std::string body;
+      body.reserve(block.body.size());
+      for (const std::byte byte : block.body) {
+        body.push_back(static_cast<char>(byte));
+      }
+      if (block.body_truncated) {
+        return unexpected(truncated(command, block.body_bytes));
+      }
+      if (block.terminal == ControlTerminal::error) {
+        // The shape a launch reports: tmux's message, trimmed, and the command.
+        while (!body.empty() && (body.back() == '\n' || body.back() == '\r')) {
+          body.pop_back();
+        }
+        return unexpected(CommandFailure{
+            .kind = FailureKind::refused,
+            .delivery = DeliveryStatus::replied,
+            .exit_code = 1,
+            .diagnostic =
+                body + " (running: " + detail::rendered_command(command) + ")"});
+      }
+      answer += body;
+    }
+    if (output_limit.has_value() && answer.size() > *output_limit) {
+      return unexpected(truncated(command, answer.size()));
+    }
+    return answer;
+  }
+
+private:
+  [[nodiscard]] static CommandFailure truncated(const CommandRequest& command,
+                                                std::size_t bytes) {
+    return CommandFailure{.kind = FailureKind::truncated,
+                          .delivery = DeliveryStatus::replied,
+                          .exit_code = 0,
+                          .diagnostic = "the reply ran to " + std::to_string(bytes) +
+                                        " bytes, past what this call holds (running: " +
+                                        detail::rendered_command(command) + ")"};
+  }
+
+  std::vector<std::shared_ptr<Connection>> connections_;
+  Server launching_;
+  mutable std::atomic<std::size_t> next_{0U};
 };
 
 } // namespace
@@ -441,6 +614,45 @@ Server::control_with_options(std::string_view session,
   return Connection::connect(
       routed_control_options(std::move(options), std::string{socket_path},
                              std::string{session}, backend_->policy().tmux_binary));
+}
+
+expected<Server, ProtocolError> Server::over_control(std::string_view session,
+                                                     std::size_t connections) const {
+  if (connections == 0U) {
+    return unexpected(
+        ProtocolError{.message = "a control-backed Server needs a connection",
+                      .delivery = DeliveryStatus::not_started});
+  }
+  std::vector<std::shared_ptr<Connection>> pool;
+  pool.reserve(connections);
+  for (std::size_t index = 0; index < connections; ++index) {
+    auto connected = control(session);
+    if (!connected.has_value()) {
+      return unexpected(std::move(connected.error()));
+    }
+    pool.push_back(std::make_shared<Connection>(*std::move(connected)));
+  }
+  // Without this Server's observer: the control-backed Server reports every
+  // command, launched or not, and a launch reported again would count twice.
+  auto launching =
+      Server::at_socket_path(std::string{socket_path()}, {}, backend_->policy());
+  if (!launching.has_value()) {
+    return unexpected(ProtocolError{.message = launching.error().diagnostic,
+                                    .delivery = DeliveryStatus::not_started});
+  }
+  // Named here rather than asked through the executor: `-V` is not a command a
+  // control client can answer, and this Server has usually asked already.
+  const auto version = backend_->version();
+  auto executor =
+      std::make_shared<const ControlExecutor>(std::move(pool), *std::move(launching));
+  return detail::server_over(std::make_shared<const ExecutorBackend>(
+      std::move(executor),
+      ExecutorOptions{.implementation = capabilities().implementation,
+                      .socket_path = std::string{socket_path()},
+                      .version = version.has_value() ? std::optional<Version>{*version}
+                                                     : std::nullopt},
+      backend_->command_observer().value_or(CommandObserver{}), backend_->policy(),
+      BackendKind::control));
 }
 
 expected<Version, CommandFailure> Server::tmux_version() const {

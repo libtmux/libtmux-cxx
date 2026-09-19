@@ -32,6 +32,9 @@ to_string(ServerImplementation implementation) noexcept {
 enum class BackendKind {
   custom,
   subprocess,
+  // Held-open control clients, with a launch for what they cannot answer
+  // completely. Appended: the values before it are an installed ABI.
+  control,
 };
 
 [[nodiscard]] constexpr std::string_view to_string(BackendKind backend) noexcept {
@@ -40,6 +43,8 @@ enum class BackendKind {
     return "custom";
   case BackendKind::subprocess:
     return "subprocess";
+  case BackendKind::control:
+    return "control";
   }
   return "unknown";
 }

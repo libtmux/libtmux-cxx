@@ -206,13 +206,17 @@ TEST(ValueSemantics, AFailureComposesAndCanBeNamed) {
   }
   EXPECT_EQ(static_cast<int>(FailureKind::truncated), 7);
   EXPECT_EQ(static_cast<int>(FailureKind::unsupported), 8);
+  EXPECT_EQ(static_cast<int>(libtmux::BackendKind::custom), 0);
+  EXPECT_EQ(static_cast<int>(libtmux::BackendKind::subprocess), 1);
+  EXPECT_EQ(static_cast<int>(libtmux::BackendKind::control), 2);
   for (const auto implementation :
        {libtmux::ServerImplementation::unknown, libtmux::ServerImplementation::tmux,
         libtmux::ServerImplementation::psmux}) {
     EXPECT_FALSE(libtmux::to_string(implementation).empty());
   }
   for (const auto backend :
-       {libtmux::BackendKind::custom, libtmux::BackendKind::subprocess}) {
+       {libtmux::BackendKind::custom, libtmux::BackendKind::subprocess,
+        libtmux::BackendKind::control}) {
     EXPECT_FALSE(libtmux::to_string(backend).empty());
   }
   for (const auto feature : {

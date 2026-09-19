@@ -14,6 +14,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -257,6 +259,142 @@ TEST(ExecutorSeam, ListingsOverAControlConnectionMatchTheLaunchingPath) {
   const auto after = over_control->windows();
   ASSERT_TRUE(after.has_value()) << after.error().diagnostic;
   EXPECT_EQ(after->front().name(), "gamma");
+}
+
+// A POSIX proxy that records each launch and hands off to tmux, so a test can
+// count what went over the wire by what did not launch. Named other than
+// `tmux`, so the `exec` finds the real one on `PATH`.
+struct CountedTmux {
+  std::filesystem::path proxy;
+  std::filesystem::path records;
+
+  [[nodiscard]] int launches() const {
+    std::ifstream file{records};
+    int lines = 0;
+    for (std::string line; std::getline(file, line);) {
+      ++lines;
+    }
+    return lines;
+  }
+
+  void reset() const { std::ofstream{records, std::ios::trunc}; }
+};
+
+CountedTmux counted_tmux(const std::filesystem::path& directory) {
+  CountedTmux counted{.proxy = directory / "counted-tmux",
+                      .records = directory / "counted-tmux.launches"};
+  std::ofstream{counted.proxy} << "#!/bin/sh\nprintf '1\\n' >> '"
+                               << counted.records.string()
+                               << "' || exit 125\nexec tmux \"$@\"\n";
+  std::filesystem::permissions(counted.proxy, std::filesystem::perms::owner_all);
+  counted.reset();
+  return counted;
+}
+
+// What `over_control` is for: the typed surface over held-open clients, and
+// the same answers as launching. Counted, because a timing proves nothing
+// about which path ran.
+TEST(ControlBackedServer, BuildsAWindowWithoutLaunchingTmux) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const CountedTmux tmux = counted_tmux(fixture->socket_path().parent_path());
+  auto launching = Server::at_socket_path(fixture->socket_path().string(), {},
+                                          {.tmux_binary = tmux.proxy});
+  ASSERT_TRUE(launching.has_value()) << launching.error().diagnostic;
+  auto controlled = launching->over_control(fixture->session_name());
+  ASSERT_TRUE(controlled.has_value()) << controlled.error().message;
+  EXPECT_EQ(controlled->capabilities().backend, libtmux::BackendKind::control);
+
+  tmux.reset();
+  auto sessions = controlled->sessions();
+  ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
+  ASSERT_FALSE(sessions->empty());
+  auto window = sessions->front().new_window({.name = "work"});
+  ASSERT_TRUE(window.has_value()) << window.error().diagnostic;
+  for (int split = 0; split < 5; ++split) {
+    const auto pane = window->split();
+    ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
+    EXPECT_TRUE(pane->id().starts_with('%')) << "the -P answer parsed as a pane id";
+    ASSERT_TRUE(window->select_layout("tiled").has_value());
+  }
+  ASSERT_TRUE(window->rename("built").has_value());
+  const auto panes = controlled->panes();
+  ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
+  EXPECT_EQ(tmux.launches(), 0) << "every command here tmux answers inside its block";
+
+  const auto launched = launching->panes();
+  ASSERT_TRUE(launched.has_value()) << launched.error().diagnostic;
+  ASSERT_EQ(panes->size(), launched->size());
+  EXPECT_EQ(panes->size(), 7U);
+  for (std::size_t index = 0; index < panes->size(); ++index) {
+    EXPECT_EQ((*panes)[index].id(), (*launched)[index].id());
+  }
+  const auto renamed = controlled->window(window->id());
+  ASSERT_TRUE(renamed.has_value()) << renamed.error().diagnostic;
+  EXPECT_EQ(renamed->name(), "built");
+}
+
+// A command tmux can finish after its block has ended is launched, so the
+// answer is the finished one. Over the wire this would read as done while the
+// shell was still running.
+TEST(ControlBackedServer, LaunchesWhatTmuxMayLeaveRunning) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const CountedTmux tmux = counted_tmux(fixture->socket_path().parent_path());
+  auto launching = Server::at_socket_path(fixture->socket_path().string(), {},
+                                          {.tmux_binary = tmux.proxy});
+  ASSERT_TRUE(launching.has_value()) << launching.error().diagnostic;
+  auto controlled = launching->over_control(fixture->session_name());
+  ASSERT_TRUE(controlled.has_value()) << controlled.error().message;
+
+  tmux.reset();
+  const auto finished = controlled->run({"run-shell", "sleep 0.2; printf finished"});
+  ASSERT_TRUE(finished.has_value()) << finished.error().diagnostic;
+  EXPECT_EQ(*finished, "finished\n");
+  EXPECT_EQ(tmux.launches(), 1);
+
+  // An abbreviation could be anything once aliases are counted, so it launches.
+  tmux.reset();
+  EXPECT_TRUE(controlled->run({"lsw", "-t", fixture->session_name()}).has_value());
+  EXPECT_EQ(tmux.launches(), 1);
+}
+
+// A failure reads as the one a launch gives, so the typed layer classifies it
+// the same way whichever path answered.
+TEST(ControlBackedServer, RefusesInTheShapeALaunchDoes) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  auto launching = Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(launching.has_value()) << launching.error().diagnostic;
+  auto controlled = launching->over_control(fixture->session_name());
+  ASSERT_TRUE(controlled.has_value()) << controlled.error().message;
+
+  const CommandRequest missing{"split-window", "-t", "%999"};
+  const auto wire = controlled->run(missing);
+  const auto launched = launching->run(missing);
+  ASSERT_FALSE(wire.has_value());
+  ASSERT_FALSE(launched.has_value());
+  EXPECT_EQ(wire.error().kind, launched.error().kind);
+  EXPECT_EQ(wire.error().delivery, launched.error().delivery);
+  EXPECT_EQ(wire.error().exit_code, launched.error().exit_code);
+  EXPECT_EQ(wire.error().diagnostic, launched.error().diagnostic);
+}
+
+// Each client is attached, so a caller counting clients sees them.
+TEST(ControlBackedServer, SpreadsCommandsOverTheClientsItWasAskedFor) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  auto launching = Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(launching.has_value()) << launching.error().diagnostic;
+  auto controlled = launching->over_control(fixture->session_name(), 4U);
+  ASSERT_TRUE(controlled.has_value()) << controlled.error().message;
+  const auto clients = controlled->clients();
+  ASSERT_TRUE(clients.has_value()) << clients.error().diagnostic;
+  EXPECT_EQ(clients->size(), 4U);
+  for (int attempt = 0; attempt < 8; ++attempt) {
+    EXPECT_TRUE(controlled->sessions().has_value());
+  }
+  EXPECT_FALSE(launching->over_control(fixture->session_name(), 0U).has_value());
 }
 
 } // namespace

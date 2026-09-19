@@ -73,10 +73,14 @@ transport that serves listings therefore fails closed — a substituted command
 answers something that does not parse as separated rows, and falling back to a
 launch costs only the launch it was avoiding.
 
-None of this makes `Connection` a typed command backend. It makes the listing
-half of one reachable, which is what `Server::over` and `CommandExecutor` let a
-caller build; `tests/executor_seam_test.cpp` does exactly that and matches the
-launching path row for row.
+None of this makes every command safe on a control client. It makes the
+commands the typed surface issues, as it issues them, answerable there — which
+is what `Server::over_control` does. It sends a command over the wire only if
+it is on a list checked against tmux's `CMD_RETURN_WAIT`, and launches
+everything else: a command that can defer, one that acts on the client itself,
+one that could end the connection, an alias it cannot see through. A failure
+reads exactly as a launched one would, and a connection lost after a command
+was written reports that as indeterminate rather than running it twice.
 
 ## Choosing the surface
 

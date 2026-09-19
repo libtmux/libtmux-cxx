@@ -73,6 +73,7 @@ The connection root.  A Server names which tmux server to talk to and how to rea
   - [`Server::run_chain`](#libtmux-server-hpp-server-run-chain)
   - [`Server::control`](#libtmux-server-hpp-server-control)
   - [`Server::control_with_options`](#libtmux-server-hpp-server-control-with-options)
+  - [`Server::over_control`](#libtmux-server-hpp-server-over-control)
   - [`Server::tmux_version`](#libtmux-server-hpp-server-tmux-version)
   - [`Server::is_alive`](#libtmux-server-hpp-server-is-alive)
   - [`Server::check_alive`](#libtmux-server-hpp-server-check-alive)
@@ -293,6 +294,14 @@ Open a control-mode connection to one session.  This is the streaming half of th
 [[nodiscard]] expected<Connection, ProtocolError> control_with_options(std::string_view session, ConnectionOptions options) const;
 ```
 The Server supplies the socket and `session` supplies the session name; every other connection option is kept, including pane output policy.
+
+<a id="libtmux-server-hpp-server-over-control"></a>
+#### `Server::over_control`
+
+```cpp
+[[nodiscard]] expected<Server, ProtocolError> over_control(std::string_view session, std::size_t connections = 1) const;
+```
+A Server whose commands travel over held-open control clients attached to `session`, rather than one launched process each.  Only where that gives the same answer. tmux can end a command's guarded block before the command has finished, so a command goes over the wire only if the typed surface issues it and tmux cannot defer it as sent — `split-window` without `-I` or `-W`, `display-message` without `-I`, the listings, and the other commands in the list in `server.cpp`, each checked against tmux's `CMD_RETURN_WAIT`. Anything else launches, as it would from this Server: a deferring command, one that acts on the client itself, an alias or an abbreviation this cannot see through. A failure reads as the same `CommandFailure` a launch would give.  `connections` spreads commands over that many clients. One is enough for most callers — a connection already carries concurrent requests — and each extra client is attached to `session` and shows in `clients()`.  A command with no target resolves against the control client's session rather than the most recently used one. The typed surface always names a target; a caller passing raw commands through `run` should too.
 
 <a id="libtmux-server-hpp-server-tmux-version"></a>
 #### `Server::tmux_version`
@@ -1052,6 +1061,7 @@ What this Server can promise without probing tmux.  These describe the local bac
 - [`BackendKind`](#libtmux-capabilities-hpp-backendkind)
   - [`BackendKind::custom`](#libtmux-capabilities-hpp-backendkind-custom)
   - [`BackendKind::subprocess`](#libtmux-capabilities-hpp-backendkind-subprocess)
+  - [`BackendKind::control`](#libtmux-capabilities-hpp-backendkind-control)
 - [`ServerFeature`](#libtmux-capabilities-hpp-serverfeature)
   - [`ServerFeature::exact_inspection`](#libtmux-capabilities-hpp-serverfeature-exact-inspection)
   - [`ServerFeature::server_cleanup`](#libtmux-capabilities-hpp-serverfeature-server-cleanup)
@@ -1103,6 +1113,11 @@ enum class BackendKind;
 
 <a id="libtmux-capabilities-hpp-backendkind-subprocess"></a>
 #### `BackendKind::subprocess` — `subprocess,`
+
+<a id="libtmux-capabilities-hpp-backendkind-control"></a>
+#### `BackendKind::control` — `control,`
+
+Held-open control clients, with a launch for what they cannot answer completely. Appended: the values before it are an installed ABI.
 
 <a id="libtmux-capabilities-hpp-serverfeature"></a>
 ### `ServerFeature`

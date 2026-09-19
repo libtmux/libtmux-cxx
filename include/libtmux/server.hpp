@@ -220,6 +220,29 @@ public:
   [[nodiscard]] expected<Connection, ProtocolError>
   control_with_options(std::string_view session, ConnectionOptions options) const;
 
+  // A Server whose commands travel over held-open control clients attached to
+  // `session`, rather than one launched process each.
+  //
+  // Only where that gives the same answer. tmux can end a command's guarded
+  // block before the command has finished, so a command goes over the wire
+  // only if the typed surface issues it and tmux cannot defer it as sent —
+  // `split-window` without `-I` or `-W`, `display-message` without `-I`, the
+  // listings, and the other commands in the list in `server.cpp`, each checked
+  // against tmux's `CMD_RETURN_WAIT`. Anything else launches, as it would from
+  // this Server: a deferring command, one that acts on the client itself, an
+  // alias or an abbreviation this cannot see through. A failure reads as the
+  // same `CommandFailure` a launch would give.
+  //
+  // `connections` spreads commands over that many clients. One is enough for
+  // most callers — a connection already carries concurrent requests — and
+  // each extra client is attached to `session` and shows in `clients()`.
+  //
+  // A command with no target resolves against the control client's session
+  // rather than the most recently used one. The typed surface always names a
+  // target; a caller passing raw commands through `run` should too.
+  [[nodiscard]] expected<Server, ProtocolError>
+  over_control(std::string_view session, std::size_t connections = 1) const;
+
   // Ask the selected subprocess executable with `tmux -V` without touching a
   // server. The call uses this Server's execution policy.
   [[nodiscard]] expected<Version, CommandFailure> tmux_version() const;
