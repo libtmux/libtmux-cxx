@@ -21,6 +21,7 @@
 
 #include <gtest/gtest.h>
 
+#include "libtmux/capture.hpp"
 #include "libtmux/cardinality.hpp"
 #include "libtmux/entities.hpp"
 #include "libtmux/server.hpp"
@@ -251,6 +252,29 @@ TEST(ValueSemantics, TheCompiledVersionMatchesTheLinkedOne) {
                                std::to_string(LIBTMUX_VERSION_PATCH);
   EXPECT_TRUE(std::string_view{LIBTMUX_VERSION_STRING}.starts_with(expected))
       << LIBTMUX_VERSION_STRING << " does not begin with " << expected;
+}
+
+// The three shapes a capture shows that are not output.
+TEST(ValueSemantics, OutputIsToldApartFromWhatIsMerelyOnScreen) {
+  using libtmux::output_confirms;
+
+  // Produced: the pane ran something and printed it above the prompt.
+  EXPECT_TRUE(output_confirms("$ echo hi\nhi\n$ ", "hi"));
+
+  // Typed, not yet run: the only occurrence is the row the cursor is on.
+  EXPECT_FALSE(output_confirms("$ run-the-thing", "run-the-thing"));
+
+  // Echoed: the shell repeated what we typed, and a redraw moved it off the
+  // active row — row position alone would now credit it to the pane.
+  EXPECT_FALSE(
+      output_confirms("$ deploy now\n$ deploy now", "deploy now", {"deploy now"}));
+
+  // Echoed and also produced: stripping our own bytes leaves the pane's.
+  EXPECT_TRUE(output_confirms("$ echo deploy now\ndeploy now\n$ ", "deploy now",
+                              {"echo deploy now"}));
+
+  // An empty needle is not a match, however much text there is.
+  EXPECT_FALSE(output_confirms("anything at all", ""));
 }
 
 TEST(ValueSemantics, EveryEntityFieldIsReachableFromAFilter) {

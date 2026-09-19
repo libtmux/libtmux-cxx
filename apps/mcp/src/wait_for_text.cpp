@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "libtmux/capture.hpp"
 #include "libtmux/control.hpp"
 #include "libtmux/server.hpp"
 #include "libtmux/snapshot.hpp"
@@ -88,62 +89,12 @@ using WaitCommandResult = libtmux::expected<std::optional<std::string>, ToolErro
 // full height, so the "last line" a caller's own just-submitted command
 // still occupies — echoed there before the shell has run it and moved on
 // — is the last row that is not blank padding, not the literal last byte.
-[[nodiscard]] bool matches_only_the_active_row(std::string_view text,
-                                               std::string_view wanted) {
-  std::string_view settled = text;
-  while (!settled.empty() && settled.back() == '\n') {
-    settled.remove_suffix(1);
-  }
-  const auto last_newline = settled.find_last_of('\n');
-  const std::string_view active_row = last_newline == std::string_view::npos
-                                          ? settled
-                                          : settled.substr(last_newline + 1);
-  const std::string_view above_it = last_newline == std::string_view::npos
-                                        ? std::string_view{}
-                                        : settled.substr(0, last_newline);
-  return active_row.find(wanted) != std::string_view::npos &&
-         above_it.find(wanted) == std::string_view::npos;
-}
-
-// `text` with every occurrence of every string in `sent` erased. `sent` is
-// this pane's own remembered-input ledger: the literal bytes this server
-// itself wrote, whether or not it has since pressed Enter for them. A shell
-// echoes typed input at least once (the kernel's own cooked-mode echo) and
-// often twice more before anything has run - once more from the line
-// editor's own redisplay, and again if an unrelated redraw (another job's
-// output, an async prompt segment) repaints the buffer somewhere else on
-// screen. None of those echoes are output the pane produced, however many
-// rows they end up spread across, so they are removed before `wanted` is
-// searched for rather than excluded by row position.
-[[nodiscard]] std::string strip_remembered_input(std::string text,
-                                                 const std::vector<std::string>& sent) {
-  for (const std::string& entry : sent) {
-    if (entry.empty()) {
-      continue;
-    }
-    std::size_t position = 0;
-    while ((position = text.find(entry, position)) != std::string::npos) {
-      text.erase(position, entry.size());
-    }
-  }
-  return text;
-}
-
-// Whether `wanted` appears in `text` as output the pane itself produced:
-// not confined to the pane's current last row (the existing, narrower
-// guard - a command still sitting there before the shell has run it), and
-// still present once every string this server itself has typed into the
-// pane is stripped out first. The second check is what the first one alone
-// misses: the same not-yet-submitted line, unchanged, after something else
-// has pushed it off the last row without the pane having produced anything
-// of its own.
+// The library owns the hard part: telling output apart from a command still
+// on the prompt and from this server's own echo. `libtmux::output_confirms`
+// is that check, and every consumer waiting on pane text needs it.
 [[nodiscard]] bool confirmed_by_output(std::string_view text, std::string_view wanted,
                                        const std::vector<std::string>& pending_input) {
-  if (matches_only_the_active_row(text, wanted)) {
-    return false;
-  }
-  const std::string masked = strip_remembered_input(std::string{text}, pending_input);
-  return masked.find(wanted) != std::string::npos;
+  return libtmux::output_confirms(text, wanted, pending_input);
 }
 
 // Every caller below defers a match confined to the active row, or confined

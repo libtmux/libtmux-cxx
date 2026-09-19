@@ -6816,6 +6816,7 @@ Split `capture-pane -p` output into lines.  Every captured line is newline-termi
   - [`capture_lines`](#libtmux-capture-hpp-free-symbols-capture-lines)
   - [`capture_lines`](#libtmux-capture-hpp-free-symbols-capture-lines-2)
   - [`without_trailing_blanks`](#libtmux-capture-hpp-free-symbols-without-trailing-blanks)
+  - [`output_confirms`](#libtmux-capture-hpp-free-symbols-output-confirms)
 
 <a id="libtmux-capture-hpp-free-symbols"></a>
 ### `Free symbols`
@@ -6842,6 +6843,14 @@ The lines are views into the text, so text that dies at the semicolon takes them
 [[nodiscard]] inline std::vector<std::string_view> without_trailing_blanks(std::vector<std::string_view> lines);
 ```
 Drop the blank rows a pane pads its height with, keeping blank lines that have content below them.
+
+<a id="libtmux-capture-hpp-free-symbols-output-confirms"></a>
+#### `output_confirms`
+
+```cpp
+[[nodiscard]] inline bool output_confirms(std::string_view captured, std::string_view wanted, const std::vector<std::string>& sent = {});
+```
+Whether `wanted` appears in captured text as something the pane produced, rather than as text that is merely on screen.  Waiting for a pane to say something is the first thing a supervising program needs and the easiest to get wrong, because a capture shows two things that are not output. The first is a command still sitting on the prompt: it has been typed, nothing has run it, and searching for it succeeds immediately. The second is its echo. A shell echoes typed input at least once — the kernel's own cooked-mode echo — and often twice more before anything runs, from the line editor's redisplay and from any unrelated repaint. None of those are output, however many rows they end up spread across.  `sent` is what the calling program itself typed into this pane and has not had confirmed. Every occurrence of every entry is erased before `wanted` is looked for, so an echo cannot be credited to the pane no matter where a redraw moved it. That is the check row position alone misses: the same unsubmitted line, unchanged, after something else pushed it off the last row without the pane having produced anything.
 
 <a id="libtmux-target-hpp"></a>
 ## `libtmux/target.hpp`
