@@ -143,3 +143,21 @@ inline constexpr Version kMinimumSupported{.major = 3, .minor = 2, .revision = 1
 [[nodiscard]] std::string_view library_version() noexcept;
 
 LIBTMUX_NAMESPACE_END
+
+// The same version, available to the preprocessor.
+//
+// `library_version()` answers what was linked; these answer what was compiled
+// against, which is the question a consumer has to ask before using something
+// that may not exist yet:
+//
+//   #if LIBTMUX_VERSION_MAJOR > 0 || LIBTMUX_VERSION_MINOR >= 2
+//
+// Written here rather than generated into the build directory, so that
+// `include/libtmux/` stays self-contained for anyone reading or vendoring it
+// without CMake. A test compares `LIBTMUX_VERSION_STRING` against
+// `library_version()`, which the build takes from the `VERSION` file, so the
+// two cannot drift apart unnoticed.
+#define LIBTMUX_VERSION_MAJOR 0
+#define LIBTMUX_VERSION_MINOR 1
+#define LIBTMUX_VERSION_PATCH 0
+#define LIBTMUX_VERSION_STRING "0.1.0-alpha.8"

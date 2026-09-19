@@ -250,7 +250,12 @@ triggers the publish workflow.
 The order a release keeps is fixed by vcpkg, because the portfile fetches a
 release tarball by hash and that hash cannot exist before the tag does:
 
-1. `VERSION` is bumped and committed.
+1. `VERSION` is bumped and committed, together with the
+   `LIBTMUX_VERSION_*` macros in
+   [`include/libtmux/version.hpp`](../include/libtmux/version.hpp). They are
+   written out rather than generated so the headers stay readable without
+   CMake, and `ValueSemantics.TheCompiledVersionMatchesTheLinkedOne` fails if
+   the two disagree.
 2. The maintainer pushes the tag.
    [`release.yml`](workflows/release.yml) refuses a tag that disagrees with
    `VERSION`.

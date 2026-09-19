@@ -7110,6 +7110,10 @@ Parse and order tmux version strings.  Suffixes follow bare releases; `next-` pr
   - [`kMinimumSupported`](#libtmux-version-hpp-free-symbols-kminimumsupported)
   - [`is_supported`](#libtmux-version-hpp-free-symbols-is-supported)
   - [`library_version`](#libtmux-version-hpp-free-symbols-library-version)
+  - [`LIBTMUX_VERSION_MAJOR`](#libtmux-version-hpp-free-symbols-libtmux-version-major)
+  - [`LIBTMUX_VERSION_MINOR`](#libtmux-version-hpp-free-symbols-libtmux-version-minor)
+  - [`LIBTMUX_VERSION_PATCH`](#libtmux-version-hpp-free-symbols-libtmux-version-patch)
+  - [`LIBTMUX_VERSION_STRING`](#libtmux-version-hpp-free-symbols-libtmux-version-string)
 
 <a id="libtmux-version-hpp-versionerror"></a>
 ### `VersionError`
@@ -7222,6 +7226,35 @@ The oldest release this library supports, matching the Python package.
 [[nodiscard]] std::string_view library_version() noexcept;
 ```
 This package's own version, not tmux's.
+
+<a id="libtmux-version-hpp-free-symbols-libtmux-version-major"></a>
+#### `LIBTMUX_VERSION_MAJOR`
+
+```cpp
+#define LIBTMUX_VERSION_MAJOR 0
+```
+The same version, available to the preprocessor.  `library_version()` answers what was linked; these answer what was compiled against, which is the question a consumer has to ask before using something that may not exist yet:  #if LIBTMUX_VERSION_MAJOR > 0 || LIBTMUX_VERSION_MINOR >= 2  Written here rather than generated into the build directory, so that `include/libtmux/` stays self-contained for anyone reading or vendoring it without CMake. A test compares `LIBTMUX_VERSION_STRING` against `library_version()`, which the build takes from the `VERSION` file, so the two cannot drift apart unnoticed.
+
+<a id="libtmux-version-hpp-free-symbols-libtmux-version-minor"></a>
+#### `LIBTMUX_VERSION_MINOR`
+
+```cpp
+#define LIBTMUX_VERSION_MINOR 1
+```
+
+<a id="libtmux-version-hpp-free-symbols-libtmux-version-patch"></a>
+#### `LIBTMUX_VERSION_PATCH`
+
+```cpp
+#define LIBTMUX_VERSION_PATCH 0
+```
+
+<a id="libtmux-version-hpp-free-symbols-libtmux-version-string"></a>
+#### `LIBTMUX_VERSION_STRING`
+
+```cpp
+#define LIBTMUX_VERSION_STRING "0.1.0-alpha.8"
+```
 
 <a id="libtmux-lowering-hpp"></a>
 ## `libtmux/lowering.hpp`

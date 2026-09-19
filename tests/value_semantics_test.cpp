@@ -25,6 +25,7 @@
 #include "libtmux/entities.hpp"
 #include "libtmux/server.hpp"
 #include "libtmux/testing/scoped_server.hpp"
+#include "libtmux/version.hpp"
 
 namespace {
 
@@ -233,16 +234,25 @@ TEST(ValueSemantics, AFailureComposesAndCanBeNamed) {
   EXPECT_FALSE(libtmux::to_string(libtmux::SocketError::path_too_long).empty());
 }
 
-// Reading a field and filtering on it are one contract, not two.
+// The preprocessor's answer and the linker's must be the same answer.
 //
-// Nothing tied them together, so accessors existed with no handle beside them:
-// `pane.left()` read while `pane::left` did not exist, and the gap showed up as
-// a filter a caller simply could not write rather than as anything that failed.
-//
-// Every type the server can list appears below, which is the part that matters.
-// An earlier version walked the namespaces that existed instead, so the two
-// types with no namespace at all — `Command` and `Buffer` — could not fail it:
-// a gate that enumerates what is present is blind to what is absent.
+// `LIBTMUX_VERSION_STRING` is written in the header so that `include/libtmux/`
+// stays readable without CMake; `library_version()` is compiled from the
+// `VERSION` file. Nothing but this ties them together, so a release that bumps
+// one and forgets the other fails here rather than shipping a library that
+// misreports itself to the preprocessor.
+TEST(ValueSemantics, TheCompiledVersionMatchesTheLinkedOne) {
+  EXPECT_EQ(std::string_view{LIBTMUX_VERSION_STRING}, libtmux::library_version());
+
+  // And the numeric macros are that same string's leading components, so a
+  // consumer branching on them is branching on the version it linked.
+  const std::string expected = std::to_string(LIBTMUX_VERSION_MAJOR) + "." +
+                               std::to_string(LIBTMUX_VERSION_MINOR) + "." +
+                               std::to_string(LIBTMUX_VERSION_PATCH);
+  EXPECT_TRUE(std::string_view{LIBTMUX_VERSION_STRING}.starts_with(expected))
+      << LIBTMUX_VERSION_STRING << " does not begin with " << expected;
+}
+
 TEST(ValueSemantics, EveryEntityFieldIsReachableFromAFilter) {
   const auto unreachable = [](const std::vector<std::string_view>& handled,
                               const auto& fields) {
