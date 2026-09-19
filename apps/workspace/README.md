@@ -166,6 +166,13 @@ session. Load publishes and flushes both output streams before handoff. Handoff
 failure leaves loaded changes intact; a later output failure preserves an
 existing nonzero load status and reports the completed summary when possible.
 
+When the final input names a session that is already running, an interactive,
+unforced load asks before attaching to it. Declining is scoped to that one
+input: earlier inputs still build, this one is left exactly as it was found
+and gets `action: "left"` in its result, and nothing is attached to since only
+the final input is ever an attach target. `-y`/`--yes`, `-d` and machine
+output all skip the question and proceed.
+
 Attachment requires a standard descriptor identifying the concrete controlling
 tty. If all three standard streams are redirected, use `-d`. JSON/NDJSON requires
 `-d` or `--append`. Terminal and caller checks precede mutation. The client is

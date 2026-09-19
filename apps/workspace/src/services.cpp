@@ -1599,6 +1599,12 @@ static Execution execute_impl(const Request& request, const EventSink& event,
     std::optional<Client> caller;
     std::string stage{"startup"};
     std::size_t active_input{};
+    // Set when the interactive attach prompt below is declined. The prompt
+    // is asked only about the last input, and a decline is scoped to that
+    // one input: earlier inputs still build, and this one is left exactly
+    // as it was found rather than aborting the whole load.
+    std::optional<std::size_t> declined_index;
+    std::optional<Session> declined_session;
     try {
       auto server = endpoint(request);
       for (const auto& plan : plans)
@@ -1622,22 +1628,18 @@ static Execution execute_impl(const Request& request, const EventSink& event,
       // mode and never without a terminal to answer from.
       if (interactive && !request.flag("yes") && !request.machine() && !plans.empty()) {
         const auto& target_name = plans.back().workspace.session_name;
-        if (server.session("=" + target_name + ":")) {
+        if (auto found = server.session("=" + target_name + ":")) {
           const auto typed =
               prompt ? prompt(target_name + " is already running. Attach? [Y/n]") : "";
           const char answer =
               typed.empty() ? 'y' : static_cast<char>(std::tolower(typed.front()));
-          if (answer != 'y')
-            // Declining is a normal outcome, not a warning or an error: say
-            // plainly what was left alone rather than answering in silence.
-            return {
-                .value = {{"schema_version", 1},
-                          {"command", "load"},
-                          {"status", "ok"},
-                          {"results", Json::array()},
-                          {"errors", Json::array()},
-                          {"note", target_name + " is unchanged; nothing was built"}},
-                .exit_code = 0};
+          if (answer != 'y') {
+            // Scoped to the input the prompt was about: earlier inputs
+            // still build normally; only this one -- the last -- is left
+            // exactly as it was found, and nothing here is attached.
+            declined_index = plans.size() - 1;
+            declined_session = *found;
+          }
         } else if (!environment("TMUX").empty()) {
           const auto typed =
               prompt ? prompt("Already inside tmux: switch (y), load detached (n), or "
@@ -1656,7 +1658,13 @@ static Execution execute_impl(const Request& request, const EventSink& event,
       std::optional<Session> borrowed;
       if (appending)
         borrowed = append_target(server);
-      else if (interactive && !environment("TMUX").empty()) {
+      else if (declined_index) {
+        // Only the last input is ever selected for attach, and it was just
+        // left alone above -- nothing will be handed off to. Resolving a
+        // caller for a handoff that cannot happen would report a refusal
+        // (no viewing client, an ambiguous one) that has nothing to do with
+        // this decline.
+      } else if (interactive && !environment("TMUX").empty()) {
         if (!environment("TMUX_PANE").empty()) {
           const auto pane = current_pane(server);
           caller = current_client(server, pane.id(), pane.window_id());
@@ -1687,6 +1695,21 @@ static Execution execute_impl(const Request& request, const EventSink& event,
                                     {"session_name", plan.workspace.session_name},
                                     {"window_total", plan.workspace.windows.size()},
                                     {"session_pane_total", total_panes}});
+        if (declined_index && index == *declined_index) {
+          // Left exactly as it was found: no comparison against the
+          // document, no build, no attach. The decision above was scoped to
+          // this one input only.
+          Json result{{"input", private_path(plan.path)},
+                      {"input_index", index},
+                      {"session_id", declined_session->id()},
+                      {"session_name", plan.workspace.session_name},
+                      {"reused", false},
+                      {"action", "left"}};
+          results.push_back(result);
+          ++succeeded;
+          event("workspace-completed", result);
+          continue;
+        }
         std::optional<Failure> observer_error;
         // Captured so a failed build can still report the session it
         // attempted (S12b), even though the session itself may since have
@@ -1946,6 +1969,10 @@ static Execution execute_impl(const Request& request, const EventSink& event,
                  {"status", status},
                  {"results", results},
                  {"errors", errors}};
+    if (declined_index)
+      // Only the declined input is unchanged; the rest of the envelope
+      // already says what the others did.
+      summary["note"] = plans[*declined_index].workspace.session_name + " is unchanged";
     Execution execution{.value = std::move(summary),
                         .exit_code = errors.empty() ? 0 : failure_status};
     if (interactive && errors.empty() && selected) {
@@ -1978,10 +2005,6 @@ std::string human_result(const Request& request, const Json& result, bool colour
     return result.at("format") == "json" ? encoded(result.at("workspace"), 2) + "\n"
                                          : yaml(result.at("workspace"));
   }
-  // A question the user answered gets a plain statement of what that answer
-  // left undone -- not a warning, not an error, an acknowledgement.
-  if (result.is_object() && result.contains("note"))
-    output << role("2", result.at("note").get<std::string>()) << '\n';
   if (request.command == "edit")
     return result.at("stdout").get<std::string>();
   if (request.command == "shell")
@@ -2042,6 +2065,10 @@ std::string human_result(const Request& request, const Json& result, bool colour
                << role("1;35", item.at("session_name").get<std::string>()) << '\n';
         continue;
       }
+      // Left alone by a declined prompt: the envelope's note says so below,
+      // once, rather than a build-shaped line about an input nothing built.
+      if (item.at("action") == "left")
+        continue;
       output << role("32", item.at("action").get<std::string>()) << ' '
              << role("1;35", item.at("session_name").get<std::string>()) << ' '
              << role("2", item.at("session_id").get<std::string>()) << '\n';
@@ -2062,6 +2089,11 @@ std::string human_result(const Request& request, const Json& result, bool colour
     }
   } else
     output << encoded(result, 2) << '\n';
+  // A question the user answered gets a plain statement of what that answer
+  // left undone -- not a warning, not an error, an acknowledgement -- printed
+  // after whatever else this command reported.
+  if (result.is_object() && result.contains("note"))
+    output << role("2", result.at("note").get<std::string>()) << '\n';
   return output.str();
 }
 } // namespace libtmux::workspace::cli
