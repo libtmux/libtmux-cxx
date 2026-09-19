@@ -43,6 +43,7 @@
 #include "libtmux/filter_expr.hpp"
 #include "libtmux/options.hpp"
 #include "libtmux/snapshot.hpp"
+#include "libtmux/wait.hpp"
 
 LIBTMUX_NAMESPACE_BEGIN
 
@@ -712,6 +713,15 @@ public:
   [[nodiscard]] expected<std::string, CommandFailure> capture() const;
   [[nodiscard]] expected<std::string, CommandFailure>
   capture(CaptureOptions options) const;
+
+  // Wait until this pane produces `wanted`, rather than until it merely
+  // appears on screen. Prefers the control stream's `%output` and falls back
+  // to re-reading the screen when no connection can be opened; `WaitOptions`
+  // says which, and `WaitResult::path` says which answered. A caller that
+  // typed the text it is waiting for names it in `WaitOptions::sent`, or the
+  // shell's echo of its own command is credited to the pane as output.
+  [[nodiscard]] expected<WaitResult, CommandFailure>
+  wait_for_text(std::string_view wanted, WaitOptions options = {}) const;
 
   [[nodiscard]] expected<void, CommandFailure> set_width(long long width) const;
   [[nodiscard]] expected<void, CommandFailure> set_height(long long height) const;

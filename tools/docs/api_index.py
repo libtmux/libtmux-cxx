@@ -35,6 +35,7 @@ HEADER_ORDER = [
     "chain.hpp",
     "keys.hpp",
     "capture.hpp",
+    "wait.hpp",
     "target.hpp",
     "socket.hpp",
     "format.hpp",

@@ -27,6 +27,7 @@ is the prose there. Run it with `--check` to prove this page is current.
 - [`libtmux/chain.hpp`](#libtmux-chain-hpp)
 - [`libtmux/keys.hpp`](#libtmux-keys-hpp)
 - [`libtmux/capture.hpp`](#libtmux-capture-hpp)
+- [`libtmux/wait.hpp`](#libtmux-wait-hpp)
 - [`libtmux/target.hpp`](#libtmux-target-hpp)
 - [`libtmux/socket.hpp`](#libtmux-socket-hpp)
 - [`libtmux/format.hpp`](#libtmux-format-hpp)
@@ -1391,6 +1392,7 @@ The tmux object hierarchy.  A Session, Window, Pane or Client is one row of a sn
   - [`Pane::split`](#libtmux-entities-hpp-pane-split)
   - [`Pane::capture`](#libtmux-entities-hpp-pane-capture)
   - [`Pane::capture`](#libtmux-entities-hpp-pane-capture-2)
+  - [`Pane::wait_for_text`](#libtmux-entities-hpp-pane-wait-for-text)
   - [`Pane::set_width`](#libtmux-entities-hpp-pane-set-width)
   - [`Pane::set_height`](#libtmux-entities-hpp-pane-set-height)
   - [`Pane::swap_with`](#libtmux-entities-hpp-pane-swap-with)
@@ -2795,6 +2797,14 @@ The visible contents, as tmux printed them. `capture_lines` frames it into lines
 ```cpp
 [[nodiscard]] expected<std::string, CommandFailure> capture(CaptureOptions options) const;
 ```
+
+<a id="libtmux-entities-hpp-pane-wait-for-text"></a>
+#### `Pane::wait_for_text`
+
+```cpp
+[[nodiscard]] expected<WaitResult, CommandFailure> wait_for_text(std::string_view wanted, WaitOptions options = {}) const;
+```
+Wait until this pane produces `wanted`, rather than until it merely appears on screen. Prefers the control stream's `%output` and falls back to re-reading the screen when no connection can be opened; `WaitOptions` says which, and `WaitResult::path` says which answered. A caller that typed the text it is waiting for names it in `WaitOptions::sent`, or the shell's echo of its own command is credited to the pane as output.
 
 <a id="libtmux-entities-hpp-pane-set-width"></a>
 #### `Pane::set_width`
@@ -6851,6 +6861,192 @@ Drop the blank rows a pane pads its height with, keeping blank lines that have c
 [[nodiscard]] inline bool output_confirms(std::string_view captured, std::string_view wanted, const std::vector<std::string>& sent = {});
 ```
 Whether `wanted` appears in captured text as something the pane produced, rather than as text that is merely on screen.  Waiting for a pane to say something is the first thing a supervising program needs and the easiest to get wrong, because a capture shows two things that are not output. The first is a command still sitting on the prompt: it has been typed, nothing has run it, and searching for it succeeds immediately. The second is its echo. A shell echoes typed input at least once — the kernel's own cooked-mode echo — and often twice more before anything runs, from the line editor's redisplay and from any unrelated repaint. None of those are output, however many rows they end up spread across.  `sent` is what the calling program itself typed into this pane and has not had confirmed. Every occurrence of every entry is erased before `wanted` is looked for, so an echo cannot be credited to the pane no matter where a redraw moved it. That is the check row position alone misses: the same unsubmitted line, unchanged, after something else pushed it off the last row without the pane having produced anything.
+
+<a id="libtmux-wait-hpp"></a>
+## `libtmux/wait.hpp`
+
+Wait for a pane to say something.  This is the first thing a supervising program needs and the easiest to get wrong, which is why it belongs here rather than in each consumer. The hard parts are not the loop: they are telling output apart from a command still sitting on the prompt (`output_confirms` in `capture.hpp`), preferring the control stream's `%output` over re-reading the screen, and falling back to capture when no connection can be opened.
+
+**Symbols:**
+
+- [`WaitPath`](#libtmux-wait-hpp-waitpath)
+  - [`WaitPath::capture_at_entry`](#libtmux-wait-hpp-waitpath-capture-at-entry)
+  - [`WaitPath::capture_after_control_connect`](#libtmux-wait-hpp-waitpath-capture-after-control-connect)
+  - [`WaitPath::capture_before_control`](#libtmux-wait-hpp-waitpath-capture-before-control)
+  - [`WaitPath::control_output`](#libtmux-wait-hpp-waitpath-control-output)
+  - [`WaitPath::capture_polling`](#libtmux-wait-hpp-waitpath-capture-polling)
+- [`WaitResult`](#libtmux-wait-hpp-waitresult)
+  - [`WaitResult::matched`](#libtmux-wait-hpp-waitresult-matched)
+  - [`WaitResult::matched_at_entry`](#libtmux-wait-hpp-waitresult-matched-at-entry)
+  - [`WaitResult::timed_out`](#libtmux-wait-hpp-waitresult-timed-out)
+  - [`WaitResult::present_unconfirmed`](#libtmux-wait-hpp-waitresult-present-unconfirmed)
+  - [`WaitResult::elapsed`](#libtmux-wait-hpp-waitresult-elapsed)
+  - [`WaitResult::path`](#libtmux-wait-hpp-waitresult-path)
+  - [`WaitResult::text`](#libtmux-wait-hpp-waitresult-text)
+- [`WaitOptions`](#libtmux-wait-hpp-waitoptions)
+  - [`WaitOptions::timeout`](#libtmux-wait-hpp-waitoptions-timeout)
+  - [`WaitOptions::sent`](#libtmux-wait-hpp-waitoptions-sent)
+  - [`WaitOptions::match_budget`](#libtmux-wait-hpp-waitoptions-match-budget)
+  - [`WaitOptions::poll_interval`](#libtmux-wait-hpp-waitoptions-poll-interval)
+  - [`WaitOptions::bool`](#libtmux-wait-hpp-waitoptions-bool)
+  - [`WaitOptions::void`](#libtmux-wait-hpp-waitoptions-void)
+  - [`WaitOptions::observe_control_client`](#libtmux-wait-hpp-waitoptions-observe-control-client)
+
+<a id="libtmux-wait-hpp-waitpath"></a>
+### `WaitPath`
+
+Which path answered the wait. A caller that reports on how it learned something needs this; a caller that does not can ignore it.
+
+```cpp
+enum class WaitPath : std::uint8_t;
+```
+
+<a id="libtmux-wait-hpp-waitpath-capture-at-entry"></a>
+#### `WaitPath::capture_at_entry` — `capture_at_entry,`
+
+Already on screen when the wait began, and credited to the pane.
+
+<a id="libtmux-wait-hpp-waitpath-capture-after-control-connect"></a>
+#### `WaitPath::capture_after_control_connect` — `capture_after_control_connect,`
+
+Found by the capture taken right after the control connection opened, which closes the window between the entry capture and the first notification.
+
+<a id="libtmux-wait-hpp-waitpath-capture-before-control"></a>
+#### `WaitPath::capture_before_control` — `capture_before_control,`
+
+The budget expired before a connection could be opened.
+
+<a id="libtmux-wait-hpp-waitpath-control-output"></a>
+#### `WaitPath::control_output` — `control_output,`
+
+A `%output` notification for this pane prompted the capture that matched.
+
+<a id="libtmux-wait-hpp-waitpath-capture-polling"></a>
+#### `WaitPath::capture_polling` — `capture_polling,`
+
+No connection could be opened, so the screen was re-read on a timer.
+
+<a id="libtmux-wait-hpp-waitresult"></a>
+### `WaitResult`
+
+```cpp
+struct WaitResult;
+```
+
+<a id="libtmux-wait-hpp-waitresult-matched"></a>
+#### `WaitResult::matched`
+
+```cpp
+bool matched{};
+```
+`text` contains `wanted` as something the pane produced.
+
+<a id="libtmux-wait-hpp-waitresult-matched-at-entry"></a>
+#### `WaitResult::matched_at_entry`
+
+```cpp
+bool matched_at_entry{};
+```
+`wanted` was already on screen before the wait began. True whether or not the wait went on to credit it to the pane, so a caller can tell a fresh line apart from one that was always there.
+
+<a id="libtmux-wait-hpp-waitresult-timed-out"></a>
+#### `WaitResult::timed_out`
+
+```cpp
+bool timed_out{};
+```
+
+<a id="libtmux-wait-hpp-waitresult-present-unconfirmed"></a>
+#### `WaitResult::present_unconfirmed`
+
+```cpp
+bool present_unconfirmed{};
+```
+`wanted` is on screen, but every occurrence of it is text the caller itself sent — so the pane has not produced it, and this is not a match. Distinct from a silent timeout, where `wanted` never appeared at all.
+
+<a id="libtmux-wait-hpp-waitresult-elapsed"></a>
+#### `WaitResult::elapsed`
+
+```cpp
+std::chrono::milliseconds elapsed{};
+```
+
+<a id="libtmux-wait-hpp-waitresult-path"></a>
+#### `WaitResult::path`
+
+```cpp
+WaitPath path{};
+```
+
+<a id="libtmux-wait-hpp-waitresult-text"></a>
+#### `WaitResult::text`
+
+```cpp
+std::string text{};
+```
+The last capture taken, matched or not.
+
+<a id="libtmux-wait-hpp-waitoptions"></a>
+### `WaitOptions`
+
+```cpp
+struct WaitOptions;
+```
+
+<a id="libtmux-wait-hpp-waitoptions-timeout"></a>
+#### `WaitOptions::timeout`
+
+```cpp
+std::chrono::milliseconds timeout{std::chrono::seconds{10}};
+```
+
+<a id="libtmux-wait-hpp-waitoptions-sent"></a>
+#### `WaitOptions::sent`
+
+```cpp
+std::vector<std::string> sent{};
+```
+What the calling program itself typed into this pane and has not had confirmed. Every occurrence is erased before the wanted text is looked for, so a command's own echo is never credited to the pane as its output. See `output_confirms`.
+
+<a id="libtmux-wait-hpp-waitoptions-match-budget"></a>
+#### `WaitOptions::match_budget`
+
+```cpp
+std::size_t match_budget{8U * 1024U * 1024U};
+```
+How much text this wait will search before giving up. A pane that prints faster than the search can read it would otherwise spin until the deadline; this reports instead. Counted across every capture, not per capture.
+
+<a id="libtmux-wait-hpp-waitoptions-poll-interval"></a>
+#### `WaitOptions::poll_interval`
+
+```cpp
+std::chrono::milliseconds poll_interval{50};
+```
+How long the fallback waits between captures, and the longest the event path blocks before checking the deadline and cancellation.
+
+<a id="libtmux-wait-hpp-waitoptions-bool"></a>
+#### `WaitOptions::bool`
+
+```cpp
+std::function<bool()> cancelled;
+```
+Whether the caller has given up. Polled rather than a `std::stop_token` because the loop already wakes on `poll_interval` and most callers have a flag rather than a token; a token adapts in one line — `[stop] { return stop.stop_requested(); }` — while the reverse would cost the caller a thread. A cancelled wait answers `FailureKind::cancelled`.
+
+<a id="libtmux-wait-hpp-waitoptions-void"></a>
+#### `WaitOptions::void`
+
+```cpp
+std::function<void(std::chrono::milliseconds elapsed, WaitPath path)> on_progress;
+```
+Called at most once per second while the wait runs, with how long it has been waiting and how it is currently waiting. For a caller forwarding progress to somebody else; the wait does not need it.
+
+<a id="libtmux-wait-hpp-waitoptions-observe-control-client"></a>
+#### `WaitOptions::observe_control_client`
+
+```cpp
+std::function<std::shared_ptr<void>(std::int64_t pid)> observe_control_client{};
+```
+Called with the control client's process id when the wait opens one, and expected to answer a guard that the wait holds until it closes that connection. A caller that reports on attached clients needs this, or its own observation reads as somebody else being attached.
 
 <a id="libtmux-target-hpp"></a>
 ## `libtmux/target.hpp`

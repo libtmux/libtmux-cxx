@@ -121,3 +121,121 @@ TEST(PaneIo, CopyModeIsEnteredAndLeftWithoutAnAttachedClient) {
 }
 
 } // namespace
+
+// `wait_for_text` — the four things a supervising caller needs it to get
+// right. The mechanism these exercise lived in the MCP server until it moved
+// here; the reason it is worth a core test is the third one.
+
+TEST(PaneIo, WaitForTextSeesOutputThatArrivesAfterTheWaitBegins) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  auto pane = server.pane(fixture->session_name());
+  ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
+
+  // Delayed, and spelled so that the command does not contain its own output:
+  // the shell composes "delayed-marker" only when it runs. Writing the marker
+  // literally would put it on screen as the echoed prompt line before the wait
+  // even began, which is a different thing to test.
+  const std::string command = "sh -c 'sleep 0.3; echo delayed-$(echo marker)'";
+  ASSERT_TRUE(pane->send_line(command).has_value());
+
+  libtmux::WaitOptions options;
+  options.timeout = std::chrono::seconds{5};
+  options.sent = {command};
+  const auto waited = pane->wait_for_text("delayed-marker", options);
+  ASSERT_TRUE(waited.has_value()) << waited.error().diagnostic;
+  EXPECT_TRUE(waited->matched) << waited->text;
+  EXPECT_FALSE(waited->timed_out);
+  EXPECT_FALSE(waited->matched_at_entry)
+      << "the marker was not on screen when the wait began";
+}
+
+TEST(PaneIo, WaitForTextCreditsTextAlreadyOnScreenAtEntry) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  auto pane = server.pane(fixture->session_name());
+  ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
+
+  const std::string command = "echo settled-marker";
+  ASSERT_TRUE(pane->send_line(command).has_value());
+  libtmux::WaitOptions settle;
+  settle.timeout = std::chrono::seconds{5};
+  settle.sent = {command};
+  ASSERT_TRUE(pane->wait_for_text("settled-marker", settle).has_value());
+
+  libtmux::WaitOptions options;
+  options.timeout = std::chrono::seconds{5};
+  options.sent = {command};
+  const auto waited = pane->wait_for_text("settled-marker", options);
+  ASSERT_TRUE(waited.has_value()) << waited.error().diagnostic;
+  EXPECT_TRUE(waited->matched) << waited->text;
+  EXPECT_TRUE(waited->matched_at_entry);
+  EXPECT_EQ(waited->path, libtmux::WaitPath::capture_at_entry);
+}
+
+// The one that is hard to get right, and the reason this belongs in the
+// library rather than in each consumer. A command sitting on the prompt has
+// been typed and not run: searching the screen for it succeeds immediately,
+// and reporting that as output is wrong.
+TEST(PaneIo, WaitForTextDoesNotCreditACallersOwnEchoAsOutput) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  auto pane = server.pane(fixture->session_name());
+  ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
+
+  // Typed, never submitted: the shell echoes it onto the prompt and nothing
+  // runs it, so the pane has produced nothing.
+  const std::string typed = "never-submitted-marker";
+  ASSERT_TRUE(pane->send_text(typed).has_value());
+
+  libtmux::WaitOptions options;
+  options.timeout = std::chrono::milliseconds{1500};
+  options.sent = {typed};
+  const auto waited = pane->wait_for_text(typed, options);
+  ASSERT_TRUE(waited.has_value()) << waited.error().diagnostic;
+  EXPECT_FALSE(waited->matched)
+      << "the echo of a command is not its output: " << waited->text;
+  EXPECT_TRUE(waited->timed_out);
+  // Not a silent timeout: it is on screen, and the caller is told so.
+  EXPECT_TRUE(waited->present_unconfirmed);
+}
+
+TEST(PaneIo, WaitForTextTimesOutRatherThanHangingOnAQuietPane) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  auto pane = server.pane(fixture->session_name());
+  ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
+
+  libtmux::WaitOptions options;
+  options.timeout = std::chrono::milliseconds{750};
+  const auto waited = pane->wait_for_text("text-that-never-appears", options);
+  ASSERT_TRUE(waited.has_value()) << waited.error().diagnostic;
+  EXPECT_FALSE(waited->matched);
+  EXPECT_TRUE(waited->timed_out);
+  EXPECT_FALSE(waited->present_unconfirmed)
+      << "nothing resembling the wanted text was ever on screen";
+  EXPECT_GE(waited->elapsed, std::chrono::milliseconds{750});
+}
+
+TEST(PaneIo, WaitForTextAnswersCancellationRatherThanTheDeadline) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  auto pane = server.pane(fixture->session_name());
+  ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
+
+  // A caller that has already given up: the wait must answer that, and must
+  // not spend the budget first.
+  libtmux::WaitOptions options;
+  options.timeout = std::chrono::seconds{30};
+  options.cancelled = [] { return true; };
+  const auto started = std::chrono::steady_clock::now();
+  const auto waited = pane->wait_for_text("text-that-never-appears", options);
+  ASSERT_FALSE(waited.has_value()) << "a cancelled wait is a failure, not a timeout";
+  EXPECT_EQ(waited.error().kind, libtmux::FailureKind::cancelled);
+  EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::seconds{5});
+}
