@@ -407,17 +407,37 @@ protected:
     return std::move(*panes);
   }
 
+  // Polls, because tmux publishes no event for an arbitrary format reaching a
+  // value; a satisfied wait returns as soon as it arrives, and an expired one
+  // reports `FailureKind::timeout` naming what it read, rather than silently
+  // returning the last value. The bound is generous because only a failing
+  // wait pays for it.
   [[nodiscard]] libtmux::expected<std::string, libtmux::CommandFailure>
   wait_for_pane_value(const libtmux::Pane& pane, std::string_view format,
-                      std::string_view expected) const {
-    for (int attempt = 0; attempt < 100; ++attempt) {
+                      std::string_view expected,
+                      std::chrono::milliseconds bound = std::chrono::seconds{
+                          15}) const {
+    const auto started = std::chrono::steady_clock::now();
+    std::string last;
+    for (;;) {
       auto value = pane.expand(format);
       if (!value.has_value() || *value == expected) {
         return value;
       }
+      last = *std::move(value);
+      const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::now() - started);
+      if (elapsed >= bound) {
+        return libtmux::unexpected(libtmux::CommandFailure{
+            .kind = libtmux::FailureKind::timeout,
+            .delivery = libtmux::DeliveryStatus::replied,
+            .exit_code = 0,
+            .diagnostic = std::string{format} + " was \"" + last + "\" after " +
+                          std::to_string(elapsed.count()) + "ms, waiting for \"" +
+                          std::string{expected} + "\""});
+      }
       std::this_thread::sleep_for(std::chrono::milliseconds{10});
     }
-    return pane.expand(format);
   }
 
   void send_shell_and_wait(const libtmux::Server& server, const libtmux::Pane& pane,
