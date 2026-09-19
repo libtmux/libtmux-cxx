@@ -39,17 +39,6 @@ struct Row {
   std::optional<std::string> reason;
 };
 
-// Lanes this port cannot express. Recorded rather than omitted, because a
-// missing row and an unavailable transport are different claims.
-const std::vector<std::pair<std::string, std::string>>& unimplemented_lanes() {
-  static const std::vector<std::pair<std::string, std::string>> lanes{
-      {"connection", "not built yet: needs a control-mode CommandExecutor"},
-      {"concurrent x4", "requires a dispatching control connection"},
-      {"chained + connection", "requires a dispatching control connection"},
-  };
-  return lanes;
-}
-
 std::string capture(const std::string& command) {
   std::string output;
   FILE* pipe = ::popen(command.c_str(), "r");
@@ -134,8 +123,10 @@ std::vector<std::vector<std::string>> workload(const std::string& target) {
   return commands;
 }
 
+// `connections` of zero launches tmux per command; otherwise the build runs
+// over that many held-open control clients, as the Go port's pool does.
 std::optional<Row> measure(const std::string& mode, const std::string& real_tmux,
-                           bool chained) {
+                           bool chained, std::size_t connections) {
   const std::filesystem::path root =
       std::filesystem::temp_directory_path() / "libtmux-cxx-bench";
   std::filesystem::create_directories(root);
@@ -166,6 +157,16 @@ std::optional<Row> measure(const std::string& mode, const std::string& real_tmux
   if (!opened.has_value()) {
     std::fprintf(stderr, "benchmarks: %s\n", opened.error().diagnostic.c_str());
     return std::nullopt;
+  }
+  // Opening the clients is setup, as starting the server is: only the build
+  // below is measured, and it must launch nothing.
+  if (connections > 0U) {
+    auto controlled = opened->over_control("bench", connections);
+    if (!controlled.has_value()) {
+      std::fprintf(stderr, "benchmarks: %s\n", controlled.error().message.c_str());
+      return std::nullopt;
+    }
+    opened = *std::move(controlled);
   }
   const libtmux::Server& server = *opened;
 
@@ -241,10 +242,19 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  struct Lane {
+    std::string mode;
+    bool chained;
+    std::size_t connections;
+  };
   std::vector<Row> rows;
-  for (const auto& [mode, chained] : std::vector<std::pair<std::string, bool>>{
-           {"process", false}, {"chained", true}}) {
-    auto row = measure(mode, real_tmux, chained);
+  for (const Lane& lane : std::vector<Lane>{{"process", false, 0U},
+                                            {"chained", true, 0U},
+                                            {"connection", false, 1U},
+                                            {"concurrent x4", false, 4U},
+                                            {"chained + connection", true, 1U}}) {
+    const std::string& mode = lane.mode;
+    auto row = measure(mode, real_tmux, lane.chained, lane.connections);
     if (!row.has_value()) {
       if (want_json) {
         std::printf("{\"error\":\"lane %s did not complete\",\"outcome\":\"failed\","
@@ -256,10 +266,6 @@ int main(int argc, char** argv) {
       return 1;
     }
     rows.push_back(*row);
-  }
-  for (const auto& [mode, reason] : unimplemented_lanes()) {
-    rows.push_back(Row{mode, "unimplemented", std::nullopt, std::nullopt, std::nullopt,
-                       std::nullopt, reason});
   }
 
   if (want_check) {
@@ -299,6 +305,15 @@ int main(int argc, char** argv) {
       failures.push_back("the chained lane made " +
                          std::to_string(rows[1].processes.value_or(0)) +
                          " tmux invocations, not one");
+    }
+    // Every command in the workload is one tmux answers inside its guarded
+    // block, so a control lane that launches anything has fallen back.
+    for (std::size_t index = 2; index < rows.size(); ++index) {
+      if (rows[index].processes.value_or(-1) != 0) {
+        failures.push_back(rows[index].mode + " made " +
+                           std::to_string(rows[index].processes.value_or(-1)) +
+                           " tmux invocations, not none");
+      }
     }
     for (const std::string& failure : failures) {
       std::fprintf(stderr, "FAIL %s\n", failure.c_str());

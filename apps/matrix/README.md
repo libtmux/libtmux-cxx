@@ -31,16 +31,16 @@ compiler check.
 ```
 
 building a 6-pane window, tmux 3.7d
-libtmux at a92937b
+libtmux at 38a9fbb
 12th Gen Intel(R) Core(TM) i7-12700H, 10 threads, linux, clang
 
 path                       wall   processes  clients  query answer
 ----------------------------------------------------------------------------------------
-process                    26ms          11        0  7 panes on the server [0 0 1 2 3 4 5]
-chained                     5ms           1        0  7 panes on the server [0 0 1 2 3 4 5]
-connection                    -           -        -  unimplemented: libtmux::control::Connection carries notifications and pane-output policy; it exposes no method that dispatches a command
-concurrent x4                 -           -        -  unimplemented: requires a dispatching control connection
-chained + connection          -           -        -  unimplemented: requires a dispatching control connection
+process                   213ms          11        0  7 panes on the server [0 0 1 2 3 4 5]
+chained                    16ms           1        0  7 panes on the server [0 0 1 2 3 4 5]
+connection                 31ms           0        1  7 panes on the server [0 0 1 2 3 4 5]
+concurrent x4              20ms           0        4  7 panes on the server [0 0 1 2 3 4 5]
+chained + connection       40ms           0        1  7 panes on the server [0 0 1 2 3 4 5]
 ```
 
 Add `--json` for the same results as one strict JSON document with durations
@@ -55,21 +55,14 @@ comparable against the other libtmux ports.
 **Count invocations, not milliseconds.** Wall clock moves with the machine. The
 process column does not.
 
-Three lanes are reported as unimplemented rather than left out. An earlier
-version of this note said tmux itself forbade them, because `split-window` is
-one of the twelve commands that can return `CMD_RETURN_WAIT`. That overstated
-it: `split-window` defers only under `-I` or `-W`, and this workload sends
-neither, so its guarded block is the whole answer. The lanes are unbuilt, not
-unbuildable.
-
-The distinction matters because it is narrow. No `list-*` command can defer,
-and `display-message` defers only under `-I`, so a listing *is* answered
-completely by its guarded block — which is why `tests/executor_seam_test.cpp`
-can serve every listing over one held-open connection and match this table's
-launching path row for row. A benchmark shaped like that workload would show
-what the control path buys; this one, built out of mutations, would not.
-libtmux-ts makes the same choice; libtmux-go, libtmux-rs, Swift, .NET and Java
-dispatch commands over their connections and measure that.
+The three connection lanes run the same build through
+`Server::over_control`: over one held-open control client, over a pool of four
+as the Go port's `concurrent x4` does, and chained over one. Every command in
+this workload is one tmux answers completely inside its guarded block —
+`split-window` defers only under `-I` or `-W`, and nothing here sends either —
+so none of them launches, and `--check` requires exactly zero. A lane that
+fell back to launching would show its invocations there. The clients are
+opened before the measured build, as the server is started before it.
 
 The harness writes a POSIX proxy that records one invocation and execs the real
 tmux, then names it twice: to the fixture as `tmux_binary`, so the server it

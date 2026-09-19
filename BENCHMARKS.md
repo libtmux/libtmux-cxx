@@ -11,11 +11,12 @@ $ cmake --build --preset cxx-dev --target libtmux_matrix libtmux_operations_benc
 
 ## [`apps/matrix/`](apps/matrix/README.md) - command dispatch
 
-What each way of reaching tmux costs: one process per command against a
-`Chain` batched into one. `--check` asserts the table's own claims (every
-supported lane must answer the same query about the same topology); `--json`
-prints the same rows as one document. See its own README for what each lane
-means and why two are reported unimplemented rather than omitted.
+What each way of reaching tmux costs: one process per command, a `Chain`
+batched into one, and the same build over held-open control clients through
+`Server::over_control` — one client, a pool of four, and chained over one.
+`--check` asserts the table's own claims (every lane must answer the same query
+about the same topology); `--json` prints the same rows as one document. See
+its own README for what each lane means.
 
 ```console
 $ ./build/cxx-dev/apps/matrix/libtmux_matrix
@@ -38,12 +39,11 @@ Three costs that sit on top of a single dispatch:
 $ ./build/cxx-dev/benchmarks/libtmux_operations_bench
 ```
 
-Command-mode dispatch over a control connection is not measured here for the
-same reason `matrix` reports it unimplemented: `Connection` exposes
-`execute()`, but it completes at the wire's own guard boundary rather than at
-a command's final, awaited result (see `execute()`'s declaration in
-[`include/libtmux/control.hpp`](include/libtmux/control.hpp)), so it answers a
-different question than every other row in these tables.
+Dispatch over a control connection is measured in `matrix`, not here, and
+only through `Server::over_control`, which sends a command over the wire only
+where tmux answers it completely inside its guarded block. A raw
+`Connection::execute()` completes at that boundary whatever the command, so on
+its own it answers a different question than every other row here.
 
 ## Reading the numbers
 
@@ -55,8 +55,9 @@ There is deliberately no time budget to regress against, because a wall clock
 on a shared runner would fail for reasons that have nothing to do with this
 library. What *is* gated is the process column, which is deterministic and the
 same everywhere: `matrix --check` asserts that every lane answers the same
-query, that the process lane makes exactly one tmux invocation per command, and
-that the chained lane makes exactly one. An inequality would not have done —
+query, that the process lane makes exactly one tmux invocation per command,
+that the chained lane makes exactly one, and that the three connection lanes
+make none. An inequality would not have done —
 `chained < process` stays true when a stray launch is added to the typed path,
 and the exact counts catch it. The expectation is derived from the workload, so
 changing the workload cannot leave a stale number behind.
