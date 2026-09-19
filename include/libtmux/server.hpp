@@ -418,7 +418,7 @@ public:
   // `WaitPath::pane_lookup` says that is what happened.
   [[nodiscard]] expected<WaitResult, CommandFailure>
   wait_for_text(std::string_view target, std::string_view wanted,
-                WaitOptions options = {}) const;
+                const WaitOptions& options = {}) const;
 
   // Created detached, and returned, because tmux prints what it made. Windows
   // psmux rejects typed creation: concurrent creators cannot prove ownership.
