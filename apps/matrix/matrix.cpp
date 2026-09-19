@@ -282,10 +282,23 @@ int main(int argc, char** argv) {
     if (expected.rfind("7 panes on the server [", 0) != 0) {
       failures.push_back("the answer is not the expected topology: " + expected);
     }
-    if (rows[0].processes.value_or(0) == 0) {
-      failures.push_back("the process lane recorded no tmux invocations");
-    } else if (rows[1].processes.value_or(0) >= rows[0].processes.value_or(0)) {
-      failures.push_back("chaining did not reduce tmux invocations");
+    // Exact counts, not an inequality. Invocations are deterministic and the
+    // same on every machine, which is what makes them gateable where wall
+    // clock is not: a stray launch added to the typed path keeps `chained <
+    // process` true and would have gone unnoticed. The expectation is derived
+    // from the workload rather than written down, so changing the workload
+    // cannot leave a stale number behind.
+    const int expected_process_launches = static_cast<int>(workload("@0").size());
+    if (rows[0].processes.value_or(0) != expected_process_launches) {
+      failures.push_back("the process lane made " +
+                         std::to_string(rows[0].processes.value_or(0)) +
+                         " tmux invocations, not one per command (" +
+                         std::to_string(expected_process_launches) + ")");
+    }
+    if (rows[1].processes.value_or(0) != 1) {
+      failures.push_back("the chained lane made " +
+                         std::to_string(rows[1].processes.value_or(0)) +
+                         " tmux invocations, not one");
     }
     for (const std::string& failure : failures) {
       std::fprintf(stderr, "FAIL %s\n", failure.c_str());

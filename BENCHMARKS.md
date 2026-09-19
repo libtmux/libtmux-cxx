@@ -49,10 +49,17 @@ different question than every other row in these tables.
 
 Both programs print wall-clock milliseconds from a machine and load this
 repository does not control, so a number here is a shape, not a promise: run
-them yourself before trusting a comparison. `matrix --check` is the one
-assertion either program makes, and it is about correctness (every lane
-answers the same query), not about a time budget - there is no "benchmark
-regressed" gate here, only two programs a maintainer can run and read.
+them yourself before trusting a comparison.
+
+There is deliberately no time budget to regress against, because a wall clock
+on a shared runner would fail for reasons that have nothing to do with this
+library. What *is* gated is the process column, which is deterministic and the
+same everywhere: `matrix --check` asserts that every lane answers the same
+query, that the process lane makes exactly one tmux invocation per command, and
+that the chained lane makes exactly one. An inequality would not have done —
+`chained < process` stays true when a stray launch is added to the typed path,
+and the exact counts catch it. The expectation is derived from the workload, so
+changing the workload cannot leave a stale number behind.
 
 Both start their own private tmux server (`libtmux::testing`) and never touch
 the one you are sitting in.
