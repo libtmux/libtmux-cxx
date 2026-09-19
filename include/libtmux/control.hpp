@@ -301,6 +301,11 @@ public:
                   std::chrono::steady_clock::time_point deadline);
 
   // Named forms of set_pane_output; the same connection policy applies.
+  //
+  // Muting is not this connection's private business on tmux 3.7+: tmux stops
+  // reading the pane's pty, so the pane freezes for every attached client and
+  // tool until it is resumed. `set_pane_output` has the version-by-version
+  // detail; this is the part worth knowing before reaching for the name.
   [[nodiscard]] expected<void, ProtocolError>
   mute_pane_output(std::string_view pane,
                    std::chrono::steady_clock::time_point deadline) {

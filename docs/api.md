@@ -995,7 +995,7 @@ True means the result can be taken; false means only this wait expired. Neither 
 [[nodiscard]] expected<std::string, CommandFailure> wait(std::stop_token stop) &&;
 ```
 Available when `defined(__cpp_lib_jthread) && __cpp_lib_jthread >= 201911L`.
-The token requests transport cancellation only during this wait; it cannot undo tmux work. The eventual result retains its command failure and delivery status.
+These three overloads exist only where the standard library provides `std::stop_token`. libstdc++ does; libc++ does not without `-fexperimental-library`, and this package pins clang with libc++ — so a default build of it has no `stop_token` overload at all, and a caller reaching for one meets "no matching member function" rather than anything that explains itself. Every non-token overload below is always present, and `cancel()` is the portable way to withdraw a wait.  The token requests transport cancellation only during this wait; it cannot undo tmux work. The eventual result retains its command failure and delivery status.
 
 <a id="libtmux-async-hpp-commandoperation-wait-until-2"></a>
 #### `CommandOperation::wait_until`
@@ -6176,7 +6176,7 @@ Stop or resume `%output` for one pane, on a connection that asked for it.  The d
 ```cpp
 [[nodiscard]] expected<void, ProtocolError> mute_pane_output(std::string_view pane, std::chrono::steady_clock::time_point deadline);
 ```
-Named forms of set_pane_output; the same connection policy applies.
+Named forms of set_pane_output; the same connection policy applies.  Muting is not this connection's private business on tmux 3.7+: tmux stops reading the pane's pty, so the pane freezes for every attached client and tool until it is resumed. `set_pane_output` has the version-by-version detail; this is the part worth knowing before reaching for the name.
 
 <a id="libtmux-control-hpp-connection-resume-pane-output"></a>
 #### `Connection::resume_pane_output`
