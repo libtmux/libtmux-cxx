@@ -1,5 +1,7 @@
 #include "libtmux/wait.hpp"
 
+#include "wait_capture.hpp"
+
 #include "libtmux/capture.hpp"
 #include "libtmux/control.hpp"
 #include "libtmux/entities.hpp"
@@ -10,15 +12,19 @@
 #include <array>
 
 #include <algorithm>
+#include <charconv>
 #include <chrono>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
 
 LIBTMUX_NAMESPACE_BEGIN
 namespace {
+
+using detail::PaneCursor;
 
 class Deadline {
 public:
@@ -79,9 +85,7 @@ struct Wait {
   const WaitOptions& options;
   Deadline deadline;
   std::size_t match_budget;
-  // Asked of the caller once, when the pane is known, rather than on every
-  // capture: the answer is the same all the way through and the caller may be
-  // taking a lock to produce it.
+  // Refreshed immediately before each confirmation, including the final one.
   std::vector<std::string> sent{};
   // Empty until looked up, and only looked up when a connection is about to
   // open. The `Server` entry point already has it and fills it in.
@@ -127,6 +131,60 @@ using BoundedOutput = expected<std::optional<std::string>, CommandFailure>;
   return run_before_deadline(wait, {"capture-pane", "-p", "-J", "-t", wait.pane_id});
 }
 
+// A failed position lookup uses the capture-only fallback.
+[[nodiscard]] std::optional<PaneCursor> cursor_before_deadline(Wait& wait) {
+  const auto reply =
+      run_before_deadline(wait, {"display-message", "-p", "-t", wait.pane_id, "--",
+                                 "#{cursor_y} #{pane_height}"});
+  if (!reply.has_value() || !reply->has_value()) {
+    return std::nullopt;
+  }
+  std::string_view text = **reply;
+  while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) {
+    text.remove_suffix(1);
+  }
+  const auto separator = text.find(' ');
+  if (separator == std::string_view::npos) {
+    return std::nullopt;
+  }
+  const std::string_view row_field = text.substr(0, separator);
+  const std::string_view height_field = text.substr(separator + 1);
+  std::size_t row = 0;
+  std::size_t pane_height = 0;
+  const auto row_parsed =
+      std::from_chars(row_field.data(), row_field.data() + row_field.size(), row);
+  const auto height_parsed = std::from_chars(
+      height_field.data(), height_field.data() + height_field.size(), pane_height);
+  if (row_parsed.ec != std::errc{} ||
+      row_parsed.ptr != row_field.data() + row_field.size() ||
+      height_parsed.ec != std::errc{} ||
+      height_parsed.ptr != height_field.data() + height_field.size() ||
+      pane_height == 0U) {
+    return std::nullopt;
+  }
+  return PaneCursor{.row = row, .pane_height = pane_height};
+}
+
+// One capture, paired with the cursor position read just before it.
+struct GridSnapshot {
+  std::optional<PaneCursor> cursor;
+  std::string text;
+};
+using BoundedGrid = expected<std::optional<GridSnapshot>, CommandFailure>;
+
+[[nodiscard]] BoundedGrid grid_before_deadline(Wait& wait) {
+  const std::optional<PaneCursor> cursor = cursor_before_deadline(wait);
+  auto captured = capture_before_deadline(wait);
+  if (!captured.has_value()) {
+    return unexpected(std::move(captured.error()));
+  }
+  if (!captured->has_value()) {
+    return std::optional<GridSnapshot>{};
+  }
+  return std::optional<GridSnapshot>{
+      GridSnapshot{.cursor = cursor, .text = *std::move(*captured)}};
+}
+
 // Charge a search against the budget before running it. A pane printing faster
 // than this can read it would otherwise spin until the deadline with nothing
 // to show.
@@ -154,14 +212,31 @@ using BoundedOutput = expected<std::optional<std::string>, CommandFailure>;
                     .text = std::move(text)};
 }
 
+[[nodiscard]] bool confirms(Wait& wait, std::string_view text,
+                            std::optional<PaneCursor> cursor) {
+  if (wait.options.sent) {
+    wait.sent = wait.options.sent(wait.pane_id);
+  }
+  const bool pending = wait.options.input_pending
+                           ? wait.options.input_pending(wait.pane_id)
+                           : !wait.sent.empty();
+  return detail::output_confirms(text, wait.wanted, wait.sent, cursor, pending);
+}
+
 // Every path defers a match it cannot credit to the pane, treating it exactly
 // as "not yet" and capturing again. This is where every timeout is built, and
 // a deferred match still standing at the deadline is never promoted: text the
 // caller itself sent is not output, however new the bytes are. It is reported
 // separately instead, so a caller can tell "I saw it but could not credit it"
 // apart from a plain silent timeout.
-[[nodiscard]] WaitResult timed_out(const Wait& wait, WaitPath path, std::string text) {
-  if (!wait.wanted.empty() && output_confirms(text, wait.wanted, wait.sent)) {
+//
+// `cursor` is the position paired with `text`, when the caller has one: the
+// deadline can expire between a capture and the check that follows it, and
+// this is that check's last chance to use the same cursor rather than falling
+// back to the active-row heuristic despite already having the real position.
+[[nodiscard]] WaitResult timed_out(Wait& wait, WaitPath path, std::string text,
+                                   std::optional<PaneCursor> cursor = std::nullopt) {
+  if (!wait.wanted.empty() && confirms(wait, text, cursor)) {
     return matched_result(wait, path, std::move(text));
   }
   const bool present =
@@ -183,27 +258,30 @@ void report(const Wait& wait, WaitPath path) {
 
 [[nodiscard]] expected<WaitResult, CommandFailure>
 poll_for_text(Wait& wait, WaitPath path, std::string last) {
+  std::optional<PaneCursor> last_cursor;
   auto next_progress = wait.deadline.started();
   while (!wait.deadline.expired()) {
     if (gave_up(wait.options)) {
       return unexpected(cancelled_failure());
     }
-    auto captured = capture_before_deadline(wait);
+    auto captured = grid_before_deadline(wait);
     if (!captured.has_value()) {
       return unexpected(std::move(captured.error()));
     }
     if (!captured->has_value()) {
-      return timed_out(wait, path, std::move(last));
+      return timed_out(wait, path, std::move(last), last_cursor);
     }
-    last = *std::move(*captured);
+    GridSnapshot snapshot = *std::move(*captured);
+    last = std::move(snapshot.text);
+    last_cursor = snapshot.cursor;
     if (wait.deadline.expired()) {
-      return timed_out(wait, path, std::move(last));
+      return timed_out(wait, path, std::move(last), last_cursor);
     }
     auto present = within_budget(wait, last);
     if (!present.has_value()) {
       return unexpected(std::move(present.error()));
     }
-    if (*present && output_confirms(last, wait.wanted, wait.sent)) {
+    if (*present && confirms(wait, last, last_cursor)) {
       return matched_result(wait, path, std::move(last));
     }
     if (std::chrono::steady_clock::now() >= next_progress) {
@@ -215,7 +293,7 @@ poll_for_text(Wait& wait, WaitPath path, std::string last) {
       std::this_thread::sleep_for(std::min(*remaining, wait.options.poll_interval));
     }
   }
-  return timed_out(wait, path, std::move(last));
+  return timed_out(wait, path, std::move(last), last_cursor);
 }
 
 [[nodiscard]] expected<WaitResult, CommandFailure>
@@ -263,22 +341,25 @@ stream_for_text(Wait& wait, std::string_view session_name, std::string screen) {
   // The window between the entry capture and the first notification belongs to
   // nobody otherwise: output that landed while the connection was starting
   // would not appear on the wire and would not have been on screen yet.
-  auto after_connect = capture_before_deadline(wait);
+  auto after_connect = grid_before_deadline(wait);
   if (!after_connect.has_value()) {
     return unexpected(std::move(after_connect.error()));
   }
   if (!after_connect->has_value()) {
     return timed_out(wait, WaitPath::capture_after_control_connect, std::move(screen));
   }
-  screen = *std::move(*after_connect);
+  GridSnapshot connect_snapshot = *std::move(*after_connect);
+  screen = std::move(connect_snapshot.text);
+  std::optional<PaneCursor> cursor = connect_snapshot.cursor;
   if (wait.deadline.expired()) {
-    return timed_out(wait, WaitPath::capture_after_control_connect, std::move(screen));
+    return timed_out(wait, WaitPath::capture_after_control_connect, std::move(screen),
+                     cursor);
   }
   auto present = within_budget(wait, screen);
   if (!present.has_value()) {
     return unexpected(std::move(present.error()));
   }
-  if (*present && output_confirms(screen, wait.wanted, wait.sent)) {
+  if (*present && confirms(wait, screen, cursor)) {
     return matched_result(wait, WaitPath::capture_after_control_connect,
                           std::move(screen));
   }
@@ -314,22 +395,24 @@ stream_for_text(Wait& wait, std::string_view session_name, std::string screen) {
       // The notification says the pane produced something, not what the screen
       // now reads: `%output` carries the bytes written, which a redraw, a
       // wrap or a clear can place anywhere. The capture is what gets searched.
-      auto captured = capture_before_deadline(wait);
+      auto captured = grid_before_deadline(wait);
       if (!captured.has_value()) {
         return unexpected(std::move(captured.error()));
       }
       if (!captured->has_value()) {
-        return timed_out(wait, WaitPath::control_output, std::move(screen));
+        return timed_out(wait, WaitPath::control_output, std::move(screen), cursor);
       }
-      screen = *std::move(*captured);
+      GridSnapshot output_snapshot = *std::move(*captured);
+      screen = std::move(output_snapshot.text);
+      cursor = output_snapshot.cursor;
       if (wait.deadline.expired()) {
-        return timed_out(wait, WaitPath::control_output, std::move(screen));
+        return timed_out(wait, WaitPath::control_output, std::move(screen), cursor);
       }
       auto found = within_budget(wait, screen);
       if (!found.has_value()) {
         return unexpected(std::move(found.error()));
       }
-      if (*found && output_confirms(screen, wait.wanted, wait.sent)) {
+      if (*found && confirms(wait, screen, cursor)) {
         return matched_result(wait, WaitPath::control_output, std::move(screen));
       }
     }
@@ -338,24 +421,23 @@ stream_for_text(Wait& wait, std::string_view session_name, std::string screen) {
       next_progress = std::chrono::steady_clock::now() + std::chrono::seconds{1};
     }
   }
-  return timed_out(wait, WaitPath::control_output, std::move(screen));
+  return timed_out(wait, WaitPath::control_output, std::move(screen), cursor);
 }
 
 // Both entry points meet here, with the deadline already running and the pane
 // settled: a wait that had to resolve its target first has already spent part
 // of its budget doing so, and must not start over.
 [[nodiscard]] expected<WaitResult, CommandFailure> perform(Wait& wait) {
-  if (wait.options.sent) {
-    wait.sent = wait.options.sent(wait.pane_id);
-  }
-  auto captured = capture_before_deadline(wait);
+  auto captured = grid_before_deadline(wait);
   if (!captured.has_value()) {
     return unexpected(std::move(captured.error()));
   }
   if (!captured->has_value()) {
     return timed_out(wait, WaitPath::capture_at_entry, {});
   }
-  std::string screen = *std::move(*captured);
+  GridSnapshot snapshot = *std::move(*captured);
+  std::string screen = std::move(snapshot.text);
+  const std::optional<PaneCursor> cursor = snapshot.cursor;
   // The screen at entry is read before anything else runs, so a later capture
   // that merely rediscovers text that was already here is never reported as
   // fresh output.
@@ -365,9 +447,9 @@ stream_for_text(Wait& wait, std::string_view session_name, std::string screen) {
   }
   wait.matched_at_entry = *present;
   if (wait.deadline.expired()) {
-    return timed_out(wait, WaitPath::capture_at_entry, std::move(screen));
+    return timed_out(wait, WaitPath::capture_at_entry, std::move(screen), cursor);
   }
-  if (*present && output_confirms(screen, wait.wanted, wait.sent)) {
+  if (*present && confirms(wait, screen, cursor)) {
     return matched_result(wait, WaitPath::capture_at_entry, std::move(screen));
   }
 

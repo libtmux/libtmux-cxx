@@ -3,8 +3,8 @@
 # Leaving it out of the Windows build left the catalog naming a symbol nothing
 # defined.
 add_library(
-  mcp_tools STATIC src/pane_input.cpp src/tool_catalog.cpp src/tool_model.cpp
-                   src/wait_for_text.cpp)
+  mcp_tools STATIC src/pane_echo.cpp src/pane_input.cpp src/tool_catalog.cpp
+                   src/tool_model.cpp src/wait_for_text.cpp)
 target_include_directories(
   mcp_tools PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
             PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -15,7 +15,7 @@ if(LIBTMUX_BUILD_TESTS AND NOT WIN32)
   # `libtmux::testing` directly, not this repository's internal alias: the MCP
   # tool surface is here to be a consumer, and a consumer reaches the fixture
   # through the exported target.
-  add_executable(mcp_tools_test tests/mcp_test.cpp)
+  add_executable(mcp_tools_test tests/mcp_test.cpp tests/pane_echo_test.cpp)
   target_include_directories(
     mcp_tools_test PRIVATE "${PROJECT_SOURCE_DIR}/src"
                            "${CMAKE_CURRENT_SOURCE_DIR}/src")

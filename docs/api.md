@@ -7136,7 +7136,7 @@ Drop the blank rows a pane pads its height with, keeping blank lines that have c
 ```cpp
 [[nodiscard]] inline bool output_confirms(std::string_view captured, std::string_view wanted, const std::vector<std::string>& sent = {});
 ```
-Whether `wanted` appears in captured text as something the pane produced, rather than as text that is merely on screen.  Waiting for a pane to say something is the first thing a supervising program needs and the easiest to get wrong, because a capture shows two things that are not output. The first is a command still sitting on the prompt: it has been typed, nothing has run it, and searching for it succeeds immediately. The second is its echo. A shell echoes typed input at least once — the kernel's own cooked-mode echo — and often twice more before anything runs, from the line editor's redisplay and from any unrelated repaint. None of those are output, however many rows they end up spread across.  `sent` is what the calling program itself typed into this pane and has not had confirmed. Every occurrence of every entry is erased before `wanted` is looked for, so an echo cannot be credited to the pane no matter where a redraw moved it. That is the check row position alone misses: the same unsubmitted line, unchanged, after something else pushed it off the last row without the pane having produced anything.
+Whether `wanted` appears in captured text as something the pane produced, rather than as text that is merely on screen.  Waiting for a pane to say something is the first thing a supervising program needs and the easiest to get wrong, because a capture shows two things that are not output. The first is a command still sitting on the prompt: it has been typed, nothing has run it, and searching for it succeeds immediately. The second is its echo. A shell echoes typed input at least once — the kernel's own cooked-mode echo — and often twice more before anything runs, from the line editor's redisplay and from any unrelated repaint. None of those are output, however many rows they end up spread across.  `sent` is what the calling program itself typed into this pane and has not had confirmed. Every whole occurrence of every entry is masked before `wanted` is looked for, so an echo cannot be credited to the pane no matter where a redraw moved it, and a short entry cannot corrupt a longer real word that merely contains it. That is the check row position alone misses: the same unsubmitted line, unchanged, after something else pushed it off the last row without the pane having produced anything.
 
 <a id="libtmux-wait-hpp"></a>
 ## `libtmux/wait.hpp`
@@ -7164,9 +7164,10 @@ Wait for a pane to say something.  This is the first thing a supervising program
 - [`WaitOptions`](#libtmux-wait-hpp-waitoptions)
   - [`WaitOptions::timeout`](#libtmux-wait-hpp-waitoptions-timeout)
   - [`WaitOptions::sent`](#libtmux-wait-hpp-waitoptions-sent)
+  - [`WaitOptions::bool`](#libtmux-wait-hpp-waitoptions-bool)
   - [`WaitOptions::match_budget`](#libtmux-wait-hpp-waitoptions-match-budget)
   - [`WaitOptions::poll_interval`](#libtmux-wait-hpp-waitoptions-poll-interval)
-  - [`WaitOptions::bool`](#libtmux-wait-hpp-waitoptions-bool)
+  - [`WaitOptions::bool`](#libtmux-wait-hpp-waitoptions-bool-2)
   - [`WaitOptions::void`](#libtmux-wait-hpp-waitoptions-void)
   - [`WaitOptions::observe_control_client`](#libtmux-wait-hpp-waitoptions-observe-control-client)
 
@@ -7297,7 +7298,15 @@ std::chrono::milliseconds timeout{std::chrono::seconds{10}};
 ```cpp
 std::function<std::vector<std::string>(std::string_view pane_id)> sent{};
 ```
-What the calling program itself typed into this pane and has not had confirmed. Every occurrence is erased before the wanted text is looked for, so a command's own echo is never credited to the pane as its output. See `output_confirms`.  Asked once, with the pane the wait settled on, because a caller that keys its record by pane cannot answer for a target it has not resolved — and resolving it twice is what this saves. A caller holding a plain list writes `[list](std::string_view) { return list; }`.
+Whole input echoes to discount, queried before every match attempt. The caller retains submitted echoes for this wait's lifetime and drops pending text when an unmodelled edit invalidates it.
+
+<a id="libtmux-wait-hpp-waitoptions-bool"></a>
+#### `WaitOptions::bool`
+
+```cpp
+std::function<bool(std::string_view pane_id)> input_pending;
+```
+Read after `sent`. A submitted line may still be discounted without excluding real output on the cursor row. Absent means `!sent.empty()`.
 
 <a id="libtmux-wait-hpp-waitoptions-match-budget"></a>
 #### `WaitOptions::match_budget`
@@ -7315,7 +7324,7 @@ std::chrono::milliseconds poll_interval{50};
 ```
 How long the fallback waits between captures, and the longest the event path blocks before checking the deadline and cancellation.
 
-<a id="libtmux-wait-hpp-waitoptions-bool"></a>
+<a id="libtmux-wait-hpp-waitoptions-bool-2"></a>
 #### `WaitOptions::bool`
 
 ```cpp

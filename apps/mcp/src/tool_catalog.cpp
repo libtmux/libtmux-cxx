@@ -32,6 +32,7 @@
 #include "libtmux/keys.hpp"
 #include "libtmux/server.hpp"
 #include "libtmux/snapshot.hpp"
+#include "pane_echo.hpp"
 #include "pane_input.hpp"
 #include "wait_for_text.hpp"
 
@@ -396,6 +397,29 @@ struct PaneInputRow {
                           "incomplete, malformed, or inconsistent"};
 }
 
+// The server generation a pane-echo record is keyed by. `server.socket_path()`
+// rather than `preflight.endpoint_path`: `wait_for_text` reads the same
+// record back from the socket path alone, before any pane-input preflight has
+// resolved an endpoint, so the two sides must agree on which string names the
+// server.
+[[nodiscard]] detail::PaneServerIdentity
+pane_server_identity(const Server& server,
+                     const detail::PaneInputPreflight& preflight) {
+  return detail::PaneServerIdentity{.socket_path = std::string{server.socket_path()},
+                                    .server_pid = preflight.server_pid,
+                                    .server_start_time = preflight.server_start_time};
+}
+
+// Bound memory opportunistically: every pane-input dispatch already has a
+// server-wide pane listing on hand, so a stale pane-echo record is dropped
+// the next time any pane is written to, without a listing of its own.
+void prune_dead_pane_echoes(const Server& server,
+                            const detail::PaneInputPreflight& preflight) {
+  detail::prune_dead_panes(pane_server_identity(server, preflight),
+                           std::set<std::string>{preflight.all_pane_ids.begin(),
+                                                 preflight.all_pane_ids.end()});
+}
+
 } // namespace
 
 libtmux::expected<PaneInputCaller, ToolError>
@@ -667,7 +691,8 @@ parse_pane_input_snapshot(std::string_view source_pane_id, std::string raw,
                             .server_pid = source->server_pid,
                             .server_start_time = source->server_start_time,
                             .server_process_generation = {},
-                            .foreground_command = source->command};
+                            .foreground_command = source->command,
+                            .all_pane_ids = {}};
   result.configured_pane_ids.reserve(configured.size());
   for (const PaneInputRow* row : configured) {
     if (row->dead) {
@@ -735,6 +760,13 @@ parse_pane_input_snapshot(std::string_view source_pane_id, std::string raw,
           false, "run_shell_command requires a supported POSIX shell in pane " +
                      std::string{source_pane_id}});
     }
+  }
+  // `pane_rows` already has exactly one entry per unique pane id across the
+  // whole server (`list-panes -a`), so this rides along for free rather than
+  // paying for a listing of its own.
+  result.all_pane_ids.reserve(pane_rows.size());
+  for (const auto& [pane_id, first_row_index] : pane_rows) {
+    result.all_pane_ids.push_back(pane_id);
   }
   return result;
 }
@@ -1955,14 +1987,11 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
                  field("timeout_ms", "Bounded wait in milliseconds.", InputSink::none,
                        false, ArgumentType::integer, 1, 60000)},
                 OutputShape::wait, detail::wait_for_text,
-                "Poll within one deadline and report a match or timeout. `matched` is "
-                "never set for text whose only occurrence is this server's own "
-                "not-yet-run input - confined to the pane's last row, or the literal "
-                "text a prior send_keys/send_keys_batch/paste_text/run_shell_command "
-                "call wrote to this pane - however that text has since been redrawn; "
-                "`matched_at_entry` reports separately whether it was already visible "
-                "when the wait began. A `mode` ending in \"-unconfirmed\" means such "
-                "text was still present, unconfirmed, at the deadline."));
+                "Discount this server's pending input and recent submitted echoes; "
+                "unmodelled keys stop tracking the current line. Wait for a new "
+                "shell's prompt before typing. `matched_at_entry` reports visible "
+                "text at entry; a mode ending in -unconfirmed identifies input "
+                "that was still unconfirmed at the deadline."));
 
   add(make_tool(
       "get_tmux_variables", "Get tmux variables", Toolset::inspect, ProcessReach::none,
@@ -2684,16 +2713,23 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
           return libtmux::unexpected(
               detail::changed_pane_input_route("run_shell_command"));
         }
+        // Recorded before dispatch, rolled back if the framed script never
+        // reaches tmux (`pane_echo.hpp`); kept discounted on any less certain
+        // outcome, matching `retain_run_until_proven_complete` below.
+        auto edit =
+            detail::note_literal_write(detail::pane_server_identity(server, *final),
+                                       pane->id().value(), payload->text, false);
         const auto sent = server.run_chain(dispatch);
         if (!sent.has_value()) {
           if (sent.error().delivery != DeliveryStatus::not_started) {
+            edit.commit();
             detail::retain_run_until_proven_complete(std::move(lease), server, *pane,
                                                      payload->marker, *initial);
           }
           return failure(sent.error());
         }
-        detail::remember_pane_input(server.socket_path(), pane->id().value(),
-                                    payload->text);
+        edit.commit();
+        detail::prune_dead_pane_echoes(server, *final);
         const auto deadline =
             std::chrono::steady_clock::now() +
             std::chrono::milliseconds{integer(arguments, "timeoutMs", 30000)};
@@ -2773,13 +2809,34 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
                           final->server_start_time, final->configured_pane_ids)) {
           return libtmux::unexpected(detail::changed_pane_input_route("send_keys"));
         }
+        // tmux's own synchronize-panes fans this one dispatch out to every
+        // configured pane, so each of them echoes it and each needs its own
+        // discounted record - recorded before dispatch, rolled back if it
+        // never reaches tmux (`pane_echo.hpp`).
+        const auto identity = detail::pane_server_identity(server, *final);
+        std::vector<detail::PaneEchoEdit> edits;
+        edits.reserve(final->configured_pane_ids.size());
+        for (const std::string& target_pane_id : final->configured_pane_ids) {
+          edits.push_back(detail::note_key_dispatch(
+              identity, target_pane_id, required(arguments, "keys"), false));
+        }
         const auto answer = server.run_chain(dispatch);
-        return answer.has_value()
-                   ? detail::output(
-                         {{"pane_id", pane->id().value()},
-                          {"target_pane_ids", StructuredValue{pane_target_ids(
-                                                  preflight->configured_pane_ids)}}})
-                   : failure(answer.error());
+        if (!answer.has_value()) {
+          if (answer.error().delivery != DeliveryStatus::not_started) {
+            for (detail::PaneEchoEdit& edit : edits) {
+              edit.commit();
+            }
+          }
+          return failure(answer.error());
+        }
+        for (detail::PaneEchoEdit& edit : edits) {
+          edit.commit();
+        }
+        detail::prune_dead_pane_echoes(server, *final);
+        return detail::output(
+            {{"pane_id", pane->id().value()},
+             {"target_pane_ids",
+              StructuredValue{pane_target_ids(preflight->configured_pane_ids)}}});
       },
       "Require every configured synchronized pane to be live and outside "
       "human-owned mode, then send one validated tmux key name."));
@@ -2858,16 +2915,37 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
                                            final->configured_pane_ids)) {
                     error = detail::changed_pane_input_route("send_keys_batch").message;
                   } else {
+                    const auto identity = detail::pane_server_identity(server, *final);
+                    const bool literal = boolean(operation, "literal");
+                    const bool enter = boolean(operation, "enter");
+                    const std::string& keys = required(operation, "keys");
+                    // Recorded before dispatch, for every configured pane
+                    // synchronize-panes fans this out to, and rolled back if
+                    // it never reaches tmux (`pane_echo.hpp`).
+                    std::vector<detail::PaneEchoEdit> edits;
+                    edits.reserve(final->configured_pane_ids.size());
+                    for (const std::string& target_pane_id :
+                         final->configured_pane_ids) {
+                      edits.push_back(
+                          literal ? detail::note_literal_write(identity, target_pane_id,
+                                                               keys, enter)
+                                  : detail::note_key_dispatch(identity, target_pane_id,
+                                                              keys, enter));
+                    }
                     const auto sent = server.run_chain(dispatch);
                     if (!sent.has_value()) {
                       error = sent.error().diagnostic;
-                    } else {
-                      resolved = pane_target_ids(final->configured_pane_ids);
-                      if (boolean(operation, "literal")) {
-                        detail::remember_pane_input(server.socket_path(),
-                                                    pane->id().value(),
-                                                    required(operation, "keys"));
+                      if (sent.error().delivery != DeliveryStatus::not_started) {
+                        for (detail::PaneEchoEdit& edit : edits) {
+                          edit.commit();
+                        }
                       }
+                    } else {
+                      for (detail::PaneEchoEdit& edit : edits) {
+                        edit.commit();
+                      }
+                      resolved = pane_target_ids(final->configured_pane_ids);
+                      detail::prune_dead_pane_echoes(server, *final);
                     }
                   }
                 }
@@ -2968,17 +3046,25 @@ remove_private_paste_buffer(const Server& server, std::string_view name) {
                           final->server_start_time, final->configured_pane_ids)) {
           return fail_after_cleanup(detail::changed_pane_input_route("paste_text"));
         }
+        // Recorded before dispatch, rolled back if the paste never reaches
+        // tmux (`pane_echo.hpp`).
+        auto edit = detail::note_literal_write(
+            detail::pane_server_identity(server, *final), pane->id().value(),
+            typed_text, boolean(arguments, "enter"));
         const auto answer = pane->paste(*buffer, true);
         if (!answer.has_value()) {
+          if (answer.error().delivery != DeliveryStatus::not_started) {
+            edit.commit();
+          }
           return fail_after_cleanup(detail::tmux_error(answer.error()));
         }
+        edit.commit();
         const auto cleanup = remove_private_paste_buffer(server, *name);
         if (cleanup.has_value()) {
           return libtmux::unexpected(
               ToolError{false, "paste completed; " + cleanup->message});
         }
-        detail::remember_pane_input(server.socket_path(), pane->id().value(),
-                                    typed_text);
+        detail::prune_dead_pane_echoes(server, *final);
         return changed("pane_id", pane->id().value());
       },
       "Require the target pane to be live and outside human-owned mode, then stage "

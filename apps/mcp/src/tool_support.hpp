@@ -232,6 +232,8 @@ struct PaneInputPreflight {
   std::uint64_t server_start_time{};
   std::string server_process_generation;
   std::string foreground_command;
+  // The complete server snapshot, used to expire killed panes.
+  std::vector<std::string> all_pane_ids;
 };
 
 using ShellNonceFactory = std::function<std::string()>;

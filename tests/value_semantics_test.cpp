@@ -5,6 +5,8 @@
 // past a failure, and name that failure — and each of them is part of the
 // surface that cannot change once the package is published.
 
+#include "wait_capture.hpp"
+
 #include <algorithm>
 #include <concepts>
 #include <cstddef>
@@ -280,6 +282,55 @@ TEST(ValueSemantics, OutputIsToldApartFromWhatIsMerelyOnScreen) {
 
   // An empty needle is not a match, however much text there is.
   EXPECT_FALSE(output_confirms("anything at all", ""));
+}
+
+TEST(ValueSemantics, OutputConfirmsMasksWholeOccurrencesOnly) {
+  using libtmux::output_confirms;
+
+  EXPECT_TRUE(output_confirms("$ y\nready\n$ ", "ready", {"y"}))
+      << "masking the typed \"y\" corrupted the unrelated word \"ready\"";
+  EXPECT_FALSE(output_confirms("$ y\nno match here\n$ ", "y", {"y"}))
+      << "the typed \"y\" itself must still be masked as a whole occurrence";
+}
+
+TEST(ValueSemantics, OutputConfirmsFallsBackWithoutACursorPosition) {
+  using libtmux::output_confirms;
+
+  const std::string padded_capture = "$ ready" + std::string(8U, '\n');
+  EXPECT_FALSE(output_confirms(padded_capture, "ready"));
+}
+
+TEST(ValueSemantics, OutputConfirmsUsesTheCursorRowWhenGiven) {
+  using libtmux::detail::output_confirms;
+  using libtmux::detail::PaneCursor;
+
+  const std::string padded_capture = "$ ready" + std::string(8U, '\n');
+  EXPECT_TRUE(output_confirms(padded_capture, "ready", {"tracked-placeholder"},
+                              PaneCursor{.row = 1U, .pane_height = 8U}));
+
+  EXPECT_FALSE(output_confirms("$ run-the-thing", "run-the-thing",
+                               {"tracked-placeholder"},
+                               PaneCursor{.row = 0U, .pane_height = 1U}));
+}
+
+TEST(ValueSemantics, OutputConfirmsAccountsForJoinedWrappedRowsAboveTheCursor) {
+  using libtmux::detail::output_confirms;
+  using libtmux::detail::PaneCursor;
+
+  const std::string joined_capture = "wrapped-line-one-and-two\nready\nMARKER\n\n\n";
+  EXPECT_FALSE(output_confirms(joined_capture, "MARKER", {"tracked-placeholder"},
+                               PaneCursor{.row = 3U, .pane_height = 6U}))
+      << "the joined row count was indexed as if -J had not merged anything";
+}
+
+TEST(ValueSemantics, OutputConfirmsIncludesTheCursorRowWhenNothingIsPending) {
+  using libtmux::detail::output_confirms;
+  using libtmux::detail::PaneCursor;
+
+  const std::string glued_capture = "readyuser@host:~$ ";
+  EXPECT_TRUE(output_confirms(glued_capture, "ready", {},
+                              PaneCursor{.row = 0U, .pane_height = 1U}))
+      << "excluded the cursor row although nothing was pending for this pane";
 }
 
 // Two runtime failure types, because the two transports answer different

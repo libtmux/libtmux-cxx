@@ -642,6 +642,8 @@ gtest_discover_tests(
   PROPERTIES LABELS real-tmux TIMEOUT 60)
 
 add_executable(libtmux_value_semantics_test value_semantics_test.cpp)
+target_include_directories(
+  libtmux_value_semantics_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(
   libtmux_value_semantics_test
   PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux

@@ -63,16 +63,13 @@ struct WaitResult {
 
 struct WaitOptions {
   std::chrono::milliseconds timeout{std::chrono::seconds{10}};
-  // What the calling program itself typed into this pane and has not had
-  // confirmed. Every occurrence is erased before the wanted text is looked
-  // for, so a command's own echo is never credited to the pane as its output.
-  // See `output_confirms`.
-  //
-  // Asked once, with the pane the wait settled on, because a caller that keys
-  // its record by pane cannot answer for a target it has not resolved — and
-  // resolving it twice is what this saves. A caller holding a plain list
-  // writes `[list](std::string_view) { return list; }`.
+  // Whole input echoes to discount, queried before every match attempt.
+  // The caller retains submitted echoes for this wait's lifetime and drops
+  // pending text when an unmodelled edit invalidates it.
   std::function<std::vector<std::string>(std::string_view pane_id)> sent{};
+  // Read after `sent`. A submitted line may still be discounted without
+  // excluding real output on the cursor row. Absent means `!sent.empty()`.
+  std::function<bool(std::string_view pane_id)> input_pending{};
   // How much text this wait will search before giving up. A pane that prints
   // faster than the search can read it would otherwise spin until the
   // deadline; this reports instead. Counted across every capture, not per

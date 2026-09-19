@@ -64,6 +64,48 @@ without_trailing_blanks(std::vector<std::string_view> lines) {
   return lines;
 }
 
+namespace detail {
+
+[[nodiscard]] constexpr bool is_word_byte(unsigned char byte) noexcept {
+  return (byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z') ||
+         (byte >= '0' && byte <= '9') || byte == '_';
+}
+
+// ASCII word boundaries preserve a short answer inside a longer output word.
+[[nodiscard]] inline std::string mask_whole_occurrences(std::string_view text,
+                                                        std::string_view echo) {
+  if (echo.empty() || text.empty()) {
+    return std::string{text};
+  }
+  std::string result;
+  std::size_t cursor = 0;
+  std::size_t from = 0;
+  for (;;) {
+    const std::size_t at = text.find(echo, from);
+    if (at == std::string_view::npos) {
+      break;
+    }
+    const std::size_t end = at + echo.size();
+    const bool opens = at == 0 ||
+                       !is_word_byte(static_cast<unsigned char>(text[at - 1])) ||
+                       !is_word_byte(static_cast<unsigned char>(echo.front()));
+    const bool closes = end == text.size() ||
+                        !is_word_byte(static_cast<unsigned char>(text[end])) ||
+                        !is_word_byte(static_cast<unsigned char>(echo.back()));
+    if (opens && closes) {
+      result.append(text.substr(cursor, at - cursor));
+      cursor = end;
+      from = end;
+    } else {
+      from = at + 1;
+    }
+  }
+  result.append(text.substr(cursor));
+  return result;
+}
+
+} // namespace detail
+
 // Whether `wanted` appears in captured text as something the pane produced,
 // rather than as text that is merely on screen.
 //
@@ -77,11 +119,13 @@ without_trailing_blanks(std::vector<std::string_view> lines) {
 // those are output, however many rows they end up spread across.
 //
 // `sent` is what the calling program itself typed into this pane and has not
-// had confirmed. Every occurrence of every entry is erased before `wanted` is
-// looked for, so an echo cannot be credited to the pane no matter where a
-// redraw moved it. That is the check row position alone misses: the same
-// unsubmitted line, unchanged, after something else pushed it off the last
-// row without the pane having produced anything.
+// had confirmed. Every whole occurrence of every entry is masked before
+// `wanted` is looked for, so an echo cannot be credited to the pane no matter
+// where a redraw moved it, and a short entry cannot corrupt a longer real
+// word that merely contains it. That is the check row position alone misses:
+// the same unsubmitted line, unchanged, after something else pushed it off
+// the last row without the pane having produced anything.
+//
 [[nodiscard]] inline bool output_confirms(std::string_view captured,
                                           std::string_view wanted,
                                           const std::vector<std::string>& sent = {}) {
@@ -107,13 +151,7 @@ without_trailing_blanks(std::vector<std::string_view> lines) {
 
   std::string masked{captured};
   for (const std::string& entry : sent) {
-    if (entry.empty()) {
-      continue;
-    }
-    std::size_t at = 0;
-    while ((at = masked.find(entry, at)) != std::string::npos) {
-      masked.erase(at, entry.size());
-    }
+    masked = detail::mask_whole_occurrences(masked, entry);
   }
   return masked.find(wanted) != std::string::npos;
 }
