@@ -443,7 +443,7 @@ def main():
                         if key == "discovery":
                             assert len(json.loads(result.stdout)["workspaces"]) == 1
                         if key == "search":
-                            assert len(json.loads(result.stdout)) == 1
+                            assert len(json.loads(result.stdout)["results"]) == 1
                         report["timings"][name][key].append(elapsed)
                     saved = root / f"{name}.json"
                     elapsed = load_capture(program, workspace, socket, saved, env, root)

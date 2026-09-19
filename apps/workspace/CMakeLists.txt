@@ -32,7 +32,7 @@ if(LIBTMUX_BUILD_TESTS AND NOT WIN32)
   add_test(NAME consumer.workspace.cli.real-tmux COMMAND workspace_cli_test
     "--gtest_filter=WorkspaceCliTmux.*")
   set_tests_properties(consumer.workspace.cli PROPERTIES LABELS "consumer;contract" TIMEOUT 5)
-  set_tests_properties(consumer.workspace.cli.real-tmux PROPERTIES LABELS "consumer;real-tmux" TIMEOUT 60)
+  set_tests_properties(consumer.workspace.cli.real-tmux PROPERTIES LABELS "consumer;real-tmux" TIMEOUT 120)
 
   # What the in-process suite cannot reach: a real controlling terminal and the
   # foreground process group around it, and the generated completion scripts

@@ -688,7 +688,10 @@ def terminal_switch(binary, root, env, mode):
             # it to exist at all.
             refused = mode in {"independent", "independent-linked"}
             failed = refused or (flagged and mode == "gained-independent")
-            assert code == (2 if failed else 0), observed
+            # Refused before anything is built: a usage error. A client that
+            # gains the flag mid-load fails at hand-off, with its sessions
+            # already created, which is a tmux failure and exits 1.
+            assert code == (2 if refused else 1 if failed else 0), observed
             assert ran != refused, observed
             assert sessions == (
                 initial_sessions
@@ -731,8 +734,10 @@ def terminal_switch(binary, root, env, mode):
                 ), observed
             return {"status": "PASS", "mode": mode, **observed}
         refused = mode in {"ambiguous", "control", "foreign", "stale"}
-        expected = 2 if mode in {"ambiguous", "control", "changed", "foreign"} else 0
-        if mode in {"stale", "replaced"}:
+        # A refusal before anything is built is a usage error; a hand-off that
+        # fails once the sessions exist reports the tmux failure it is.
+        expected = 2 if refused else 0
+        if mode in {"changed", "replaced"}:
             expected = 1
         assert code == expected, (code, output, error)
         sessions = (
