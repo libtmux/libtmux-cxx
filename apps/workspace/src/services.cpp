@@ -501,6 +501,30 @@ bool same_socket(std::string_view left, std::string_view right) {
   return fs::weakly_canonical(fs::path{left}, ignored) ==
          fs::weakly_canonical(fs::path{right}, ignored);
 }
+// Every start_directory the document names that is not a directory, with
+// where it was written. tmux starts such a pane in $HOME instead, silently,
+// so a typo would otherwise cost a workspace that looks built and is not.
+std::vector<std::pair<std::string, std::string>>
+absent_directories(const Workspace& description) {
+  std::vector<std::pair<std::string, std::string>> absent;
+  const auto check = [&absent](const std::string& where, const std::string& path) {
+    if (path.empty() || path.find('\0') != std::string::npos)
+      return;
+    std::error_code ignored;
+    if (!fs::is_directory(path, ignored))
+      absent.emplace_back(where, path);
+  };
+  check("start_directory", description.start_directory);
+  for (std::size_t window = 0; window < description.windows.size(); ++window) {
+    const auto where = "windows[" + std::to_string(window) + "]";
+    check(where + ".start_directory", description.windows[window].start_directory);
+    const auto& panes = description.windows[window].panes;
+    for (std::size_t pane = 0; pane < panes.size(); ++pane)
+      check(where + ".panes[" + std::to_string(pane) + "].start_directory",
+            panes[pane].start_directory);
+  }
+  return absent;
+}
 // The document's windows that a session already running under that name does
 // not have. Empty means the session holds everything the document asks for;
 // std::nullopt means its windows could not be read. A window the document
@@ -1519,6 +1543,24 @@ static Execution execute_impl(const Request& request, const EventSink& event,
                         "before_script working directory does not exist"};
       }
       plans.push_back({path, *workspace, std::move(script), std::move(directory)});
+    }
+    // Said before anything is built: each is something the documents ask for
+    // that this build carries on without.
+    for (std::size_t index = 0; index < plans.size(); ++index) {
+      for (const auto& text : plans[index].workspace.warnings)
+        event("warning", {{"input_index", index},
+                          {"input", private_path(plans[index].path)},
+                          {"code", "unsupported_key"},
+                          {"message", text}});
+      for (const auto& [where, path] : absent_directories(plans[index].workspace))
+        event("warning",
+              {{"input_index", index},
+               {"input", private_path(plans[index].path)},
+               {"code", "invalid_workspace"},
+               {"message", where +
+                               " is not a directory, so tmux starts the pane in "
+                               "$HOME instead: " +
+                               path}});
     }
     Json results = Json::array(), errors = Json::array();
     event("started", {{"inputs", plans.size()}});

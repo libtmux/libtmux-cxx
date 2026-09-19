@@ -517,7 +517,12 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
     progress = std::make_unique<Progress>(request, output, errors,
                                           progress_terminal(request, output, errors));
     std::size_t sequence{};
+    // Held until the operation finishes: in human mode the progress panel
+    // owns stderr while it runs, and a warning written into it is lost.
+    std::vector<Json> warnings;
     const auto emit = [&](const std::string& name, Json data) {
+      if (name == "warning")
+        warnings.push_back(data);
       diagnostics.event(name, data, ++sequence);
       progress->event(name, data);
       if (request.command == "shell" && name == "script-output" && !request.machine()) {
@@ -561,6 +566,20 @@ int run(std::vector<std::string> arguments, std::istream& input, std::ostream& o
                     ? with_interrupts(operation)
                     : operation();
     const auto& result = execution.value;
+    // --ndjson carried each one as it happened; the other modes say them here,
+    // once the progress panel has released stderr.
+    if (!request.ndjson && diagnostics.enabled("warning"))
+      for (const auto& warning : warnings) {
+        const auto message = warning.at("message").get<std::string>();
+        if (request.machine())
+          errors << encoded({{"schema_version", 1},
+                             {"code", warning.at("code")},
+                             {"level", "warning"},
+                             {"message", message}})
+                 << '\n';
+        else
+          errors << "Warning: " << message << '\n';
+      }
     if (request.command == "freeze" && request.json && !request.ndjson &&
         !result.contains("destination") && diagnostics.enabled("warning")) {
       errors << encoded({{"code", "capture_lossy"},

@@ -103,6 +103,10 @@ struct Workspace {
   // made later; a window's do not.
   std::vector<std::pair<std::string, std::string>> environment{};
   std::vector<Window> windows{};
+  // What the document says that this builds around rather than refuses: a
+  // setting it does not act on, a path that is not there. Each is one
+  // sentence for a reader, in document order.
+  std::vector<std::string> warnings{};
 };
 
 struct BuildError {

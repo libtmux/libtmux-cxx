@@ -403,10 +403,16 @@ libtmux::expected<Workspace, ParseError> parse_tmuxp(std::string_view document) 
   if (!root.IsMap()) {
     return fail("", "a tmuxp document is a mapping");
   }
-  static constexpr std::string_view kDocumentKeys[]{
-      "session_name", "start_directory",      "root",
-      "windows",      "shell_command_before", "environment",
-      "options",      "global_options",       "suppress_history"};
+  static constexpr std::string_view kDocumentKeys[]{"session_name",
+                                                    "start_directory",
+                                                    "root",
+                                                    "windows",
+                                                    "shell_command_before",
+                                                    "environment",
+                                                    "options",
+                                                    "global_options",
+                                                    "suppress_history",
+                                                    "workspace_builder_options"};
   if (const auto unknown = unknown_key(root, kDocumentKeys)) {
     return fail_unsupported_key("", *unknown);
   }
@@ -416,6 +422,30 @@ libtmux::expected<Workspace, ParseError> parse_tmuxp(std::string_view document) 
   }
 
   Workspace workspace;
+  // Builder settings a document carries for whichever port reads it. This one
+  // waits for every pane's prompt whatever the shell, so there is nothing
+  // here to act on; a setting it does not know is said out loud and built
+  // around, never a reason to refuse a document another port can load.
+  if (const YAML::Node builder = root["workspace_builder_options"]) {
+    if (!builder.IsMap()) {
+      workspace.warnings.emplace_back(
+          "workspace_builder_options is not a mapping and was ignored");
+    } else {
+      for (const auto& entry : builder) {
+        if (!entry.first.IsScalar()) {
+          workspace.warnings.emplace_back(
+              "a workspace_builder_options key is not a name and was ignored");
+          continue;
+        }
+        const auto key = entry.first.as<std::string>();
+        if (key != "pane_readiness" && !key.starts_with("x-")) {
+          workspace.warnings.emplace_back("workspace_builder_options." + key +
+                                          " is not a setting this builder has; it "
+                                          "was ignored");
+        }
+      }
+    }
+  }
   workspace.session_name = name.as<std::string>();
   workspace.start_directory = directory_of(root);
   auto variables = read_environment(root["environment"], "environment");

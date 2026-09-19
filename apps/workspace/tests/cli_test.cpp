@@ -2050,6 +2050,79 @@ TEST(WorkspaceCliTmux, AppendKeepsItsBorrowedSessionAndReportsRetainedWindows) {
   EXPECT_TRUE(missing.out.empty());
 }
 
+// A document written for the other libtmux workspace ports carries builder
+// settings this one has nothing to act on. It loads here, and a setting this
+// builder does not have is said out loud rather than refusing the document.
+TEST(WorkspaceCliTmux, BuilderOptionsLoadAndUnknownSettingsWarn) {
+  Files files;
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-wbo")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto socket = fixture->socket_path().string();
+  const auto server = libtmux::Server::at_socket_path(socket);
+  ASSERT_TRUE(server.has_value());
+  std::ofstream{"wbo.yaml"} << "session_name: wbo\n"
+                               "workspace_builder_options:\n"
+                               "  pane_readiness: always\n"
+                               "  no_such_setting: 1\n"
+                               "windows:\n  - window_name: one\n    panes: [echo A]\n";
+
+  const auto loaded = invoke({"load", "wbo.yaml", "-d", "-S", socket, "--json"});
+  ASSERT_EQ(loaded.code, 0) << loaded.out << loaded.err;
+  EXPECT_EQ(Json::parse(loaded.out).at("status"), "ok");
+  EXPECT_TRUE(server->session("=wbo:").has_value());
+  const auto warning = Json::parse(loaded.err);
+  EXPECT_EQ(warning.at("level"), "warning") << loaded.err;
+  EXPECT_EQ(warning.at("code"), "unsupported_key") << loaded.err;
+  EXPECT_NE(warning.at("message").get<std::string>().find("no_such_setting"),
+            std::string::npos)
+      << loaded.err;
+
+  // A document carrying only settings it knows says nothing.
+  std::ofstream{"known.yaml"}
+      << "session_name: known\n"
+         "workspace_builder_options:\n"
+         "  pane_readiness: always\n"
+         "windows:\n  - window_name: one\n    panes: [echo A]\n";
+  const auto quiet = invoke({"load", "known.yaml", "-d", "-S", socket, "--json"});
+  ASSERT_EQ(quiet.code, 0) << quiet.out << quiet.err;
+  EXPECT_TRUE(quiet.err.empty()) << quiet.err;
+}
+
+// tmux starts a pane whose start_directory does not exist in $HOME instead,
+// and says nothing, so a typo builds a workspace that looks right and is not.
+TEST(WorkspaceCliTmux, AbsentStartDirectoryBuildsAndWarns) {
+  Files files;
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("cli-sdir")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const auto socket = fixture->socket_path().string();
+  const auto server = libtmux::Server::at_socket_path(socket);
+  ASSERT_TRUE(server.has_value());
+  std::ofstream{"absent.yaml"}
+      << "session_name: sdir\nstart_directory: /nonexistent/definitely/not/here\n"
+         "windows:\n  - window_name: one\n    panes: [echo A]\n";
+
+  const auto loaded = invoke({"load", "absent.yaml", "-d", "-S", socket, "--json"});
+  ASSERT_EQ(loaded.code, 0) << loaded.out << loaded.err;
+  EXPECT_TRUE(server->session("=sdir:").has_value());
+  const auto warning = Json::parse(loaded.err);
+  EXPECT_EQ(warning.at("level"), "warning") << loaded.err;
+  const auto message = warning.at("message").get<std::string>();
+  EXPECT_NE(message.find("/nonexistent/definitely/not/here"), std::string::npos)
+      << message;
+  EXPECT_NE(message.find("$HOME"), std::string::npos) << message;
+
+  // A directory that is there is built without a word about it.
+  std::ofstream{"present.yaml"}
+      << "session_name: sdir-ok\nstart_directory: " << files.directory.string()
+      << "\nwindows:\n  - window_name: one\n"
+         "    panes: [echo A]\n";
+  const auto quiet = invoke({"load", "present.yaml", "-d", "-S", socket, "--json"});
+  ASSERT_EQ(quiet.code, 0) << quiet.out << quiet.err;
+  EXPECT_TRUE(quiet.err.empty()) << quiet.err;
+}
+
 // Reuse compares the document against the session that is already there; it
 // does not rebuild. A session missing a window the document asks for is
 // reported by name, the session is left as it was, and a document the session
