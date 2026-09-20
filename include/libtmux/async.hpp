@@ -116,7 +116,7 @@ public:
   /// Only one dispatch or discard call runs at once; competitors return zero.
   [[nodiscard]] std::size_t discard_ready();
 
-  // Readable exactly when `wait_ready` would return without blocking, for a
+  /// Readable exactly when `wait_ready` would return without blocking, for a
   // caller that owns an event loop and cannot park a thread in `wait_ready`.
   // The same contract as `Connection::notification_fd`:
   //

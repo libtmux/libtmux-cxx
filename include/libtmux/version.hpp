@@ -149,7 +149,7 @@ inline constexpr Version kMinimumSupported{.major = 3, .minor = 2, .revision = 1
 
 LIBTMUX_NAMESPACE_END
 
-// The same version, available to the preprocessor.
+/// The same version, available to the preprocessor.
 //
 // `library_version()` answers what was linked; these answer what was compiled
 // against, which is the question a consumer has to ask before using something

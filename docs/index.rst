@@ -18,6 +18,7 @@ header that declares something.
    control
    delivery
    entities
+   error
    expected
    filter_expr
    format
@@ -37,6 +38,7 @@ header that declares something.
    testing-scoped_server
    testing-tmux_version
    version
+   wait
 
 Umbrella headers
 ----------------

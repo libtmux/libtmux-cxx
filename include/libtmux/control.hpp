@@ -135,7 +135,7 @@ struct ControlRequestResult {
 /// output is delivered at all is fixed when the connection starts, and the
 /// decoder's bounds belong to the decoder rather than to whatever reads it.
 struct ConnectionOptions {
-  // Which tmux to run. Absent means `tmux` from `PATH` — or, through
+  /// Which tmux to run. Absent means `tmux` from `PATH` — or, through
   // `Server::control`, the tmux that Server's policy names. Absent rather than
   // defaulting to `tmux`, so that a caller who writes `tmux` here gets it,
   // instead of being indistinguishable from one who wrote nothing.

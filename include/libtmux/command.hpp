@@ -94,7 +94,7 @@ struct CommandFailure {
   std::string diagnostic;
 };
 
-// One line naming what happened, what tmux said, and — through the delivery
+/// One line naming what happened, what tmux said, and — through the delivery
 // status — whether the call is safe to repeat.
 [[nodiscard]] inline std::string to_string(const CommandFailure& failure) {
   std::string text{to_string(failure.kind)};
@@ -258,7 +258,7 @@ struct ExecutionPolicy {
   std::optional<std::chrono::milliseconds> timeout{std::chrono::seconds{30}};
   /// Absent leaves the transport's own bound, which is one megabyte.
   std::optional<std::size_t> output_limit{};
-  // Which tmux to run. A bare name is resolved through `PATH`, as tmux's own
+  /// Which tmux to run. A bare name is resolved through `PATH`, as tmux's own
   // documentation assumes; a path containing a separator is used as given.
   //
   // Naming it is how a caller stops `PATH` deciding: a hermetic build, a
@@ -273,7 +273,7 @@ struct ExecutionPolicy {
   std::filesystem::path tmux_binary{"tmux"};
 };
 
-// A transport a caller supplies.
+/// A transport a caller supplies.
 //
 // `BackendKind::custom` named this possibility from the first release, but
 // nothing implemented it: the interface a backend had to satisfy lived in the
@@ -309,7 +309,7 @@ public:
   CommandExecutor& operator=(CommandExecutor&&) = delete;
   virtual ~CommandExecutor() = default;
 
-  // Absent timeout means the caller named none; absent limit means the same.
+  /// Absent timeout means the caller named none; absent limit means the same.
   // An implementation that cannot bound itself should refuse rather than wait
   // forever, the way every transport here already does.
   [[nodiscard]] virtual expected<std::string, CommandFailure>
@@ -319,7 +319,7 @@ public:
 
 LIBTMUX_NAMESPACE_END
 
-// Formatting a failure is how it reaches a log line, so the type every call
+/// Formatting a failure is how it reaches a log line, so the type every call
 // can return knows how to write itself.
 //
 // Inheriting the string formatter keeps fill, alignment and width working, so

@@ -151,6 +151,8 @@ The tmux this transport speaks to. Absent asks the executor by running `-V`, whi
 <a id="libtmux-server-hpp-server"></a>
 ### `Server`
 
+One tmux server, addressed by the socket it listens on.  The entry point: sessions, windows and panes are read from here and carry the server with them. Constructing a handle sends no command. Only a startable handle may create an absent daemon; ordinary handles never do.
+
 ```cpp
 class Server;
 ```
@@ -690,7 +692,7 @@ enum class ReadyStatus : std::uint8_t;
 <a id="libtmux-async-hpp-commandruntimeconfig"></a>
 ### `CommandRuntimeConfig`
 
-The maximum number of accepted commands retaining any lifecycle leg. `start` rejects zero with `DeliveryStatus::not_started`.
+The maximum number of accepted commands retaining any lifecycle leg. `start` rejects zero with `DeliveryStatus::not_started`. How many commands the runtime will admit at once.
 
 ```cpp
 struct CommandRuntimeConfig final;
@@ -706,7 +708,7 @@ std::size_t capacity{256U};
 <a id="libtmux-async-hpp-commandruntimesnapshot"></a>
 ### `CommandRuntimeSnapshot`
 
-A lock-consistent instant; values may change immediately after it is read. Admission, refusal, and completion totals are monotonic.
+A lock-consistent instant; values may change immediately after it is read. Admission, refusal, and completion totals are monotonic. The runtime's counters at one instant, for diagnostics rather than control.  Read under a lock and stale immediately after, so a caller must not branch on `in_flight` expecting it to still hold. The totals only ever increase.
 
 ```cpp
 struct CommandRuntimeSnapshot final;
@@ -1089,6 +1091,8 @@ What this Server can promise without probing tmux.  These describe the local bac
 <a id="libtmux-capabilities-hpp-serverimplementation"></a>
 ### `ServerImplementation`
 
+Which server answered: tmux, a compatible reimplementation, or not yet determined.
+
 ```cpp
 enum class ServerImplementation;
 ```
@@ -1104,6 +1108,8 @@ enum class ServerImplementation;
 
 <a id="libtmux-capabilities-hpp-backendkind"></a>
 ### `BackendKind`
+
+How commands reach the server: by spawning a process, or through a backend the caller supplied.
 
 ```cpp
 enum class BackendKind;
@@ -1191,6 +1197,8 @@ This Server can open a persistent control connection.
 
 <a id="libtmux-capabilities-hpp-servercapabilities"></a>
 ### `ServerCapabilities`
+
+What this server is known to support, decided without asking it.  Every query here is local: the implementation and backend were established once, and answering from them costs no process and cannot fail.
 
 ```cpp
 struct ServerCapabilities;
@@ -1670,6 +1678,8 @@ Variables the new process starts with, on top of what tmux passes down.  Pairs r
 <a id="libtmux-entities-hpp-newwindowoptions"></a>
 ### `NewWindowOptions`
 
+What a new window is created as, and where it lands.  Placing a window after the current one shifts the windows above it up, so an index a caller is holding can change.
+
 ```cpp
 struct NewWindowOptions;
 ```
@@ -1728,6 +1738,8 @@ Variables the new process starts with, on top of what tmux passes down.  Pairs r
 
 <a id="libtmux-entities-hpp-newsessionoptions"></a>
 ### `NewSessionOptions`
+
+What a new session is created as, including its first window.  tmux always creates a first window, so the fields naming one are not optional in effect — leaving them empty takes tmux's defaults rather than creating nothing.
 
 ```cpp
 struct NewSessionOptions;
@@ -1809,6 +1821,8 @@ Where the configured replacement process starts. Empty inherits the pane's curre
 
 <a id="libtmux-entities-hpp-captureoptions"></a>
 ### `CaptureOptions`
+
+Which part of a pane's screen and scrollback a capture reads.  A capture reads what the pane is showing, so a line the program redrew is the redrawn one and a line scrolled past the history limit is gone.
 
 ```cpp
 struct CaptureOptions;
@@ -1981,6 +1995,8 @@ Exec-order arguments; empty after this value is moved from.
 
 <a id="libtmux-entities-hpp-session"></a>
 ### `Session`
+
+One session, as one listing saw it.  Reads its own fields without touching tmux: the listing ran once, and every value here is that moment's. A window created since is not in `window_count`, and a session killed since still answers.  Equality is the server incarnation and the session id together, so two handles from separate listings of one live server agree, and a handle kept across a restart does not become a handle to whatever reused `$0`.
 
 ```cpp
 class Session;
@@ -2260,6 +2276,8 @@ Put a message on the status line of every client attached here, and send it to a
 <a id="libtmux-entities-hpp-window"></a>
 ### `Window`
 
+One window, as one listing saw it.  A window can be linked into more than one session; this handle carries the session it was reached through, which is the one its qualified target addresses.  Reads its own fields without touching tmux, on the same terms as `Session`.
+
 ```cpp
 class Window;
 ```
@@ -2495,7 +2513,7 @@ Rearrange the panes. tmux names five layouts, plus two mirrored ones on tmux 3.5
 ```cpp
 [[nodiscard]] expected<void, CommandFailure> next_layout() const;
 ```
-Exchange positions with another window, keeping both ids. Step through tmux's preset arrangements, and turn the panes within the one in use.  The layouts are tmux's list, not a caller's: asking for "the next one" is the only way to reach them without naming each. Rotating is a different act — it moves which pane occupies which cell and leaves the cells where they are.  None of the three refuses a window holding a single pane. tmux accepts all of them there and changes nothing, which is worth knowing before treating success as evidence that something moved.
+Step through tmux's preset arrangements, and turn the panes within the one in use.  The layouts are tmux's list, not a caller's: asking for "the next one" is the only way to reach them without naming each. Rotating is a different act — it moves which pane occupies which cell and leaves the cells where they are.  None of the three refuses a window holding a single pane. tmux accepts all of them there and changes nothing, which is worth knowing before treating success as evidence that something moved.
 
 <a id="libtmux-entities-hpp-window-previous-layout"></a>
 #### `Window::previous_layout`
@@ -2541,6 +2559,7 @@ Stop showing it in the session this value came from.  tmux refuses to remove the
 ```cpp
 [[nodiscard]] expected<void, CommandFailure> swap_with(const Window& other) const;
 ```
+Exchange positions with another window, keeping both ids.
 
 <a id="libtmux-entities-hpp-window-move-to"></a>
 #### `Window::move_to`
@@ -2618,6 +2637,8 @@ Window options. tmux looks a named option up in the table it belongs to, so the 
 
 <a id="libtmux-entities-hpp-pane"></a>
 ### `Pane`
+
+One pane, as one listing saw it.  The narrowest thing tmux addresses, and the only one that owns a process: `pid` is the command tmux started, not the shell's children, so a pane running a program under a shell reports the shell.  Reads its own fields without touching tmux, on the same terms as `Session`.
 
 ```cpp
 class Pane;
@@ -3265,6 +3286,8 @@ The whole contents. tmux prints them with no trailing newline, so what comes bac
 <a id="libtmux-entities-hpp-client"></a>
 ### `Client`
 
+One attached client, as one listing saw it.  The shortest-lived of these: a client goes away with its terminal, so a handle outlives what it names more often than the others do. It is named by its tty rather than by an id tmux issues.
+
 ```cpp
 class Client;
 ```
@@ -3433,6 +3456,8 @@ template <> struct std::hash<libtmux::Session>;
 <a id="libtmux-entities-hpp-std-hash-libtmux-window"></a>
 ### `std::hash<libtmux::Window>`
 
+Hashing a window, on the same terms as its equality.
+
 ```cpp
 template <> struct std::hash<libtmux::Window>;
 ```
@@ -3447,6 +3472,8 @@ template <> struct std::hash<libtmux::Window>;
 <a id="libtmux-entities-hpp-std-hash-libtmux-pane"></a>
 ### `std::hash<libtmux::Pane>`
 
+Hashing a pane, on the same terms as its equality.
+
 ```cpp
 template <> struct std::hash<libtmux::Pane>;
 ```
@@ -3460,6 +3487,8 @@ template <> struct std::hash<libtmux::Pane>;
 
 <a id="libtmux-entities-hpp-std-hash-libtmux-client"></a>
 ### `std::hash<libtmux::Client>`
+
+Hashing a client, on the same terms as its equality.
 
 ```cpp
 template <> struct std::hash<libtmux::Client>;
@@ -4349,6 +4378,8 @@ Value-semantic filter expressions over explicit snapshots.  An expression owns e
 <a id="libtmux-filter-expr-hpp-stringop"></a>
 ### `StringOp`
 
+How a text field is compared. `iequals` folds case; the rest do not.
+
 ```cpp
 enum class StringOp;
 ```
@@ -4371,7 +4402,7 @@ enum class StringOp;
 <a id="libtmux-filter-expr-hpp-numberop"></a>
 ### `NumberOp`
 
-tmux renders a count, a size and an index as text. Comparing them as text puts "9" after "10", so a numeric field is its own kind with its own operations rather than a string field a caller must remember to convert.
+tmux renders a count, a size and an index as text. Comparing them as text puts "9" after "10", so a numeric field is its own kind with its own operations rather than a string field a caller must remember to convert. How a numeric field is compared, on the value rather than on its text.
 
 ```cpp
 enum class NumberOp;
@@ -4397,6 +4428,8 @@ enum class NumberOp;
 
 <a id="libtmux-filter-expr-hpp-combine"></a>
 ### `Combine`
+
+Whether a group's operands must all hold or any one of them.
 
 ```cpp
 enum class Combine;
@@ -4434,6 +4467,8 @@ std::string_view (*read)(const Entity&);
 <a id="libtmux-filter-expr-hpp-boolfield"></a>
 ### `BoolField`
 
+A flag on an entity, named for the expression and read through a function pointer rather than a member pointer so the same descriptor works for a field computed from several tmux tokens.
+
 ```cpp
 template <typename Entity> struct BoolField;
 ```
@@ -4455,6 +4490,8 @@ bool (*read)(const Entity&);
 <a id="libtmux-filter-expr-hpp-numberfield"></a>
 ### `NumberField`
 
+A numeric field on an entity, read as a number rather than as the text tmux sends, so `9` orders before `10`.
+
 ```cpp
 template <typename Entity> struct NumberField;
 ```
@@ -4475,6 +4512,8 @@ long long (*read)(const Entity&);
 
 <a id="libtmux-filter-expr-hpp-filterexpr"></a>
 ### `FilterExpr`
+
+A filter over one entity type, as a value.  Owns every operand it compares against, so it outlives the call that built it and can be stored and copied. The node set is a closed variant rather than an expression template, which is what lets the same value both filter a range already in memory and be translated to a tmux `-f` format later.
 
 ```cpp
 template <typename Entity> class FilterExpr;
@@ -4546,6 +4585,8 @@ FilterExpr& operator=(FilterExpr&&) noexcept = default;
 <a id="libtmux-filter-expr-hpp-filterexpr-stringtest"></a>
 ### `FilterExpr::StringTest`
 
+A text field compared against an operand this node owns.
+
 ```cpp
 struct StringTest;
 ```
@@ -4574,6 +4615,8 @@ std::string operand;
 <a id="libtmux-filter-expr-hpp-filterexpr-booltest"></a>
 ### `FilterExpr::BoolTest`
 
+A flag compared against an expected value.
+
 ```cpp
 struct BoolTest;
 ```
@@ -4594,6 +4637,8 @@ bool expected;
 
 <a id="libtmux-filter-expr-hpp-filterexpr-numbertest"></a>
 ### `FilterExpr::NumberTest`
+
+A numeric field compared against a number.
 
 ```cpp
 struct NumberTest;
@@ -4623,6 +4668,8 @@ long long operand;
 <a id="libtmux-filter-expr-hpp-filterexpr-group"></a>
 ### `FilterExpr::Group`
 
+Several expressions combined, all of them or any of them.
+
 ```cpp
 struct Group;
 ```
@@ -4643,6 +4690,8 @@ std::vector<FilterExpr> operands;
 
 <a id="libtmux-filter-expr-hpp-filterexpr-negation"></a>
 ### `FilterExpr::Negation`
+
+One expression inverted. Held indirectly because a node cannot contain itself by value.
 
 ```cpp
 struct Negation;
@@ -4754,6 +4803,8 @@ StringField<Entity> field;
 <a id="libtmux-filter-expr-hpp-numberfieldhandle"></a>
 ### `NumberFieldHandle`
 
+The value a numeric field name resolves to in an expression, whose comparison operators build the node rather than comparing anything.
+
 ```cpp
 template <typename Entity> struct NumberFieldHandle;
 ```
@@ -4816,6 +4867,8 @@ NumberField<Entity> field;
 
 <a id="libtmux-filter-expr-hpp-boolfieldhandle"></a>
 ### `BoolFieldHandle`
+
+The value a flag's name resolves to in an expression. Converts to a filter on its own, so naming the field is the same as testing it for true.
 
 ```cpp
 template <typename Entity> struct BoolFieldHandle;
@@ -4959,6 +5012,8 @@ Relation quantifiers over to-many and to-one links.  The quantifier is named rat
 <a id="libtmux-relations-hpp-quantifier"></a>
 ### `Quantifier`
 
+How a filter applies across a relation.  `all_of` and `none_of` hold for an empty relation, which is set theory rather than an oversight; `any_of` is usually what a caller means.
+
 ```cpp
 enum class Quantifier;
 ```
@@ -5083,6 +5138,8 @@ Exception-free cardinality over snapshot views.  Callers ask for one entity far 
 <a id="libtmux-cardinality-hpp-cardinalityerror"></a>
 ### `CardinalityError`
 
+Why a lookup that required exactly one match did not get one.  The two want opposite fixes, which is why they are distinct: one needs wider criteria and the other needs narrower.
+
 ```cpp
 enum class CardinalityError;
 ```
@@ -5167,6 +5224,8 @@ How far a tmux command is known to have progressed before a failure.  Only `not_
 
 <a id="libtmux-delivery-hpp-deliverystatus"></a>
 ### `DeliveryStatus`
+
+How far a command is known to have got before something stopped it.  This is the value that decides whether retrying is safe: only `not_started` is safe blindly, and `indeterminate` is an answer rather than a missing one.
 
 ```cpp
 enum class DeliveryStatus : std::uint8_t;
@@ -5366,6 +5425,8 @@ Why a tmux command produced no answer.  `refused` means tmux ran and said no; `m
 <a id="libtmux-command-hpp-failurekind"></a>
 ### `FailureKind`
 
+Why a command did not produce an answer, in the order a caller would diagnose them: bad before it left, then how it left, then what came back.
+
 ```cpp
 enum class FailureKind;
 ```
@@ -5414,6 +5475,8 @@ The caller withdrew the call. Whether tmux acted is a separate question, and `de
 <a id="libtmux-command-hpp-commandfailure"></a>
 ### `CommandFailure`
 
+A command that did not produce an answer, and how far it got.  `delivery` is the part that decides whether retrying is safe; `kind` and `diagnostic` say what to fix.
+
 ```cpp
 struct CommandFailure;
 ```
@@ -5450,6 +5513,8 @@ std::string diagnostic;
 <a id="libtmux-command-hpp-argumentsensitivity"></a>
 ### `ArgumentSensitivity`
 
+Whether an argument may appear in a diagnostic, a log, or an error message.
+
 ```cpp
 enum class ArgumentSensitivity : std::uint8_t;
 ```
@@ -5462,6 +5527,8 @@ enum class ArgumentSensitivity : std::uint8_t;
 
 <a id="libtmux-command-hpp-commandargument"></a>
 ### `CommandArgument`
+
+One argument, carrying whether any part of it is a secret.  Implicitly constructible from the string types so building a command reads as a list of words; marking a part secret is the deliberate act.
 
 ```cpp
 class CommandArgument;
@@ -5526,6 +5593,8 @@ Keep a composite argument intact on the wire while treating one byte range insid
 
 <a id="libtmux-command-hpp-commandrequest"></a>
 ### `CommandRequest`
+
+One tmux command as argv, with no shell between it and tmux.  Arguments are passed as separate words, so a value holding a space, a quote or a `;` arrives whole and nothing here needs escaping.
 
 ```cpp
 class CommandRequest;
@@ -5836,6 +5905,8 @@ std::optional<std::string> value;
 <a id="libtmux-options-hpp-optionentry"></a>
 ### `OptionEntry`
 
+One option as tmux reports it: its name, its value, and the array index it sits at when it is an array option.
+
 ```cpp
 struct OptionEntry;
 ```
@@ -6004,6 +6075,8 @@ DeliveryStatus delivery{DeliveryStatus::indeterminate};
 <a id="libtmux-control-hpp-controlterminal"></a>
 ### `ControlTerminal`
 
+How tmux closed a reply block: normally, or reporting a failure.
+
 ```cpp
 enum class ControlTerminal : std::uint8_t;
 ```
@@ -6016,6 +6089,8 @@ enum class ControlTerminal : std::uint8_t;
 
 <a id="libtmux-control-hpp-controlblock"></a>
 ### `ControlBlock`
+
+One reply block, framed between tmux's `%begin` and its terminator.  Framing is all this is: whether the command succeeded is `terminal`, and what it said is `body`. A body that hit the decoder's retention bound is still framed and still attributable — see `body_truncated`.
 
 ```cpp
 struct ControlBlock;
@@ -6081,6 +6156,8 @@ std::size_t body_bytes{0};
 <a id="libtmux-control-hpp-parser"></a>
 ### `Parser`
 
+The control-mode wire format, decoded into whole events.  Owns the partial state between reads, so a caller feeds whatever bytes arrived and gets back only complete events. It bounds what it retains because a connection, unlike a subprocess, never gives its memory back.
+
 ```cpp
 class Parser final;
 ```
@@ -6117,6 +6194,8 @@ expected<void, ProtocolError> finish();
 <a id="libtmux-control-hpp-controlcommand"></a>
 ### `ControlCommand`
 
+One command as argv, before it is joined into a control-mode line.
+
 ```cpp
 struct ControlCommand;
 ```
@@ -6131,6 +6210,8 @@ std::vector<std::string> argv;
 <a id="libtmux-control-hpp-controlrequest"></a>
 ### `ControlRequest`
 
+The commands sent as one group, which tmux runs until one fails.
+
 ```cpp
 struct ControlRequest;
 ```
@@ -6144,6 +6225,8 @@ std::vector<ControlCommand> group;
 
 <a id="libtmux-control-hpp-controlrequestresult"></a>
 ### `ControlRequestResult`
+
+What one request produced: its reply blocks, and the connection error that ended the exchange if one did.  A connection error is separate from a failed block because they need different handling: a failed command leaves the connection usable.
 
 ```cpp
 struct ControlRequestResult;
@@ -6166,6 +6249,8 @@ std::optional<ProtocolError> connection_error;
 
 <a id="libtmux-control-hpp-connectionoptions"></a>
 ### `ConnectionOptions`
+
+How to start a control-mode connection, and what it is allowed to buffer.  Two of these cannot be changed later because tmux cannot: whether pane output is delivered at all is fixed when the connection starts, and the decoder's bounds belong to the decoder rather than to whatever reads it.
 
 ```cpp
 struct ConnectionOptions;
@@ -6270,6 +6355,8 @@ NotificationRange(Connection& connection, std::chrono::steady_clock::time_point 
 
 <a id="libtmux-control-hpp-notificationrange-iterator"></a>
 ### `NotificationRange::iterator`
+
+Single-pass, and the value it yields is borrowed: advancing invalidates the notification the previous dereference viewed.
 
 ```cpp
 class iterator final;
@@ -6506,6 +6593,7 @@ inline constexpr std::size_t kDefaultLineBytes = 1024U * 1024U;
 ```cpp
 using Event = std::variant<ControlBlock, Notification>;
 ```
+Anything the parser produces: a reply to something asked, or something tmux said on its own. The two arrive interleaved on one stream.
 
 <a id="libtmux-notification-hpp"></a>
 ## `libtmux/notification.hpp`
@@ -6571,6 +6659,8 @@ Events tmux emits outside guarded control reply blocks.  Most are protocol notif
 
 <a id="libtmux-notification-hpp-notification"></a>
 ### `Notification`
+
+One control event tmux sent unprompted, still as bytes.  Kept undecoded because deciding what it is costs a parse a caller may not need — `ParsedNotification` is that parse.
 
 ```cpp
 struct Notification;
@@ -6872,6 +6962,8 @@ Build one tmux command sequence from several commands.  tmux accepts multiple co
 <a id="libtmux-batch-hpp-commandbatch"></a>
 ### `CommandBatch`
 
+The argv a chain becomes: commands joined by tmux's separator.  An empty command is rejected rather than emitted, because tmux reads two adjacent separators as the next command's first argument.
+
 ```cpp
 class CommandBatch;
 ```
@@ -6950,6 +7042,8 @@ Compose several tmux commands as one fail-fast group.  A chain is a typed front 
 
 <a id="libtmux-chain-hpp-chain"></a>
 ### `Chain`
+
+Several commands built up and sent as one tmux invocation.  tmux runs a chain until a command fails and discards the rest, so the chain is the unit of atomicity a caller gets — and the reply count alone cannot say which command failed.
 
 ```cpp
 class Chain;
@@ -7039,6 +7133,8 @@ Build `send-keys` arguments.  tmux does not report an unknown key name: `send-ke
 
 <a id="libtmux-keys-hpp-keyerror"></a>
 ### `KeyError`
+
+Why a key name could not be resolved to something tmux accepts.
 
 ```cpp
 enum class KeyError;
@@ -7371,6 +7467,8 @@ Build tmux target specifiers.  tmux addresses objects either by id (`$0`, `@0`, 
 <a id="libtmux-target-hpp-targeterror"></a>
 ### `TargetError`
 
+Why a target could not be built from a name.
+
 ```cpp
 enum class TargetError;
 ```
@@ -7468,6 +7566,8 @@ Build the connection arguments that select a tmux-compatible server.  tmux selec
 
 <a id="libtmux-socket-hpp-socketerror"></a>
 ### `SocketError`
+
+Why a socket name or path was rejected before any server was contacted.  Length is the one that surprises: a unix socket path is bounded by the platform, not by tmux.
 
 ```cpp
 enum class SocketError;
@@ -7623,6 +7723,8 @@ Parse and order tmux version strings.  Suffixes follow bare releases; `next-` pr
 <a id="libtmux-version-hpp-versionerror"></a>
 ### `VersionError`
 
+Why a tmux version string could not be read.
+
 ```cpp
 enum class VersionError;
 ```
@@ -7635,6 +7737,8 @@ enum class VersionError;
 
 <a id="libtmux-version-hpp-version"></a>
 ### `Version`
+
+A tmux version, ordered so a feature gate can compare against a literal.  tmux marks a development build with a suffix, which orders after the release it follows rather than before it.
 
 ```cpp
 struct Version;
@@ -7851,6 +7955,8 @@ One node of a lowered expression.  Lowering flattens an expression into a sequen
 <a id="libtmux-lowered-node-hpp-lowerednode"></a>
 ### `LoweredNode`
 
+One node of a filter after it has been reduced to what tmux's `-f` format language can express.
+
 ```cpp
 struct LoweredNode;
 ```
@@ -7950,7 +8056,7 @@ enum class Kind;
 <a id="libtmux-lowered-node-hpp-nodecollector"></a>
 ### `NodeCollector`
 
-Collects a lowered expression. This is the sink the relation builders use to capture their child, and it is a plain value so the result is copyable.
+Collects a lowered expression. This is the sink the relation builders use to capture their child, and it is a plain value so the result is copyable. Builds the flat node list a lowered expression is, keeping the indices stable so a parent can reference a child it has not finished emitting.
 
 ```cpp
 class NodeCollector;
@@ -8042,6 +8148,7 @@ void end_relation();
 ```cpp
 using LoweredExpression = std::vector<LoweredNode>;
 ```
+A whole lowered filter, flat: children are referenced by index rather than owned, so the vector can be walked without recursion.
 
 <a id="libtmux-legacy-lookup-hpp"></a>
 ## `libtmux/legacy_lookup.hpp`
@@ -8060,6 +8167,8 @@ Edge parser for the Python `field__lookup=value` spelling.  This exists so a cal
 
 <a id="libtmux-legacy-lookup-hpp-lookupparseerror"></a>
 ### `LookupParseError`
+
+Why a legacy lookup string could not be read.
 
 ```cpp
 enum class LookupParseError;
@@ -8119,6 +8228,7 @@ The one C++23 library facility this package's public surface needs.  Recoverable
 template <typename Value, typename Error> using expected = tl::expected<Value, Error>;
 ```
 Available when `defined(LIBTMUX_USE_TL_EXPECTED)`.
+A value or the reason there is not one.  `std::expected` where the standard library has it, and a drop-in otherwise, so a caller writes the same code either way. Nothing in this library throws to report a tmux failure.
 
 <a id="libtmux-expected-hpp-free-symbols-expected-2"></a>
 #### `expected`
@@ -8127,6 +8237,7 @@ Available when `defined(LIBTMUX_USE_TL_EXPECTED)`.
 template <typename Value, typename Error> using expected = std::expected<Value, Error>;
 ```
 Available when `!(defined(LIBTMUX_USE_TL_EXPECTED))`.
+A value or the reason there is not one.  `std::expected` where the standard library has it, and a drop-in otherwise, so a caller writes the same code either way. Nothing in this library throws to report a tmux failure.
 
 <a id="libtmux-expected-hpp-free-symbols-unexpected-t"></a>
 #### `unexpected_t`
@@ -8135,6 +8246,7 @@ Available when `!(defined(LIBTMUX_USE_TL_EXPECTED))`.
 template <typename Error> using unexpected_t = tl::unexpected<Error>;
 ```
 Available when `defined(LIBTMUX_USE_TL_EXPECTED)`.
+The error side of `expected`, named for the rare declaration that has to spell it. Returning one is how a function reports a failure.
 
 <a id="libtmux-expected-hpp-free-symbols-unexpected-t-2"></a>
 #### `unexpected_t`
@@ -8143,6 +8255,7 @@ Available when `defined(LIBTMUX_USE_TL_EXPECTED)`.
 template <typename Error> using unexpected_t = std::unexpected<Error>;
 ```
 Available when `!(defined(LIBTMUX_USE_TL_EXPECTED))`.
+The error side of `expected`, named for the rare declaration that has to spell it. Returning one is how a function reports a failure.
 
 <a id="libtmux-expected-hpp-free-symbols-bad-expected-access"></a>
 #### `bad_expected_access`

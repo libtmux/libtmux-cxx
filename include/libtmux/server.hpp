@@ -46,7 +46,7 @@ namespace detail {
 [[nodiscard]] Server server_over(std::shared_ptr<const Backend> backend);
 } // namespace detail
 
-// What a caller-supplied transport tells the library about itself.
+/// What a caller-supplied transport tells the library about itself.
 //
 // `implementation` answers what a caller may rely on, and only that. Leaving it
 // `unknown` makes `capabilities().supports(...)` answer no for every feature —
@@ -57,10 +57,10 @@ namespace detail {
 // tmux server, so a caller asking what it may rely on gets a useful answer.
 struct ExecutorOptions {
   ServerImplementation implementation{ServerImplementation::unknown};
-  // What `Server::socket_path()` reports. Informational; the library never
+  /// What `Server::socket_path()` reports. Informational; the library never
   // resolves it, because the executor has already decided where it is talking.
   std::string socket_path{};
-  // The tmux this transport speaks to. Absent asks the executor by running
+  /// The tmux this transport speaks to. Absent asks the executor by running
   // `-V`, which a transport that only speaks tmux subcommands cannot answer —
   // such an executor names the version here instead.
   std::optional<Version> version{};

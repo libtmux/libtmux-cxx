@@ -97,7 +97,7 @@ struct ParsedNotification {
 [[nodiscard]] ParsedNotification parse(const Notification& notification);
 ParsedNotification parse(Notification&&) = delete;
 
-// Whether `pane_id` (`%N`) is still part of a window's arrangement, reading
+/// Whether `pane_id` (`%N`) is still part of a window's arrangement, reading
 // a `layout_change` notification's own `text` — `window_layout` followed by
 // `window_visible_layout` and the window's flags (control-notify.c) — for
 // its first, whitespace-delimited token.

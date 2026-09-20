@@ -65,6 +65,8 @@ A private tmux server, torn down with the scope that started it.  Exported as `l
 <a id="libtmux-testing-scoped-server-hpp-socketmode"></a>
 ### `SocketMode`
 
+Whether the test server is addressed by `tmux -L name` or `tmux -S path`.
+
 ```cpp
 enum class SocketMode;
 ```
@@ -77,6 +79,8 @@ enum class SocketMode;
 
 <a id="libtmux-testing-scoped-server-hpp-teardownreport"></a>
 ### `TeardownReport`
+
+What teardown could not clean up, so a suite can fail loudly rather than leave a server behind quietly.
 
 ```cpp
 struct TeardownReport;
@@ -122,6 +126,8 @@ Prefixed, so a consumer's servers are distinguishable from this library's.
 
 <a id="libtmux-testing-scoped-server-hpp-scopedtmuxserveroptions"></a>
 ### `ScopedTmuxServerOptions`
+
+How the test server is started and how long teardown may take.  Every member carries an initializer on purpose; see the note on the last one.
 
 ```cpp
 struct ScopedTmuxServerOptions;
@@ -179,6 +185,8 @@ Every member has an initializer: without one here, a designated initializer that
 
 <a id="libtmux-testing-scoped-server-hpp-scopedtmuxserver"></a>
 ### `ScopedTmuxServer`
+
+A tmux server that exists for the lifetime of this value.  Owns a private socket and directory and kills the server on destruction, so suites running at once cannot see each other's sessions. Teardown reports rather than throws — a destructor that throws during a failing test hides the failure.
 
 ```cpp
 class ScopedTmuxServer final;
@@ -407,6 +415,8 @@ Set a variable for the length of a scope, and put back exactly what was there.  
 
 <a id="libtmux-testing-environment-guard-hpp-environmentguard"></a>
 ### `EnvironmentGuard`
+
+Environment variables set for the lifetime of this value and restored on destruction, including the ones that were previously unset.
 
 ```cpp
 class EnvironmentGuard final;

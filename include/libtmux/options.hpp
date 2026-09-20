@@ -16,7 +16,7 @@
 
 LIBTMUX_NAMESPACE_BEGIN
 
-// One name in the environment tmux gives processes it starts.
+/// One name in the environment tmux gives processes it starts.
 //
 // The value is optional because tmux distinguishes two things a listing shows
 // side by side: a name bound to a value, printed `NAME=value`, and a name

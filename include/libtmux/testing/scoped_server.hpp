@@ -78,7 +78,7 @@ void set_environment(std::vector<std::string>& environment, std::string_view nam
                      std::string_view value);
 void erase_environment(std::vector<std::string>& environment, std::string_view name);
 
-// Whether two paths name the same socket.
+/// Whether two paths name the same socket.
 //
 // Not `std::filesystem::equivalent`: [fs.op.equivalent] makes it an *error*
 // when both paths are "other" files, and a unix domain socket is one. That is

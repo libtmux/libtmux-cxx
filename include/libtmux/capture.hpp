@@ -106,7 +106,7 @@ namespace detail {
 
 } // namespace detail
 
-// Whether `wanted` appears in captured text as something the pane produced,
+/// Whether `wanted` appears in captured text as something the pane produced,
 // rather than as text that is merely on screen.
 //
 // Waiting for a pane to say something is the first thing a supervising program
