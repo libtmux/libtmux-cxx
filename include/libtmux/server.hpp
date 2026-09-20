@@ -15,12 +15,15 @@
 #include "libtmux/command.hpp"
 #include "libtmux/expected.hpp"
 #include <chrono>
+#include <concepts>
 #include <cstddef>
 #include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "libtmux/async.hpp"
@@ -43,6 +46,26 @@ namespace detail {
 [[nodiscard]] Server server_over(std::shared_ptr<const Backend> backend);
 } // namespace detail
 
+// What a caller-supplied transport tells the library about itself.
+//
+// `implementation` answers what a caller may rely on, and only that. Leaving it
+// `unknown` makes `capabilities().supports(...)` answer no for every feature —
+// the library will not promise what it cannot recognise — but it does not stop
+// a typed call: `refuses` asks a separate question from `supports` rather than
+// its negation, so that a transport reaching a real tmux is not blocked for
+// being unfamiliar. Name `tmux` when the executor really does reach a POSIX
+// tmux server, so a caller asking what it may rely on gets a useful answer.
+struct ExecutorOptions {
+  ServerImplementation implementation{ServerImplementation::unknown};
+  // What `Server::socket_path()` reports. Informational; the library never
+  // resolves it, because the executor has already decided where it is talking.
+  std::string socket_path{};
+  // The tmux this transport speaks to. Absent asks the executor by running
+  // `-V`, which a transport that only speaks tmux subcommands cannot answer —
+  // such an executor names the version here instead.
+  std::optional<Version> version{};
+};
+
 class Server {
 public:
   // `-S path`: the socket file, used verbatim.
@@ -61,6 +84,18 @@ public:
   [[nodiscard]] static expected<Server, CommandFailure>
   at_socket_path(std::string_view path, CommandObserver observer = {},
                  ExecutionPolicy policy = {});
+  // Uses native path bytes on POSIX and UTF-8 on Windows. The exact path
+  // constraint keeps string and string-literal calls unambiguous.
+  template <typename Path>
+    requires std::same_as<std::remove_cvref_t<Path>, std::filesystem::path>
+  [[nodiscard]] static expected<Server, CommandFailure>
+  at_socket_path(Path&& path, CommandObserver observer = {},
+                 ExecutionPolicy policy = {}) {
+    const auto text = path.u8string();
+    return at_socket_path(
+        std::string_view{reinterpret_cast<const char*>(text.data()), text.size()},
+        std::move(observer), policy);
+  }
   // `-L name`: resolved under tmux's socket directory, as the tmux flag does.
   [[nodiscard]] static expected<Server, CommandFailure>
   at_socket_name(std::string_view name, CommandObserver observer = {},
@@ -76,6 +111,17 @@ public:
   startable_at_socket_path(std::string_view path,
                            std::optional<std::filesystem::path> configuration,
                            CommandObserver observer = {}, ExecutionPolicy policy = {});
+  template <typename Path>
+    requires std::same_as<std::remove_cvref_t<Path>, std::filesystem::path>
+  [[nodiscard]] static expected<Server, CommandFailure>
+  startable_at_socket_path(Path&& path,
+                           std::optional<std::filesystem::path> configuration,
+                           CommandObserver observer = {}, ExecutionPolicy policy = {}) {
+    const auto text = path.u8string();
+    return startable_at_socket_path(
+        std::string_view{reinterpret_cast<const char*>(text.data()), text.size()},
+        std::move(configuration), std::move(observer), policy);
+  }
   [[nodiscard]] static expected<Server, CommandFailure>
   startable_at_socket_name(std::string_view name,
                            std::optional<std::filesystem::path> configuration,
@@ -98,6 +144,19 @@ public:
   // one a person means when they say "my tmux".
   [[nodiscard]] static expected<Server, CommandFailure>
   at_default(CommandObserver observer = {}, ExecutionPolicy policy = {});
+
+  // A Server over a transport the caller supplies.
+  //
+  // `BackendKind::custom` named this possibility from the first release and
+  // nothing could reach it: the interface a backend had to satisfy lived in a
+  // header this package does not install, so the only transport a consumer
+  // could get was the one that launches a subprocess per command. An executor
+  // answers one command; the library keeps session routing, batching, attach
+  // preparation and the rest on its own side rather than making them a
+  // promise.
+  [[nodiscard]] static expected<Server, CommandFailure>
+  over(std::shared_ptr<const CommandExecutor> executor, ExecutorOptions options = {},
+       CommandObserver observer = {}, ExecutionPolicy policy = {});
 
   // The local backend contract; no command runs. `tmux_version()` separately
   // queries the executable or the connected control server.
@@ -161,6 +220,29 @@ public:
   [[nodiscard]] expected<Connection, ProtocolError>
   control_with_options(std::string_view session, ConnectionOptions options) const;
 
+  // A Server whose commands travel over held-open control clients attached to
+  // `session`, rather than one launched process each.
+  //
+  // Only where that gives the same answer. tmux can end a command's guarded
+  // block before the command has finished, so a command goes over the wire
+  // only if the typed surface issues it and tmux cannot defer it as sent —
+  // `split-window` without `-I` or `-W`, `display-message` without `-I`, the
+  // listings, and the other commands in the list in `server.cpp`, each checked
+  // against tmux's `CMD_RETURN_WAIT`. Anything else launches, as it would from
+  // this Server: a deferring command, one that acts on the client itself, an
+  // alias or an abbreviation this cannot see through. A failure reads as the
+  // same `CommandFailure` a launch would give.
+  //
+  // `connections` spreads commands over that many clients. One is enough for
+  // most callers — a connection already carries concurrent requests — and
+  // each extra client is attached to `session` and shows in `clients()`.
+  //
+  // A command with no target resolves against the control client's session
+  // rather than the most recently used one. The typed surface always names a
+  // target; a caller passing raw commands through `run` should too.
+  [[nodiscard]] expected<Server, ProtocolError>
+  over_control(std::string_view session, std::size_t connections = 1) const;
+
   // Ask the selected subprocess executable with `tmux -V` without touching a
   // server. The call uses this Server's execution policy.
   [[nodiscard]] expected<Version, CommandFailure> tmux_version() const;
@@ -202,6 +284,11 @@ public:
   // indistinguishable from being signalled — a caller would carry on as
   // though the other side had spoken. This reports that as a failure
   // instead, which is the reason to prefer it over running the command.
+  //
+  // Omitting `timeout` waits with no deadline: if the channel is never
+  // signalled, this call never returns. Waiting is the whole point of the
+  // request, so that is deliberate rather than a gap — pass a timeout to
+  // bound it.
   [[nodiscard]] expected<void, CommandFailure>
   wait_for(std::string_view channel,
            std::optional<std::chrono::milliseconds> timeout = {}) const;
@@ -324,6 +411,15 @@ public:
   [[nodiscard]] expected<Window, CommandFailure> window(std::string_view target) const;
   [[nodiscard]] expected<Pane, CommandFailure> pane(std::string_view target) const;
 
+  // Wait until the pane `target` names produces `wanted`. For a caller holding
+  // a target rather than a `Pane` — `Pane::wait_for_text` is the same wait
+  // without the lookup. One deadline covers both: a target that will not
+  // resolve cannot spend the whole budget and leave nothing for waiting, and
+  // `WaitPath::pane_lookup` says that is what happened.
+  [[nodiscard]] expected<WaitResult, CommandFailure>
+  wait_for_text(std::string_view target, std::string_view wanted,
+                const WaitOptions& options = {}) const;
+
   // Created detached, and returned, because tmux prints what it made. Windows
   // psmux rejects typed creation: concurrent creators cannot prove ownership.
   [[nodiscard]] expected<Session, CommandFailure>
@@ -346,6 +442,30 @@ public:
   set_global_option(std::string_view name, std::string_view value) const;
   [[nodiscard]] expected<std::vector<OptionEntry>, CommandFailure>
   hooks(std::string_view target = {}) const;
+
+  // The environment every new process on this server starts with.
+  //
+  // Server-global here; a session has its own. tmux keeps hidden entries
+  // apart from these, and this asks for neither `-h` nor the shell form, so
+  // what comes back is the plain listing a caller means.
+  [[nodiscard]] expected<std::vector<EnvironmentEntry>, CommandFailure>
+  environment() const;
+
+  // Bind a name. An empty value binds it to empty, which is not the same as
+  // not binding it at all.
+  [[nodiscard]] expected<void, CommandFailure>
+  set_environment(std::string_view name, std::string_view value) const;
+
+  // Forget the name, so a new process inherits whatever the tmux server
+  // itself has. This is tmux's `-u`.
+  [[nodiscard]] expected<void, CommandFailure>
+  unset_environment(std::string_view name) const;
+
+  // Keep the name and take it out of what a new process inherits — tmux's
+  // `-r`, which a listing then prints as `-NAME`. Different from forgetting
+  // it: this one is remembered, as an instruction to remove.
+  [[nodiscard]] expected<void, CommandFailure>
+  remove_environment(std::string_view name) const;
   // A hook set globally is not reported by the unscoped listing, so reading it
   // back needs the scope it was set with.
   [[nodiscard]] expected<std::vector<OptionEntry>, CommandFailure> global_hooks() const;

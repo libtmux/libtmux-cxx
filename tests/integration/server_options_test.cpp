@@ -41,6 +41,7 @@ TEST(ServerOptions, SetsAndReadsBackAServerScopeOption) {
   // A server option with a value tmux will not normalise away.
   const auto set = server.set_server_option("buffer-limit", "37");
   ASSERT_TRUE(set.has_value()) << set.error().diagnostic;
+  EXPECT_FALSE(server.set_server_option("-u", "buffer-limit").has_value());
 
   const auto entries = server.server_options();
   ASSERT_TRUE(entries.has_value()) << entries.error().diagnostic;
@@ -53,6 +54,8 @@ TEST(ServerOptions, GlobalScopeIsNotTheServerScope) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
+  ASSERT_TRUE(server.set_global_option("status-position", "top").has_value());
+  EXPECT_FALSE(server.set_global_option("-u", "status-position").has_value());
 
   const auto server_scope = server.server_options();
   ASSERT_TRUE(server_scope.has_value()) << server_scope.error().diagnostic;
@@ -65,6 +68,9 @@ TEST(ServerOptions, GlobalScopeIsNotTheServerScope) {
   EXPECT_NE(find(*server_scope, "buffer-limit"), nullptr);
   EXPECT_EQ(find(*server_scope, "status"), nullptr);
   EXPECT_NE(find(*global_scope, "status"), nullptr);
+  const OptionEntry* position = find(*global_scope, "status-position");
+  ASSERT_NE(position, nullptr);
+  EXPECT_EQ(position->value, "top");
 }
 
 TEST(ServerOptions, ResolvesAnOptionForAParticularTarget) {
@@ -88,6 +94,7 @@ TEST(ServerHooks, SetsAGlobalHookAndReadsItBack) {
 
   const auto set = server.set_global_hook("alert-bell", "display-message 'hooked'");
   ASSERT_TRUE(set.has_value()) << set.error().diagnostic;
+  EXPECT_FALSE(server.set_global_hook("-u", "alert-bell").has_value());
 
   const auto hooks = server.global_hooks();
   ASSERT_TRUE(hooks.has_value()) << hooks.error().diagnostic;

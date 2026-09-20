@@ -238,12 +238,12 @@ json ProtocolSession::execute(const CallRequest& request, const CallContext& con
     }
     return success(request.id, tool_success(*answer, request.era));
   }
-  if (answer.error().caller_error) {
-    if (request.tool_input_errors_are_results) {
-      return success(request.id, tool_failure(answer.error().message, request.era));
-    }
-    return failure(request.id, kInvalidParams, answer.error().message);
-  }
+  // A tool that ran and refused is a result the caller reads and can act
+  // on, whether the refusal traces back to a caller mistake or not - not a
+  // JSON-RPC protocol fault. `tool_input_errors_are_results` above governs
+  // only whether an argument that never reached a tool at all (missing,
+  // wrong shape) gets that treatment; once a tool has run, era does not
+  // change how its own answer is reported.
   return success(request.id, tool_failure(answer.error().message, request.era));
 }
 

@@ -31,6 +31,32 @@ LIBTMUX_NAMESPACE_BEGIN
 
 namespace {
 
+[[nodiscard]] std::chrono::steady_clock::time_point
+deadline_after(std::chrono::milliseconds timeout) {
+  using Clock = std::chrono::steady_clock;
+  const auto now = Clock::now();
+  if (timeout <= std::chrono::milliseconds::zero()) {
+    return now;
+  }
+  if (timeout >= std::chrono::duration_cast<std::chrono::milliseconds>(
+                     Clock::time_point::max() - now)) {
+    return Clock::time_point::max();
+  }
+  return now + timeout;
+}
+
+[[nodiscard]] ReadyStatus to_ready_status(detail::QueueReadyStatus status) {
+  switch (status) {
+  case detail::QueueReadyStatus::ready:
+    return ReadyStatus::ready;
+  case detail::QueueReadyStatus::timeout:
+    return ReadyStatus::timeout;
+  case detail::QueueReadyStatus::closed:
+    return ReadyStatus::closed;
+  }
+  return ReadyStatus::closed;
+}
+
 [[nodiscard]] CommandFailure immediate_failure(FailureKind kind,
                                                std::string diagnostic) {
   return CommandFailure{.kind = kind,
@@ -227,10 +253,21 @@ private:
 struct Observation final {
   CommandObserver callback;
   std::string command;
+  std::vector<std::string> argv;
   CommandFailure failure;
   bool failed{};
+  // Measured from admission to the result being ready, which for an
+  // asynchronous command is the wait a caller actually paid — not the span
+  // the dispatching thread spent inside tmux.
+  std::chrono::steady_clock::time_point started{std::chrono::steady_clock::now()};
+  std::optional<std::chrono::nanoseconds> elapsed{};
 
-  void dispatch() const { callback(command, failed ? &failure : nullptr); }
+  void dispatch() const {
+    callback(CommandReport{.command = command,
+                           .argv = argv,
+                           .failure = failed ? &failure : nullptr,
+                           .elapsed = elapsed});
+  }
 };
 
 class ObserverRecord final {
@@ -271,7 +308,32 @@ private:
   std::atomic_size_t& active_;
 };
 
+// Blocked `wait_ready` callers, which `close` waits out. Never held by the
+// closing thread: `wait_ready` runs no caller code.
+class ActiveReadinessWait final {
+public:
+  ActiveReadinessWait(std::atomic_size_t& active, std::mutex& mutex,
+                      std::condition_variable& idle) noexcept
+      : active_{active}, mutex_{mutex}, idle_{idle} {
+    active_.fetch_add(1U);
+  }
+  ~ActiveReadinessWait() {
+    const std::lock_guard<std::mutex> lock{mutex_};
+    if (active_.fetch_sub(1U) == 1U) {
+      idle_.notify_all();
+    }
+  }
+  ActiveReadinessWait(const ActiveReadinessWait&) = delete;
+  ActiveReadinessWait& operator=(const ActiveReadinessWait&) = delete;
+
+private:
+  std::atomic_size_t& active_;
+  std::mutex& mutex_;
+  std::condition_variable& idle_;
+};
+
 #if !defined(_WIN32)
+#if defined(LIBTMUX_FAULT_INJECTION)
 std::mutex launch_observer_mutex;
 std::function<void(const detail::ProcessRequest&)> runtime_launch_observer;
 std::function<void()> runtime_completion_observer;
@@ -323,11 +385,33 @@ void notify_runtime_completion_observer() noexcept {
   } catch (...) {
   }
 }
+#else
+// Without fault injection there is no state to consult, and every caller below
+// asks the same questions. Answering them as constants leaves the runtime's own
+// code unguarded and folds each branch away, so the shipped archive carries
+// neither the lock nor the paths that only a test could reach.
+[[nodiscard]] constexpr bool consume_runtime_start_failure() noexcept { return false; }
+[[nodiscard]] constexpr bool consume_runtime_subscription_failure() noexcept {
+  return false;
+}
+[[nodiscard]] constexpr bool use_windows_validation_for_test() noexcept {
+  return false;
+}
+[[nodiscard]] constexpr bool
+consume_runtime_action_failure(detail::RuntimeFailurePoint) noexcept {
+  return false;
+}
+[[nodiscard]] inline std::function<void(const detail::ProcessRequest&)>
+copy_runtime_launch_observer() {
+  return {};
+}
+inline void notify_runtime_completion_observer() noexcept {}
+#endif
 #endif
 
 } // namespace
 
-#if !defined(_WIN32)
+#if !defined(_WIN32) && defined(LIBTMUX_FAULT_INJECTION)
 namespace detail {
 
 void set_runtime_launch_observer_for_test(
@@ -527,6 +611,7 @@ struct CommandRuntime::State final {
       observation = std::make_shared<Observation>(
           Observation{.callback = std::move(*observer),
                       .command = detail::rendered_command(command),
+                      .argv = command.argv(),
                       .failure = accepted_internal_failure(
                           "the runtime could not translate this command result"),
                       .failed = false});
@@ -664,36 +749,42 @@ struct CommandRuntime::State final {
       break;
     }
 
+    bool transports_stopped = true;
     try {
       request_stop();
-      bool transports_stopped = true;
-#if !defined(_WIN32)
-      const auto engine_report = engine_->close();
-      transports_stopped = engine_report.complete;
-      if (consume_runtime_action_failure(
-              detail::RuntimeFailurePoint::engine_shutdown)) {
-        transports_stopped = false;
-      }
-      if (!transports_stopped) {
-        store_lifecycle_failure(accepted_internal_failure(
-            "the process runtime could not retire every accepted child"));
-      }
-#else
-      engine_->close();
-#endif
-#if !defined(_WIN32)
-      if (consume_runtime_action_failure(detail::RuntimeFailurePoint::close)) {
-        throw detail::RuntimeFailurePoint::close;
-      }
-#endif
       {
-        std::lock_guard completion_lock{completion_mutex_};
-        finish_completion_thread_ = true;
-        completion_wake_ = true;
-      }
-      completion_ready_.notify_all();
-      if (completion_thread_.joinable()) {
-        completion_thread_.join();
+        // Runs even if a step below throws, so a `wait_ready` caller is
+        // always woken and fully drained before `~State` can free the
+        // object its `ActiveReadinessWait` still references.
+        FinishReadinessWaits finish_readiness_waits{*this};
+#if !defined(_WIN32)
+        const auto engine_report = engine_->close();
+        transports_stopped = engine_report.complete;
+        if (consume_runtime_action_failure(
+                detail::RuntimeFailurePoint::engine_shutdown)) {
+          transports_stopped = false;
+        }
+        if (!transports_stopped) {
+          store_lifecycle_failure(accepted_internal_failure(
+              "the process runtime could not retire every accepted child"));
+        }
+#else
+        engine_->close();
+#endif
+#if !defined(_WIN32)
+        if (consume_runtime_action_failure(detail::RuntimeFailurePoint::close)) {
+          throw detail::RuntimeFailurePoint::close;
+        }
+#endif
+        {
+          std::lock_guard completion_lock{completion_mutex_};
+          finish_completion_thread_ = true;
+          completion_wake_ = true;
+        }
+        completion_ready_.notify_all();
+        if (completion_thread_.joinable()) {
+          completion_thread_.join();
+        }
       }
 
       const auto final_snapshot = ledger_->snapshot();
@@ -704,6 +795,7 @@ struct CommandRuntime::State final {
           .safe_to_unload = transports_stopped &&
                             final_snapshot.pending_results == 0U &&
                             final_snapshot.pending_observers == 0U &&
+                            active_readiness_waiters_.load() == 0U &&
                             active_observer_dispositions_.load() == 0U,
           .failure = lifecycle_failure()};
       {
@@ -728,6 +820,12 @@ struct CommandRuntime::State final {
     return ledger_->snapshot();
   }
 
+  [[nodiscard]] ReadyStatus wait_ready(std::chrono::steady_clock::time_point deadline) {
+    const ActiveReadinessWait active{active_readiness_waiters_, readiness_wait_mutex_,
+                                     readiness_wait_idle_};
+    return to_ready_status(observers_.wait_ready(deadline));
+  }
+
   [[nodiscard]] std::size_t dispatch_ready() {
     const ActiveObserverDisposition active{active_observer_dispositions_};
     return observers_.run_ready();
@@ -738,7 +836,29 @@ struct CommandRuntime::State final {
     return observers_.discard_ready();
   }
 
+  [[nodiscard]] int ready_fd() const noexcept { return observers_.ready_fd(); }
+
 private:
+  class FinishReadinessWaits final {
+  public:
+    explicit FinishReadinessWaits(State& state) noexcept : state_{state} {}
+    ~FinishReadinessWaits() {
+      state_.observers_.finish();
+      state_.wait_for_idle_readiness_waiters();
+    }
+    FinishReadinessWaits(const FinishReadinessWaits&) = delete;
+    FinishReadinessWaits& operator=(const FinishReadinessWaits&) = delete;
+
+  private:
+    State& state_;
+  };
+
+  void wait_for_idle_readiness_waiters() noexcept {
+    std::unique_lock lock{readiness_wait_mutex_};
+    readiness_wait_idle_.wait(
+        lock, [this] { return active_readiness_waiters_.load() == 0U; });
+  }
+
   void notify_completion() noexcept {
     {
       std::lock_guard lock{completion_mutex_};
@@ -792,6 +912,7 @@ private:
     try {
       if (observation) {
         observation->failed = !answer.has_value();
+        observation->elapsed = std::chrono::steady_clock::now() - observation->started;
         if (!answer.has_value()) {
           observation->failure = answer.error();
         }
@@ -890,6 +1011,10 @@ private:
   std::optional<CommandFailure> lifecycle_failure_;
   std::atomic_size_t active_observer_dispositions_{};
 
+  std::mutex readiness_wait_mutex_;
+  std::condition_variable readiness_wait_idle_;
+  std::atomic_size_t active_readiness_waiters_{};
+
 #if !defined(_WIN32)
   std::shared_ptr<detail::ProcessEngine> engine_;
 #else
@@ -976,12 +1101,24 @@ CommandRuntimeSnapshot CommandRuntime::snapshot() const noexcept {
   return state_->snapshot();
 }
 
+ReadyStatus CommandRuntime::wait_ready(std::chrono::steady_clock::time_point deadline) {
+  return state_ ? state_->wait_ready(deadline) : ReadyStatus::closed;
+}
+
+ReadyStatus CommandRuntime::wait_ready_for(std::chrono::milliseconds timeout) {
+  return wait_ready(deadline_after(timeout));
+}
+
 std::size_t CommandRuntime::dispatch_ready() {
   return state_ ? state_->dispatch_ready() : 0U;
 }
 
 std::size_t CommandRuntime::discard_ready() {
   return state_ ? state_->discard_ready() : 0U;
+}
+
+int CommandRuntime::ready_fd() const noexcept {
+  return state_ ? state_->ready_fd() : -1;
 }
 
 CommandOperation::CommandOperation(std::unique_ptr<State> state) noexcept
@@ -998,6 +1135,27 @@ expected<std::string, CommandFailure> CommandOperation::wait() && {
   }
   auto state = std::move(state_);
   return detail::sync_wait(std::move(state->result));
+}
+
+std::function<void()> CommandOperation::cancellation_callback() const {
+  auto relay =
+      state_ ? state_->cancellation : detail::OperationCancellation<RuntimeRawReply>{};
+  return [relay = std::move(relay)] { static_cast<void>(relay.request_cancel()); };
+}
+
+expected<bool, CommandFailure>
+CommandOperation::wait_until(std::chrono::steady_clock::time_point deadline) const {
+  if (!state_) {
+    return unexpected(
+        immediate_failure(FailureKind::validation,
+                          "this operation was consumed, detached, or moved from"));
+  }
+  return state_->result.wait_until(deadline);
+}
+
+expected<bool, CommandFailure>
+CommandOperation::wait_for(std::chrono::milliseconds timeout) const {
+  return wait_until(deadline_after(timeout));
 }
 
 void CommandOperation::detach() && noexcept { state_.reset(); }

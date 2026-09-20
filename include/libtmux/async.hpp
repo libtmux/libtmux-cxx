@@ -7,15 +7,25 @@
 
 #include "libtmux/command.hpp"
 #include "libtmux/expected.hpp"
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
+#include <version>
+
+#if defined(__cpp_lib_jthread) && __cpp_lib_jthread >= 201911L
+#include <stop_token>
+#endif
 
 LIBTMUX_NAMESPACE_BEGIN
 
 class Server;
+
+enum class ReadyStatus : std::uint8_t { ready, timeout, closed };
 
 // The maximum number of accepted commands retaining any lifecycle leg.
 // `start` rejects zero with `DeliveryStatus::not_started`.
@@ -53,7 +63,8 @@ struct CommandRuntimeShutdown final {
   // Whether every owned child and transport thread retired.
   bool transports_stopped{};
   // True only when transports and pending work ended and no caller-side
-  // dispatch or discard, including callback-target teardown, remains active.
+  // readiness wait, dispatch or discard, including callback-target teardown,
+  // remains active.
   // Callers must prevent concurrent or later runtime entry before unloading.
   bool safe_to_unload{};
   // The first runtime lifecycle failure; an operation may also carry it.
@@ -79,11 +90,19 @@ public:
 
   // Stops admission and requests cancellation without waiting.
   void request_stop() noexcept;
-  // Joins every owned thread without invoking or discarding observers.
+  // Joins every owned thread without invoking or discarding observers, and
+  // does not return or throw until every blocked `wait_ready` caller has left.
   // The first successful report is cached; a throwing shutdown can be retried.
   [[nodiscard]] CommandRuntimeShutdown close();
   // Reads one lock-consistent instant without waiting for work.
   [[nodiscard]] CommandRuntimeSnapshot snapshot() const noexcept;
+  // Waits for a ready observer without invoking it. `closed` means close has
+  // joined the transports and no ready observers remain, or this owner was moved.
+  // Ready records take precedence over closure and deadline expiry.
+  [[nodiscard]] ReadyStatus
+  wait_ready(std::chrono::steady_clock::time_point deadline =
+                 std::chrono::steady_clock::time_point::max());
+  [[nodiscard]] ReadyStatus wait_ready_for(std::chrono::milliseconds timeout);
   // Runs one snapshot of ready observers on this thread and returns its count.
   // A callback exception releases that record, propagates, and leaves later
   // records.
@@ -91,6 +110,20 @@ public:
   // Releases ready observer obligations without invoking callbacks.
   // Only one dispatch or discard call runs at once; competitors return zero.
   [[nodiscard]] std::size_t discard_ready();
+
+  // Readable exactly when `wait_ready` would return without blocking, for a
+  // caller that owns an event loop and cannot park a thread in `wait_ready`.
+  // The same contract as `Connection::notification_fd`:
+  //
+  //   - Readability is the signal. Do not read from it: the byte carries
+  //     nothing and is this runtime's to consume. Drain by taking the work —
+  //     `dispatch_ready` or `discard_ready` — which clears it.
+  //   - A closed runtime makes it readable, so a poller learns that no answer
+  //     is coming rather than waiting for one.
+  //   - Valid until this runtime is destroyed or moved from. `-1` when the
+  //     pipe could not be created, and on Windows, where the runtime has no
+  //     descriptor to offer; a caller that gets `-1` uses `wait_ready`.
+  [[nodiscard]] int ready_fd() const noexcept;
 
 private:
   struct State;
@@ -115,6 +148,43 @@ public:
   // Waiting never dispatches the Server's global observer.
   [[nodiscard]] expected<std::string, CommandFailure> wait() &&;
 
+  // True means the result can be taken; false means only this wait expired.
+  // Neither outcome consumes the handle or changes the command's deadline.
+  // A consumed or moved-from handle reports FailureKind::validation.
+  [[nodiscard]] expected<bool, CommandFailure>
+  wait_until(std::chrono::steady_clock::time_point deadline) const;
+  [[nodiscard]] expected<bool, CommandFailure>
+  wait_for(std::chrono::milliseconds timeout) const;
+
+#if defined(__cpp_lib_jthread) && __cpp_lib_jthread >= 201911L
+  // These three overloads exist only where the standard library provides
+  // `std::stop_token`. libstdc++ does; libc++ does not without
+  // `-fexperimental-library`, and this package pins clang with libc++ — so a
+  // default build of it has no `stop_token` overload at all, and a caller
+  // reaching for one meets "no matching member function" rather than anything
+  // that explains itself. Every non-token overload below is always present,
+  // and `cancel()` is the portable way to withdraw a wait.
+  //
+  // The token requests transport cancellation only during this wait; it
+  // cannot undo tmux work. The eventual result retains its command failure
+  // and delivery status.
+  [[nodiscard]] expected<std::string, CommandFailure> wait(std::stop_token stop) && {
+    const std::stop_callback cancellation{stop, cancellation_callback()};
+    return std::move(*this).wait();
+  }
+  [[nodiscard]] expected<bool, CommandFailure>
+  wait_until(std::chrono::steady_clock::time_point deadline,
+             std::stop_token stop) const {
+    const std::stop_callback cancellation{stop, cancellation_callback()};
+    return wait_until(deadline);
+  }
+  [[nodiscard]] expected<bool, CommandFailure>
+  wait_for(std::chrono::milliseconds timeout, std::stop_token stop) const {
+    const std::stop_callback cancellation{stop, cancellation_callback()};
+    return wait_for(timeout);
+  }
+#endif
+
   // Releases the result obligation without cancelling the command.
   // The Server's global observer remains a runtime obligation.
   void detach() && noexcept;
@@ -126,6 +196,7 @@ public:
 private:
   struct State;
   explicit CommandOperation(std::unique_ptr<State> state) noexcept;
+  [[nodiscard]] std::function<void()> cancellation_callback() const;
   friend class CommandRuntime;
   friend class Server;
 

@@ -18,6 +18,7 @@
 #include "libtmux/control.hpp"
 #include "libtmux/delivery.hpp"
 #include "libtmux/entities.hpp"
+#include "libtmux/error.hpp"
 #include "libtmux/expected.hpp"
 #include "libtmux/filter_expr.hpp"
 #include "libtmux/format.hpp"

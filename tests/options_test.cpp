@@ -116,6 +116,7 @@ TEST(Options, ASessionOptionIsWrittenAndReadBackAtItsOwnScope) {
   const Session session = only_session(server);
 
   ASSERT_TRUE(session.set_option("status-position", "top").has_value());
+  EXPECT_FALSE(session.set_option("-u", "status-position").has_value());
 
   const auto read = session.option("status-position");
   ASSERT_TRUE(read.has_value()) << read.error().diagnostic;
@@ -141,12 +142,14 @@ TEST(Options, AnOptionResolvesThroughTheTargetsScopeChain) {
   ASSERT_FALSE(panes->empty());
 
   ASSERT_TRUE(window->set_option("main-pane-width", "101").has_value());
+  EXPECT_FALSE(window->set_option("-u", "main-pane-width").has_value());
   const auto width = window->option("main-pane-width");
   ASSERT_TRUE(width.has_value()) << width.error().diagnostic;
   EXPECT_EQ(width->value, "101");
   EXPECT_FALSE(width->inherited);
 
   ASSERT_TRUE(panes->front().set_option("remain-on-exit", "on").has_value());
+  EXPECT_FALSE(panes->front().set_option("-u", "remain-on-exit").has_value());
   const auto remain = panes->front().option("remain-on-exit");
   ASSERT_TRUE(remain.has_value()) << remain.error().diagnostic;
   EXPECT_EQ(remain->value, "on");
@@ -199,6 +202,7 @@ TEST(Options, AHookIsSetOnASessionAndReadBack) {
 
   ASSERT_TRUE(
       session.set_hook("after-new-window", "display-message hooked").has_value());
+  EXPECT_FALSE(session.set_hook("-u", "after-new-window").has_value());
 
   const auto hooks = session.hooks();
   ASSERT_TRUE(hooks.has_value()) << hooks.error().diagnostic;

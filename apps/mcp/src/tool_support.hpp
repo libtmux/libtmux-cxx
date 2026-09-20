@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <string>
@@ -18,10 +19,66 @@
 
 namespace libtmux::mcp::detail {
 
-// The sentence every tool description opens with, naming the authority the
-// caller is granting before the tool says what it does.
+struct OwnObservationRegistry {
+  std::mutex mutex;
+  std::set<std::int64_t> pids;
+};
+
+[[nodiscard]] inline OwnObservationRegistry& own_observation_registry() {
+  static OwnObservationRegistry* const process_registry = new OwnObservationRegistry;
+  return *process_registry;
+}
+
+// While this process's own `wait_for_text` holds a control connection open
+// on a session, `list_sessions`/`get_session_info` must not read that
+// connection's client as someone attached - an agent deciding whether it is
+// safe to act on a session should not see its own observation as another
+// user. RAII-registers a control connection's own
+// `native_child_pid()` for as long as it is open; the pid, not a longer-lived
+// handle, because that is the only identity `#{client_pid}` (`list-clients`)
+// can be matched against later.
+class OwnObservationClient {
+public:
+  explicit OwnObservationClient(std::int64_t pid) noexcept : pid_{pid} {
+    if (pid_ > 0) {
+      OwnObservationRegistry& registry = own_observation_registry();
+      std::lock_guard lock{registry.mutex};
+      registry.pids.insert(pid_);
+    }
+  }
+  ~OwnObservationClient() {
+    if (pid_ > 0) {
+      OwnObservationRegistry& registry = own_observation_registry();
+      std::lock_guard lock{registry.mutex};
+      registry.pids.erase(pid_);
+    }
+  }
+  OwnObservationClient(const OwnObservationClient&) = delete;
+  OwnObservationClient& operator=(const OwnObservationClient&) = delete;
+  OwnObservationClient(OwnObservationClient&&) = delete;
+  OwnObservationClient& operator=(OwnObservationClient&&) = delete;
+
+private:
+  std::int64_t pid_;
+};
+
+[[nodiscard]] inline bool is_own_observation_client(std::int64_t pid) {
+  OwnObservationRegistry& registry = own_observation_registry();
+  std::lock_guard lock{registry.mutex};
+  return registry.pids.contains(pid);
+}
+
+// The sentence every tool description closes with, naming the authority the
+// caller is granting. It comes after the tool's own sentence rather than
+// before it: grouped by the coarse authority classes below, this sentence
+// is identical across every tool in a class by design - a caller comparing
+// authority across tools wants that - but a first sentence is also the one
+// thing a client shows without the reader asking for more, and several
+// tools opening on this same sentence verbatim were not distinguishable
+// there. The tool's own sentence, describing what only it does, goes first
+// instead.
 //
-// One definition on purpose: the catalog prepends this when it builds a tool
+// One definition on purpose: the catalog appends this when it builds a tool
 // and the registry validator re-derives it to check the tool kept it, so two
 // copies would be two predicates enforcing one invariant. They had already
 // drifted — the builder keyed the change sentence off the toolset while the
@@ -175,6 +232,8 @@ struct PaneInputPreflight {
   std::uint64_t server_start_time{};
   std::string server_process_generation;
   std::string foreground_command;
+  // The complete server snapshot, used to expire killed panes.
+  std::vector<std::string> all_pane_ids;
 };
 
 using ShellNonceFactory = std::function<std::string()>;

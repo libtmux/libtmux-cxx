@@ -400,6 +400,36 @@ TEST(NotificationParse, PutsEachIdInTheFieldItsPrefixNames) {
   EXPECT_TRUE(pane_parsed.session.empty());
 }
 
+// tmux's grammar for this one (control.c) is fixed-position rather than
+// id-then-text: `%subscription-changed <name> <session> <window-or-'-'>
+// <index-or-'-'> <pane-or-'-'> : <value>`. Its own subscription name is
+// never an id, so the generic id-scan below would stop right there and
+// never place the ids that follow it — the defect this pins.
+TEST(NotificationParse, TypesTheIdsInASubscriptionChangedNotification) {
+  const auto session_scope =
+      notification_of("%subscription-changed subwin $0 - - - : 3");
+  const auto session_parsed = libtmux::parse(session_scope);
+  EXPECT_EQ(session_parsed.kind, libtmux::NotificationKind::subscription_changed);
+  EXPECT_EQ(session_parsed.session, "$0");
+  EXPECT_TRUE(session_parsed.window.empty());
+  EXPECT_TRUE(session_parsed.pane.empty());
+  EXPECT_EQ(session_parsed.text, "subwin $0 - - - : 3");
+
+  const auto window_scope =
+      notification_of("%subscription-changed winsub $0 @1 0 - : value");
+  const auto window_parsed = libtmux::parse(window_scope);
+  EXPECT_EQ(window_parsed.session, "$0");
+  EXPECT_EQ(window_parsed.window, "@1");
+  EXPECT_TRUE(window_parsed.pane.empty());
+
+  const auto pane_scope =
+      notification_of("%subscription-changed panesub $0 @1 0 %2 : value");
+  const auto pane_parsed = libtmux::parse(pane_scope);
+  EXPECT_EQ(pane_parsed.session, "$0");
+  EXPECT_EQ(pane_parsed.window, "@1");
+  EXPECT_EQ(pane_parsed.pane, "%2");
+}
+
 TEST(NotificationParse, KeepsFreeTextWholeIncludingItsSpaces) {
   const auto held = notification_of("%window-renamed @3 a name with spaces");
   const auto parsed = libtmux::parse(held);
@@ -457,4 +487,26 @@ TEST(NotificationParse, ReportsAnUnknownNameWithoutLosingIt) {
   EXPECT_EQ(parsed.name, "%something-tmux-added-later");
   EXPECT_EQ(parsed.window, "@9");
   EXPECT_EQ(libtmux::to_string(libtmux::NotificationKind::unknown), "unknown");
+}
+
+// The only signal tmux emits for a pane leaving its window's arrangement: a
+// `%layout-change` naming the window, not the pane. `layout_contains_pane`
+// turns that into a typed answer for a JSON layout, and an honest "cannot
+// tell" for the classic one.
+TEST(LayoutContainsPane, AnswersFromJsonAndDeclinesFromClassic) {
+  constexpr std::string_view layout_change_text =
+      R"({"V":2,"L":{"t":"h","w":80,"h":24,"x":0,"y":0,)"
+      R"("c":[{"t":"p","w":40,"h":24,"x":0,"y":0,"i":0,"I":"%0"},)"
+      R"({"t":"p","w":39,"h":24,"x":41,"y":0,"a":true,"i":1,"I":"%1"}]}} )"
+      R"({"V":2,"L":{"t":"p","w":80,"h":24,"x":0,"y":0,"i":0,"I":"%0"}} *)";
+
+  EXPECT_EQ(libtmux::layout_contains_pane(layout_change_text, "%0"),
+            std::optional<bool>{true});
+  EXPECT_EQ(libtmux::layout_contains_pane(layout_change_text, "%1"),
+            std::optional<bool>{true});
+  EXPECT_EQ(libtmux::layout_contains_pane(layout_change_text, "%2"),
+            std::optional<bool>{false});
+
+  constexpr std::string_view classic_text = "b25d,80x24,0,0,0 1 *";
+  EXPECT_EQ(libtmux::layout_contains_pane(classic_text, "%0"), std::nullopt);
 }

@@ -164,11 +164,12 @@ template <class... Functions> struct Overloaded : Functions... {
     return closed_object(
         {{"elapsed_ms", {{"type", "integer"}, {"minimum", 0}}},
          {"matched", {{"type", "boolean"}}},
+         {"matched_at_entry", {{"type", "boolean"}}},
          {"mode", {{"type", "string"}}},
          {"pane_id", {{"type", "string"}, {"pattern", R"(^%[0-9]+$)"}}},
          {"text", {{"type", "string"}}},
          {"timed_out", {{"type", "boolean"}}}},
-        {"elapsed_ms", "matched", "mode", "text", "timed_out"});
+        {"elapsed_ms", "matched", "matched_at_entry", "mode", "text", "timed_out"});
   case OutputShape::matches:
     return closed_object(
         {{"matches",

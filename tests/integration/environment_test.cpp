@@ -190,13 +190,13 @@ TEST(Creation, AnEntityIsReadableWhenTheCallCarriesAShellCommand) {
   const auto window = session->new_window(window_options);
   ASSERT_TRUE(window.has_value()) << window.error().diagnostic;
   EXPECT_EQ(window->name(), "running");
-  EXPECT_FALSE(window->id().empty());
+  EXPECT_FALSE(window->id().value().empty());
 
   libtmux::SplitOptions split_options;
   split_options.shell_command = "sh -c 'sleep 60'";
   const auto pane = window->split(split_options);
   ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
-  EXPECT_TRUE(pane->id().starts_with("%"));
+  EXPECT_TRUE(pane->id().value().starts_with("%"));
 
   libtmux::NewSessionOptions session_options;
   session_options.name = "also-running";
@@ -204,7 +204,7 @@ TEST(Creation, AnEntityIsReadableWhenTheCallCarriesAShellCommand) {
   const auto made = server.new_session(session_options);
   ASSERT_TRUE(made.has_value()) << made.error().diagnostic;
   EXPECT_EQ(made->name(), "also-running");
-  EXPECT_TRUE(made->id().starts_with("$"));
+  EXPECT_TRUE(made->id().value().starts_with("$"));
 }
 
 } // namespace

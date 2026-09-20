@@ -25,19 +25,23 @@ Given a `server` — from `Server::from_env()` inside tmux,
 `Server::at_default()`:
 
 ```cpp
+// Given: const libtmux::Server& server
 // Every call answers with a value: the result, or the reason there is none.
-const auto panes = server.panes();
-if (!panes.has_value()) {
-  std::cerr << std::format("{}\n", panes.error());
-  return 1;
-}
+{
+  const auto panes = server.panes();
+  if (!panes.has_value()) {
+    std::cerr << std::format("{}\n", panes.error());
+    return 1;
+  }
 
-// Find the active pane running an editor, and press Escape in it.
-auto editing = *panes | libtmux::matching(libtmux::pane::command.starts_with("nv") &&
-                                          libtmux::pane::active);
+  // Find the active pane running an editor, and press Escape in it.
+  auto editing =
+      *panes | libtmux::matching(libtmux::pane::command.starts_with("nv") &&
+                                 libtmux::pane::active);
 
-if (auto pane = libtmux::first(editing)) {
-  (void)pane->get().send_key("Escape");
+  if (auto pane = libtmux::first(editing)) {
+    (void)pane->get().send_key("Escape");
+  }
 }
 ```
 
@@ -271,6 +275,7 @@ Windows workflow.
 ### Connect and look around
 
 ```cpp
+// Given: const libtmux::Server& server
 // No tmux failure is thrown. Every call answers with a value that is either
 // the result or the reason there isn't one.
 const auto sessions = server.sessions();
@@ -292,23 +297,26 @@ running inside, and `Server::at_default()` the one a person means by "my tmux".
 ### Build a workspace
 
 ```cpp
+// Given: const libtmux::Session& session
 // Build an arrangement without composing a single tmux argument.
-const auto editor = session.new_window({.name = "editor"});
-if (!editor.has_value()) {
-  std::cerr << std::format("{}\n", editor.error());
-  return 1;
-}
+{
+  const auto editor = session.new_window({.name = "editor"});
+  if (!editor.has_value()) {
+    std::cerr << std::format("{}\n", editor.error());
+    return 1;
+  }
 
-const auto logs = editor->split({.horizontal = true, .percentage = 30});
-if (!logs.has_value()) {
-  std::cerr << std::format("{}\n", logs.error());
-  return 1;
-}
+  const auto logs = editor->split({.horizontal = true, .percentage = 30});
+  if (!logs.has_value()) {
+    std::cerr << std::format("{}\n", logs.error());
+    return 1;
+  }
 
-// Text and Enter in one invocation, which is what running a command in a
-// pane means. `send_text` and `send_key` stay available for the times the
-// two halves are separate acts.
-(void)logs->send_line("journalctl -f");
+  // Text and Enter in one invocation, which is what running a command in a
+  // pane means. `send_text` and `send_key` stay available for the times the
+  // two halves are separate acts.
+  (void)logs->send_line("journalctl -f");
+}
 ```
 
 No tmux argument is composed anywhere in that. Every target is the id tmux
@@ -317,28 +325,36 @@ gave the object, so a window called `my:window` cannot redirect an operation.
 ### Query with typed filters
 
 ```cpp
+// Given: const libtmux::Server& server
 // A filter is a value built from typed fields, not a string tmux parses.
 // They compose with `&&`, `||` and `!`, and the result is a standard range.
-const auto interesting =
-    (libtmux::pane::command == "bash" || libtmux::pane::command == "zsh") &&
-    !libtmux::pane::dead;
+{
+  const auto panes = server.panes();
+  if (!panes.has_value()) {
+    std::cerr << std::format("{}\n", panes.error());
+    return 1;
+  }
+  const auto interesting =
+      (libtmux::pane::command == "bash" || libtmux::pane::command == "zsh") &&
+      !libtmux::pane::dead;
 
-for (const libtmux::Pane& shell : *panes | libtmux::matching(interesting)) {
-  std::cout << std::format("{} is a live shell, {} columns wide\n", shell.id(),
-                           shell.width());
-}
+  for (const libtmux::Pane& shell : *panes | libtmux::matching(interesting)) {
+    std::cout << std::format("{} is a live shell, {} columns wide\n",
+                             shell.id().value(), shell.width());
+  }
 
-// An expression owns what it compares against, so this one still works
-// after the string it was built from has gone out of scope.
-const auto by_name = [] {
-  const std::string wanted = std::string{"edi"} + "tor";
-  return libtmux::window::name == wanted;
-}();
+  // An expression owns what it compares against, so this one still works
+  // after the string it was built from has gone out of scope.
+  const auto by_name = [] {
+    const std::string wanted = std::string{"edi"} + "tor";
+    return libtmux::window::name == wanted;
+  }();
 
-const auto windows = server.windows();
-if (windows.has_value()) {
-  const auto found = std::ranges::distance(*windows | libtmux::matching(by_name));
-  std::cout << std::format("{} window(s) called editor\n", found);
+  const auto windows = server.windows();
+  if (windows.has_value()) {
+    const auto found = std::ranges::distance(*windows | libtmux::matching(by_name));
+    std::cout << std::format("{} window(s) called editor\n", found);
+  }
 }
 ```
 
@@ -346,9 +362,11 @@ A handle is the accessor as well as the name, so the vocabulary that filters
 also sorts, counts and transforms:
 
 ```cpp
+// Given: const libtmux::Server& server
 // A handle reads a row, so the name that filters also projects, and a flag
 // handle is a predicate on its own. The standard algorithms take them as
 // they are, with no lambda naming the accessor a second time.
+const auto windows = server.windows();
 if (windows.has_value() && !windows->empty()) {
   std::vector<libtmux::Window> ordered = *windows;
   std::ranges::sort(ordered, {}, libtmux::window::index);
@@ -377,9 +395,16 @@ Each of these is a build error, and a test in
 ### Exactly one, or say why not
 
 ```cpp
+// Given: const libtmux::Server& server
 // "Exactly one, or say why not" is a question the library answers directly,
 // rather than one every caller reimplements around `.size() == 1`.
-auto addressed = *panes | libtmux::matching(libtmux::pane::id == panes->at(0).id());
+const auto panes = server.panes();
+if (!panes.has_value()) {
+  std::cerr << std::format("{}\n", panes.error());
+  return 1;
+}
+auto addressed =
+    *panes | libtmux::matching(libtmux::pane::id == panes->at(0).id().value());
 
 if (const auto one = libtmux::exactly_one(addressed); one.has_value()) {
   std::cout << std::format("exactly one: {}\n", one->get());
@@ -400,9 +425,8 @@ and the storage you have to keep alive is visible in your own code.
 ### Read a pane
 
 ```cpp
+// Given: const libtmux::Pane& pane
 // Read a pane's visible contents, or its scrollback.
-const libtmux::Pane& pane = panes->at(0);
-
 const auto visible = pane.capture();
 if (visible.has_value()) {
   std::cout << std::format("{} bytes on screen\n", visible->size());
@@ -421,6 +445,7 @@ much you are prepared to hold.
 ### Traverse the hierarchy
 
 ```cpp
+// Given: const libtmux::Pane& pane
 // Every entity knows the server it came from, so it can reach its children
 // and its parents without a target string.
 const auto window = pane.window();
@@ -433,8 +458,14 @@ if (window.has_value() && owner.has_value()) {
 ### A snapshot is a moment, not a handle
 
 ```cpp
+// Given: const libtmux::Session& session
 // An entity is one row of the listing that produced it: a moment, not a
 // live handle. Ask again for the present.
+const auto editor = session.new_window({.name = "editor"});
+if (!editor.has_value()) {
+  std::cerr << std::format("{}\n", editor.error());
+  return 1;
+}
 (void)editor->rename("renamed");
 
 std::cout << std::format("held: {}\n", editor->name()); // still "editor"
@@ -453,6 +484,7 @@ value rather than mutating the old one.
 ### When things fail
 
 ```cpp
+// Given: const libtmux::Server& server
 // Failures are values with a kind, so a caller can tell "you asked wrongly"
 // from "tmux said no" from "tmux never answered".
 const auto gone = server.run({"kill-session", "-t", "=no-such-session"});
@@ -499,6 +531,7 @@ if (!gone.has_value()) {
 One failure type covers the whole surface, so calls compose rather than nest:
 
 ```cpp
+// Given: const libtmux::Server& server; const libtmux::Session& session
 // One failure type covers the whole surface, so calls compose rather than
 // nest: each step runs only when the last one answered, and the first
 // failure is what comes out.
@@ -517,10 +550,10 @@ both builds. Nothing in the library throws it for them.
 ### Bounded asynchronous commands
 
 ```cpp
+// Given: const libtmux::Server& server
 std::size_t observed = 0U;
 auto async_server = libtmux::Server::at_socket_path(
-    scratch.socket_path().string(),
-    [&observed](std::string_view, const libtmux::CommandFailure*) { ++observed; });
+    server.socket_path(), [&observed](const libtmux::CommandReport&) { ++observed; });
 if (!async_server.has_value()) {
   std::cerr << std::format("{}\n", async_server.error());
   return 1;
@@ -533,27 +566,23 @@ if (!started_runtime.has_value()) {
   return 1;
 }
 auto runtime = *std::move(started_runtime);
-const auto wait_for_completion = [&runtime](std::uint64_t wanted) {
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
-  while (runtime.snapshot().completed < wanted &&
-         std::chrono::steady_clock::now() < deadline) {
-    std::this_thread::sleep_for(std::chrono::milliseconds{10});
-  }
-  return runtime.snapshot().completed >= wanted;
-};
-
 auto submitted =
     async_server->try_submit(runtime, {"display-message", "-p", "async result"});
 if (!submitted.has_value()) { // Refused before admission.
   std::cerr << std::format("{}\n", submitted.error());
   return 1;
 }
+const auto ready = submitted->wait_for(std::chrono::seconds{5});
+if (!ready.has_value() || !*ready) {
+  // A wait timeout keeps the command alive. Cancellation is a separate choice.
+  static_cast<void>(submitted->request_cancel());
+}
 auto result = std::move(*submitted).wait();
 if (!result.has_value()) { // Failed after admission.
   std::cerr << std::format("{}\n", result.error());
   return 1;
 }
-if (!wait_for_completion(1U)) {
+if (runtime.wait_ready_for(std::chrono::seconds{5}) != libtmux::ReadyStatus::ready) {
   return 1;
 }
 
@@ -569,7 +598,7 @@ if (!detached.has_value()) {
   return 1;
 }
 std::move(*detached).detach(); // Keep no result; the observation remains.
-if (!wait_for_completion(2U)) {
+if (runtime.wait_ready_for(std::chrono::seconds{5}) != libtmux::ReadyStatus::ready) {
   return 1;
 }
 std::cout << std::format("discarded {} observation(s)\n", runtime.discard_ready());
@@ -622,6 +651,26 @@ accepted commands enter the transport in admission order; completion order is
 not fixed, and callers racing from different threads have no priority
 guarantee.
 
+`CommandOperation::wait_for` and `wait_until` observe readiness without consuming
+the handle. Their `false` result means the wait expired: the command keeps running
+and retains its runtime slot. The timeout passed to `try_submit` instead bounds
+the command itself, whose eventual result reports `FailureKind::timeout`.
+`request_cancel` separately asks the transport to withdraw the command; its
+eventual `DeliveryStatus` still says whether tmux may have acted.
+
+When the standard library defines `__cpp_lib_jthread`, the operation's `wait`,
+`wait_for` and `wait_until` also accept `std::stop_token`. A stop request invokes
+the same transport cancellation while that wait is active. A completed result
+still wins over a later stop request. libc++ 18 requires an experimental library
+mode for stop tokens; the ordinary pinned build keeps `request_cancel` available
+and does not enable that mode implicitly.
+
+`wait_ready` and `wait_ready_for` block until an observer is ready, their deadline
+expires, or `close` finishes with no ready observations left. They return
+`ReadyStatus::ready`, `timeout` or `closed` and never run callbacks. A ready
+observation takes precedence over an expired deadline or closure; callers still
+choose `dispatch_ready` or `discard_ready`.
+
 `snapshot` is one lock-consistent instant; it does not wait for command
 completion or runtime work to finish. `accepted`, `refused`, and `completed`
 are cumulative; `completed` means the result was published and its observer
@@ -655,6 +704,7 @@ described in [Windows through psmux](#windows-through-psmux).
 ### Escape hatch
 
 ```cpp
+// Given: const libtmux::Pane& pane; const libtmux::Server& server
 // Anything tmux knows and this library does not name yet: ask it directly,
 // with a format string expanded against a pane.
 const auto running = pane.expand("#{pane_current_command}");
@@ -675,6 +725,7 @@ the typed surface has named it yet.
 ### Options
 
 ```cpp
+// Given: const libtmux::Session& session
 // Options are read and written where tmux scopes them.
 (void)session.set_option("@project", "libtmux");
 
@@ -825,7 +876,7 @@ It links no test framework, so GoogleTest, Catch2 and doctest all work.
 tmux 3.2a and newer, matching the Python package. `Version` orders releases
 correctly: `3.7 < 3.7a < 3.7b`, `next-3.8` precedes `3.8`, and `master` sorts
 above every numbered release. CI builds and tests pinned compatibility cells
-from 3.2a through 3.7b, plus `master`, on every pull request and master change.
+from 3.2a through 3.7c, plus `master`, on every pull request and master change.
 
 Across that range tmux does not answer identically, and where it cannot the
 library cannot either. These are the exceptions, each covered by a test that
@@ -1067,13 +1118,30 @@ sends is pinned.
 | [`versions/`](versions/) | The registry's versions database. Generated, never edited by hand. |
 | [`cmake/`](cmake/README.md) | Helper modules and the package config template. |
 
+### What it is called
+
+One artifact, four spellings, because each namespace has its own rules and
+none of them can be the same string.
+
+| Spelling | Where it is the name |
+|---|---|
+| `libtmux-cxx` | the repository and its directory |
+| `libtmux_cxx` | the CMake project |
+| `libtmux::libtmux` | the CMake target to link, and `libtmux` the vcpkg port |
+| `libtmuxpp` | the built library — `libtmuxpp.a`, `-ltmuxpp` |
+
+Link the target, not the file: `find_package(libtmux)` then
+`target_link_libraries(you PRIVATE libtmux::libtmux)`. Outside CMake the
+installed `libtmux.pc` carries the same answer, including the standard and the
+`LIBTMUX_USE_TL_EXPECTED` the C++20 build needs.
+
 ## How it is checked
 
 Pull requests and master changes run against real tmux under clang with
 libc++, GCC with libstdc++, the C++20 build over `tl::expected`, address and
 undefined-behaviour sanitizers, the thread sanitizer, a locale that is not
 UTF-8, and macOS with Apple Clang. The tmux matrix spans pinned compatibility
-cells from 3.2a through 3.7b, plus `master`. The examples run as tests, and so
+cells from 3.2a through 3.7c, plus `master`. The examples run as tests, and so
 do the programs that must fail to compile.
 
 The four core parsers for tmux-controlled text — rows, options, version output,

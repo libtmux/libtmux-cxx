@@ -125,6 +125,11 @@ struct InputStep {
   std::string text;
   std::chrono::milliseconds pause_after{};
   std::function<libtmux::expected<void, std::string>()> barrier_after_write{};
+  // Read the server's output until this holds, before the barrier and the next
+  // step. Closing stdin is shutdown, and shutdown cancels work still running,
+  // so a caller that needs a reply waits for it here instead of guessing how
+  // long it takes.
+  std::function<bool(std::string_view output)> until{};
 };
 
 inline libtmux::expected<std::vector<std::string>, std::string> run_backpressure_probe(
@@ -288,29 +293,6 @@ inline libtmux::expected<std::string, std::string> run_server_steps(
         libtmux::unexpected(std::move(error))};
   };
 
-  // SIGPIPE would kill the suite if the server exited early; a short write is
-  // reported instead.
-  static_cast<void>(::signal(SIGPIPE, SIG_IGN));
-  for (const InputStep& step : steps) {
-    std::size_t written = 0;
-    while (written < step.text.size()) {
-      const auto wrote =
-          ::write(to_child[1], step.text.data() + written, step.text.size() - written);
-      if (wrote <= 0) {
-        break;
-      }
-      written += static_cast<std::size_t>(wrote);
-    }
-    if (step.barrier_after_write) {
-      auto ready = step.barrier_after_write();
-      if (!ready.has_value()) {
-        return abort(ready.error());
-      }
-    }
-    if (step.pause_after > std::chrono::milliseconds::zero()) {
-      std::this_thread::sleep_for(step.pause_after);
-    }
-  }
   std::string output;
   std::size_t output_lines = 0U;
   const auto read_output = [&]() -> libtmux::expected<bool, std::string> {
@@ -336,6 +318,48 @@ inline libtmux::expected<std::string, std::string> run_server_steps(
     output.append(buffer.data(), static_cast<std::size_t>(read_bytes));
     return true;
   };
+  // SIGPIPE would kill the suite if the server exited early; a short write is
+  // reported instead.
+  static_cast<void>(::signal(SIGPIPE, SIG_IGN));
+  for (const InputStep& step : steps) {
+    // A short write must not break out of this loop silently: the rest of the
+    // step would never reach the server, and the test would fail far away on a
+    // reply whose request was never sent. `EINTR` — routine on a loaded
+    // machine — is exactly what triggers this.
+    std::size_t written = 0;
+    while (written < step.text.size()) {
+      const auto wrote =
+          ::write(to_child[1], step.text.data() + written, step.text.size() - written);
+      if (wrote < 0 && errno == EINTR) {
+        continue;
+      }
+      if (wrote <= 0) {
+        return abort(program.string() + ": wrote " + std::to_string(written) + " of " +
+                     std::to_string(step.text.size()) +
+                     " bytes to its stdin: " + std::strerror(errno));
+      }
+      written += static_cast<std::size_t>(wrote);
+    }
+    while (step.until && !step.until(output)) {
+      auto more = read_output();
+      if (!more.has_value()) {
+        return abort(more.error());
+      }
+      if (!*more) {
+        // The server closed its output; the caller reports what did arrive.
+        break;
+      }
+    }
+    if (step.barrier_after_write) {
+      auto ready = step.barrier_after_write();
+      if (!ready.has_value()) {
+        return abort(ready.error());
+      }
+    }
+    if (step.pause_after > std::chrono::milliseconds::zero()) {
+      std::this_thread::sleep_for(step.pause_after);
+    }
+  }
   while (output_lines < output_lines_before_eof) {
     auto more = read_output();
     if (!more.has_value()) {

@@ -27,6 +27,7 @@ HEADER_ORDER = [
     "relations.hpp",
     "cardinality.hpp",
     "delivery.hpp",
+    "error.hpp",
     "command.hpp",
     "options.hpp",
     "control.hpp",
@@ -35,6 +36,7 @@ HEADER_ORDER = [
     "chain.hpp",
     "keys.hpp",
     "capture.hpp",
+    "wait.hpp",
     "target.hpp",
     "socket.hpp",
     "format.hpp",
@@ -233,10 +235,23 @@ def _prose_above(lines: list[str], index: int) -> list[str]:
 
 def _function_symbol(signature: str) -> str | None:
     """Return the callable name from a declaration-like prefix."""
-    operators = list(OPERATOR_NAME.finditer(signature))
+    code = _code(signature)
+    depths = []
+    depth = 0
+    for char in code:
+        depths.append(depth)
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth = max(0, depth - 1)
+    operators = [
+        match for match in OPERATOR_NAME.finditer(code) if depths[match.start()] == 0
+    ]
     if operators:
         return "operator" + operators[-1].group("name").strip()
-    names = list(FUNCTION_NAME.finditer(signature))
+    names = [
+        match for match in FUNCTION_NAME.finditer(code) if depths[match.start()] == 0
+    ]
     if not names:
         return None
     ignored = {"decltype", "noexcept", "requires", "sizeof"}

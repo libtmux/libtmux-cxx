@@ -14,6 +14,15 @@
 #include <tl/expected.hpp>
 #else
 #include <expected>
+// libstdc++ defines `std::expected` only when the compiler advertises the
+// concepts support its header is written against, which clang does not when it
+// drives libstdc++ — the pairing a distribution gives you by default. Without
+// this the first thing a builder sees is a template error inside this header,
+// which names neither the toolchain nor the way out.
+#if !defined(__cpp_lib_expected)
+#error                                                                                 \
+    "libtmux needs std::expected, and this standard library does not provide it. Build with libc++ (-stdlib=libc++), with GCC, or configure -DLIBTMUX_CXX_STANDARD=20 to use tl::expected instead."
+#endif
 #endif
 
 #include <type_traits>

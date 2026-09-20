@@ -427,7 +427,7 @@ validate_definition(const ToolDefinition& tool) {
   if (process_argv) {
     return libtmux::unexpected("process-argv input is prohibited: " + tool.name);
   }
-  if (!tool.description.starts_with(detail::controlled_opener(
+  if (!tool.description.ends_with(detail::controlled_opener(
           tool.toolset, tool.authority.process_reach, tool.authority.output_classes,
           tool.authority.effects))) {
     return libtmux::unexpected("description has the wrong controlled opener: " +

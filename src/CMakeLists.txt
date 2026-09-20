@@ -5,18 +5,28 @@ include(GNUInstallDirs)
 set(LIBTMUX_SOURCES
     version.cpp server.cpp backend.cpp snapshot.cpp entities.cpp
     socket_identity.cpp control.cpp completion_queue.cpp command_engine.cpp async.cpp
-    process_validation.cpp)
+    process_validation.cpp wait.cpp)
 if(WIN32)
   list(APPEND LIBTMUX_SOURCES process_windows.cpp connection_windows.cpp)
 else()
   list(APPEND LIBTMUX_SOURCES process.cpp posix_child.cpp process_engine.cpp
        connection.cpp notification_stream.cpp spawn_descriptors.cpp)
 endif()
-add_library(libtmux STATIC ${LIBTMUX_SOURCES})
+# No STATIC keyword, so `BUILD_SHARED_LIBS` decides — which is what the
+# design note promised and what a distribution packaging this will reach for.
+# The sources are already built position-independent below, so a shared build
+# needs nothing else here on ELF or Mach-O.
+add_library(libtmux ${LIBTMUX_SOURCES})
 add_library(libtmux::libtmux ALIAS libtmux)
-if(LIBTMUX_BUILD_TESTS AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+# Public, not private: the tests reach these seams through the same headers,
+# so one definition keeps the library and its suite agreeing about whether the
+# seams exist at all. Never set in a default or installed build.
+if(LIBTMUX_ENABLE_FAULT_INJECTION AND NOT WIN32)
+  target_compile_definitions(libtmux PUBLIC LIBTMUX_FAULT_INJECTION)
+endif()
+if(LIBTMUX_ENABLE_FAULT_INJECTION AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_definitions(
-    libtmux PRIVATE LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
+    libtmux PUBLIC LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
 endif()
 
 # Two threads per control connection. This links on a glibc that folded
@@ -105,6 +115,21 @@ endif()
 
 if(LIBTMUX_INSTALL)
   include(CMakePackageConfigHelpers)
+
+  # A consumer reaching this through pkg-config gets no CMake target and so no
+  # `target_compile_definitions`. The C++20 build selects a different ABI
+  # namespace through `LIBTMUX_USE_TL_EXPECTED`, so a translation unit that
+  # does not define it links against symbols that are not there — the pc file
+  # carries it rather than leaving that to be discovered at link time.
+  set(LIBTMUX_PC_CFLAGS "-std=c++${LIBTMUX_CXX_STANDARD}")
+  if(LIBTMUX_CXX_STANDARD STREQUAL "20")
+    string(APPEND LIBTMUX_PC_CFLAGS " -DLIBTMUX_USE_TL_EXPECTED")
+  endif()
+  configure_file(
+    "${PROJECT_SOURCE_DIR}/cmake/libtmux.pc.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/libtmux.pc" @ONLY)
+  install(FILES "${CMAKE_CURRENT_BINARY_DIR}/libtmux.pc"
+          DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig")
 
   install(
     TARGETS libtmux

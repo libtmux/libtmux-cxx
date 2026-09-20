@@ -4,355 +4,78 @@
 #include <array>
 #include <charconv>
 #include <chrono>
+#include <cstdint>
+#include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <utility>
 #include <vector>
 
-#include "libtmux/control.hpp"
+#include "libtmux/entities.hpp"
 #include "libtmux/server.hpp"
 #include "libtmux/snapshot.hpp"
+#include "libtmux/wait.hpp"
+#include "pane_echo.hpp"
 #include "tool_support.hpp"
 
 namespace libtmux::mcp::detail {
 namespace {
 
-struct WaitAnswer {
-  bool matched{};
-  bool timed_out{};
-  long long elapsed_ms{};
-  std::string mode;
-  std::string pane_id;
-  std::string text;
-};
-
-class WaitDeadline {
-public:
-  explicit WaitDeadline(long long budget)
-      : started_{std::chrono::steady_clock::now()},
-        deadline_{started_ + std::chrono::milliseconds{budget}}, budget_{budget} {}
-
-  [[nodiscard]] std::optional<std::chrono::milliseconds> remaining() const {
-    const auto left = deadline_ - std::chrono::steady_clock::now();
-    if (left <= std::chrono::steady_clock::duration::zero()) {
-      return std::nullopt;
-    }
-    auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(left);
-    if (milliseconds < left) {
-      milliseconds += std::chrono::milliseconds{1};
-    }
-    return std::max(milliseconds, std::chrono::milliseconds{1});
-  }
-
-  [[nodiscard]] bool expired() const noexcept {
-    return std::chrono::steady_clock::now() >= deadline_;
-  }
-
-  [[nodiscard]] long long elapsed() const {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(
-               std::chrono::steady_clock::now() - started_)
-        .count();
-  }
-
-  [[nodiscard]] long long budget() const noexcept { return budget_; }
-  [[nodiscard]] std::chrono::steady_clock::time_point started() const noexcept {
-    return started_;
-  }
-  [[nodiscard]] std::chrono::steady_clock::time_point deadline() const noexcept {
-    return deadline_;
-  }
-
-private:
-  std::chrono::steady_clock::time_point started_;
-  std::chrono::steady_clock::time_point deadline_;
-  long long budget_;
-};
-
-struct WaitTarget {
-  std::string pane_id;
-  std::string session_name;
-};
-
-using WaitCommandResult = libtmux::expected<std::optional<std::string>, ToolError>;
-
 [[nodiscard]] ToolError cancellation_error() {
   return ToolError{false, "request cancelled"};
 }
 
-[[nodiscard]] WaitAnswer wait_timed_out(const WaitDeadline& deadline, std::string mode,
-                                        std::string pane_id = {},
-                                        std::string text = {}) {
-  return WaitAnswer{.timed_out = true,
-                    .elapsed_ms = deadline.elapsed(),
-                    .mode = std::move(mode),
-                    .pane_id = std::move(pane_id),
-                    .text = std::move(text)};
-}
-
-[[nodiscard]] WaitCommandResult run_before_deadline(const Server& server,
-                                                    std::vector<std::string> command,
-                                                    const WaitDeadline& deadline,
-                                                    const CallContext& context) {
-  if (context.cancelled()) {
-    return libtmux::unexpected(cancellation_error());
+// The wire spelling of how the wait was answered. `WaitPath` is the library's
+// answer; these strings are this server's published schema, so the mapping is
+// written out rather than derived.
+[[nodiscard]] std::string wire_mode(const libtmux::WaitResult& result) {
+  std::string mode;
+  switch (result.path) {
+  case libtmux::WaitPath::pane_lookup:
+    mode = "pane-lookup";
+    break;
+  case libtmux::WaitPath::capture_at_entry:
+    mode = "capture-at-entry";
+    break;
+  case libtmux::WaitPath::capture_after_control_connect:
+    mode = "capture-after-control-connect";
+    break;
+  case libtmux::WaitPath::capture_before_control:
+    mode = "capture-before-control";
+    break;
+  case libtmux::WaitPath::control_output:
+    mode = "control-output";
+    break;
+  case libtmux::WaitPath::capture_polling:
+    mode = "capture-polling";
+    break;
   }
-  const auto remaining = deadline.remaining();
-  if (!remaining.has_value()) {
-    return std::optional<std::string>{};
+  // `wanted` is on screen but the pane did not produce it. Said out loud, so a
+  // caller can tell this from a plain, silent timeout.
+  if (result.present_unconfirmed) {
+    mode += "-unconfirmed";
   }
-  auto reply = server.run(command, *remaining);
-  if (!reply.has_value()) {
-    if (reply.error().kind == FailureKind::timeout) {
-      return std::optional<std::string>{};
-    }
-    return libtmux::unexpected(tmux_error(reply.error()));
-  }
-  if (context.cancelled()) {
-    return libtmux::unexpected(cancellation_error());
-  }
-  return std::optional<std::string>{*std::move(reply)};
-}
-
-[[nodiscard]] libtmux::expected<std::optional<WaitTarget>, ToolError>
-resolve_wait_target(const Server& server, std::string_view target,
-                    const WaitDeadline& deadline, const CallContext& context) {
-  constexpr std::array fields{std::string_view{"pane_id"},
-                              std::string_view{"session_name"}};
-  auto reply = run_before_deadline(server,
-                                   {"display-message", "-p", "-t", std::string{target},
-                                    "--", format_request(fields)},
-                                   deadline, context);
-  if (!reply.has_value()) {
-    return libtmux::unexpected(reply.error());
-  }
-  if (!reply->has_value()) {
-    return std::optional<WaitTarget>{};
-  }
-  auto snapshot = Snapshot::from_recording(fields, *std::move(*reply));
-  if (snapshot == nullptr || snapshot->rows().size() != 1U ||
-      snapshot->rows().front()[0].empty() || snapshot->rows().front()[1].empty()) {
-    return libtmux::unexpected(
-        ToolError{false, "tmux could not resolve the requested pane"});
-  }
-  return std::optional<WaitTarget>{
-      WaitTarget{.pane_id = std::string{snapshot->rows().front()[0]},
-                 .session_name = std::string{snapshot->rows().front()[1]}}};
-}
-
-[[nodiscard]] WaitCommandResult capture_before_deadline(const Server& server,
-                                                        const WaitTarget& target,
-                                                        const WaitDeadline& deadline,
-                                                        const CallContext& context) {
-  return run_before_deadline(server, {"capture-pane", "-p", "-t", target.pane_id},
-                             deadline, context);
+  return mode;
 }
 
 // A wait that expires before its target resolves has no pane to name, and the
 // output schema admits `pane_id` only as a real pane ID.
-[[nodiscard]] ToolOutput wait_output(WaitAnswer answer) {
-  StructuredValue::Object structured{{"elapsed_ms", StructuredValue{answer.elapsed_ms}},
-                                     {"matched", StructuredValue{answer.matched}},
-                                     {"mode", StructuredValue{std::move(answer.mode)}},
-                                     {"text", StructuredValue{std::move(answer.text)}},
-                                     {"timed_out", StructuredValue{answer.timed_out}}};
-  if (!answer.pane_id.empty()) {
-    structured.emplace("pane_id", StructuredValue{std::move(answer.pane_id)});
+[[nodiscard]] ToolOutput wait_output(const libtmux::WaitResult& result,
+                                     std::string_view mode, long long elapsed_ms,
+                                     std::string_view pane_id) {
+  StructuredValue::Object structured{
+      {"elapsed_ms", StructuredValue{elapsed_ms}},
+      {"matched", StructuredValue{result.matched}},
+      {"matched_at_entry", StructuredValue{result.matched_at_entry}},
+      {"mode", StructuredValue{std::string{mode}}},
+      {"text", StructuredValue{result.text}},
+      {"timed_out", StructuredValue{result.timed_out}}};
+  if (!pane_id.empty()) {
+    structured.emplace("pane_id", StructuredValue{std::string{pane_id}});
   }
   return output(std::move(structured));
-}
-
-void report_wait_progress(const CallContext& context, const WaitDeadline& deadline,
-                          std::string_view mode) {
-  const auto completed = std::min(deadline.elapsed(), deadline.budget());
-  context.report(static_cast<double>(completed), static_cast<double>(deadline.budget()),
-                 "waiting via " + std::string{mode});
-}
-
-[[nodiscard]] libtmux::expected<bool, ToolError>
-bounded_contains(std::string_view text, std::string_view wanted,
-                 std::size_t& remaining_work) {
-  if (text.size() > remaining_work || wanted.size() > remaining_work - text.size()) {
-    return libtmux::unexpected(ToolError{false, "wait matching work limit exceeded"});
-  }
-  remaining_work -= text.size() + wanted.size();
-  return text.find(wanted) != std::string_view::npos;
-}
-
-[[nodiscard]] libtmux::expected<WaitAnswer, ToolError>
-poll_for_text(const Server& server, const WaitTarget& target, std::string_view wanted,
-              const CallContext& context, const WaitDeadline& deadline,
-              std::size_t& remaining_match_work, std::string mode,
-              std::string last = {}) {
-  auto next_progress = deadline.started();
-  while (!deadline.expired()) {
-    if (context.cancelled()) {
-      return libtmux::unexpected(cancellation_error());
-    }
-    auto captured = capture_before_deadline(server, target, deadline, context);
-    if (!captured.has_value()) {
-      return libtmux::unexpected(captured.error());
-    }
-    if (!captured->has_value()) {
-      return wait_timed_out(deadline, std::move(mode), target.pane_id, std::move(last));
-    }
-    last = *std::move(*captured);
-    if (deadline.expired()) {
-      return wait_timed_out(deadline, std::move(mode), target.pane_id, std::move(last));
-    }
-    const auto matched = bounded_contains(last, wanted, remaining_match_work);
-    if (!matched.has_value()) {
-      return libtmux::unexpected(matched.error());
-    }
-    if (*matched) {
-      return WaitAnswer{.matched = true,
-                        .elapsed_ms = deadline.elapsed(),
-                        .mode = std::move(mode),
-                        .pane_id = target.pane_id,
-                        .text = std::move(last)};
-    }
-    if (std::chrono::steady_clock::now() >= next_progress) {
-      report_wait_progress(context, deadline, mode);
-      next_progress = std::chrono::steady_clock::now() + std::chrono::seconds{1};
-    }
-    const auto remaining = deadline.remaining();
-    if (remaining.has_value()) {
-      std::this_thread::sleep_for(std::min(*remaining, std::chrono::milliseconds{50}));
-    }
-  }
-  return wait_timed_out(deadline, std::move(mode), target.pane_id, std::move(last));
-}
-
-[[nodiscard]] libtmux::expected<WaitAnswer, ToolError>
-stream_for_text(const Server& server, const WaitTarget& target, std::string_view wanted,
-                const CallContext& context, const WaitDeadline& deadline,
-                std::size_t& remaining_match_work, std::string initial_capture) {
-  if (context.cancelled()) {
-    return libtmux::unexpected(cancellation_error());
-  }
-  // Not `#{socket_path}`: tmux escapes non-printable bytes in the socket path
-  // when it stores it at server start, so a socket named with one comes back as
-  // its `\376` spelling and names no file. Connecting to that fails, and this
-  // would fall back to polling without ever saying why. The handle already
-  // knows the exact bytes every command here travels over.
-  const std::string_view socket = server.socket_path();
-  if (socket.empty()) {
-    return poll_for_text(server, target, wanted, context, deadline,
-                         remaining_match_work, "capture-polling",
-                         std::move(initial_capture));
-  }
-  const auto remaining = deadline.remaining();
-  if (!remaining.has_value()) {
-    return wait_timed_out(deadline, "capture-before-control", target.pane_id,
-                          std::move(initial_capture));
-  }
-
-  ConnectionOptions options;
-  options.socket_path = std::string{socket};
-  options.session_name = target.session_name;
-  options.startup_timeout = std::min(*remaining, std::chrono::milliseconds{2000});
-  options.shutdown_timeout = std::min(*remaining, std::chrono::milliseconds{500});
-  options.pane_output = true;
-  options.pause_after = std::chrono::seconds{2};
-  auto connected = Connection::connect(std::move(options));
-  if (!connected.has_value()) {
-    return poll_for_text(server, target, wanted, context, deadline,
-                         remaining_match_work, "capture-polling",
-                         std::move(initial_capture));
-  }
-
-  Connection connection = *std::move(connected);
-  if (context.cancelled()) {
-    return libtmux::unexpected(cancellation_error());
-  }
-  auto after_connect = capture_before_deadline(server, target, deadline, context);
-  if (!after_connect.has_value()) {
-    return libtmux::unexpected(after_connect.error());
-  }
-  if (!after_connect->has_value()) {
-    return wait_timed_out(deadline, "capture-after-control-connect", target.pane_id,
-                          std::move(initial_capture));
-  }
-  initial_capture = *std::move(*after_connect);
-  if (deadline.expired()) {
-    return wait_timed_out(deadline, "capture-after-control-connect", target.pane_id,
-                          std::move(initial_capture));
-  }
-  const auto matched_after_connect =
-      bounded_contains(initial_capture, wanted, remaining_match_work);
-  if (!matched_after_connect.has_value()) {
-    return libtmux::unexpected(matched_after_connect.error());
-  }
-  if (*matched_after_connect) {
-    return WaitAnswer{.matched = true,
-                      .elapsed_ms = deadline.elapsed(),
-                      .mode = "capture-after-control-connect",
-                      .pane_id = target.pane_id,
-                      .text = std::move(initial_capture)};
-  }
-
-  auto next_progress = deadline.started();
-  while (!deadline.expired()) {
-    if (context.cancelled()) {
-      return libtmux::unexpected(cancellation_error());
-    }
-    const auto remaining_slice = deadline.remaining();
-    if (!remaining_slice.has_value()) {
-      break;
-    }
-    const auto slice_deadline =
-        std::chrono::steady_clock::now() +
-        std::min(*remaining_slice, std::chrono::milliseconds{50});
-    auto notifications = connection.wait_for_notifications(slice_deadline);
-    if (notifications.empty()) {
-      if (std::chrono::steady_clock::now() + std::chrono::milliseconds{5} <
-          slice_deadline) {
-        return poll_for_text(server, target, wanted, context, deadline,
-                             remaining_match_work, "capture-polling",
-                             std::move(initial_capture));
-      }
-    }
-    for (const Notification& notification : notifications) {
-      const ParsedNotification parsed = parse(notification);
-      if ((parsed.kind != NotificationKind::output &&
-           parsed.kind != NotificationKind::extended_output) ||
-          parsed.pane != target.pane_id) {
-        continue;
-      }
-      auto captured = capture_before_deadline(server, target, deadline, context);
-      if (!captured.has_value()) {
-        return libtmux::unexpected(captured.error());
-      }
-      if (!captured->has_value()) {
-        return wait_timed_out(deadline, "control-output", target.pane_id,
-                              std::move(initial_capture));
-      }
-      initial_capture = *std::move(*captured);
-      if (deadline.expired()) {
-        return wait_timed_out(deadline, "control-output", target.pane_id,
-                              std::move(initial_capture));
-      }
-      const auto matched =
-          bounded_contains(initial_capture, wanted, remaining_match_work);
-      if (!matched.has_value()) {
-        return libtmux::unexpected(matched.error());
-      }
-      if (*matched) {
-        return WaitAnswer{.matched = true,
-                          .elapsed_ms = deadline.elapsed(),
-                          .mode = "control-output",
-                          .pane_id = target.pane_id,
-                          .text = std::move(initial_capture)};
-      }
-    }
-    if (std::chrono::steady_clock::now() >= next_progress) {
-      report_wait_progress(context, deadline, "control-output");
-      next_progress = std::chrono::steady_clock::now() + std::chrono::seconds{1};
-    }
-  }
-  return wait_timed_out(deadline, "control-output", target.pane_id,
-                        std::move(initial_capture));
 }
 
 [[nodiscard]] long long timeout_budget(const Arguments& arguments) {
@@ -369,51 +92,109 @@ stream_for_text(const Server& server, const WaitTarget& target, std::string_view
   return budget;
 }
 
+// Use the same daemon generation as pane-input preflight.
+[[nodiscard]] std::optional<PaneServerIdentity>
+resolve_pane_server_identity(const Server& server, std::string_view target,
+                             std::chrono::milliseconds timeout) {
+  const auto reply = server.run({"display-message", "-p", "-t", std::string{target},
+                                 "--", "#{pid} #{start_time}"},
+                                timeout);
+  if (!reply.has_value()) {
+    return std::nullopt;
+  }
+  std::string_view text = *reply;
+  while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) {
+    text.remove_suffix(1);
+  }
+  const auto separator = text.find(' ');
+  if (separator == std::string_view::npos) {
+    return std::nullopt;
+  }
+  const std::string_view pid_field = text.substr(0, separator);
+  const std::string_view start_field = text.substr(separator + 1);
+  std::uint64_t pid = 0;
+  std::uint64_t start_time = 0;
+  const auto pid_parsed =
+      std::from_chars(pid_field.data(), pid_field.data() + pid_field.size(), pid);
+  const auto start_parsed = std::from_chars(
+      start_field.data(), start_field.data() + start_field.size(), start_time);
+  if (pid_parsed.ec != std::errc{} ||
+      pid_parsed.ptr != pid_field.data() + pid_field.size() ||
+      start_parsed.ec != std::errc{} ||
+      start_parsed.ptr != start_field.data() + start_field.size() || pid == 0U ||
+      start_time == 0U) {
+    return std::nullopt;
+  }
+  return PaneServerIdentity{.socket_path = std::string{server.socket_path()},
+                            .server_pid = pid,
+                            .server_start_time = start_time};
+}
+
 } // namespace
 
 ToolResult wait_for_text(const Server& server, const Arguments& arguments,
                          const CallContext& context) {
-  const WaitDeadline deadline{timeout_budget(arguments)};
-  auto target =
-      resolve_wait_target(server, *argument(arguments, "target"), deadline, context);
-  if (!target.has_value()) {
-    return libtmux::unexpected(target.error());
+  const auto budget = std::chrono::milliseconds{timeout_budget(arguments)};
+  const auto started = std::chrono::steady_clock::now();
+
+  libtmux::WaitOptions options;
+  options.timeout = budget;
+  // Retain submitted echoes across TTL expiry, but re-read pending input.
+  const auto identity_timeout =
+      std::max(std::chrono::milliseconds{1},
+               std::chrono::duration_cast<std::chrono::milliseconds>(
+                   budget - (std::chrono::steady_clock::now() - started)));
+  const std::optional<PaneServerIdentity> identity = resolve_pane_server_identity(
+      server, *argument(arguments, "target"), identity_timeout);
+  const auto seen_recent = std::make_shared<std::set<std::string>>();
+  const auto input_pending = std::make_shared<bool>(false);
+  options.input_pending = [input_pending](std::string_view) { return *input_pending; };
+  options.sent = [identity, seen_recent,
+                  input_pending](std::string_view pane_id) -> std::vector<std::string> {
+    if (!identity.has_value()) {
+      return {};
+    }
+    const LiveEcho echo = live_echo(*identity, pane_id);
+    *input_pending = echo.input_pending;
+    for (const std::string& line : echo.recent) {
+      seen_recent->insert(line);
+    }
+    std::vector<std::string> discounted(seen_recent->begin(), seen_recent->end());
+    if (!echo.pending.empty()) {
+      discounted.push_back(echo.pending);
+    }
+    return discounted;
+  };
+  options.cancelled = [&context] { return context.cancelled(); };
+  options.on_progress = [&context, budget](std::chrono::milliseconds elapsed,
+                                           libtmux::WaitPath path) {
+    const auto completed = std::min(elapsed, budget);
+    context.report(static_cast<double>(completed.count()),
+                   static_cast<double>(budget.count()),
+                   "waiting via " + wire_mode(libtmux::WaitResult{.path = path}));
+  };
+  // While this process's own wait holds a control connection open,
+  // `list_sessions`/`get_session_info` must not read that connection's client
+  // as somebody attached — an agent deciding whether it is safe to act on a
+  // session should not see its own observation as another user.
+  options.observe_control_client = [](std::int64_t pid) -> std::shared_ptr<void> {
+    return std::make_shared<OwnObservationClient>(pid);
+  };
+
+  options.timeout = std::max(std::chrono::milliseconds::zero(),
+                             budget - std::chrono::ceil<std::chrono::milliseconds>(
+                                          std::chrono::steady_clock::now() - started));
+  auto waited = server.wait_for_text(*argument(arguments, "target"),
+                                     *argument(arguments, "text"), options);
+  if (!waited.has_value()) {
+    if (waited.error().kind == FailureKind::cancelled) {
+      return libtmux::unexpected(cancellation_error());
+    }
+    return libtmux::unexpected(tmux_error(waited.error()));
   }
-  const std::string& wanted = *argument(arguments, "text");
-  std::size_t remaining_match_work = 8U * 1024U * 1024U;
-  if (!target->has_value()) {
-    return wait_output(wait_timed_out(deadline, "pane-lookup"));
-  }
-  auto captured = capture_before_deadline(server, **target, deadline, context);
-  if (!captured.has_value()) {
-    return libtmux::unexpected(captured.error());
-  }
-  if (!captured->has_value()) {
-    return wait_output(
-        wait_timed_out(deadline, "capture-at-entry", (*target)->pane_id));
-  }
-  std::string initial_capture = *std::move(*captured);
-  if (deadline.expired()) {
-    return wait_output(wait_timed_out(deadline, "capture-at-entry", (*target)->pane_id,
-                                      std::move(initial_capture)));
-  }
-  const auto matched = bounded_contains(initial_capture, wanted, remaining_match_work);
-  if (!matched.has_value()) {
-    return libtmux::unexpected(matched.error());
-  }
-  if (*matched) {
-    return wait_output(WaitAnswer{.matched = true,
-                                  .elapsed_ms = deadline.elapsed(),
-                                  .mode = "capture-at-entry",
-                                  .pane_id = (*target)->pane_id,
-                                  .text = std::move(initial_capture)});
-  }
-  auto answer = stream_for_text(server, **target, wanted, context, deadline,
-                                remaining_match_work, std::move(initial_capture));
-  if (!answer.has_value()) {
-    return libtmux::unexpected(answer.error());
-  }
-  return wait_output(*std::move(answer));
+  const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - started);
+  return wait_output(*waited, wire_mode(*waited), elapsed.count(), waited->pane_id);
 }
 
 } // namespace libtmux::mcp::detail

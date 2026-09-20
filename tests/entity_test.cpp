@@ -8,8 +8,10 @@
 #include <array>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <ranges>
 #include <string>
+#include <sys/stat.h>
 #include <thread>
 #include <vector>
 
@@ -69,7 +71,7 @@ TEST(Entity, ASessionReachesItsWindowsAndTheirPanes) {
   const auto created = session.new_window("editor");
   ASSERT_TRUE(created.has_value()) << created.error().diagnostic;
   EXPECT_EQ(created->name(), "editor");
-  EXPECT_EQ(created->session_id(), session.id());
+  EXPECT_EQ(created->session_id().value(), session.id().value());
 
   const auto windows = session.windows();
   ASSERT_TRUE(windows.has_value()) << windows.error().diagnostic;
@@ -78,7 +80,7 @@ TEST(Entity, ASessionReachesItsWindowsAndTheirPanes) {
   const auto panes = created->panes();
   ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
   ASSERT_EQ(panes->size(), 1U);
-  EXPECT_EQ(panes->front().window_id(), created->id());
+  EXPECT_EQ(panes->front().window_id().value(), created->id().value());
 }
 
 TEST(Entity, APaneReachesItsWindowAndSession) {
@@ -94,11 +96,11 @@ TEST(Entity, APaneReachesItsWindowAndSession) {
 
   const auto window = pane.window();
   ASSERT_TRUE(window.has_value()) << window.error().diagnostic;
-  EXPECT_EQ(window->id(), pane.window_id());
+  EXPECT_EQ(window->id().value(), pane.window_id().value());
 
   const auto owner = pane.session();
   ASSERT_TRUE(owner.has_value()) << owner.error().diagnostic;
-  EXPECT_EQ(owner->id(), session.id());
+  EXPECT_EQ(owner->id().value(), session.id().value());
 }
 
 TEST(Entity, EntitiesOutliveTheCallThatListedThem) {
@@ -115,7 +117,7 @@ TEST(Entity, EntitiesOutliveTheCallThatListedThem) {
   }();
 
   ASSERT_FALSE(windows.empty());
-  EXPECT_FALSE(windows.front().id().empty());
+  EXPECT_FALSE(windows.front().id().value().empty());
 
   const auto panes = windows.front().panes();
   ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
@@ -140,7 +142,7 @@ TEST(Entity, ASnapshotIsAMomentAndRefreshTakesANewOne) {
   const auto current = created->refresh();
   ASSERT_TRUE(current.has_value()) << current.error().diagnostic;
   EXPECT_EQ(current->name(), "after");
-  EXPECT_EQ(current->id(), created->id());
+  EXPECT_EQ(current->id().value(), created->id().value());
 }
 
 TEST(Entity, RefreshingSomethingTmuxNoLongerHasIsMissingNotEmpty) {
@@ -160,7 +162,7 @@ TEST(Entity, RefreshingSomethingTmuxNoLongerHasIsMissingNotEmpty) {
   const auto current = created->refresh();
   ASSERT_FALSE(current.has_value());
   EXPECT_EQ(current.error().kind, FailureKind::missing);
-  EXPECT_NE(current.error().diagnostic.find(created->id()), std::string::npos);
+  EXPECT_NE(current.error().diagnostic.find(created->id().value()), std::string::npos);
 }
 
 TEST(Entity, RefreshingADeadWindowDoesNotAnswerAboutAnotherOne) {
@@ -176,12 +178,13 @@ TEST(Entity, RefreshingADeadWindowDoesNotAnswerAboutAnotherOne) {
 
   const auto doomed = session.new_window("doomed");
   ASSERT_TRUE(doomed.has_value()) << doomed.error().diagnostic;
-  const std::string dead_id{doomed->id()};
+  const std::string dead_id{doomed->id().value()};
   ASSERT_TRUE(doomed->kill().has_value());
 
   const auto current = doomed->refresh();
   ASSERT_FALSE(current.has_value())
-      << "refresh answered about " << current->id() << " when asked about " << dead_id;
+      << "refresh answered about " << current->id().value() << " when asked about "
+      << dead_id;
   EXPECT_EQ(current.error().kind, FailureKind::missing);
 }
 
@@ -256,7 +259,7 @@ TEST(Entity, AnAnswerThatDoesNotFitIsReportedNotCut) {
   ASSERT_TRUE(window.has_value()) << window.error().diagnostic;
   const auto panes = window->panes();
   ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
-  const std::string pane_id{panes->at(0).id()};
+  const std::string pane_id{panes->at(0).id().value()};
 
   ASSERT_TRUE(
       panes->at(0)
@@ -320,7 +323,7 @@ TEST(Entity, SplittingAWindowReturnsTheNewPane) {
 
   const auto added = window->split();
   ASSERT_TRUE(added.has_value()) << added.error().diagnostic;
-  EXPECT_EQ(added->window_id(), window->id());
+  EXPECT_EQ(added->window_id().value(), window->id().value());
 
   const auto panes = window->panes();
   ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
@@ -375,6 +378,238 @@ TEST(Entity, PanesAreArrangedByLayoutAndSize) {
   EXPECT_FALSE(panes->front().set_width(0).has_value());
 }
 
+TEST(Entity, SelectLayoutRefusesALeadingDashInsteadOfRunningItAsAFlag) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const Session session = only_session(server);
+
+  const auto window = session.new_window("layout-guard");
+  ASSERT_TRUE(window.has_value()) << window.error().diagnostic;
+  ASSERT_TRUE(window->split().has_value());
+  ASSERT_TRUE(window->split().has_value());
+
+  ASSERT_TRUE(window->select_layout("tiled").has_value());
+  const auto tiled = window->refresh();
+  ASSERT_TRUE(tiled.has_value()) << tiled.error().diagnostic;
+  const std::string tiled_layout{tiled->layout()};
+
+  ASSERT_TRUE(window->select_layout("main-vertical").has_value());
+  const auto arranged = window->refresh();
+  ASSERT_TRUE(arranged.has_value()) << arranged.error().diagnostic;
+  const std::string main_vertical_layout{arranged->layout()};
+  ASSERT_NE(main_vertical_layout, tiled_layout);
+
+  // Unguarded, tmux reads a leading "-o" as its own undo flag rather than a
+  // layout value, and quietly reverts to the layout applied before this one.
+  const auto undone = window->select_layout("-o");
+  ASSERT_FALSE(undone.has_value());
+  EXPECT_EQ(undone.error().kind, FailureKind::validation);
+
+  const auto after = window->refresh();
+  ASSERT_TRUE(after.has_value()) << after.error().diagnostic;
+  EXPECT_EQ(std::string{after->layout()}, main_vertical_layout)
+      << "\"-o\" ran as tmux's undo flag instead of being refused as an "
+         "invalid layout";
+}
+
+TEST(Entity, SelectLayoutRefusesAnUnrecognisedValueWithoutCrashingTheServer) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const Session session = only_session(server);
+
+  const auto window = session.new_window("layout-crash-guard");
+  ASSERT_TRUE(window.has_value()) << window.error().diagnostic;
+  ASSERT_TRUE(window->split().has_value());
+
+  // Not shaped like a preset, a saved layout, or JSON. Raw tmux 3.3 and
+  // 3.3a crash their server outright for exactly this input instead of
+  // refusing it; every other supported version refuses it cleanly. Either
+  // way, this is refused before dispatch, so the server survives here
+  // regardless of which version this runs against.
+  const auto refused = window->select_layout("garbage");
+  ASSERT_FALSE(refused.has_value());
+  EXPECT_EQ(refused.error().kind, FailureKind::validation);
+  EXPECT_EQ(refused.error().delivery, libtmux::DeliveryStatus::not_started);
+
+  EXPECT_TRUE(server.is_alive());
+  const auto still_there = window->refresh();
+  ASSERT_TRUE(still_there.has_value()) << still_there.error().diagnostic;
+}
+
+TEST(Entity, SelectLayoutGatesMirroredPresetsAndJsonByVersion) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const auto version = server.tmux_version();
+  ASSERT_TRUE(version.has_value()) << version.error().diagnostic;
+  const Session session = only_session(server);
+
+  const auto window = session.new_window("layout-version-gate");
+  ASSERT_TRUE(window.has_value()) << window.error().diagnostic;
+  ASSERT_TRUE(window->split().has_value());
+
+  const auto mirrored = window->select_layout("main-vertical-mirrored");
+  if (*version < libtmux::Version{.major = 3, .minor = 5}) {
+    ASSERT_FALSE(mirrored.has_value());
+    EXPECT_EQ(mirrored.error().kind, FailureKind::validation);
+  } else {
+    EXPECT_TRUE(mirrored.has_value()) << mirrored.error().diagnostic;
+  }
+  EXPECT_TRUE(server.is_alive());
+
+  const auto json_attempt =
+      window->select_layout(R"({"V":2,"L":{"t":"p","w":1,"h":1,"x":0,"y":0,"i":0}})");
+  if (*version < libtmux::Version{.major = 3, .minor = 8}) {
+    ASSERT_FALSE(json_attempt.has_value());
+    EXPECT_EQ(json_attempt.error().kind, FailureKind::validation);
+  } else if (!json_attempt.has_value()) {
+    // Past the version gate: whatever this shape of JSON gets from tmux is
+    // tmux's own refusal, not this method's.
+    EXPECT_NE(json_attempt.error().kind, FailureKind::validation);
+  }
+  EXPECT_TRUE(server.is_alive());
+}
+
+// `layout_set_lookup` (layout-set.c) is a prefix match in tmux itself: `tile`
+// and `even-h` apply cleanly on every supported version, never reaching the
+// layout-string parser 3.3/3.3a crashes on.
+TEST(Entity, SelectLayoutAcceptsAUniquePresetPrefix) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const Session session = only_session(server);
+
+  const auto window = session.new_window("layout-prefix");
+  ASSERT_TRUE(window.has_value()) << window.error().diagnostic;
+  ASSERT_TRUE(window->split().has_value());
+  ASSERT_TRUE(window->split().has_value());
+
+  ASSERT_TRUE(window->select_layout("tiled").has_value());
+  const auto tiled = window->refresh();
+  ASSERT_TRUE(tiled.has_value()) << tiled.error().diagnostic;
+  const std::string tiled_layout{tiled->layout()};
+
+  ASSERT_TRUE(window->select_layout("main-vertical").has_value());
+  const auto arranged = window->refresh();
+  ASSERT_TRUE(arranged.has_value()) << arranged.error().diagnostic;
+  ASSERT_NE(std::string{arranged->layout()}, tiled_layout);
+
+  // "tile" and "even-h" are each a unique prefix of exactly one preset
+  // name ("tiled", "even-horizontal") - neither is ambiguous, and neither
+  // is a preset name tmux does not know.
+  const auto tile_prefix = window->select_layout("tile");
+  ASSERT_TRUE(tile_prefix.has_value()) << tile_prefix.error().diagnostic;
+  const auto after_tile = window->refresh();
+  ASSERT_TRUE(after_tile.has_value()) << after_tile.error().diagnostic;
+  EXPECT_EQ(std::string{after_tile->layout()}, tiled_layout);
+
+  const auto even_h_prefix = window->select_layout("even-h");
+  ASSERT_TRUE(even_h_prefix.has_value()) << even_h_prefix.error().diagnostic;
+  const auto after_even_h = window->refresh();
+  ASSERT_TRUE(after_even_h.has_value()) << after_even_h.error().diagnostic;
+  EXPECT_NE(std::string{after_even_h->layout()}, tiled_layout);
+
+  EXPECT_TRUE(server.is_alive());
+}
+
+// The other half: a prefix ambiguous among the presets it could name is
+// refused, naming what it could mean, rather than silently picking one or
+// claiming tmux does not know it.
+TEST(Entity, SelectLayoutRefusesAnAmbiguousPresetPrefixNamingCandidates) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const Session session = only_session(server);
+
+  const auto window = session.new_window("layout-ambiguous-prefix");
+  ASSERT_TRUE(window.has_value()) << window.error().diagnostic;
+  ASSERT_TRUE(window->split().has_value());
+
+  // "even-" is a prefix of both "even-horizontal" and "even-vertical" on
+  // every supported version - unconditionally ambiguous, never a name tmux
+  // itself would resolve.
+  const auto refused = window->select_layout("even-");
+  ASSERT_FALSE(refused.has_value());
+  EXPECT_EQ(refused.error().kind, FailureKind::validation);
+  EXPECT_EQ(refused.error().delivery, libtmux::DeliveryStatus::not_started);
+  EXPECT_NE(refused.error().diagnostic.find("even-horizontal"), std::string::npos)
+      << refused.error().diagnostic;
+  EXPECT_NE(refused.error().diagnostic.find("even-vertical"), std::string::npos)
+      << refused.error().diagnostic;
+
+  EXPECT_TRUE(server.is_alive());
+}
+
+// Below the version that adds the mirrored pair, "main-v"/"main-h" are
+// unambiguous prefixes (apply on 3.3a, 3.4); at or after it they are ambiguous
+// and refused (3.5 on).
+TEST(Entity, SelectLayoutPrefixAmbiguityTracksTheMirroredPresetFloor) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const auto version = server.tmux_version();
+  ASSERT_TRUE(version.has_value()) << version.error().diagnostic;
+  const Session session = only_session(server);
+
+  const auto window = session.new_window("layout-mirrored-floor");
+  ASSERT_TRUE(window.has_value()) << window.error().diagnostic;
+  ASSERT_TRUE(window->split().has_value());
+
+  const auto main_vertical_prefix = window->select_layout("main-v");
+  const auto main_horizontal_prefix = window->select_layout("main-h");
+  if (*version < libtmux::Version{.major = 3, .minor = 5}) {
+    ASSERT_TRUE(main_vertical_prefix.has_value())
+        << main_vertical_prefix.error().diagnostic;
+    ASSERT_TRUE(main_horizontal_prefix.has_value())
+        << main_horizontal_prefix.error().diagnostic;
+  } else {
+    ASSERT_FALSE(main_vertical_prefix.has_value());
+    EXPECT_EQ(main_vertical_prefix.error().kind, FailureKind::validation);
+    EXPECT_NE(main_vertical_prefix.error().diagnostic.find("main-vertical"),
+              std::string::npos)
+        << main_vertical_prefix.error().diagnostic;
+    EXPECT_NE(main_vertical_prefix.error().diagnostic.find("main-vertical-mirrored"),
+              std::string::npos)
+        << main_vertical_prefix.error().diagnostic;
+
+    ASSERT_FALSE(main_horizontal_prefix.has_value());
+    EXPECT_EQ(main_horizontal_prefix.error().kind, FailureKind::validation);
+    EXPECT_NE(
+        main_horizontal_prefix.error().diagnostic.find("main-horizontal-mirrored"),
+        std::string::npos)
+        << main_horizontal_prefix.error().diagnostic;
+  }
+  EXPECT_TRUE(server.is_alive());
+}
+
+TEST(Entity, ToggleZoomZoomsAndUnzoomsAPane) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const Session session = only_session(server);
+
+  const auto window = session.new_window("zoom-guard");
+  ASSERT_TRUE(window.has_value()) << window.error().diagnostic;
+  const auto other = window->split();
+  ASSERT_TRUE(other.has_value()) << other.error().diagnostic;
+
+  const auto before = window->refresh();
+  ASSERT_TRUE(before.has_value()) << before.error().diagnostic;
+  EXPECT_FALSE(before->zoomed());
+
+  ASSERT_TRUE(other->toggle_zoom().has_value());
+  const auto zoomed = window->refresh();
+  ASSERT_TRUE(zoomed.has_value()) << zoomed.error().diagnostic;
+  EXPECT_TRUE(zoomed->zoomed());
+
+  ASSERT_TRUE(other->toggle_zoom().has_value());
+  const auto unzoomed = window->refresh();
+  ASSERT_TRUE(unzoomed.has_value()) << unzoomed.error().diagnostic;
+  EXPECT_FALSE(unzoomed->zoomed());
+}
+
 TEST(Entity, AWindowMovesToAnIndexInItsOwnSession) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
@@ -393,7 +628,7 @@ TEST(Entity, AWindowMovesToAnIndexInItsOwnSession) {
   const auto moved = window->refresh();
   ASSERT_TRUE(moved.has_value()) << moved.error().diagnostic;
   EXPECT_EQ(moved->index(), 9);
-  EXPECT_EQ(moved->session_id(), session.id());
+  EXPECT_EQ(moved->session_id().value(), session.id().value());
 
   const auto elsewhere = other->windows();
   ASSERT_TRUE(elsewhere.has_value()) << elsewhere.error().diagnostic;
@@ -415,8 +650,8 @@ TEST(Entity, MovingAWindowLeavesItsOtherLinksAlone) {
   const auto elsewhere = server.new_session("elsewhere");
   ASSERT_TRUE(elsewhere.has_value()) << elsewhere.error().diagnostic;
   ASSERT_TRUE(server
-                  .run({"link-window", "-s", std::string{shared->id()}, "-t",
-                        std::string{elsewhere->id()} + ":9"})
+                  .run({"link-window", "-s", std::string{shared->id().value()}, "-t",
+                        std::string{elsewhere->id().value()} + ":9"})
                   .has_value());
 
   ASSERT_TRUE(shared->move_to(5).has_value());
@@ -430,7 +665,7 @@ TEST(Entity, MovingAWindowLeavesItsOtherLinksAlone) {
   ASSERT_TRUE(linked.has_value()) << linked.error().diagnostic;
   bool still_linked = false;
   for (const Window& window : *linked) {
-    if (window.id() == shared->id()) {
+    if (window.id().value() == shared->id().value()) {
       still_linked = true;
       EXPECT_EQ(window.index(), 9);
     }
@@ -440,7 +675,7 @@ TEST(Entity, MovingAWindowLeavesItsOtherLinksAlone) {
   // And the move did not drag the user's focus along with it.
   const auto active = session.active_window();
   ASSERT_TRUE(active.has_value()) << active.error().diagnostic;
-  EXPECT_NE(active->id(), shared->id());
+  EXPECT_NE(active->id().value(), shared->id().value());
 }
 
 TEST(Entity, APaneBreaksOutIntoAWindowOfItsOwn) {
@@ -457,18 +692,18 @@ TEST(Entity, APaneBreaksOutIntoAWindowOfItsOwn) {
   const auto broken = added->break_out("roomy");
   ASSERT_TRUE(broken.has_value()) << broken.error().diagnostic;
   EXPECT_EQ(broken->name(), "roomy");
-  EXPECT_NE(broken->id(), window->id());
+  EXPECT_NE(broken->id().value(), window->id().value());
 
   const auto moved = added->refresh();
   ASSERT_TRUE(moved.has_value()) << moved.error().diagnostic;
-  EXPECT_EQ(moved->window_id(), broken->id());
+  EXPECT_EQ(moved->window_id().value(), broken->id().value());
 
   // Unnamed is the path that crashes tmux 3.7, so it is exercised too.
   const auto second = window->split();
   ASSERT_TRUE(second.has_value()) << second.error().diagnostic;
   const auto unnamed = second->break_out();
   ASSERT_TRUE(unnamed.has_value()) << unnamed.error().diagnostic;
-  EXPECT_FALSE(unnamed->id().empty());
+  EXPECT_FALSE(unnamed->id().value().empty());
   EXPECT_TRUE(server.is_alive()) << "break-pane took the server down";
 
   const auto literal_pane = window->split();
@@ -496,12 +731,12 @@ TEST(Entity, BreakingAnOnlyPanePreservesItsWindow) {
   const auto broken = pane->break_out();
 
   ASSERT_TRUE(broken.has_value()) << broken.error().diagnostic;
-  EXPECT_EQ(broken->id(), original->id());
+  EXPECT_EQ(broken->id().value(), original->id().value());
   EXPECT_EQ(broken->name(), "original");
-  EXPECT_EQ(broken->session_id(), source.id());
+  EXPECT_EQ(broken->session_id().value(), source.id().value());
   const auto moved = pane->refresh();
   ASSERT_TRUE(moved.has_value()) << moved.error().diagnostic;
-  EXPECT_EQ(moved->window_id(), original->id());
+  EXPECT_EQ(moved->window_id().value(), original->id().value());
 }
 
 TEST(Entity, NamingAnOnlyPaneRenamesItInPlace) {
@@ -522,12 +757,12 @@ TEST(Entity, NamingAnOnlyPaneRenamesItInPlace) {
   const auto broken = pane->break_out(requested);
 
   ASSERT_TRUE(broken.has_value()) << broken.error().diagnostic;
-  EXPECT_EQ(broken->id(), original->id());
+  EXPECT_EQ(broken->id().value(), original->id().value());
   EXPECT_EQ(broken->name(), requested);
-  EXPECT_EQ(broken->session_id(), source.id());
+  EXPECT_EQ(broken->session_id().value(), source.id().value());
   const auto moved = pane->refresh();
   ASSERT_TRUE(moved.has_value()) << moved.error().diagnostic;
-  EXPECT_EQ(moved->window_id(), original->id());
+  EXPECT_EQ(moved->window_id().value(), original->id().value());
 }
 
 TEST(Entity, RawTmux37RepairsACoincidentNaturalWindowName) {
@@ -683,7 +918,7 @@ TEST(Entity, CreationVerbsCarryTheFlagsTmuxHas) {
   // Creating something does not move the user.
   const auto active = session.active_window();
   ASSERT_TRUE(active.has_value()) << active.error().diagnostic;
-  EXPECT_NE(active->id(), window->id());
+  EXPECT_NE(active->id().value(), window->id().value());
 
   EXPECT_FALSE(window->split({.percentage = 0}).has_value());
   EXPECT_FALSE(window->split({.percentage = 101}).has_value());
@@ -795,10 +1030,12 @@ TEST(Entity, ARecordedSnapshotFiltersButCannotAct) {
     return line + "\n";
   };
   const std::string output =
-      recording({"%0", "nvim", "1", "@0", "$0", "0", "editor", "4210", "/dev/pts/3",
-                 "/home/user", "80", "24", "0", "0", "1", "0", "1", "1", "0"}) +
-      recording({"%1", "zsh", "0", "@0", "$0", "1", "shell", "4211", "/dev/pts/4",
-                 "/home/user", "80", "24", "0", "0", "0", "1", "1", "1", "1"});
+      recording({"%0",         "nvim",       "1",  "@0", "$0", "0", "editor", "4210",
+                 "/dev/pts/3", "/home/user", "80", "24", "0",  "0", "1",      "0",
+                 "1",          "1",          "0",  "0",  "0",  ""}) +
+      recording({"%1",         "zsh",        "0",  "@0", "$0", "1", "shell", "4211",
+                 "/dev/pts/4", "/home/user", "80", "24", "0",  "0", "0",     "1",
+                 "1",          "1",          "1",  "40", "0",  ""});
 
   const auto recorded = libtmux::Snapshot::from_recording(Pane::kFields, output);
   ASSERT_NE(recorded, nullptr);
@@ -812,13 +1049,217 @@ TEST(Entity, ARecordedSnapshotFiltersButCannotAct) {
   EXPECT_TRUE(editing.at_top());
   EXPECT_FALSE(editing.at_bottom());
   EXPECT_FALSE(editing.piping());
+  EXPECT_EQ(editing.left(), 0);
+  EXPECT_EQ(editing.top(), 0);
   EXPECT_TRUE(editing.session_name().empty());
+
+  const Pane shell{recorded, 1};
+  EXPECT_EQ(shell.left(), 40);
+  EXPECT_EQ(shell.top(), 0);
   EXPECT_TRUE((pane::command.starts_with("nv") && pane::active)(editing));
 
   const auto killed = editing.kill();
   ASSERT_FALSE(killed.has_value());
   EXPECT_EQ(killed.error().kind, FailureKind::validation);
   EXPECT_EQ(killed.error().delivery, libtmux::DeliveryStatus::not_started);
+}
+
+// A recording is whatever field list its author passed, and a released schema
+// is one of them: `pane_left` and `pane_top` were added after 0.1.0-alpha.8,
+// so every recording written against that release names nineteen fields while
+// this header names twenty-one. Reading one must answer, not run off the row.
+//
+// Under a sanitizer this is the whole test: an unbounded positional read
+// reports a heap-buffer-overflow inside `Row::value` rather than failing an
+// expectation.
+TEST(Entity, ARecordingOfAnOlderSchemaReadsItsAbsentFieldsAsZero) {
+  static constexpr std::array kReleasedPaneFields{
+      std::string_view{"pane_id"},      std::string_view{"pane_current_command"},
+      std::string_view{"pane_active"},  std::string_view{"window_id"},
+      std::string_view{"session_id"},   std::string_view{"pane_index"},
+      std::string_view{"pane_title"},   std::string_view{"pane_pid"},
+      std::string_view{"pane_tty"},     std::string_view{"pane_current_path"},
+      std::string_view{"pane_width"},   std::string_view{"pane_height"},
+      std::string_view{"pane_dead"},    std::string_view{"pane_in_mode"},
+      std::string_view{"pane_at_top"},  std::string_view{"pane_at_bottom"},
+      std::string_view{"pane_at_left"}, std::string_view{"pane_at_right"},
+      std::string_view{"pane_pipe"}};
+  static_assert(kReleasedPaneFields.size() < Pane::kFields.size(),
+                "this test is about a recording naming fewer fields than the "
+                "entity does; make it one short again if a field was removed");
+
+  std::string output;
+  for (const std::string_view value :
+       {"%0", "nvim", "1", "@0", "$0", "0", "editor", "4210", "/dev/pts/3", "/home",
+        "80", "24", "0", "0", "1", "0", "1", "1", "0"}) {
+    output += value;
+    output += libtmux::kFormatSeparator;
+  }
+  output += "\n";
+
+  const auto recorded = libtmux::Snapshot::from_recording(kReleasedPaneFields, output);
+  ASSERT_NE(recorded, nullptr);
+
+  const Pane pane{recorded, 0};
+  EXPECT_EQ(pane.id().value(), "%0");
+  EXPECT_EQ(pane.command(), "nvim");
+  EXPECT_EQ(pane.width(), 80);
+  EXPECT_TRUE(pane.piping() == false);
+  // Named by this header, absent from the recording.
+  EXPECT_EQ(pane.left(), 0);
+  EXPECT_EQ(pane.top(), 0);
+
+  // The row index is the caller's too, and out of range is not a row.
+  const Pane absent{recorded, 7};
+  EXPECT_TRUE(absent.id().value().empty());
+  EXPECT_EQ(absent.left(), 0);
+}
+
+// The two listings a caller is most likely to search are the two that could
+// not be searched: which commands this tmux understands, and which buffer
+// holds what. Both list like every other entity, so both filter like one.
+TEST(Entity, CommandsAndBuffersFilterLikeEveryOtherListing) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+
+  const auto commands = server.commands();
+  ASSERT_TRUE(commands.has_value()) << commands.error().diagnostic;
+  ASSERT_FALSE(commands->empty());
+
+  auto listing = *commands | matching(libtmux::command::name == "list-panes");
+  const auto listed = libtmux::first(listing);
+  ASSERT_TRUE(listed.has_value()) << "every supported tmux has list-panes";
+  EXPECT_EQ(listed->get().name(), "list-panes");
+  // `lsp` is its alias on every version in the supported range.
+  EXPECT_EQ(listed->get().alias(), "lsp");
+
+  ASSERT_TRUE(server.set_buffer("greeting", "hello").has_value());
+  ASSERT_TRUE(server.set_buffer("other", "xy").has_value());
+
+  const auto buffers = server.buffers();
+  ASSERT_TRUE(buffers.has_value()) << buffers.error().diagnostic;
+
+  auto named = *buffers | matching(libtmux::buffer::name == "greeting");
+  const auto greeting = libtmux::first(named);
+  ASSERT_TRUE(greeting.has_value());
+  EXPECT_EQ(greeting->get().size(), 5);
+
+  // A number compares as a number, which is the point of the typed handle.
+  auto larger = *buffers | matching(libtmux::buffer::size > 2);
+  EXPECT_EQ(std::ranges::distance(larger), 1);
+}
+
+// A pane that has exited is the one a supervisor most wants to ask about, and
+// the status it exited with was the one thing an entity could not say.
+TEST(Entity, ADeadPaneReportsWhatItExitedWith) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const Session session = only_session(server);
+
+  const auto gate_path = fixture->tmux_tmpdir() / "exit-gate";
+  ASSERT_EQ(::mkfifo(gate_path.c_str(), 0600), 0);
+  std::fstream gate{gate_path, std::ios::in | std::ios::out};
+  ASSERT_TRUE(gate.is_open());
+
+  const auto window = session.new_window(
+      {.name = "exiting", .start_directory = fixture->tmux_tmpdir().string()});
+  ASSERT_TRUE(window.has_value()) << window.error().diagnostic;
+  const auto panes = window->panes();
+  ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
+  ASSERT_FALSE(panes->empty());
+  const Pane& pane = panes->front();
+
+  // Still running, so there is no status — not a status of zero.
+  EXPECT_FALSE(pane.exit_status().has_value());
+
+  // Without this tmux destroys the pane and there is nothing left to ask.
+  ASSERT_TRUE(pane.set_option("remain-on-exit", "on").has_value());
+  ASSERT_TRUE(server
+                  .run({"set-hook", "-p", "-t", pane.id().value(), "pane-died",
+                        "wait-for -S exited"})
+                  .has_value());
+
+  // tmux 3.4 can lose SIGCHLD in libutempter's PTY teardown.
+  // Hold the PTY until the shell's exit status is recorded.
+  ASSERT_TRUE(pane.send_line("trap '' HUP; exec 3< exit-gate; "
+                             "{ read -r release <&3; } & exit 7")
+                  .has_value());
+  const auto exited = server.wait_for("exited", std::chrono::seconds{1});
+  ASSERT_TRUE(exited.has_value()) << exited.error().diagnostic;
+  gate.close();
+
+  const auto dead = pane.refresh();
+  ASSERT_TRUE(dead.has_value()) << dead.error().diagnostic;
+
+  const auto status = dead->exit_status();
+  ASSERT_TRUE(status.has_value()) << "a dead pane reported no status";
+  EXPECT_EQ(*status, 7);
+
+  // And the same value is what a filter sees.
+  const std::vector<Pane> one{*dead};
+  EXPECT_EQ(std::ranges::distance(one | matching(pane::exit_status == 7)), 1);
+  EXPECT_EQ(std::ranges::distance(one | matching(pane::exit_status == 0)), 0);
+}
+
+// The environment a new process starts with was reachable only as raw argv,
+// which is why the MCP server issued `show-environment` by hand.
+TEST(Entity, TheServerEnvironmentIsReadAndWrittenByName) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+
+  ASSERT_TRUE(server.set_environment("LIBTMUX_PROBE", "seven").has_value());
+  // Empty is a value, not an absence.
+  ASSERT_TRUE(server.set_environment("LIBTMUX_EMPTY", "").has_value());
+  // Remembered, as an instruction to keep it out of a child.
+  ASSERT_TRUE(server.remove_environment("LIBTMUX_GONE").has_value());
+  ASSERT_TRUE(server.set_environment("-r", "LIBTMUX_PROBE").has_value());
+
+  const auto environment = server.environment();
+  ASSERT_TRUE(environment.has_value()) << environment.error().diagnostic;
+
+  const auto find = [&](std::string_view name) {
+    return std::ranges::find(*environment, name, &libtmux::EnvironmentEntry::name);
+  };
+
+  const auto probe = find("LIBTMUX_PROBE");
+  ASSERT_NE(probe, environment->end());
+  ASSERT_TRUE(probe->value.has_value());
+  EXPECT_EQ(*probe->value, "seven");
+
+  const auto empty = find("LIBTMUX_EMPTY");
+  ASSERT_NE(empty, environment->end());
+  ASSERT_TRUE(empty->value.has_value()) << "an empty value is still a value";
+  EXPECT_TRUE(empty->value->empty());
+
+  // tmux prints this one as `-LIBTMUX_GONE`; it is a name with no value
+  // rather than a name bound to nothing.
+  const auto gone = find("LIBTMUX_GONE");
+  ASSERT_NE(gone, environment->end());
+  EXPECT_FALSE(gone->value.has_value());
+
+  const auto dashed = find("-r");
+  ASSERT_NE(dashed, environment->end());
+  ASSERT_TRUE(dashed->value.has_value());
+  EXPECT_EQ(*dashed->value, "LIBTMUX_PROBE");
+  ASSERT_TRUE(server.unset_environment("-r").has_value());
+  ASSERT_TRUE(server.remove_environment("-u").has_value());
+
+  // Forgetting takes the name out of the listing altogether.
+  ASSERT_TRUE(server.unset_environment("LIBTMUX_PROBE").has_value());
+  const auto after = server.environment();
+  ASSERT_TRUE(after.has_value()) << after.error().diagnostic;
+  EXPECT_EQ(
+      std::ranges::find(*after, "LIBTMUX_PROBE", &libtmux::EnvironmentEntry::name),
+      after->end());
+  EXPECT_EQ(std::ranges::find(*after, "-r", &libtmux::EnvironmentEntry::name),
+            after->end());
+  const auto removed_dash =
+      std::ranges::find(*after, "-u", &libtmux::EnvironmentEntry::name);
+  ASSERT_NE(removed_dash, after->end());
+  EXPECT_FALSE(removed_dash->value.has_value());
 }
 
 TEST(Entity, ANewSessionComesBackAsASession) {

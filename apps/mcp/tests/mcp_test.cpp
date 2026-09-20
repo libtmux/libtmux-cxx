@@ -6,8 +6,10 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -50,8 +52,10 @@ using libtmux::mcp::Toolset;
 class DeadlineBackend final : public libtmux::detail::Backend {
 public:
   explicit DeadlineBackend(std::chrono::milliseconds delay,
-                           std::string capture = "visible text without the marker\n")
-      : delay_{delay}, capture_{std::move(capture)} {}
+                           std::string capture = "visible text without the marker\n",
+                           std::optional<libtmux::CommandFailure> capture_failure = {})
+      : delay_{delay}, capture_{std::move(capture)},
+        capture_failure_{std::move(capture_failure)} {}
 
   libtmux::expected<std::string, libtmux::CommandFailure>
   run(const libtmux::CommandRequest& command,
@@ -76,6 +80,9 @@ public:
     }
     const std::vector<std::string> argv = command.argv();
     if (argv.front() == "capture-pane") {
+      if (capture_failure_.has_value()) {
+        return libtmux::unexpected(*capture_failure_);
+      }
       return capture_;
     }
     if (argv.front() == "display-message" &&
@@ -114,6 +121,7 @@ public:
 private:
   std::chrono::milliseconds delay_;
   std::string capture_;
+  std::optional<libtmux::CommandFailure> capture_failure_;
   std::vector<std::string> connection_;
   mutable std::vector<std::optional<std::chrono::milliseconds>> timeouts_;
 };
@@ -331,7 +339,8 @@ TEST(McpToolsTmux, RunsShellFramingThroughThePinnedServerEndpoint) {
                   .has_value());
 
   const auto preflight = libtmux::mcp::detail::preflight_pane_input(
-      server, panes->front().id(), libtmux::mcp::detail::PaneInputScope::target_only);
+      server, panes->front().id().value(),
+      libtmux::mcp::detail::PaneInputScope::target_only);
   ASSERT_TRUE(preflight.has_value()) << preflight.error().message;
   auto held = libtmux::mcp::detail::reserve_pane_input(
       retained.string(), preflight->server_pid, preflight->server_start_time,
@@ -344,14 +353,15 @@ TEST(McpToolsTmux, RunsShellFramingThroughThePinnedServerEndpoint) {
     ASSERT_FALSE(replaced.error()) << replaced.error().message();
     EXPECT_EQ(server.socket_path(), selected.string());
 
-    const auto collided = all_tools().call(
-        server, "send_keys", {{"paneId", panes->front().id()}, {"keys", "Space"}});
+    const auto collided =
+        all_tools().call(server, "send_keys",
+                         {{"paneId", panes->front().id().value()}, {"keys", "Space"}});
     ASSERT_FALSE(collided.has_value());
     EXPECT_NE(collided.error().message.find("still active"), std::string::npos);
     held->release();
 
     const auto answer = all_tools().call(server, "run_shell_command",
-                                         {{"paneId", panes->front().id()},
+                                         {{"paneId", panes->front().id().value()},
                                           {"command", "printf pinned-endpoint-output"},
                                           {"timeoutMs", "2000"}});
     ASSERT_TRUE(answer.has_value()) << answer.error().message;
@@ -385,6 +395,76 @@ TEST(McpToolsTmux, CapturesAPaneThroughTheLibrary) {
       all_tools().call(server, "capture_pane",
                        Arguments{{"paneId", std::string{fixture->session_name()}}});
   ASSERT_TRUE(captured.has_value()) << captured.error().message;
+}
+
+// tmux's version cannot round-trip through Version's numeric fields alone —
+// `3.7c` becomes "3.7.3" — and collides with psmux's own numeric third field.
+// Report tmux's own `-V` spelling instead of reconstructing one.
+TEST(McpToolsTmux, ReportsTmuxsOwnVersionSpellingNotAReconstruction) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+
+  auto raw = server.run({"-V"});
+  ASSERT_TRUE(raw.has_value()) << raw.error().diagnostic;
+  std::string expected = *raw;
+  while (!expected.empty() && (expected.back() == '\n' || expected.back() == '\r')) {
+    expected.pop_back();
+  }
+  constexpr std::string_view prefix = "tmux ";
+  ASSERT_TRUE(expected.starts_with(prefix)) << expected;
+  expected.erase(0, prefix.size());
+
+  const auto reported = all_tools().call(server, "get_server_info", Arguments{});
+  ASSERT_TRUE(reported.has_value()) << reported.error().message;
+  ASSERT_TRUE(reported->structured.contains("version"));
+  EXPECT_EQ(std::get<std::string>(reported->structured.at("version").value), expected);
+}
+
+// While wait_for_text holds its own observation control connection open on
+// a session, list_sessions must not read that connection's client as
+// someone attached: an agent deciding whether it is safe to act on a
+// detached session should not see its own observation as another user.
+TEST(McpToolsTmux, ListSessionsExcludesWaitForTextsOwnObservationClient) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const std::string session_name{fixture->session_name()};
+
+  std::thread waiter([&server, &session_name] {
+    static_cast<void>(all_tools().call(server, "wait_for_text",
+                                       Arguments{{"target", session_name},
+                                                 {"text", "never appears in this pane"},
+                                                 {"timeout_ms", "6000"}}));
+  });
+
+  // No API exposes "the observation connection is open"; poll the raw
+  // condition list_sessions itself would otherwise be fooled by, rather
+  // than sleep a guessed duration.
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+  bool client_seen = false;
+  while (std::chrono::steady_clock::now() < deadline) {
+    const auto clients = server.run({"list-clients", "-t", session_name});
+    if (clients.has_value() && !clients->empty()) {
+      client_seen = true;
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds{20});
+  }
+  ASSERT_TRUE(client_seen) << "wait_for_text's observation connection never attached";
+
+  const auto reported = all_tools().call(server, "list_sessions", Arguments{});
+  waiter.join();
+
+  ASSERT_TRUE(reported.has_value()) << reported.error().message;
+  const auto& sessions =
+      std::get<StructuredValue::Array>(reported->structured.at("sessions").value);
+  ASSERT_FALSE(sessions.empty());
+  const auto& first = std::get<StructuredValue::Object>(sessions.front().value);
+  EXPECT_FALSE(std::get<bool>(first.at("attached").value))
+      << "this process's own wait_for_text observation connection read as an "
+         "attached client";
+  EXPECT_EQ(std::get<std::int64_t>(first.at("client_count").value), 0);
 }
 
 // tmux escapes a non-printable byte in the socket path when it stores it at
@@ -993,6 +1073,48 @@ TEST(McpTools, PaneInputSettlementRetryScheduleIsFinite) {
   EXPECT_EQ(waited.size(), 3U);
 }
 
+// A run that outlived its answer holds its panes until something proves it
+// finished; the request that next wants one of them asks. Its watchers give up
+// after about a second, so proving completion cannot wait on them alone.
+TEST(McpToolsTmux, AFinishedRunReleasesItsPanesToTheNextRequest) {
+  using libtmux::mcp::detail::PaneInputReservationKind;
+  using libtmux::mcp::detail::reserve_pane_input;
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const std::string endpoint = fixture->socket_path().string();
+  constexpr std::uint64_t start_time = 1700000000U;
+
+  auto run = reserve_pane_input(endpoint, 101U, start_time, {"%1", "%2"},
+                                PaneInputReservationKind::run, "run_shell_command");
+  ASSERT_TRUE(run.has_value()) << run.error().message;
+  // Shared rather than referenced: the registry holds the proof, and must not
+  // be left calling into a finished test if an assertion stops this one early.
+  const auto finished = std::make_shared<std::atomic_bool>(false);
+  const auto asked = std::make_shared<std::atomic<int>>(0);
+  run->prove_completion_with([finished, asked] {
+    ++*asked;
+    return finished->load();
+  });
+
+  const auto refused =
+      reserve_pane_input(endpoint, 101U, start_time, {"%2"},
+                         PaneInputReservationKind::input, "paste_text");
+  ASSERT_FALSE(refused.has_value()) << "a run still going keeps its pane";
+  EXPECT_NE(refused.error().message.find("still active"), std::string::npos);
+  EXPECT_EQ(asked->load(), 1);
+
+  finished->store(true);
+  const auto accepted =
+      reserve_pane_input(endpoint, 101U, start_time, {"%2"},
+                         PaneInputReservationKind::input, "paste_text");
+  EXPECT_TRUE(accepted.has_value())
+      << "the run finished, so its pane is free: " << accepted.error().message;
+  EXPECT_TRUE(reserve_pane_input(endpoint, 101U, start_time, {"%1"},
+                                 PaneInputReservationKind::input, "paste_text")
+                  .has_value())
+      << "every pane the run reserved is released, not only the one asked about";
+}
+
 TEST(McpToolsTmux, PaneInputReservationsAreProcessWideAndNonqueueing) {
   using libtmux::mcp::detail::PaneInputReservationKind;
   using libtmux::mcp::detail::reserve_pane_input;
@@ -1086,7 +1208,8 @@ TEST(McpToolsTmux, PaneInputReservationsUnifyPhysicalSocketAliases) {
   ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
   ASSERT_EQ(panes->size(), 1U);
   const auto preflight = libtmux::mcp::detail::preflight_pane_input(
-      server, panes->front().id(), libtmux::mcp::detail::PaneInputScope::target_only);
+      server, panes->front().id().value(),
+      libtmux::mcp::detail::PaneInputScope::target_only);
   ASSERT_TRUE(preflight.has_value()) << preflight.error().message;
   const std::filesystem::path socket = fixture->socket_path();
   const std::filesystem::path hard_link = socket.string() + "-hard";
@@ -1103,7 +1226,7 @@ TEST(McpToolsTmux, PaneInputReservationsUnifyPhysicalSocketAliases) {
     const auto aliased = Server::at_socket_path(alias.string());
     ASSERT_TRUE(aliased.has_value()) << aliased.error().diagnostic;
     const auto observed = libtmux::mcp::detail::preflight_pane_input(
-        *aliased, panes->front().id(),
+        *aliased, panes->front().id().value(),
         libtmux::mcp::detail::PaneInputScope::target_only);
     ASSERT_TRUE(observed.has_value()) << observed.error().message;
     EXPECT_TRUE(held->covers(alias.string(), observed->server_pid,
@@ -1123,8 +1246,8 @@ TEST(McpToolsTmux, PaneInputPreflightAcceptsCompleteLinkedPlacements) {
   const auto panes = server.panes();
   ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
   ASSERT_EQ(panes->size(), 1U);
-  const std::string pane_id{panes->front().id()};
-  const std::string window_id{panes->front().window_id()};
+  const std::string pane_id{panes->front().id().value()};
+  const std::string window_id{panes->front().window_id().value()};
   const auto linked = server.run({"new-session", "-d", "-s", "linked"});
   ASSERT_TRUE(linked.has_value()) << linked.error().diagnostic;
   const auto placed = server.run({"link-window", "-s", window_id, "-t", "linked:1"});
@@ -1146,9 +1269,9 @@ TEST(McpToolsTmux, PaneInputPreflightAcceptsOneWindowAtMultipleSessionIndices) {
   const auto sessions = server.sessions();
   ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
   ASSERT_EQ(sessions->size(), 1U);
-  const std::string pane_id{panes->front().id()};
-  const std::string window_id{panes->front().window_id()};
-  const std::string target = std::string{sessions->front().id()} + ":7";
+  const std::string pane_id{panes->front().id().value()};
+  const std::string window_id{panes->front().window_id().value()};
+  const std::string target = std::string{sessions->front().id().value()} + ":7";
   const auto linked = server.run({"link-window", "-s", window_id, "-t", target});
   ASSERT_TRUE(linked.has_value()) << linked.error().diagnostic;
 
@@ -1172,8 +1295,8 @@ TEST(McpToolsTmux, PaneWritersRecheckStateImmediatelyBeforeDispatch) {
     const auto panes = server.panes();
     ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
     ASSERT_EQ(panes->size(), 1U);
-    const std::string pane_id{panes->front().id()};
-    const std::string window_id{panes->front().window_id()};
+    const std::string pane_id{panes->front().id().value()};
+    const std::string window_id{panes->front().window_id().value()};
     const auto hooked =
         server.run({"set-hook", "-g", "after-list-clients",
                     "set-window-option -t " + window_id + " synchronize-panes on"});
@@ -1229,7 +1352,7 @@ TEST(McpToolsTmux, ReleasesTimedOutRunReservationWhenDaemonExits) {
   auto panes = server.panes();
   ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
   ASSERT_EQ(panes->size(), 1U);
-  const std::string pane_id{panes->front().id()};
+  const std::string pane_id{panes->front().id().value()};
   const auto preflight = libtmux::mcp::detail::preflight_pane_input(
       server, pane_id, libtmux::mcp::detail::PaneInputScope::target_only);
   ASSERT_TRUE(preflight.has_value()) << preflight.error().message;
@@ -1499,22 +1622,23 @@ TEST(McpToolsTmux, PaneInputPreflightReadsFreshState) {
 
   ASSERT_TRUE(pane.enter_copy_mode().has_value());
   const auto guarded = libtmux::mcp::detail::preflight_pane_input(
-      server, pane.id(), libtmux::mcp::detail::PaneInputScope::target_only);
+      server, pane.id().value(), libtmux::mcp::detail::PaneInputScope::target_only);
   ASSERT_FALSE(guarded.has_value());
-  EXPECT_NE(guarded.error().message.find(pane.id()), std::string::npos);
+  EXPECT_NE(guarded.error().message.find(pane.id().value()), std::string::npos);
   EXPECT_EQ(guarded.error().message.find("scripted expansion failure"),
             std::string::npos);
 
   ASSERT_TRUE(pane.leave_mode().has_value());
-  ASSERT_TRUE(server.run({"select-pane", "-t", pane.id(), "-d"}).has_value());
+  ASSERT_TRUE(server.run({"select-pane", "-t", pane.id().value(), "-d"}).has_value());
   const auto input_off = libtmux::mcp::detail::preflight_pane_input(
-      server, pane.id(), libtmux::mcp::detail::PaneInputScope::target_only);
+      server, pane.id().value(), libtmux::mcp::detail::PaneInputScope::target_only);
   ASSERT_FALSE(input_off.has_value());
   EXPECT_NE(input_off.error().message.find("disabled"), std::string::npos);
-  ASSERT_TRUE(server.run({"select-pane", "-t", pane.id(), "-e"}).has_value());
-  EXPECT_TRUE(libtmux::mcp::detail::preflight_pane_input(
-                  server, pane.id(), libtmux::mcp::detail::PaneInputScope::target_only)
-                  .has_value());
+  ASSERT_TRUE(server.run({"select-pane", "-t", pane.id().value(), "-e"}).has_value());
+  EXPECT_TRUE(
+      libtmux::mcp::detail::preflight_pane_input(
+          server, pane.id().value(), libtmux::mcp::detail::PaneInputScope::target_only)
+          .has_value());
 }
 
 TEST(McpToolsTmux, CreatesAWindowAndTypesIntoItsPane) {
@@ -1544,6 +1668,176 @@ TEST(McpToolsTmux, CreatesAWindowAndTypesIntoItsPane) {
   }));
 }
 
+TEST(McpToolsTmux, SelectLayoutRefusesALeadingDashInsteadOfRunningItAsAFlag) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  auto windows = server.windows();
+  ASSERT_TRUE(windows.has_value()) << windows.error().diagnostic;
+  ASSERT_EQ(windows->size(), 1U);
+  const auto window = windows->front();
+  ASSERT_TRUE(window.split().has_value());
+  ASSERT_TRUE(window.split().has_value());
+  ASSERT_TRUE(window.select_layout("tiled").has_value());
+  ASSERT_TRUE(window.select_layout("main-vertical").has_value());
+  const auto before = server.window(window.id().value());
+  ASSERT_TRUE(before.has_value()) << before.error().diagnostic;
+  const std::string main_vertical_layout{before->layout()};
+  const std::string window_id{window.id().value()};
+
+  const auto tools = all_tools();
+  // Unguarded, tmux reads a leading "-o" as its own undo flag rather than a
+  // layout value; an agent-facing tool must be at least as defensive as the
+  // library's own client-side checks.
+  const auto refused = tools.call(server, "select_layout",
+                                  Arguments{{"windowId", window_id}, {"layout", "-o"}});
+  ASSERT_FALSE(refused.has_value());
+  EXPECT_TRUE(refused.error().caller_error);
+
+  const auto inspected =
+      tools.call(server, "get_window_info", Arguments{{"windowId", window_id}});
+  ASSERT_TRUE(inspected.has_value()) << inspected.error().message;
+  const auto& reported =
+      std::get<StructuredValue::Object>(inspected->structured.at("window").value);
+  EXPECT_EQ(std::get<std::string>(reported.at("layout").value), main_vertical_layout)
+      << "\"-o\" ran as tmux's undo flag instead of being refused";
+}
+
+// An agent's ordinary paste_text-then-Enter-then-wait_for_text sequence
+// must not report a match against the keystrokes it just typed (the
+// command's own echo) rather than against output the shell produced by
+// running them.
+//
+// A plain `echo <marker>` is not enough to prove this: three separate MCP
+// round trips already give a shell time to run it and print a fresh prompt
+// before `wait_for_text` ever looks, so its first capture is often already
+// confirmed output rather than the echo this is testing for. `sleep`
+// guarantees the capture-at-entry check lands while only the echo — the
+// literal command line, marker included — is on screen.
+TEST(McpToolsTmux, WaitForTextAfterSendKeysDoesNotMatchTheEchoedCommandLine) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  auto panes = server.panes();
+  ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
+  ASSERT_FALSE(panes->empty());
+  const std::string pane_id{panes->front().id().value()};
+  const auto tools = all_tools();
+
+  const std::string marker{"MCPMARKER-D10-42"};
+  const auto typed =
+      tools.call(server, "paste_text",
+                 Arguments{{"paneId", pane_id}, {"text", "sleep 1; echo " + marker}});
+  ASSERT_TRUE(typed.has_value()) << typed.error().message;
+  const auto submitted = tools.call(server, "send_keys",
+                                    Arguments{{"paneId", pane_id}, {"keys", "Enter"}});
+  ASSERT_TRUE(submitted.has_value()) << submitted.error().message;
+
+  const auto waited = tools.call(
+      server, "wait_for_text",
+      Arguments{{"target", pane_id}, {"text", marker}, {"timeout_ms", "8000"}});
+  ASSERT_TRUE(waited.has_value()) << waited.error().message;
+  EXPECT_TRUE(std::get<bool>(waited->structured.at("matched").value));
+  EXPECT_FALSE(std::get<bool>(waited->structured.at("timed_out").value));
+  const std::string mode = string_field(*waited, "mode");
+  EXPECT_NE(mode, "capture-at-entry")
+      << "matched the pane's already-visible content (the typed command line "
+         "included) rather than output the shell produced by running it. text="
+      << string_field(*waited, "text");
+  EXPECT_NE(mode, "capture-after-control-connect") << string_field(*waited, "text");
+}
+
+// A command that was never submitted must never read as `matched:true`,
+// however long the wait runs. Typed but never submitted, the marker sits on
+// the pane's one and only row for as long as the wait runs, so nothing ever
+// confirms it — proving a short-timeout wait reports a plain, honest
+// timeout rather than a disguised false positive.
+//
+// The marker is padded past the pane's 80-column width (ScopedTmuxServer's
+// default, unset by this test) so it wraps onto a second physical row by
+// itself, regardless of any prompt in front of it — a shell prompt long
+// enough to push an unpadded marker across that same boundary is what broke
+// this on a macOS CI runner with a long hostname; capture-pane needs `-J`
+// (rejoin what tmux only wrapped for display) or a search spanning the
+// wrap point never finds it. Padding here rather than relying on the
+// runner's own prompt length makes the wrap - and this proof - the same on
+// every platform.
+TEST(McpToolsTmux, WaitForTextNeverMatchesACommandThatWasNeverSubmitted) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  auto panes = server.panes();
+  ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
+  ASSERT_FALSE(panes->empty());
+  const std::string pane_id{panes->front().id().value()};
+  const auto tools = all_tools();
+
+  const std::string marker{"MCPMARKER-D10-UNSUBMITTED-" + std::string(80U, 'X')};
+  const auto typed = tools.call(server, "paste_text",
+                                Arguments{{"paneId", pane_id}, {"text", marker}});
+  ASSERT_TRUE(typed.has_value()) << typed.error().message;
+
+  const auto waited = tools.call(
+      server, "wait_for_text",
+      Arguments{{"target", pane_id}, {"text", marker}, {"timeout_ms", "300"}});
+  ASSERT_TRUE(waited.has_value()) << waited.error().message;
+  const std::string text = string_field(*waited, "text");
+  EXPECT_FALSE(std::get<bool>(waited->structured.at("matched").value))
+      << "reported a match for a command that was never submitted; text=\"" << text
+      << "\"";
+  EXPECT_TRUE(std::get<bool>(waited->structured.at("timed_out").value));
+  EXPECT_TRUE(std::get<bool>(waited->structured.at("matched_at_entry").value))
+      << "the pasted, unsubmitted marker was on screen before the wait even started";
+  EXPECT_TRUE(string_field(*waited, "mode").ends_with("-unconfirmed"))
+      << string_field(*waited, "mode");
+}
+
+// The same not-yet-submitted line, unchanged, can be pushed off the pane's
+// last row by output the pane produces for an unrelated reason - an
+// interactive shell's own startup redraw is one real source of this, but
+// the check that alone (confining a match to the pane's current last row)
+// does not catch it once something else has moved the line off that row.
+// Reproduced here with a real background job on a plain `sh` pane instead
+// of a particular shell's startup, so the proof does not depend on any
+// shell configuration: a bare `echo` prints only the newline that ends the
+// pending row, then `echo BGMARK` lands on a fresh row below it - the
+// pending row's own text never changes, only its position does.
+TEST(McpToolsTmux, WaitForTextDoesNotMatchAPendingLineOutputPushesOffTheActiveRow) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  auto session = server.new_session({.name = "redraw-guard", .shell_command = "sh"});
+  ASSERT_TRUE(session.has_value()) << session.error().diagnostic;
+  auto panes = session->panes();
+  ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
+  ASSERT_FALSE(panes->empty());
+  const std::string pane_id{panes->front().id().value()};
+  const auto tools = all_tools();
+
+  const auto background =
+      tools.call(server, "paste_text",
+                 Arguments{{"paneId", pane_id},
+                           {"text", "(sleep 1; echo; echo BGMARK-D1) &"},
+                           {"enter", "true"}});
+  ASSERT_TRUE(background.has_value()) << background.error().message;
+
+  const std::string marker{"MCPMARKER-D1-PENDING"};
+  const auto typed = tools.call(
+      server, "paste_text", Arguments{{"paneId", pane_id}, {"text", "echo " + marker}});
+  ASSERT_TRUE(typed.has_value()) << typed.error().message;
+
+  const auto waited = tools.call(
+      server, "wait_for_text",
+      Arguments{{"target", pane_id}, {"text", marker}, {"timeout_ms", "2000"}});
+  ASSERT_TRUE(waited.has_value()) << waited.error().message;
+  const std::string text = string_field(*waited, "text");
+  EXPECT_FALSE(std::get<bool>(waited->structured.at("matched").value))
+      << "matched the pending, unsubmitted marker line after unrelated output "
+         "pushed it off the pane's active row; text=\""
+      << text << "\"";
+  EXPECT_TRUE(std::get<bool>(waited->structured.at("timed_out").value));
+}
+
 TEST(McpToolsTmux, LiteralizesTmuxFormatBearingStateOnce) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
@@ -1551,7 +1845,7 @@ TEST(McpToolsTmux, LiteralizesTmuxFormatBearingStateOnce) {
   auto windows = server.windows();
   ASSERT_TRUE(windows.has_value()) << windows.error().diagnostic;
   ASSERT_EQ(windows->size(), 1U);
-  const std::string window_id{windows->front().id()};
+  const std::string window_id{windows->front().id().value()};
   const std::string literal_name{"literal-#{session_name}"};
   const auto tools = all_tools();
 
@@ -1576,6 +1870,23 @@ TEST(McpTools, EveryToolDeclaresANameAndDescription) {
     EXPECT_FALSE(tool.description.empty());
   }
   EXPECT_EQ(tools.tools().size(), 45U);
+}
+
+// Each tool's own sentence leads its description, ahead of the shared
+// authority-disclosure sentence, so a client's first line is never generic.
+TEST(McpTools, NoTwoToolDescriptionsShareAFirstSentence) {
+  const auto tools = all_tools();
+  std::map<std::string, std::string, std::less<>> owner_by_first_sentence;
+  for (const auto& tool : tools.tools()) {
+    const auto period = tool.description.find(". ");
+    const std::string first_sentence = period == std::string::npos
+                                           ? tool.description
+                                           : tool.description.substr(0, period + 1U);
+    const auto [existing, inserted] =
+        owner_by_first_sentence.emplace(first_sentence, tool.name);
+    EXPECT_TRUE(inserted) << tool.name << " and " << existing->second
+                          << " share the first sentence \"" << first_sentence << "\"";
+  }
 }
 
 TEST(McpTools, CapabilityManifestMatchesThePinnedCrossPortInventory) {
@@ -1665,7 +1976,7 @@ TEST(McpTools, CapabilityManifestMatchesThePinnedCrossPortInventory) {
   }
   const ToolDefinition* const batch = tools.find("call_read_tools_batch");
   ASSERT_NE(batch, nullptr);
-  EXPECT_TRUE(batch->description.starts_with(
+  EXPECT_TRUE(batch->description.ends_with(
       "Read pane output; accepts no client-supplied executable input. Returned "
       "content may be sensitive or untrusted."));
   const ToolDefinition* const capture_since = tools.find("capture_since");
@@ -1755,7 +2066,7 @@ TEST(McpTools, CapabilityRegistryOwnsTheCurrentSurface) {
     EXPECT_EQ(tool->authority.output_classes, item.outputs);
     EXPECT_EQ(tool->authority.may_expose_secrets, item.secrets);
     EXPECT_EQ(tool->authority.may_return_untrusted_content, item.untrusted);
-    EXPECT_TRUE(tool->description.starts_with(item.opener));
+    EXPECT_TRUE(tool->description.ends_with(item.opener));
     EXPECT_FALSE(tool->annotations.read_only);
     EXPECT_TRUE(tool->annotations.destructive);
     EXPECT_FALSE(tool->annotations.idempotent);
@@ -2037,8 +2348,8 @@ TEST(McpTools, CountsUtf8CodePointsLikeThePublishedSchema) {
           .name = "unicode",
           .title = "Unicode",
           .description =
-              "Inspect tmux metadata; accepts no client-supplied executable input. "
-              "Validate a bounded Unicode string.",
+              "Validate a bounded Unicode string. Inspect tmux metadata; accepts no "
+              "client-supplied executable input.",
           .toolset = Toolset::inspect,
           .authority = {.process_reach = ProcessReach::none,
                         .effects = {Effect::observe},
@@ -2234,6 +2545,27 @@ TEST(McpTools, RejectsWaitWhenDeterministicMatchingWorkBudgetIsSpent) {
   EXPECT_EQ(waited.error().message, "wait matching work limit exceeded");
 }
 
+// A pane that resolved and then could not be read reports why it could not be
+// read. `missing` is not only "no such pane": tmux also answers it for a server
+// that went away and a session that no longer exists, and rewording all of them
+// as a lookup failure hides the one fact a caller needs.
+TEST(McpTools, WaitReportsWhyThePaneCouldNotBeReadAfterItResolved) {
+  auto backend = std::make_shared<DeadlineBackend>(
+      std::chrono::milliseconds{0}, std::string{},
+      libtmux::CommandFailure{.kind = libtmux::FailureKind::missing,
+                              .delivery = libtmux::DeliveryStatus::replied,
+                              .exit_code = 1,
+                              .diagnostic = "tmux has no session mcp"});
+  const Server server = libtmux::detail::server_over(backend);
+
+  const auto waited = all_tools().call(
+      server, "wait_for_text",
+      {{"target", "mcp"}, {"text", "never appears"}, {"timeout_ms", "1000"}});
+
+  ASSERT_FALSE(waited.has_value());
+  EXPECT_EQ(waited.error().message, "tmux has no session mcp");
+}
+
 TEST(McpToolsTmux, ReportsAPaneThatDisappearsDuringSearch) {
   auto started = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(started.has_value()) << started.error();
@@ -2241,9 +2573,8 @@ TEST(McpToolsTmux, ReportsAPaneThatDisappearsDuringSearch) {
   const std::string path = fixture->socket_path().string();
   bool stopped = false;
   auto server = Server::at_socket_path(
-      path,
-      [&fixture, &stopped](std::string_view command, const libtmux::CommandFailure*) {
-        if (!stopped && command.find("list-panes") != std::string_view::npos) {
+      path, [&fixture, &stopped](const libtmux::CommandReport& report) {
+        if (!stopped && report.command.find("list-panes") != std::string_view::npos) {
           stopped = true;
           fixture.reset();
         }

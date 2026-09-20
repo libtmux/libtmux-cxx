@@ -133,7 +133,7 @@ CATALOGUE: t.Final = (
     Mutation(
         mutation_id="unnamed-break-report-keeps-source-session",
         path="src/entities.cpp",
-        find="      created.session_id() != owner) {",
+        find="      created.session_id().value() != owner) {",
         replace="        false) {",
         target="libtmux_backend_seam_test",
         test_regex=r"^libtmux[.]backend_seam$",
@@ -144,12 +144,13 @@ CATALOGUE: t.Final = (
         mutation_id="named-break-report-keeps-source-session",
         path="src/entities.cpp",
         find=(
-            "  auto created = named_break_report(executor, *std::move(broken), "
-            "pane.id(), {}, owner);"
+            "  auto created =\n"
+            "      named_break_report(executor, *std::move(broken), "
+            "pane.id().value(), {}, owner);"
         ),
         replace=(
-            "  auto created = named_break_report(executor, *std::move(broken), "
-            "pane.id());"
+            "  auto created =\n"
+            "      named_break_report(executor, *std::move(broken), pane.id().value());"
         ),
         target="libtmux_backend_seam_test",
         test_regex=r"^libtmux[.]backend_seam$",
@@ -506,10 +507,10 @@ CATALOGUE: t.Final = (
     ),
     Mutation(
         mutation_id="mcp-wait-shares-one-deadline",
-        path="apps/mcp/src/wait_for_text.cpp",
-        find="  auto reply = server.run(command, *remaining);",
+        path="src/wait.cpp",
+        find="  auto reply = wait.server.run(command, *remaining);",
         replace=(
-            "  auto reply = server.run(command, std::chrono::milliseconds{60000});"
+            "  auto reply = wait.server.run(command, std::chrono::milliseconds{60000});"
         ),
         target="mcp_tools_test",
         test_regex=r"^consumer[.]mcp$",
@@ -518,7 +519,7 @@ CATALOGUE: t.Final = (
     Mutation(
         mutation_id="mcp-wait-omits-unresolved-pane",
         path="apps/mcp/src/wait_for_text.cpp",
-        find="  if (!answer.pane_id.empty()) {",
+        find="  if (!pane_id.empty()) {",
         replace="  if (true) {",
         target="mcp_schema_test",
         test_regex=r"^consumer[.]mcp[.]schema$",
@@ -682,5 +683,295 @@ CATALOGUE: t.Final = (
         test_regex=r"^libtmux[.]value_semantics[.]",
         guards="a formatted failure names how far the command got, which is "
         "what says whether repeating it is safe",
+    ),
+    # Per-test CMake timeouts turn both waiter deadlocks below into failures.
+    Mutation(
+        mutation_id="readiness-wait-drain",
+        path="src/async.cpp",
+        find="        FinishReadinessWaits finish_readiness_waits{*this};",
+        replace="        static_cast<void>(0);",
+        target="libtmux_server_contract_test",
+        test_regex=(
+            r"^libtmux[.]server_contract[.]ServerContract[.]"
+            r"AThrowingCloseStillWakesABlockedWaiter$"
+        ),
+        guards="close() wakes and waits out every blocked wait_ready() caller "
+        "before letting ~State run, even when a step it wraps throws",
+    ),
+    Mutation(
+        mutation_id="completion-queue-finish-wakes-waiter",
+        path="src/completion_queue.cpp",
+        find="    core->finished = true;",
+        replace="    static_cast<void>(core);",
+        target="libtmux_operation_state_test",
+        test_regex=(
+            r"^libtmux[.]operation_state[.]CompletionQueue[.]"
+            r"FinishWakesARunOneWaiterWithNoReadyRecord$"
+        ),
+        guards="finish() wakes a run_one() caller blocked with no ready record, "
+        "not only wait_ready()'s own predicate",
+    ),
+    Mutation(
+        mutation_id="resume-clears-mute-and-pause",
+        path="src/connection.cpp",
+        find=(
+            "  ControlCommand refresh{\n"
+            '      {"refresh-client", "-A", std::string{pane} + '
+            '(deliver ? ":on" : ":off")}};\n'
+            "  if (deliver) {\n"
+            "    // tmux tracks muted and paused output separately; resume "
+            "clears both.\n"
+            '    refresh.argv.emplace_back("-A");\n'
+            '    refresh.argv.emplace_back(std::string{pane} + ":continue");\n'
+            "  }\n"
+            "  request.group.push_back(std::move(refresh));\n"
+        ),
+        replace=(
+            "  request.group.push_back(ControlCommand{\n"
+            '      {"refresh-client", "-A", std::string{pane} + '
+            '(deliver ? ":continue" : ":off")}});\n'
+        ),
+        target="libtmux_control_integration_test",
+        test_regex=(
+            r"^libtmux[.]control[.]integration[.]ControlModeConnection[.]"
+            r"MutesOnePaneAndRefusesToWidenASilentConnection$"
+        ),
+        guards="resuming delivery clears tmux's separate pause flag as well as "
+        "mute, so output paused before the mute is not left stuck silent",
+    ),
+    Mutation(
+        mutation_id="cardinality-forward-range-peek",
+        path="include/libtmux/cardinality.hpp",
+        find=(
+            "  if constexpr (std::ranges::forward_range<Range>) {\n"
+            "    auto second = iterator;\n"
+            "    if (++second != last) {\n"
+            "      return unexpected(CardinalityError::several_matched);\n"
+            "    }\n"
+            "    return std::ranges::range_value_t<Range>(*iterator);\n"
+            "  } else {\n"
+            "    std::ranges::range_value_t<Range> only(*iterator);\n"
+            "    if (++iterator != last) {\n"
+            "      return unexpected(CardinalityError::several_matched);\n"
+            "    }\n"
+            "    return only;\n"
+            "  }\n"
+        ),
+        replace=(
+            "  std::ranges::range_value_t<Range> only(*iterator);\n"
+            "  if (++iterator != last) {\n"
+            "    return unexpected(CardinalityError::several_matched);\n"
+            "  }\n"
+            "  return only;\n"
+        ),
+        target="libtmux_cardinality_test",
+        test_regex=(
+            r"^libtmux[.]cardinality[.]Cardinality[.]"
+            r"SeveralMatchedLeavesAMovingRangeUntouched$"
+        ),
+        guards="a forward range rules out a second element before the first is "
+        "moved out, so a moving range's first element survives a "
+        "several_matched error",
+    ),
+    Mutation(
+        mutation_id="api-index-depth-tracking",
+        path="tools/docs/api_index.py",
+        find=(
+            "def _function_symbol(signature: str) -> str | None:\n"
+            '    """Return the callable name from a declaration-like prefix."""\n'
+            "    code = _code(signature)\n"
+            "    depths = []\n"
+            "    depth = 0\n"
+            "    for char in code:\n"
+            "        depths.append(depth)\n"
+            '        if char in "([{":\n'
+            "            depth += 1\n"
+            '        elif char in ")]}":\n'
+            "            depth = max(0, depth - 1)\n"
+            "    operators = [\n"
+            "        match for match in OPERATOR_NAME.finditer(code) "
+            "if depths[match.start()] == 0\n"
+            "    ]\n"
+            "    if operators:\n"
+            '        return "operator" + operators[-1].group("name").strip()\n'
+            "    names = [\n"
+            "        match for match in FUNCTION_NAME.finditer(code) "
+            "if depths[match.start()] == 0\n"
+            "    ]\n"
+            "    if not names:\n"
+        ),
+        replace=(
+            "def _function_symbol(signature: str) -> str | None:\n"
+            '    """Return the callable name from a declaration-like prefix."""\n'
+            "    operators = list(OPERATOR_NAME.finditer(signature))\n"
+            "    if operators:\n"
+            '        return "operator" + operators[-1].group("name").strip()\n'
+            "    names = list(FUNCTION_NAME.finditer(signature))\n"
+            "    if not names:\n"
+        ),
+        target="tools.docs.api_index",
+        guards="a callable's name is read at bracket depth zero, so a default "
+        "argument that calls another function cannot steal the enclosing "
+        "method's index entry",
+        python_test=(
+            "tools.docs.test_api_index.ApiIndexTest."
+            "test_default_argument_calls_are_not_method_names"
+        ),
+    ),
+    Mutation(
+        mutation_id="select-layout-rejects-unrecognised-value",
+        path="src/entities.cpp",
+        find="  if (!is_universal_layout_preset(layout) && "
+        "!looks_like_classic_layout(layout)) {",
+        replace="  static_cast<void>(is_universal_layout_preset(layout));\n"
+        "  static_cast<void>(looks_like_classic_layout(layout));\n"
+        "  if (false) {",
+        target="libtmux_entity_test",
+        test_regex=(
+            r"^libtmux[.]entity[.]Entity[.]"
+            r"SelectLayoutRefusesAnUnrecognisedValueWithoutCrashingTheServer$"
+        ),
+        guards="a layout value that is not a known preset, not shaped like a "
+        "saved layout, and not (version-gated) JSON is refused before "
+        "dispatch, rather than passed to tmux, which crashes its server "
+        "outright on exactly that input on tmux 3.3 and 3.3a",
+    ),
+    Mutation(
+        mutation_id="subscription-changed-typed-ids",
+        path="src/control.cpp",
+        find="  if (parsed.kind == NotificationKind::subscription_changed) {\n"
+        "    constexpr std::size_t argument_count = 6U;\n"
+        "    const auto fields = leading_fields(line, argument_count);\n"
+        "    if (fields.size() < argument_count) {\n"
+        "      return parsed;\n"
+        "    }\n"
+        "    place_argument(parsed, fields[2]);\n"
+        "    place_argument(parsed, fields[3]);\n"
+        "    place_argument(parsed, fields[5]);\n",
+        replace="  if (parsed.kind == NotificationKind::subscription_changed) {\n"
+        "    constexpr std::size_t argument_count = 6U;\n"
+        "    const auto fields = leading_fields(line, argument_count);\n"
+        "    if (fields.size() < argument_count) {\n"
+        "      return parsed;\n"
+        "    }\n",
+        target="libtmux_control_parser_test",
+        test_regex=(
+            r"^libtmux[.]control[.]parser[.]NotificationParse[.]"
+            r"TypesTheIdsInASubscriptionChangedNotification$"
+        ),
+        guards="a %subscription-changed notification's own session, window and "
+        "pane ids land in the typed fields the doc comment promises, rather "
+        "than staying empty because the subscription's free-form name is "
+        "the first argument",
+    ),
+    Mutation(
+        mutation_id="rendered-command-utf8-boundary",
+        path="src/backend.cpp",
+        find="      rendered.resize(utf8_safe_cut(rendered, maximum));",
+        replace="      rendered.resize(maximum);\n"
+        "      static_cast<void>(utf8_safe_cut(rendered, maximum));",
+        target="libtmux_backend_seam_test",
+        test_regex=r"^libtmux[.]backend_seam$",
+        guards="a diagnostic truncated at the byte budget backs up to a UTF-8 "
+        "character boundary instead of cutting one in half",
+    ),
+    # tmux before 3.8 does not expose new-layouts in client_flags.
+    # Observe the request because layout-output assertions skip those versions.
+    Mutation(
+        mutation_id="connect-requests-json-layouts",
+        path="src/connection.cpp",
+        find="    ControlRequest layout_request;\n"
+        "    layout_request.group.push_back(\n"
+        '        ControlCommand{{"refresh-client", "-f", "new-layouts"}});',
+        replace="    ControlRequest layout_request;\n"
+        "    static_cast<void>(layout_request);",
+        target="libtmux_control_integration_test",
+        test_regex=(
+            r"^libtmux[.]control[.]integration[.]ControlModeConnection[.]"
+            r"ConnectAsksForJsonLayoutsOnEveryVersion$"
+        ),
+        guards="Connection::connect asks tmux for JSON layouts, so a "
+        "%layout-change this connection reads agrees with a plain Server "
+        "snapshot's window_layout on tmux 3.8+ instead of carrying the "
+        "classic, index-based form.",
+    ),
+    Mutation(
+        mutation_id="pane-toggle-zoom-sends-flag",
+        path="src/entities.cpp",
+        find='  return effect(run({"resize-pane", "-Z", "-t", pane_target(*this)}));',
+        replace='  return effect(run({"resize-pane", "-t", pane_target(*this)}));',
+        target="libtmux_entity_test",
+        test_regex=r"^libtmux[.]entity[.]Entity[.]ToggleZoomZoomsAndUnzoomsAPane$",
+        guards="toggling zoom sends resize-pane's -Z flag rather than a bare "
+        "resize-pane that changes nothing",
+    ),
+    Mutation(
+        mutation_id="layout-contains-pane-needle",
+        path="src/control.cpp",
+        find='  const std::string needle = "\\"I\\":\\"" + std::string{pane_id} + '
+        '"\\"";',
+        replace='  const std::string needle = "\\"J\\":\\"" + std::string{pane_id} + '
+        '"\\"";',
+        target="libtmux_control_parser_test",
+        test_regex=(
+            r"^libtmux[.]control[.]parser[.]LayoutContainsPane[.]"
+            r"AnswersFromJsonAndDeclinesFromClassic$"
+        ),
+        guards="layout_contains_pane looks for the JSON layout's own pane-id "
+        "key, so it does not report every pane absent from a real layout",
+    ),
+    Mutation(
+        mutation_id="startable-keeps-bootstrap-selector",
+        path="src/backend.cpp",
+        find="    endpoint->connection = selector;",
+        replace='    endpoint->connection = {"-S", *resolved};',
+        target="libtmux_server_identity_test",
+        test_regex=(
+            r"^libtmux[.]server[.]identity[.]ServerIdentity[.]"
+            r"StartableAtSocketNameSucceedsUnderAFreshTmuxTmpdir$"
+        ),
+        guards="a startable server's first command keeps the caller's own "
+        "-L/default selector, so tmux creates the tmux-<uid> directory a "
+        "fresh socket lives under; pinning that first command to a bare "
+        "-S <path> of our own skips the step that creates it",
+    ),
+    Mutation(
+        mutation_id="wait-for-text-defers-active-row-match",
+        path="include/libtmux/capture.hpp",
+        find="  if (active_row.find(wanted) != std::string_view::npos &&\n"
+        "      above.find(wanted) == std::string_view::npos) {",
+        replace="  if (false && active_row.find(wanted) != std::string_view::npos &&\n"
+        "      above.find(wanted) == std::string_view::npos) {",
+        target="libtmux_value_semantics_test",
+        test_regex=r"^libtmux[.]value_semantics[.]",
+        guards="output_confirms does not report a match confined to the pane's "
+        "active row, which is a caller's own just-submitted command echoed "
+        "back rather than output the shell produced by running it",
+    ),
+    Mutation(
+        mutation_id="wait-for-text-timeout-marks-an-unconfirmed-match",
+        path="src/wait.cpp",
+        find="  const bool present =\n"
+        "      !wait.wanted.empty() && text.find(wait.wanted) != std::string::npos;",
+        replace="  const bool present = false;",
+        target="libtmux_pane_io_test",
+        test_regex=r"^libtmux[.]pane[.]io[.]",
+        guards="a timeout whose last capture still shows the wanted text says "
+        "so in its mode, so a caller can tell text this server typed and the "
+        "shell never ran apart from a pane that stayed silent",
+    ),
+    Mutation(
+        mutation_id="wait-for-text-capture-joins-wrapped-lines",
+        path="src/wait.cpp",
+        find='  return run_before_deadline(wait, {"capture-pane", "-p", "-J", "-t", '
+        "wait.pane_id});",
+        replace='  return run_before_deadline(wait, {"capture-pane", "-p", "-t", '
+        "wait.pane_id});",
+        target="libtmux_pane_io_test",
+        test_regex=r"^libtmux[.]pane[.]io[.]",
+        guards="wait_for_text's capture rejoins a line tmux only wrapped for "
+        "display (-J), so a wanted string straddling the pane's width still "
+        "matches instead of being split by an inserted line break — found "
+        "when a long CI hostname pushed a short prompt past 80 columns",
     ),
 )

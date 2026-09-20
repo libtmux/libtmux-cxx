@@ -47,7 +47,7 @@ int main() {
     std::fprintf(stderr, "%s\n", panes.error().diagnostic.c_str());
     return 1;
   }
-  const std::string pane{panes->at(0).id()};
+  const std::string pane{panes->at(0).id().value()};
 
   // `pane_output` is decided here and cannot be changed later, because tmux
   // decides it here: a control client that starts without output cannot be

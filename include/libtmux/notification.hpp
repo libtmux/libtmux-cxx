@@ -69,6 +69,12 @@ enum class NotificationKind : std::uint8_t {
 // `payload` is the pane bytes of an output notification, already unescaped;
 // it is empty for every other kind.
 //
+// `subscription_changed` is the one kind whose first argument is never an
+// id: it is the subscription's own name (chosen by whoever called
+// `refresh-client -B`), so `text` holds that name and the changed value
+// together — `"<name> : <value>"` — once `session`/`window`/`pane` have
+// taken the ids around them.
+//
 // Everything here borrows. The notification must outlive it, which is why
 // there is no overload taking a temporary.
 struct ParsedNotification {
@@ -86,6 +92,23 @@ struct ParsedNotification {
 
 [[nodiscard]] ParsedNotification parse(const Notification& notification);
 ParsedNotification parse(Notification&&) = delete;
+
+// Whether `pane_id` (`%N`) is still part of a window's arrangement, reading
+// a `layout_change` notification's own `text` — `window_layout` followed by
+// `window_visible_layout` and the window's flags (control-notify.c) — for
+// its first, whitespace-delimited token.
+//
+// tmux gives no notification dedicated to a pane leaving its window; a
+// `%layout-change` naming the pane gone is the only signal there is. This
+// answers only from the JSON layout (3.8+, and only for a connection that
+// requested it — see `Window::layout()`), which carries each pane's stable
+// id. The classic layout string encodes each pane's position by index
+// instead, which the removal of any other pane in the window renumbers, so
+// this returns `std::nullopt` there rather than guessing: killing the
+// observed pane is the one case a caller most wants an honest answer for,
+// and a stale index is exactly where a guess would be wrong.
+[[nodiscard]] std::optional<bool>
+layout_contains_pane(std::string_view layout_change_text, std::string_view pane_id);
 
 namespace detail {
 struct NotificationWatchState;

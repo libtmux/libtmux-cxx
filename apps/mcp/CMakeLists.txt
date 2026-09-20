@@ -3,8 +3,8 @@
 # Leaving it out of the Windows build left the catalog naming a symbol nothing
 # defined.
 add_library(
-  mcp_tools STATIC src/pane_input.cpp src/tool_catalog.cpp src/tool_model.cpp
-                   src/wait_for_text.cpp)
+  mcp_tools STATIC src/pane_echo.cpp src/pane_input.cpp src/tool_catalog.cpp
+                   src/tool_model.cpp src/wait_for_text.cpp)
 target_include_directories(
   mcp_tools PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
             PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -15,7 +15,7 @@ if(LIBTMUX_BUILD_TESTS AND NOT WIN32)
   # `libtmux::testing` directly, not this repository's internal alias: the MCP
   # tool surface is here to be a consumer, and a consumer reaches the fixture
   # through the exported target.
-  add_executable(mcp_tools_test tests/mcp_test.cpp)
+  add_executable(mcp_tools_test tests/mcp_test.cpp tests/pane_echo_test.cpp)
   target_include_directories(
     mcp_tools_test PRIVATE "${PROJECT_SOURCE_DIR}/src"
                            "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -58,13 +58,37 @@ if(LIBTMUX_BUILD_TESTS AND LIBTMUX_BUILD_MCP_SERVER AND NOT WIN32)
     COMMAND mcp_protocol_test "--gtest_filter=McpProtocolCli.*")
   set_tests_properties(
     consumer.mcp.protocol PROPERTIES LABELS "consumer;contract" TIMEOUT 120)
-  add_test(
-    NAME consumer.mcp.protocol.real-tmux
-    COMMAND mcp_protocol_test
-            "--gtest_filter=McpProtocol.*:McpProtocolTmux.*")
+  # One entry per test rather than one for the suite. The tests shared a
+  # single 120 s budget and ran 92-119 s under a loaded gate, and 135 s at load
+  # 60, so one slow machine timed all of them out together. Apart, each has its
+  # own hang guard, and `-j` runs them side by side. Discovered when ctest runs,
+  # as `tests/` does, rather than by running the binary during the build.
+  set(CMAKE_GTEST_DISCOVER_TESTS_DISCOVERY_MODE PRE_TEST)
+  include(GoogleTest)
+  gtest_discover_tests(
+    mcp_protocol_test
+    TEST_FILTER "McpProtocol.*:McpProtocolTmux.*"
+    TEST_PREFIX "consumer.mcp.protocol.real-tmux."
+    PROPERTIES TIMEOUT 120)
+  # CMake 3.28 flattens a list-valued property passed above, so the two labels
+  # and the sanitizer allowance are applied after discovery, as in `tests/`.
+  set(mcp_protocol_environment "")
+  if(LIBTMUX_ENABLE_SANITIZERS AND CMAKE_CXX_FLAGS MATCHES "-stdlib=libc\\+\\+")
+    set(mcp_protocol_environment "ENVIRONMENT ASAN_OPTIONS=alloc_dealloc_mismatch=0")
+  endif()
+  set(mcp_protocol_properties
+      "${CMAKE_CURRENT_BINARY_DIR}/mcp_protocol_properties.cmake")
+  file(
+    GENERATE
+    OUTPUT "${mcp_protocol_properties}"
+    CONTENT "foreach(test_name IN LISTS mcp_protocol_test_TESTS)
   set_tests_properties(
-    consumer.mcp.protocol.real-tmux
-    PROPERTIES LABELS "consumer;real-tmux" TIMEOUT 120)
+    \"\${test_name}\" PROPERTIES LABELS \"consumer;real-tmux\" TIMEOUT 120
+    ${mcp_protocol_environment})
+endforeach()
+")
+  set_property(
+    DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES "${mcp_protocol_properties}")
   # Ubuntu's libc++ allocates exception text with new while libc++abi frees it;
   # malformed JSON triggers ASan's cross-runtime mismatch before recovery.
   if(LIBTMUX_ENABLE_SANITIZERS AND CMAKE_CXX_FLAGS MATCHES "-stdlib=libc\\+\\+")
@@ -74,9 +98,6 @@ if(LIBTMUX_BUILD_TESTS AND LIBTMUX_BUILD_MCP_SERVER AND NOT WIN32)
     # and catch inside the test process itself, which needs the same allowance.
     set_property(
       TEST consumer.mcp.protocol APPEND PROPERTY ENVIRONMENT
-           "ASAN_OPTIONS=alloc_dealloc_mismatch=0")
-    set_property(
-      TEST consumer.mcp.protocol.real-tmux APPEND PROPERTY ENVIRONMENT
            "ASAN_OPTIONS=alloc_dealloc_mismatch=0")
   endif()
 endif()

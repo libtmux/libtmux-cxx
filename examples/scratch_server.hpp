@@ -37,7 +37,7 @@ public:
       std::exit(1);
     }
 
-    auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
+    auto server = libtmux::Server::at_socket_path(fixture->socket_path());
     if (!server.has_value()) {
       std::fprintf(stderr, "%s\n", server.error().diagnostic.c_str());
       std::exit(1);

@@ -109,7 +109,11 @@ struct ControlRequestResult {
 };
 
 struct ConnectionOptions {
-  std::filesystem::path tmux_binary{"tmux"};
+  // Which tmux to run. Absent means `tmux` from `PATH` — or, through
+  // `Server::control`, the tmux that Server's policy names. Absent rather than
+  // defaulting to `tmux`, so that a caller who writes `tmux` here gets it,
+  // instead of being indistinguishable from one who wrote nothing.
+  std::optional<std::filesystem::path> tmux_binary{};
   std::filesystem::path socket_path{};
   std::string session_name{};
   std::chrono::milliseconds startup_timeout{2000};
@@ -205,6 +209,21 @@ private:
   std::size_t index_{0};
 };
 
+// One held-open control client.
+//
+// Shared freely between threads. `execute`, `take_notifications`,
+// `wait_for_notifications`, `watch_notifications`, `set_pane_output` and the
+// muting pair may all be called at once: writes are serialized, and each
+// reply is matched to its own request through a private boundary, which is
+// what lets concurrent callers tell their blocks apart even though tmux puts
+// no request id on a guard.
+//
+// Moving from a connection, or destroying one, may not race with any of
+// those — the same rule `CommandRuntime` states for itself.
+//
+// It remains one FIFO client, so a command that waits on the server also
+// delays whatever another thread asked for next. That is why `Server::run`
+// stays the surface for a command whose final result matters.
 class Connection final {
 public:
   static expected<Connection, ProtocolError> connect(ConnectionOptions options);
@@ -270,12 +289,37 @@ public:
   // muting is the only per-pane control it offers. So this narrows what a
   // listening connection receives; it cannot widen a silent one.
   //
-  // `resume` on a pane that tmux paused also clears the pause, and tmux moves
-  // that pane's offset to the current end — so whatever was produced while it
-  // was paused or muted is not delivered afterwards.
+  // Resuming clears both mute and pause, starting at tmux's current output
+  // offset. What a caller sees for output produced while muted differs by
+  // tmux version, and is not this library's choice either way:
+  //
+  //   - Before tmux 3.7, muting stops delivery to this connection only.
+  //     What the pane printed while muted is lost — resuming never replays
+  //     it.
+  //   - On tmux 3.7+, muting stops tmux from reading the pane's pty at all.
+  //     The pane freezes for every attached client and tool, not only this
+  //     connection, and what it printed while muted arrives as a backlog on
+  //     resume (measured against raw tmux, both directions).
   expected<void, ProtocolError>
   set_pane_output(std::string_view pane, bool deliver,
                   std::chrono::steady_clock::time_point deadline);
+
+  // Named forms of set_pane_output; the same connection policy applies.
+  //
+  // Muting is not this connection's private business on tmux 3.7+: tmux stops
+  // reading the pane's pty, so the pane freezes for every attached client and
+  // tool until it is resumed. `set_pane_output` has the version-by-version
+  // detail; this is the part worth knowing before reaching for the name.
+  [[nodiscard]] expected<void, ProtocolError>
+  mute_pane_output(std::string_view pane,
+                   std::chrono::steady_clock::time_point deadline) {
+    return set_pane_output(pane, false, deadline);
+  }
+  [[nodiscard]] expected<void, ProtocolError>
+  resume_pane_output(std::string_view pane,
+                     std::chrono::steady_clock::time_point deadline) {
+    return set_pane_output(pane, true, deadline);
+  }
 
   // Everything tmux says until the deadline, as one loop rather than two.
   //

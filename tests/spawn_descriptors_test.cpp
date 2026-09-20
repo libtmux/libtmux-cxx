@@ -16,7 +16,7 @@
 
 extern char** environ;
 
-#if defined(__linux__)
+#if defined(__linux__) && defined(LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
 namespace {
 std::atomic<bool> return_infinite_hard_limit{false};
 std::atomic<int> reported_policy_error{0};
@@ -72,7 +72,7 @@ public:
   int attributes_result{-1};
 };
 
-#if defined(__linux__)
+#if defined(__linux__) && defined(LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
 int retained_descriptor_is_safe_after_hard_limit_is_lowered() {
   constexpr int minimum_marker_descriptor = 512;
   std::array<int, 2> marker{-1, -1};
@@ -155,7 +155,7 @@ TEST(SpawnDescriptors, PlatformPolicyClosesAnUnrelatedDescriptor) {
   EXPECT_NE(watched.revents & (POLLERR | POLLHUP), 0);
 }
 
-#if defined(__linux__)
+#if defined(__linux__) && defined(LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
 TEST(SpawnDescriptors, ForcedNumericPolicyRefusesAnInfiniteHardLimit) {
   SpawnObjects spawn;
   ASSERT_EQ(spawn.actions_result, 0);

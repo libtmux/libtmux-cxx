@@ -4,6 +4,7 @@
 #include <chrono>
 #include <compare>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -64,6 +65,11 @@ public:
   [[nodiscard]] bool covers(std::string_view endpoint, std::uint64_t server_pid,
                             std::uint64_t server_start_time,
                             const std::vector<std::string>& pane_ids) const;
+  // How another request can tell that the run holding these panes has finished.
+  // Asked when that request finds a pane reserved, so a run that outlived its
+  // answer releases the pane the moment somebody needs it — not only if a
+  // background watcher happened to see it finish before giving up.
+  void prove_completion_with(std::function<bool()> proves_complete);
   void release();
   void abandon() noexcept;
 

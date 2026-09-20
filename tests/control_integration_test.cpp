@@ -65,7 +65,7 @@ using libtmux::test::ScopedTmuxServer;
 using libtmux::test::ScopedTmuxServerOptions;
 using libtmux::test::SocketMode;
 
-#if defined(__linux__)
+#if defined(__linux__) && defined(LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
 struct LateMarker final {
   std::mutex mutex;
   std::condition_variable changed;
@@ -283,6 +283,7 @@ TEST(ControlModeConnection, ControlClientDoesNotInheritABlockedSignalMask) {
   EXPECT_EQ(*mask, 0ULL);
 }
 
+#if defined(LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
 TEST(ControlModeConnection, ForcedNumericPolicyDoesNotLeakAConcurrentHighDescriptor) {
   auto server = start_server(unique_name("control-descriptor-policy"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
@@ -378,8 +379,9 @@ TEST(ControlModeConnection, ForcedNumericPolicyDoesNotLeakAConcurrentHighDescrip
   EXPECT_NE(inherited.revents & POLLERR, 0);
   EXPECT_TRUE(stopped.has_value());
 }
+#endif
 
-#if defined(__GLIBC__)
+#if defined(__GLIBC__) && defined(LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
 TEST(ControlModeConnection, ForcedNumericPolicyRefusesAMarkerAboveALoweredSoftLimit) {
   auto server = start_server(unique_name("control-high-descriptor-policy"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
@@ -564,6 +566,182 @@ TEST(ControlModeConnection, AliasExpansionKeepsEveryReplyAndTheNextRequestAligne
       connection.execute(group({{"display-message", "-p", "still-aligned"}}),
                          std::chrono::steady_clock::now() + 2s);
   expect_exact_end(after, "still-aligned\n");
+  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+}
+
+// The request itself, on every supported release.
+//
+// Below tmux 3.8 asking for `new-layouts` has no observable effect -- an
+// unrecognised client flag is skipped silently, and `#{client_flags}` never
+// mentions it -- so the test below can only check the *consequence* on 3.8+,
+// and skips everywhere else. That leaves the request unguarded on the versions
+// this project mostly runs against. This watches the request instead of its
+// consequence: the connection runs tmux through a wrapper that copies what the
+// library writes on stdin into a file, which works the same on 3.2a and on a
+// development build.
+TEST(ControlModeConnection, ConnectAsksForJsonLayoutsOnEveryVersion) {
+  auto fixture = start_server(unique_name("control-layout-request"));
+  ASSERT_TRUE(fixture.has_value()) << (fixture.has_value() ? "" : fixture.error());
+
+  const auto directory =
+      std::filesystem::temp_directory_path() / unique_name("libtmux-cxx-record");
+  std::error_code directory_error;
+  std::filesystem::create_directories(directory, directory_error);
+  ASSERT_FALSE(directory_error) << directory_error.message();
+  const auto record = directory / "written";
+  const auto wrapper = directory / "tmux";
+  {
+    std::ofstream script{wrapper};
+    ASSERT_TRUE(script.is_open());
+    script << "#!/bin/sh\n"
+           << "exec tee -a " << record << " | exec " << LIBTMUX_CONTROL_TMUX_PATH
+           << " \"$@\"\n";
+  }
+  std::filesystem::permissions(wrapper, std::filesystem::perms::owner_all,
+                               directory_error);
+  ASSERT_FALSE(directory_error) << directory_error.message();
+
+  auto connected =
+      Connection::connect({.tmux_binary = wrapper,
+                           .socket_path = fixture->socket_path(),
+                           .session_name = std::string{fixture->session_name()},
+                           .startup_timeout = 5s,
+                           .shutdown_timeout = 2s});
+  ASSERT_TRUE(connected.has_value())
+      << (connected.has_value() ? "" : connected.error().message);
+  EXPECT_TRUE(connected->shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+
+  std::ifstream written{record};
+  ASSERT_TRUE(written.is_open()) << "the wrapper recorded nothing at " << record;
+  const std::string sent{std::istreambuf_iterator<char>{written},
+                         std::istreambuf_iterator<char>{}};
+  // The library writes each argument as octal escapes, so tmux's own parser
+  // takes it literally; the bytes on the wire are `\162\145...`, not the word.
+  std::string decoded;
+  for (std::size_t index = 0; index < sent.size();) {
+    if (sent[index] == '\\' && index + 3 < sent.size()) {
+      decoded.push_back(
+          static_cast<char>(std::stoi(sent.substr(index + 1, 3), nullptr, 8)));
+      index += 4;
+      continue;
+    }
+    decoded.push_back(sent[index]);
+    ++index;
+  }
+  EXPECT_NE(decoded.find("refresh-client -f new-layouts"), std::string::npos)
+      << "connect never asked tmux for JSON layouts; it wrote: " << decoded;
+
+  std::filesystem::remove_all(directory, directory_error);
+}
+
+// `Connection::connect` requests JSON layouts so a snapshot read through a
+// plain `Server` and a `%layout-change` read from this control connection
+// agree, on tmux 3.8+, instead of one being JSON and the other the classic
+// form.
+TEST(ControlModeConnection, LayoutChangePayloadAgreesWithAPlainSnapshotOn38Plus) {
+  auto fixture = start_server(unique_name("control-layout-json"));
+  ASSERT_TRUE(fixture.has_value()) << (fixture.has_value() ? "" : fixture.error());
+  auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+  const auto version = server->tmux_version();
+  ASSERT_TRUE(version.has_value()) << version.error().diagnostic;
+  if (*version < libtmux::Version{.major = 3, .minor = 8}) {
+    GTEST_SKIP() << "the JSON layout form this compares needs tmux 3.8+";
+  }
+
+  auto connected = connect_to(*fixture);
+  ASSERT_TRUE(connected.has_value())
+      << (connected.has_value() ? "" : connected.error().message);
+  auto connection = std::move(*connected);
+
+  auto panes = server->panes();
+  ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
+  ASSERT_EQ(panes->size(), 1U);
+  ASSERT_TRUE(panes->front().split().has_value());
+
+  const auto deadline = std::chrono::steady_clock::now() + 2s;
+  std::optional<std::string> layout_change_text;
+  while (!layout_change_text.has_value() &&
+         std::chrono::steady_clock::now() < deadline) {
+    for (const auto& notification : connection.wait_for_notifications(deadline)) {
+      const auto parsed = libtmux::parse(notification);
+      if (parsed.kind == libtmux::NotificationKind::layout_change) {
+        layout_change_text = std::string{parsed.text};
+      }
+    }
+  }
+  ASSERT_TRUE(layout_change_text.has_value())
+      << "no %layout-change arrived after split";
+  const auto space = layout_change_text->find(' ');
+  ASSERT_NE(space, std::string::npos);
+  const std::string notified_layout = layout_change_text->substr(0, space);
+
+  auto windows = server->windows();
+  ASSERT_TRUE(windows.has_value()) << windows.error().diagnostic;
+  ASSERT_EQ(windows->size(), 1U);
+  const std::string snapshot_layout{windows->front().layout()};
+
+  EXPECT_TRUE(notified_layout.starts_with(R"({"V":)"))
+      << "control connection did not receive JSON: " << notified_layout;
+  EXPECT_EQ(notified_layout, snapshot_layout);
+
+  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+}
+
+// tmux gives no notification dedicated to a pane leaving its window: the
+// only signal is the window's own `%layout-change`. This proves the
+// signal `layout_contains_pane` reads is really there, end to end, for a
+// pane this connection was watching and tmux then removed.
+TEST(ControlModeConnection, LayoutContainsPaneAnswersAfterTheObservedPaneIsKilled) {
+  auto fixture = start_server(unique_name("control-pane-lost"));
+  ASSERT_TRUE(fixture.has_value()) << (fixture.has_value() ? "" : fixture.error());
+  auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+  const auto version = server->tmux_version();
+  ASSERT_TRUE(version.has_value()) << version.error().diagnostic;
+  if (*version < libtmux::Version{.major = 3, .minor = 8}) {
+    GTEST_SKIP() << "the JSON layout this answers from needs tmux 3.8+";
+  }
+
+  auto connected = connect_to(*fixture);
+  ASSERT_TRUE(connected.has_value())
+      << (connected.has_value() ? "" : connected.error().message);
+  auto connection = std::move(*connected);
+
+  auto panes = server->panes();
+  ASSERT_TRUE(panes.has_value()) << panes.error().diagnostic;
+  ASSERT_EQ(panes->size(), 1U);
+  const std::string kept{panes->front().id().value()};
+  const auto split = panes->front().split();
+  ASSERT_TRUE(split.has_value()) << split.error().diagnostic;
+  const std::string doomed{split->id().value()};
+
+  // Drain the split's own layout-change before killing the pane, so the one
+  // this test reads is unambiguously the one the kill caused.
+  static_cast<void>(
+      connection.wait_for_notifications(std::chrono::steady_clock::now() + 300ms));
+
+  ASSERT_TRUE(split->kill().has_value());
+
+  const auto deadline = std::chrono::steady_clock::now() + 2s;
+  std::optional<std::string> layout_change_text;
+  while (!layout_change_text.has_value() &&
+         std::chrono::steady_clock::now() < deadline) {
+    for (const auto& notification : connection.wait_for_notifications(deadline)) {
+      const auto parsed = libtmux::parse(notification);
+      if (parsed.kind == libtmux::NotificationKind::layout_change) {
+        layout_change_text = std::string{parsed.text};
+      }
+    }
+  }
+  ASSERT_TRUE(layout_change_text.has_value())
+      << "no %layout-change arrived after the kill";
+
+  EXPECT_EQ(libtmux::layout_contains_pane(*layout_change_text, kept),
+            std::optional<bool>{true});
+  EXPECT_EQ(libtmux::layout_contains_pane(*layout_change_text, doomed),
+            std::optional<bool>{false});
+
   EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
 }
 
@@ -1000,7 +1178,7 @@ TEST(ControlModeConnection, MutesOnePaneAndRefusesToWidenASilentConnection) {
         << (silent.has_value() ? "" : silent.error().message);
     auto connection = std::move(*silent);
     const auto refused =
-        connection.set_pane_output("%0", true, std::chrono::steady_clock::now() + 2s);
+        connection.resume_pane_output("%0", std::chrono::steady_clock::now() + 2s);
     ASSERT_FALSE(refused.has_value());
     EXPECT_NE(refused.error().message.find("did not ask for pane output"),
               std::string::npos)
@@ -1030,7 +1208,7 @@ TEST(ControlModeConnection, MutesOnePaneAndRefusesToWidenASilentConnection) {
   ASSERT_FALSE(pane.empty());
 
   const auto muted =
-      connection.set_pane_output(pane, false, std::chrono::steady_clock::now() + 2s);
+      connection.mute_pane_output(pane, std::chrono::steady_clock::now() + 2s);
   ASSERT_TRUE(muted.has_value()) << muted.error().message;
 
   static_cast<void>(connection.take_notifications());
@@ -1053,6 +1231,33 @@ TEST(ControlModeConnection, MutesOnePaneAndRefusesToWidenASilentConnection) {
     }
   }
   EXPECT_EQ(outputs, 0) << "a muted pane still delivered output";
+
+  const auto paused =
+      connection.execute(group({{"refresh-client", "-A", pane + ":pause"}}),
+                         std::chrono::steady_clock::now() + 2s);
+  ASSERT_FALSE(paused.connection_error.has_value());
+  ASSERT_TRUE(connection.resume_pane_output(pane, std::chrono::steady_clock::now() + 2s)
+                  .has_value());
+  const auto resumed = connection.execute(
+      group({{"send-keys", "-t", pane, "echo resumed-pane-marker", "Enter"}}),
+      std::chrono::steady_clock::now() + 2s);
+  ASSERT_FALSE(resumed.connection_error.has_value());
+  std::string received;
+  const auto resumed_deadline = std::chrono::steady_clock::now() + 2s;
+  while (std::chrono::steady_clock::now() < resumed_deadline &&
+         received.find("resumed-pane-marker") == std::string::npos) {
+    const auto batch = connection.wait_for_notifications(resumed_deadline);
+    if (batch.empty()) {
+      break;
+    }
+    for (const auto& notification : batch) {
+      if (libtmux::parse(notification).kind == libtmux::NotificationKind::output) {
+        received += text(notification.body);
+      }
+    }
+  }
+  EXPECT_NE(received.find("resumed-pane-marker"), std::string::npos)
+      << "a resumed pane did not deliver new output";
 
   EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
 }

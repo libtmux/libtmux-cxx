@@ -108,6 +108,13 @@ $ (set -e; for p in \
   done)
 ```
 
+`cxx-sanitize` is also the fault-injection lane: it is the one build that sets
+`LIBTMUX_ENABLE_FAULT_INJECTION`, so the seams reaching error paths a caller
+cannot provoke — a thread that will not start, an allocation that fails while a
+result is published — are compiled in and their tests run. Every other lane
+builds the library a consumer links, and a test there asserts the archive
+exports no seam at all. Tests that need one skip by name when it is absent.
+
 ```console
 $ python3 -m tools.parity verify --manifest tools/parity/data/manifest.json --mode structural --allow-pending
 ```
@@ -153,6 +160,17 @@ Edit the example, never the block in the README, then bring the quote across:
 
 ```console
 $ python3 tools/docs/check_readme.py --fix
+```
+
+Matching the code is not the same as pasting it: a region quoted mid-`main()`
+can compile there while depending on a binding a reader's own file does not
+have. Each `#region` must also compile as the only code in its own
+translation unit, so a region that needs something declares it on its first
+line as `// Given: <type> <name>` (repeated for more than one, separated by
+`;`), which becomes that line in the README too:
+
+```console
+$ python3 -m tools.docs.check_example_isolation
 ```
 
 This repository is also a vcpkg registry, and the versions database can drift
@@ -232,7 +250,12 @@ triggers the publish workflow.
 The order a release keeps is fixed by vcpkg, because the portfile fetches a
 release tarball by hash and that hash cannot exist before the tag does:
 
-1. `VERSION` is bumped and committed.
+1. `VERSION` is bumped and committed, together with the
+   `LIBTMUX_VERSION_*` macros in
+   [`include/libtmux/version.hpp`](../include/libtmux/version.hpp). They are
+   written out rather than generated so the headers stay readable without
+   CMake, and `ValueSemantics.TheCompiledVersionMatchesTheLinkedOne` fails if
+   the two disagree.
 2. The maintainer pushes the tag.
    [`release.yml`](workflows/release.yml) refuses a tag that disagrees with
    `VERSION`.
@@ -270,7 +293,7 @@ with a command the notes give them.
 ## Compatibility
 
 tmux 3.2a and newer, through `master`, matching the Python package. CI builds
-and tests pinned compatibility cells from 3.2a through 3.7b, plus `master`, on
+and tests pinned compatibility cells from 3.2a through 3.7c, plus `master`, on
 every pull request and every change to master; the handful of capabilities that
 need a later tmux are covered by tests that skip below the release providing
 them — [the README](../README.md#compatibility) lists them.

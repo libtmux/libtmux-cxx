@@ -13,10 +13,12 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <format>
 #include <functional>
 #include <initializer_list>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -205,10 +207,24 @@ private:
 //
 // Synchronous calls invoke it on their caller's thread. Asynchronous calls
 // invoke it only on the thread calling `CommandRuntime::dispatch_ready`.
-// No internal lock is held; a shared observer must synchronise itself. Both
-// callback arguments expire on return.
-using CommandObserver =
-    std::function<void(std::string_view command, const CommandFailure* failure)>;
+// No internal lock is held; a shared observer must synchronise itself.
+struct CommandReport {
+  // As tmux received it, with any argument marked sensitive replaced. For a
+  // human reading a log.
+  std::string_view command;
+  // The same command unrendered, for a caller building structured telemetry
+  // rather than a line of text. Empty when the report has no argv to give.
+  std::span<const std::string> argv;
+  // Nothing when the command succeeded.
+  const CommandFailure* failure;
+  // How long the command took, measured around its dispatch. Absent when
+  // nothing was dispatched — a request rejected before it ran took no time,
+  // and reporting zero would read as an immeasurably fast command.
+  std::optional<std::chrono::nanoseconds> elapsed;
+};
+
+// Every member expires on return; a caller keeping any of it copies it.
+using CommandObserver = std::function<void(const CommandReport&)>;
 
 // What a call waits and holds when the caller did not say.
 //
@@ -227,6 +243,63 @@ struct ExecutionPolicy {
   std::optional<std::chrono::milliseconds> timeout{std::chrono::seconds{30}};
   // Absent leaves the transport's own bound, which is one megabyte.
   std::optional<std::size_t> output_limit{};
+  // Which tmux to run. A bare name is resolved through `PATH`, as tmux's own
+  // documentation assumes; a path containing a separator is used as given.
+  //
+  // Naming it is how a caller stops `PATH` deciding: a hermetic build, a
+  // pinned version under test, or a wrapper that reaches tmux on another
+  // machine. It rides the policy rather than the call because a Server's
+  // connection is immutable, and because a handle that changed which tmux it
+  // meant between two calls would make its own entities disagree.
+  //
+  // `Server::control` passes this to the connection it opens, so both
+  // transports run the same executable unless the caller overrides it in
+  // `ConnectionOptions`.
+  std::filesystem::path tmux_binary{"tmux"};
+};
+
+// A transport a caller supplies.
+//
+// `BackendKind::custom` named this possibility from the first release, but
+// nothing implemented it: the interface a backend had to satisfy lived in the
+// library's private headers, so the only reachable transport was the one that
+// launches a subprocess per command. This is the seam that makes the name
+// true.
+//
+// One method, deliberately. Everything else a backend does — routing an entity
+// command through its owning psmux session, proving a session belongs,
+// preparing an attach argv — is either psmux's problem or the library's, and
+// freezing it here would make a private arrangement permanent. What a
+// transport owes is an answer to one command; the library supplies the rest
+// and asks this for the tmux version too, by running `-V` through it.
+//
+// `run` is const and may be called from any thread, because a `Server` is
+// copyable across threads and shares one executor. An implementation that
+// keeps a connection or a buffer synchronises itself.
+//
+// Returning the command's standard output is the whole contract: a listing
+// answers its rows, a mutation answers whatever tmux printed, and a failure
+// answers `CommandFailure` rather than throwing.
+//
+// A batch arrives here too, as one request whose argv carries `;` between the
+// grouped commands — there is no second method to implement, but the
+// separators must reach tmux as they are. A transport that interprets or drops
+// them turns one fail-fast group into something else without saying so.
+class CommandExecutor {
+public:
+  CommandExecutor() = default;
+  CommandExecutor(const CommandExecutor&) = delete;
+  CommandExecutor& operator=(const CommandExecutor&) = delete;
+  CommandExecutor(CommandExecutor&&) = delete;
+  CommandExecutor& operator=(CommandExecutor&&) = delete;
+  virtual ~CommandExecutor() = default;
+
+  // Absent timeout means the caller named none; absent limit means the same.
+  // An implementation that cannot bound itself should refuse rather than wait
+  // forever, the way every transport here already does.
+  [[nodiscard]] virtual expected<std::string, CommandFailure>
+  run(const CommandRequest& command, std::optional<std::chrono::milliseconds> timeout,
+      std::optional<std::size_t> output_limit) const = 0;
 };
 
 LIBTMUX_NAMESPACE_END

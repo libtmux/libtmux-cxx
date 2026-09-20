@@ -68,7 +68,7 @@ int main() {
   // Going back to the previously selected pane, which only the server
   // knows: a listing does not say which one that was.
   if (const auto back = windows->front().select_last_pane(); back.has_value()) {
-    std::printf("back to pane %s\n", std::string{back->id()}.c_str());
+    std::printf("back to pane %s\n", std::string{back->id().value()}.c_str());
   }
 
   // The same window can be shown in a second session: one window, two
@@ -89,7 +89,7 @@ int main() {
     // by another name.
     if (const auto mirrored = shared->windows(); mirrored.has_value()) {
       for (const libtmux::Window& window : *mirrored) {
-        if (window.id() == windows->front().id() &&
+        if (window.id().value() == windows->front().id().value() &&
             failed(window.unlink(), "unsharing the first window")) {
           return 1;
         }

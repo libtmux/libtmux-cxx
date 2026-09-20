@@ -42,6 +42,17 @@ option(LIBTMUX_WARNINGS_AS_ERRORS "Treat first-party warnings as errors" OFF)
 # add_subdirectory should not have this package's headers and CMake config
 # appear in its own install prefix.
 option(LIBTMUX_INSTALL "Generate install rules" ${PROJECT_IS_TOP_LEVEL})
+option(LIBTMUX_BUILD_BENCHMARKS "Build the benchmark suite (apps/matrix, benchmarks/)"
+       OFF)
+# Off, including with tests on, so that what the suite exercises is what a
+# consumer links. Fault injection reaches error paths a caller cannot provoke —
+# a thread that will not start, an allocation that fails mid-publication — and
+# pays for it with process-wide mutable state and entry points that have no
+# business in a shipped archive. One lane turns it on and runs the tests that
+# need it; every other lane, and every release, builds without it. A test
+# asserts the archive is clean whenever it is off.
+option(LIBTMUX_ENABLE_FAULT_INJECTION
+       "Compile the test-only fault-injection seams into the library" OFF)
 option(LIBTMUX_BUILD_EXAMPLES "Build and run the examples"
        ${PROJECT_IS_TOP_LEVEL})
 # `libtmux::testing` — the private-tmux-server fixture, installed alongside
@@ -76,6 +87,16 @@ endif()
 if(WIN32 AND LIBTMUX_BUILD_FUZZERS)
   message(FATAL_ERROR "LIBTMUX_BUILD_FUZZERS is not supported on Windows")
 endif()
+# A shared build needs every symbol a consumer links to be exported, and the
+# Windows preview has no export annotations at all — it would produce a DLL
+# with an empty import library and fail at link rather than at configure.
+# Refusing here says so while the builder can still act on it.
+if(BUILD_SHARED_LIBS AND WIN32)
+  message(
+    FATAL_ERROR
+      "BUILD_SHARED_LIBS is not supported on Windows: the psmux preview "
+      "carries no symbol export annotations, so the DLL would export nothing.")
+endif()
 if(WIN32 AND (LIBTMUX_ENABLE_SANITIZERS OR LIBTMUX_ENABLE_THREAD_SANITIZER OR
               LIBTMUX_ENABLE_COVERAGE))
   message(
@@ -104,6 +125,10 @@ add_subdirectory(src)
 # links it in turn.
 if(NOT WIN32 AND LIBTMUX_BUILD_TESTING_LIBRARY)
   add_subdirectory(src/testing)
+  if(LIBTMUX_BUILD_BENCHMARKS)
+    add_subdirectory(apps/matrix)
+    add_subdirectory(benchmarks)
+  endif()
 endif()
 
 if(NOT WIN32 AND (LIBTMUX_BUILD_TESTS OR LIBTMUX_BUILD_EXAMPLES) AND

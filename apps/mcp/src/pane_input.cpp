@@ -7,6 +7,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <tuple>
 #include <utility>
 
@@ -29,6 +30,9 @@ struct PaneInputIdentity {
 struct Reservation {
   std::uint64_t token{};
   PaneInputReservationKind kind{};
+  // Set for a run that outlived its answer. Shared, because one run reserves
+  // several panes and a request that proves it finished releases all of them.
+  std::shared_ptr<const std::function<bool()>> completion_proof{};
 };
 
 struct Registry {
@@ -140,6 +144,18 @@ public:
     released_ = true;
   }
 
+  void prove_completion_with(std::function<bool()> proves_complete) {
+    auto proof =
+        std::make_shared<const std::function<bool()>>(std::move(proves_complete));
+    std::lock_guard lock{owner_.mutex};
+    for (const PaneInputIdentity& identity : identities_) {
+      const auto found = owner_.active.find(identity);
+      if (found != owner_.active.end() && found->second.token == token_) {
+        found->second.completion_proof = proof;
+      }
+    }
+  }
+
   [[nodiscard]] bool covers(const std::vector<PaneInputIdentity>& candidates) const {
     std::lock_guard lock{owner_.mutex};
     if (released_ || candidates != identities_) {
@@ -179,6 +195,12 @@ PaneInputLease::~PaneInputLease() {
   }
 }
 
+void PaneInputLease::prove_completion_with(std::function<bool()> proves_complete) {
+  if (implementation_ != nullptr && proves_complete) {
+    implementation_->prove_completion_with(std::move(proves_complete));
+  }
+}
+
 bool PaneInputLease::covers(std::string_view endpoint, std::uint64_t server_pid,
                             std::uint64_t server_start_time,
                             const std::vector<std::string>& pane_ids) const {
@@ -215,7 +237,39 @@ reserve_pane_input(std::string_view endpoint, std::uint64_t server_pid,
   std::vector<PaneInputIdentity> wanted =
       identities(*physical, server_pid, server_start_time, pane_ids);
   Registry& owner = registry();
+  // A run that outlived its answer is asked whether it has finished before its
+  // reservation refuses anyone. The proof runs tmux, so it runs outside the
+  // lock.
+  std::map<std::uint64_t, std::shared_ptr<const std::function<bool()>>> finished;
+  {
+    std::lock_guard lock{owner.mutex};
+    for (const PaneInputIdentity& identity : wanted) {
+      const auto found = owner.active.find(identity);
+      if (found == owner.active.end()) {
+        continue;
+      }
+      if (!found->second.completion_proof) {
+        return libtmux::unexpected(
+            conflict(identity.pane_id, tool_name, found->second.kind));
+      }
+      finished.emplace(found->second.token, found->second.completion_proof);
+    }
+  }
+  std::set<std::uint64_t> proven;
+  for (const auto& [held, proves_complete] : finished) {
+    try {
+      if ((*proves_complete)()) {
+        proven.insert(held);
+      }
+    } catch (...) {
+      // Unproved, so the pane stays reserved: refusing is the safe answer.
+    }
+  }
+  // Only what was proved is dropped. A run that is still going keeps every pane
+  // it reserved, and the check below refuses on its behalf.
   std::lock_guard lock{owner.mutex};
+  std::erase_if(owner.active,
+                [&](const auto& entry) { return proven.contains(entry.second.token); });
   for (const PaneInputIdentity& identity : wanted) {
     const auto found = owner.active.find(identity);
     if (found != owner.active.end()) {

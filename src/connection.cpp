@@ -351,7 +351,7 @@ expected<SpawnedClient, ProtocolError> spawn_client(const ConnectionOptions& opt
     flags += flag;
   }
 
-  std::vector<std::string> arguments{options.tmux_binary.string(),
+  std::vector<std::string> arguments{options.tmux_binary.value_or("tmux").string(),
                                      "-N",
                                      "-u",
                                      "-S",
@@ -1003,8 +1003,11 @@ Connection& Connection::operator=(Connection&& other) noexcept {
 }
 
 expected<Connection, ProtocolError> Connection::connect(ConnectionOptions options) {
-  if (options.tmux_binary.empty()) {
+  if (options.tmux_binary.has_value() && options.tmux_binary->empty()) {
     return unexpected(not_started_error("tmux binary path is empty"));
+  }
+  if (!options.tmux_binary.has_value()) {
+    options.tmux_binary = "tmux";
   }
   if (options.socket_path.empty()) {
     return unexpected(not_started_error("tmux socket path is empty"));
@@ -1012,7 +1015,7 @@ expected<Connection, ProtocolError> Connection::connect(ConnectionOptions option
   if (options.session_name.empty()) {
     return unexpected(not_started_error("tmux session name is empty"));
   }
-  if (contains_nul(options.tmux_binary.native()) ||
+  if (contains_nul(options.tmux_binary->native()) ||
       contains_nul(options.socket_path.native()) ||
       contains_nul(options.session_name)) {
     return unexpected(not_started_error("connection option contains NUL"));
@@ -1056,21 +1059,50 @@ expected<Connection, ProtocolError> Connection::connect(ConnectionOptions option
 
   const auto startup_deadline = Clock::now() + state->options.startup_timeout;
   std::optional<ProtocolError> failure;
+  bool ready = false;
   {
     std::unique_lock lock{state->mutex};
     static_cast<void>(state->condition.wait_until(lock, startup_deadline, [&] {
       return state->ready || state->fatal_error || state->reader_done;
     }));
-    if (state->ready) {
-      return Connection{std::move(state)};
+    ready = state->ready;
+    if (!ready) {
+      const auto fatal_error = state->fatal_error;
+      if (fatal_error) {
+        failure = fatal_error.value();
+      } else {
+        failure = not_started_error("control client startup deadline expired");
+      }
+      failure->delivery = DeliveryStatus::not_started;
     }
-    const auto fatal_error = state->fatal_error;
-    if (fatal_error) {
-      failure = fatal_error.value();
-    } else {
-      failure = not_started_error("control client startup deadline expired");
+  }
+
+  if (ready) {
+    Connection connection{std::move(state)};
+    // JSON layouts, not the classic form that renumbers a pane by index
+    // whenever another pane in the window disappears. tmux 3.7c and earlier
+    // silently ignore an unrecognised client flag; 3.8+ starts sending JSON
+    // for `window_layout` and `%layout-change` from this point on. Verified
+    // against raw tmux on 3.2a, 3.7c and next-3.9.
+    ControlRequest layout_request;
+    layout_request.group.push_back(
+        ControlCommand{{"refresh-client", "-f", "new-layouts"}});
+    const auto layout_deadline =
+        Clock::now() + connection.state_->options.startup_timeout;
+    const auto layout_result =
+        connection.execute(std::move(layout_request), layout_deadline);
+    const bool layout_refused =
+        !layout_result.blocks.empty() &&
+        layout_result.blocks.front().terminal == ControlTerminal::error;
+    if (layout_result.connection_error.has_value() || layout_refused) {
+      ProtocolError layout_failure = layout_result.connection_error.value_or(
+          ProtocolError{.message = "tmux refused to request JSON layouts on connect",
+                        .delivery = DeliveryStatus::replied});
+      static_cast<void>(connection.shutdown(
+          Clock::now() + connection.state_->options.shutdown_timeout));
+      return unexpected(std::move(layout_failure));
     }
-    failure->delivery = DeliveryStatus::not_started;
+    return connection;
   }
 
   Connection cleanup{std::move(state)};
@@ -1213,8 +1245,14 @@ Connection::set_pane_output(std::string_view pane, bool deliver,
   }
 
   ControlRequest request;
-  request.group.push_back(ControlCommand{
-      {"refresh-client", "-A", std::string{pane} + (deliver ? ":continue" : ":off")}});
+  ControlCommand refresh{
+      {"refresh-client", "-A", std::string{pane} + (deliver ? ":on" : ":off")}};
+  if (deliver) {
+    // tmux tracks muted and paused output separately; resume clears both.
+    refresh.argv.emplace_back("-A");
+    refresh.argv.emplace_back(std::string{pane} + ":continue");
+  }
+  request.group.push_back(std::move(refresh));
   auto result = execute(std::move(request), deadline);
   if (result.connection_error.has_value()) {
     return unexpected(*result.connection_error);

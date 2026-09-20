@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pathlib
+import re
 import subprocess
 import unittest
 from unittest import mock
@@ -149,6 +150,54 @@ class MutationMainTest(unittest.TestCase):
         self.assertEqual(status, 2)
         run_mutation.assert_not_called()
         rebuild.assert_not_called()
+
+    def test_hang_shaped_mutations_are_bounded_by_a_cmake_timeout(self) -> None:
+        """Keep the fact catalogue.py's comment asserts actually true.
+
+        Removing readiness-wait-drain's or completion-queue-finish-wakes-
+        waiter's guard hangs the raw binary; the comment beside those two
+        entries says this lane does not need its own timeout because ctest
+        already bounds each target with a CMake TIMEOUT property. Nothing
+        checked that claim - a maintainer dropping either property would
+        silently let a future hang wedge this lane.
+        """
+        cmake_lists = (
+            pathlib.Path(__file__).parents[2] / "tests" / "CMakeLists.txt"
+        ).read_text(encoding="utf-8")
+        expected = {
+            "libtmux_server_contract_test": 60,
+            "libtmux_operation_state_test": 30,
+        }
+        for target, timeout in expected.items():
+            match = re.search(
+                rf"gtest_discover_tests\(\s*{re.escape(target)}\b.*?TIMEOUT (\d+)",
+                cmake_lists,
+                re.DOTALL,
+            )
+            self.assertIsNotNone(match, f"no gtest_discover_tests found for {target}")
+            self.assertEqual(
+                int(match.group(1)),
+                timeout,
+                f"{target}'s CMake TIMEOUT changed; the hang-mutation entries "
+                "for it need a new bound, not a survivor",
+            )
+
+    def test_new_guard_mutations_match_the_current_source(self) -> None:
+        """Keep the new-guard mutation entries bound to real source."""
+        ids = {
+            "readiness-wait-drain",
+            "completion-queue-finish-wakes-waiter",
+            "resume-clears-mute-and-pause",
+            "cardinality-forward-range-peek",
+            "api-index-depth-tracking",
+        }
+        for mutation_id in ids:
+            mutation, source = self.mutation_source(mutation_id)
+            self.assertEqual(
+                source.count(mutation.find),
+                1,
+                f"{mutation_id} lost its anchor in {mutation.path}",
+            )
 
     def test_mcp_mutations_build_the_protocol_test(self) -> None:
         """Build the CTest executable as well as its separately named server."""

@@ -209,8 +209,8 @@ private:
   std::thread reactor_;
 };
 
-void set_runtime_launch_observer_for_test(
-    std::function<void(const ProcessRequest&)> observer);
+// Named here rather than inside the fault-injection guard below: the runtime
+// names these points in its own code, so the enum exists in every build.
 enum class RuntimeFailurePoint {
   completion_queue,
   result_publication,
@@ -218,11 +218,25 @@ enum class RuntimeFailurePoint {
   engine_shutdown,
   close,
 };
+
+// Fault injection, compiled in only where `LIBTMUX_ENABLE_FAULT_INJECTION`
+// asks for it.
+//
+// These reach error paths a caller cannot provoke — a thread that will not
+// start, an allocation that fails while a result is published — and they do it
+// through process-wide mutable state. That state has no business in the
+// archive a consumer links, so the default build has neither these entry
+// points nor the globals behind them, and the branches that read them fold
+// away. One lane turns it on and runs the tests that need it.
+#if defined(LIBTMUX_FAULT_INJECTION)
+void set_runtime_launch_observer_for_test(
+    std::function<void(const ProcessRequest&)> observer);
 void fail_next_runtime_action_for_test(RuntimeFailurePoint point);
 void set_runtime_completion_observer_for_test(std::function<void()> observer);
 void fail_next_runtime_start_for_test();
 void fail_next_runtime_subscription_for_test();
 void force_runtime_windows_validation_for_test(bool enabled);
+#endif
 
 } // namespace detail
 LIBTMUX_NAMESPACE_END

@@ -1,0 +1,15 @@
+# What travels with a release, as opposed to what lives in the repository.
+#
+# `vcpkg_from_github` downloads GitHub's source tarball, which `git archive`
+# builds and which honours these. Vendoring the library meant vendoring its
+# research record with it: `tools/` alone is 61% of the tracked lines, almost
+# all of it the parity ledger's JSON, and `src/README.md` already says it is
+# never installed.
+#
+# `docs/` stays. The generated API reference is what a consumer reads, and the
+# README links to it.
+#
+# A clone still has everything; this only shapes the archive.
+tools/         export-ignore
+.github/       export-ignore
+.gitattributes export-ignore

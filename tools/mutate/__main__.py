@@ -23,7 +23,8 @@ def main(argv: t.Sequence[str] | None = None) -> int:
     Returns
     -------
     int
-        Zero only when every mutation was killed.
+        Zero only when every mutation was killed or, for one whose own
+        guarding test skipped itself, could not be evaluated here.
 
     Examples
     --------

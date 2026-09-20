@@ -5,6 +5,9 @@
 // past a failure, and name that failure — and each of them is part of the
 // surface that cannot change once the package is published.
 
+#include "wait_capture.hpp"
+
+#include <algorithm>
 #include <concepts>
 #include <cstddef>
 #include <format>
@@ -12,6 +15,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
@@ -19,10 +23,13 @@
 
 #include <gtest/gtest.h>
 
+#include "libtmux/capture.hpp"
 #include "libtmux/cardinality.hpp"
 #include "libtmux/entities.hpp"
+#include "libtmux/error.hpp"
 #include "libtmux/server.hpp"
 #include "libtmux/testing/scoped_server.hpp"
+#include "libtmux/version.hpp"
 
 namespace {
 
@@ -117,7 +124,7 @@ TEST(ValueSemantics, EntitiesKeyTheOrdinaryContainers) {
   const auto again = server.windows();
   ASSERT_TRUE(again.has_value()) << again.error().diagnostic;
   for (const Window& window : *again) {
-    EXPECT_TRUE(unique.contains(window)) << window.id() << " hashed elsewhere";
+    EXPECT_TRUE(unique.contains(window)) << window.id().value() << " hashed elsewhere";
   }
 
   std::unordered_map<Window, std::string> named;
@@ -130,7 +137,7 @@ TEST(ValueSemantics, EntitiesKeyTheOrdinaryContainers) {
 TEST(ValueSemantics, AnEntityPrintsAsSomethingAReaderRecognises) {
   const auto recorded = libtmux::Snapshot::from_recording(
       Pane::kFields,
-      "%4␞nvim␞1␞@2␞$1␞0␞editor␞991␞/dev/pts/7␞/tmp␞80␞24␞0␞0␞1␞0␞1␞1␞0␞\n");
+      "%4␞nvim␞1␞@2␞$1␞0␞editor␞991␞/dev/pts/7␞/tmp␞80␞24␞0␞0␞1␞0␞1␞1␞0␞0␞0␞␞\n");
   ASSERT_NE(recorded, nullptr);
 
   std::ostringstream out;
@@ -202,13 +209,17 @@ TEST(ValueSemantics, AFailureComposesAndCanBeNamed) {
   }
   EXPECT_EQ(static_cast<int>(FailureKind::truncated), 7);
   EXPECT_EQ(static_cast<int>(FailureKind::unsupported), 8);
+  EXPECT_EQ(static_cast<int>(libtmux::BackendKind::custom), 0);
+  EXPECT_EQ(static_cast<int>(libtmux::BackendKind::subprocess), 1);
+  EXPECT_EQ(static_cast<int>(libtmux::BackendKind::control), 2);
   for (const auto implementation :
        {libtmux::ServerImplementation::unknown, libtmux::ServerImplementation::tmux,
         libtmux::ServerImplementation::psmux}) {
     EXPECT_FALSE(libtmux::to_string(implementation).empty());
   }
   for (const auto backend :
-       {libtmux::BackendKind::custom, libtmux::BackendKind::subprocess}) {
+       {libtmux::BackendKind::custom, libtmux::BackendKind::subprocess,
+        libtmux::BackendKind::control}) {
     EXPECT_FALSE(libtmux::to_string(backend).empty());
   }
   for (const auto feature : {
@@ -229,6 +240,248 @@ TEST(ValueSemantics, AFailureComposesAndCanBeNamed) {
   }
   EXPECT_FALSE(libtmux::to_string(libtmux::CardinalityError::several_matched).empty());
   EXPECT_FALSE(libtmux::to_string(libtmux::SocketError::path_too_long).empty());
+}
+
+// The preprocessor's answer and the linker's must be the same answer.
+//
+// `LIBTMUX_VERSION_STRING` is written in the header so that `include/libtmux/`
+// stays readable without CMake; `library_version()` is compiled from the
+// `VERSION` file. Nothing but this ties them together, so a release that bumps
+// one and forgets the other fails here rather than shipping a library that
+// misreports itself to the preprocessor.
+TEST(ValueSemantics, TheCompiledVersionMatchesTheLinkedOne) {
+  EXPECT_EQ(std::string_view{LIBTMUX_VERSION_STRING}, libtmux::library_version());
+
+  // And the numeric macros are that same string's leading components, so a
+  // consumer branching on them is branching on the version it linked.
+  const std::string expected = std::to_string(LIBTMUX_VERSION_MAJOR) + "." +
+                               std::to_string(LIBTMUX_VERSION_MINOR) + "." +
+                               std::to_string(LIBTMUX_VERSION_PATCH);
+  EXPECT_TRUE(std::string_view{LIBTMUX_VERSION_STRING}.starts_with(expected))
+      << LIBTMUX_VERSION_STRING << " does not begin with " << expected;
+}
+
+// The three shapes a capture shows that are not output.
+TEST(ValueSemantics, OutputIsToldApartFromWhatIsMerelyOnScreen) {
+  using libtmux::output_confirms;
+
+  // Produced: the pane ran something and printed it above the prompt.
+  EXPECT_TRUE(output_confirms("$ echo hi\nhi\n$ ", "hi"));
+
+  // Typed, not yet run: the only occurrence is the row the cursor is on.
+  EXPECT_FALSE(output_confirms("$ run-the-thing", "run-the-thing"));
+
+  // Echoed: the shell repeated what we typed, and a redraw moved it off the
+  // active row — row position alone would now credit it to the pane.
+  EXPECT_FALSE(
+      output_confirms("$ deploy now\n$ deploy now", "deploy now", {"deploy now"}));
+
+  // Echoed and also produced: stripping our own bytes leaves the pane's.
+  EXPECT_TRUE(output_confirms("$ echo deploy now\ndeploy now\n$ ", "deploy now",
+                              {"echo deploy now"}));
+
+  // An empty needle is not a match, however much text there is.
+  EXPECT_FALSE(output_confirms("anything at all", ""));
+}
+
+TEST(ValueSemantics, OutputConfirmsMasksWholeOccurrencesOnly) {
+  using libtmux::output_confirms;
+
+  EXPECT_TRUE(output_confirms("$ y\nready\n$ ", "ready", {"y"}))
+      << "masking the typed \"y\" corrupted the unrelated word \"ready\"";
+  EXPECT_FALSE(output_confirms("$ y\nno match here\n$ ", "y", {"y"}))
+      << "the typed \"y\" itself must still be masked as a whole occurrence";
+}
+
+TEST(ValueSemantics, OutputConfirmsFallsBackWithoutACursorPosition) {
+  using libtmux::output_confirms;
+
+  const std::string padded_capture = "$ ready" + std::string(8U, '\n');
+  EXPECT_FALSE(output_confirms(padded_capture, "ready"));
+}
+
+TEST(ValueSemantics, OutputConfirmsUsesTheCursorRowWhenGiven) {
+  using libtmux::detail::output_confirms;
+  using libtmux::detail::PaneCursor;
+
+  const std::string padded_capture = "$ ready" + std::string(8U, '\n');
+  EXPECT_TRUE(output_confirms(padded_capture, "ready", {"tracked-placeholder"},
+                              PaneCursor{.row = 1U, .pane_height = 8U}));
+
+  EXPECT_FALSE(output_confirms("$ run-the-thing", "run-the-thing",
+                               {"tracked-placeholder"},
+                               PaneCursor{.row = 0U, .pane_height = 1U}));
+}
+
+TEST(ValueSemantics, OutputConfirmsAccountsForJoinedWrappedRowsAboveTheCursor) {
+  using libtmux::detail::output_confirms;
+  using libtmux::detail::PaneCursor;
+
+  const std::string joined_capture = "wrapped-line-one-and-two\nready\nMARKER\n\n\n";
+  EXPECT_FALSE(output_confirms(joined_capture, "MARKER", {"tracked-placeholder"},
+                               PaneCursor{.row = 3U, .pane_height = 6U}))
+      << "the joined row count was indexed as if -J had not merged anything";
+}
+
+TEST(ValueSemantics, OutputConfirmsIncludesTheCursorRowWhenNothingIsPending) {
+  using libtmux::detail::output_confirms;
+  using libtmux::detail::PaneCursor;
+
+  const std::string glued_capture = "readyuser@host:~$ ";
+  EXPECT_TRUE(output_confirms(glued_capture, "ready", {},
+                              PaneCursor{.row = 0U, .pane_height = 1U}))
+      << "excluded the cursor row although nothing was pending for this pane";
+}
+
+// Two runtime failure types, because the two transports answer different
+// questions — and a caller handling both wrote the same adapter to get one.
+// What it must not lose is what each says about delivery.
+// An id says what it names. What still works matters as much as what does
+// not: comparing one to text answers a real question, and `tests/compile`
+// holds the half that must not build.
+TEST(ValueSemantics, AnIdIsTypedByWhatItNames) {
+  static_assert(!std::same_as<libtmux::PaneId, libtmux::WindowId>);
+  static_assert(!std::same_as<libtmux::WindowId, libtmux::SessionId>);
+  // No conversion: with one, every `std::string_view` parameter takes any id
+  // again and this reads as safety while providing none.
+  static_assert(!std::convertible_to<libtmux::PaneId, std::string_view>);
+  static_assert(!std::constructible_from<libtmux::PaneId, libtmux::WindowId>);
+
+  const libtmux::PaneId pane{"%7"};
+  EXPECT_EQ(pane.value(), "%7");
+  EXPECT_TRUE(pane == "%7") << "comparing an id to text cannot confuse two kinds";
+  EXPECT_FALSE(pane == "%8");
+  EXPECT_TRUE(pane == libtmux::PaneId{"%7"});
+  EXPECT_FALSE(pane == libtmux::PaneId{"%8"});
+  EXPECT_LT(libtmux::PaneId{"%1"}, libtmux::PaneId{"%2"});
+  EXPECT_TRUE(libtmux::PaneId{}.empty());
+
+  std::ostringstream printed;
+  printed << pane;
+  EXPECT_EQ(printed.str(), "%7") << "a failing comparison has to be readable";
+}
+
+TEST(ValueSemantics, ErrorsCrossBetweenSurfacesWithoutAnAdapter) {
+  const auto broken = libtmux::as_command_failure(
+      libtmux::ProtocolError{.message = "the wire stopped answering",
+                             .delivery = libtmux::DeliveryStatus::written});
+  EXPECT_EQ(broken.kind, libtmux::FailureKind::pipe);
+  EXPECT_EQ(broken.delivery, libtmux::DeliveryStatus::written)
+      << "whether tmux may have acted is the one thing a caller cannot rebuild";
+  EXPECT_EQ(broken.diagnostic, "the wire stopped answering");
+
+  // Never started is a refusal, not a broken pipe.
+  const auto refused = libtmux::as_command_failure(
+      libtmux::ProtocolError{.message = "control request group is empty",
+                             .delivery = libtmux::DeliveryStatus::not_started});
+  EXPECT_EQ(refused.kind, libtmux::FailureKind::validation);
+  EXPECT_EQ(refused.delivery, libtmux::DeliveryStatus::not_started);
+
+  const auto wired = libtmux::as_protocol_error(
+      libtmux::CommandFailure{.kind = libtmux::FailureKind::timeout,
+                              .delivery = libtmux::DeliveryStatus::indeterminate,
+                              .exit_code = -1,
+                              .diagnostic = "tmux did not answer in time"});
+  EXPECT_EQ(wired.message, "tmux did not answer in time");
+  EXPECT_EQ(wired.delivery, libtmux::DeliveryStatus::indeterminate);
+
+  // A validation reason comes from a builder that never reached tmux, so it
+  // always folds the same way and keeps its own words.
+  const auto folded = libtmux::as_command_failure(libtmux::KeyError::unknown_name);
+  EXPECT_EQ(folded.kind, libtmux::FailureKind::validation);
+  EXPECT_EQ(folded.delivery, libtmux::DeliveryStatus::not_started);
+  EXPECT_EQ(folded.exit_code, 0);
+  EXPECT_EQ(folded.diagnostic, libtmux::to_string(libtmux::KeyError::unknown_name));
+  EXPECT_EQ(libtmux::as_command_failure(libtmux::SocketError::path_too_long).diagnostic,
+            libtmux::to_string(libtmux::SocketError::path_too_long));
+  EXPECT_EQ(libtmux::as_command_failure(libtmux::TargetError::empty_name).diagnostic,
+            libtmux::to_string(libtmux::TargetError::empty_name));
+
+  // Only a validation reason opts in. `FailureKind` is an enum too, and is not
+  // a reason a call was refused.
+  static_assert(libtmux::is_validation_reason<libtmux::VersionError>);
+  static_assert(!libtmux::is_validation_reason<libtmux::FailureKind>);
+}
+
+// Reading a field and filtering on it are one contract, not two. Every type
+// the server can list appears below, including `Command` and `Buffer`, which
+// have no namespace of their own: a gate that enumerates what is present is
+// blind to what is absent.
+TEST(ValueSemantics, EveryEntityFieldIsReachableFromAFilter) {
+  const auto unreachable = [](const std::vector<std::string_view>& handled,
+                              const auto& fields) {
+    std::string absent;
+    for (const std::string_view field : fields) {
+      if (std::ranges::find(handled, field) == handled.end()) {
+        absent += absent.empty() ? "" : ", ";
+        absent += field;
+      }
+    }
+    return absent;
+  };
+
+  namespace buffer = libtmux::buffer;
+  namespace command = libtmux::command;
+  namespace session = libtmux::session;
+  namespace window = libtmux::window;
+  namespace pane = libtmux::pane;
+  namespace client = libtmux::client;
+
+  EXPECT_EQ(unreachable({session::id.field.name, session::name.field.name,
+                         session::attached.field.name, session::path.field.name,
+                         session::group.field.name, session::grouped.field.name,
+                         session::client_count.field.name,
+                         session::window_count.field.name, session::created.field.name},
+                        libtmux::Session::kFields),
+            "")
+      << "namespace session has no handle for these";
+
+  EXPECT_EQ(unreachable({window::id.field.name, window::name.field.name,
+                         window::active.field.name, window::session_id.field.name,
+                         window::layout.field.name, window::zoomed.field.name,
+                         window::bell.field.name, window::activity.field.name,
+                         window::index.field.name, window::pane_count.field.name,
+                         window::width.field.name, window::height.field.name,
+                         window::linked_sessions.field.name},
+                        libtmux::Window::kFields),
+            "")
+      << "namespace window has no handle for these";
+
+  EXPECT_EQ(unreachable({pane::id.field.name,         pane::command.field.name,
+                         pane::active.field.name,     pane::window_id.field.name,
+                         pane::session_id.field.name, pane::title.field.name,
+                         pane::tty.field.name,        pane::path.field.name,
+                         pane::dead.field.name,       pane::in_mode.field.name,
+                         pane::index.field.name,      pane::pid.field.name,
+                         pane::width.field.name,      pane::height.field.name,
+                         pane::at_top.field.name,     pane::at_bottom.field.name,
+                         pane::at_left.field.name,    pane::at_right.field.name,
+                         pane::piping.field.name,     pane::left.field.name,
+                         pane::top.field.name,        pane::exit_status.field.name},
+                        libtmux::Pane::kFields),
+            "")
+      << "namespace pane has no handle for these";
+
+  EXPECT_EQ(unreachable({client::name.field.name, client::session_name.field.name,
+                         client::read_only.field.name, client::tty.field.name,
+                         client::terminal.field.name, client::control_mode.field.name,
+                         client::width.field.name, client::height.field.name,
+                         client::created.field.name, client::last_activity.field.name},
+                        libtmux::Client::kFields),
+            "")
+      << "namespace client has no handle for these";
+
+  EXPECT_EQ(unreachable({command::name.field.name, command::alias.field.name,
+                         command::usage.field.name},
+                        libtmux::Command::kFields),
+            "")
+      << "namespace command has no handle for these";
+
+  EXPECT_EQ(unreachable({buffer::name.field.name, buffer::size.field.name,
+                         buffer::sample.field.name, buffer::created.field.name},
+                        libtmux::Buffer::kFields),
+            "")
+      << "namespace buffer has no handle for these";
 }
 
 TEST(ValueSemantics, CapabilitiesReportWhetherControlCanBeOpened) {

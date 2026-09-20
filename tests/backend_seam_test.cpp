@@ -32,6 +32,7 @@
 namespace {
 
 using libtmux::CommandFailure;
+using libtmux::CommandReport;
 using libtmux::expected;
 using libtmux::FailureKind;
 using libtmux::Server;
@@ -194,7 +195,7 @@ TEST(BackendSeam, TheWholeSurfaceRunsOverASubstitutedExecutor) {
 
   // Parsed from the script, with no tmux anywhere.
   const Session& session = sessions->front();
-  EXPECT_EQ(session.id(), "$3");
+  EXPECT_EQ(session.id().value(), "$3");
   EXPECT_EQ(session.name(), "scripted");
   EXPECT_EQ(session.window_count(), 2);
   EXPECT_EQ(session.path(), "/tmp");
@@ -261,8 +262,9 @@ TEST(BackendSeam, EveryOperationSendsTheArgvItClaimsTo) {
   // `--` because a name is data: tmux reads a leading dash as a flag.
   EXPECT_EQ(backend->issued[1],
             (std::vector<std::string>{"rename-session", "-t", "$0", "--", "renamed"}));
-  EXPECT_EQ(backend->issued[2], (std::vector<std::string>{"set-option", "-t", "$0",
-                                                          "status-position", "top"}));
+  EXPECT_EQ(backend->issued[2],
+            (std::vector<std::string>{"set-option", "-t", "$0", "--", "status-position",
+                                      "top"}));
   EXPECT_EQ(backend->issued[3], (std::vector<std::string>{"kill-session", "-t", "$0"}));
 }
 
@@ -339,6 +341,72 @@ TEST(BackendSeam, AnEntityTargetsItsIdRatherThanItsName) {
   EXPECT_EQ(killed[2], "$7");
 }
 
+// Two panes carry the same id in different sessions. Whether that is one pane
+// or two is the server's answer, not the build's: tmux numbers panes uniquely
+// across the whole server, so a pane that moves between sessions is still that
+// pane; psmux numbers them within a session, so the same id twice is two
+// objects. Deciding it with `#if defined(_WIN32)` made two builds of this
+// source disagree, and made a psmux-like transport reached through
+// `Server::over` read as tmux for running on POSIX.
+// A transport answering a number field with something that is not a number is
+// refused, naming the field, rather than read as a real-looking zero. An empty
+// field still reads as zero: that is tmux having nothing to say.
+TEST(BackendSeam, ANumberTmuxDidNotRenderIsRefusedRatherThanReadAsZero) {
+  const auto pane_with_index = [](std::string_view index) {
+    return entity_row(std::array<std::string_view, libtmux::Pane::kFields.size()>{
+        "%1", "sh", "1", "@1", "$0", index, "", "123", "/dev/pts/1", "/tmp", "80", "24",
+        "0", "0", "1", "1", "1", "1", "0"});
+  };
+  const auto listed =
+      libtmux::detail::server_over(std::make_shared<ScriptedBackend>(
+                                       std::vector<std::string>{pane_with_index("x")}))
+          .panes();
+  ASSERT_FALSE(listed.has_value()) << "a garbled index read as a pane";
+  EXPECT_EQ(listed.error().kind, FailureKind::refused);
+  EXPECT_NE(listed.error().diagnostic.find("pane_index"), std::string::npos)
+      << listed.error().diagnostic;
+  EXPECT_NE(listed.error().diagnostic.find("\"x\""), std::string::npos);
+
+  const auto described =
+      libtmux::detail::server_over(std::make_shared<ScriptedBackend>(
+                                       std::vector<std::string>{pane_with_index("7x")}))
+          .pane("%1");
+  ASSERT_FALSE(described.has_value()) << "one object is read the same way as a listing";
+  EXPECT_EQ(described.error().kind, FailureKind::refused);
+
+  const auto empty =
+      libtmux::detail::server_over(std::make_shared<ScriptedBackend>(
+                                       std::vector<std::string>{pane_with_index("")}))
+          .panes();
+  ASSERT_TRUE(empty.has_value()) << empty.error().diagnostic;
+  ASSERT_EQ(empty->size(), 1U);
+  EXPECT_EQ(empty->front().index(), 0);
+}
+
+TEST(BackendSeam, EntityIdentityFollowsTheServerRatherThanTheBuildPlatform) {
+  const auto same_pane_twice = [](libtmux::ServerImplementation implementation) {
+    auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{
+        pane_row("%1", "@1", "$0") + pane_row("%1", "@2", "$1")});
+    backend->declared = libtmux::ServerCapabilities{.implementation = implementation};
+    const auto snapshot = libtmux::Snapshot::take(
+        backend, libtmux::Pane::kFields, {"list-panes"}, libtmux::FormatArgument::flag);
+    EXPECT_TRUE(snapshot.has_value());
+    EXPECT_EQ((*snapshot)->rows().size(), 2U);
+    const libtmux::Pane first{*snapshot, 0};
+    const libtmux::Pane second{*snapshot, 1};
+    EXPECT_EQ(first.id().value(), second.id().value());
+    EXPECT_NE(first.session_id().value(), second.session_id().value());
+    return first == second;
+  };
+
+  EXPECT_TRUE(same_pane_twice(libtmux::ServerImplementation::tmux))
+      << "tmux pane ids are unique across the server, so the session cannot "
+         "make one pane into two";
+  EXPECT_FALSE(same_pane_twice(libtmux::ServerImplementation::psmux))
+      << "psmux scopes pane ids to a session, so the same id in two sessions "
+         "is two panes";
+}
+
 TEST(BackendSeam, RawTmux37RepairsABrokenOutWindowByStableId) {
   auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{
       pane_row("%7", "@3", "$2"), named_window_row("@9", "sh", "$2", "3.7", "1"),
@@ -351,7 +419,7 @@ TEST(BackendSeam, RawTmux37RepairsABrokenOutWindowByStableId) {
   const auto broken = pane.break_out("roomy");
 
   ASSERT_TRUE(broken.has_value()) << broken.error().diagnostic;
-  EXPECT_EQ(broken->id(), "@9");
+  EXPECT_EQ(broken->id().value(), "@9");
   EXPECT_EQ(broken->name(), "roomy");
   EXPECT_EQ(backend->version_queries, 0U);
   ASSERT_EQ(backend->issued.size(), 3U);
@@ -513,7 +581,7 @@ TEST(BackendSeam, NamedBreakMismatchOnAnotherVersionIsReturnedUnchanged) {
   const auto broken = pane.break_out("roomy");
 
   ASSERT_TRUE(broken.has_value()) << broken.error().diagnostic;
-  EXPECT_EQ(broken->id(), "@9");
+  EXPECT_EQ(broken->id().value(), "@9");
   EXPECT_EQ(broken->name(), "unexpected");
   EXPECT_EQ(backend->version_queries, 0U);
   EXPECT_EQ(backend->issued.size(), 2U);
@@ -880,9 +948,7 @@ TEST(BackendSeam, SubprocessCapabilitiesAreLocal) {
   std::size_t observed_commands = 0U;
   const auto opened = Server::at_socket_name(
       "libtmux-capabilities-only",
-      [&observed_commands](std::string_view, const CommandFailure*) {
-        ++observed_commands;
-      });
+      [&observed_commands](const CommandReport&) { ++observed_commands; });
   ASSERT_TRUE(opened.has_value());
 
   const auto capabilities = opened->capabilities();
@@ -1007,6 +1073,18 @@ TEST(BackendSeam, AnInvalidEmptySensitiveRangeFailsClosed) {
   const std::string rendered = libtmux::detail::rendered_command(command);
 
   EXPECT_EQ(rendered.find("must-stay-private"), std::string::npos) << rendered;
+}
+
+// U+241E is 3 bytes (`\xE2\x90\x9E`); placed at 298 ASCII bytes in, its
+// middle byte sits exactly on the 300-byte truncation cutoff.
+TEST(BackendSeam, TruncationStaysOnAUtf8Boundary) {
+  const std::string marker{"\xE2\x90\x9E"};
+  libtmux::CommandRequest command{std::string(298U, 'a') + marker +
+                                  std::string(20U, 'b')};
+
+  const std::string rendered = libtmux::detail::rendered_command(command);
+
+  EXPECT_EQ(rendered, std::string(298U, 'a') + "...") << rendered;
 }
 
 TEST(BackendSeam, UnreadableKeyTablesFailBeforeDispatch) {

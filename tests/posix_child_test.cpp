@@ -34,7 +34,7 @@ using libtmux::detail::ProcessError;
 using libtmux::detail::ProcessRequest;
 using libtmux::detail::Signaled;
 
-#if defined(__linux__)
+#if defined(__linux__) && defined(LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
 struct LateMarker final {
   std::mutex mutex;
   std::condition_variable changed;
@@ -281,7 +281,7 @@ TEST(PosixChild, GivesTheChildAnUnblockedSignalMask) {
   EXPECT_TRUE(std::holds_alternative<Signaled>(launched->termination()));
 }
 
-#if defined(__linux__)
+#if defined(__linux__) && defined(LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
 TEST(PosixChild, ForcedNumericPolicyDoesNotLeakAConcurrentHighDescriptor) {
   constexpr rlim_t lowered_soft_limit = 256U;
   constexpr int minimum_marker_descriptor = 512;
