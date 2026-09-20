@@ -9,6 +9,18 @@ was recorded as it landed.
 
 ## Unreleased
 
+## 0.1.0-alpha.10 (2026-09-19)
+
+This alpha publishes what `0.1.0-alpha.9` tagged. That release's Windows port
+build failed before any artifact reached the registry, so this is the first
+build carrying the typed entity surface and completion waits described below.
+
+### vcpkg
+
+- The port declares static linkage on Windows, so a dynamic triplet —
+  `x64-windows` or `x64-windows-release` — installs the static library the
+  preview can produce instead of failing to configure.
+
 ## 0.1.0-alpha.9 (2026-09-19)
 
 This alpha types the entity surface and replaces polling with completion
