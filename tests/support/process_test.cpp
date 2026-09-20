@@ -1,5 +1,6 @@
 #include "libtmux/expected.hpp"
 #include "process.hpp"
+#include "reaping.hpp"
 
 #include <gtest/gtest.h>
 
@@ -7,12 +8,14 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <condition_variable>
 #include <csignal>
 #include <cstdarg>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
@@ -23,11 +26,34 @@
 #if defined(__linux__)
 #include <sys/ptrace.h>
 #include <sys/syscall.h>
+#else
+#include <dlfcn.h>
 #endif
 #include <sys/wait.h>
 #include <unistd.h>
 
 namespace {
+struct ReapNotifications {
+  std::mutex mutex;
+  std::condition_variable condition;
+};
+
+ReapNotifications& reap_notifications() {
+  // A handed-off reap can finish during static destruction.
+  static auto* notifications = new ReapNotifications;
+  return *notifications;
+}
+
+void notify_reap() {
+  const auto saved_errno = errno;
+  {
+    auto& notifications = reap_notifications();
+    const std::lock_guard lock{notifications.mutex};
+    notifications.condition.notify_all();
+  }
+  errno = saved_errno;
+}
+
 #if defined(__linux__)
 std::atomic<bool> emulate_continuous_read{false};
 enum class PidfdFailureMode { None, Reservation, Child, ChildDelayedReap };
@@ -169,11 +195,60 @@ extern "C" pid_t __wrap_waitpid(pid_t pid, int* status, int options) {
   if (pid == redirected_waitpid.load(std::memory_order_relaxed)) {
     const auto target = redirected_waitpid_target.load(std::memory_order_relaxed);
     const auto result = __real_waitpid(target, status, options);
+    if (result > 0) {
+      notify_reap();
+    }
     return result == target ? pid : result;
   }
-  return __real_waitpid(pid, status, options);
+  const auto result = __real_waitpid(pid, status, options);
+  if (result > 0) {
+    notify_reap();
+  }
+  return result;
+}
+
+extern "C" int __real_waitid(idtype_t type, id_t id, siginfo_t* information,
+                             int options);
+
+extern "C" int __wrap_waitid(idtype_t type, id_t id, siginfo_t* information,
+                             int options) {
+  const auto result = __real_waitid(type, id, information, options);
+  if (result == 0 && information != nullptr && information->si_pid > 0 &&
+      (options & WNOWAIT) == 0) {
+    notify_reap();
+  }
+  return result;
+}
+#else
+extern "C" pid_t waitpid(pid_t pid, int* status, int options) {
+  using WaitPid = pid_t (*)(pid_t, int*, int);
+  static const auto real_waitpid =
+      reinterpret_cast<WaitPid>(::dlsym(RTLD_NEXT, "waitpid"));
+  if (real_waitpid == nullptr) {
+    std::abort();
+  }
+  const auto result = real_waitpid(pid, status, options);
+  if (result > 0) {
+    notify_reap();
+  }
+  return result;
 }
 #endif
+
+bool libtmux::test::wait_until_reaped(pid_t pid,
+                                      std::chrono::steady_clock::time_point deadline) {
+  auto& notifications = reap_notifications();
+  std::unique_lock lock{notifications.mutex};
+  return notifications.condition.wait_until(lock, deadline, [pid] {
+    siginfo_t information{};
+    int result = -1;
+    do {
+      result = ::waitid(P_PID, static_cast<id_t>(pid), &information,
+                        WEXITED | WNOHANG | WNOWAIT);
+    } while (result < 0 && errno == EINTR);
+    return result < 0 && errno == ECHILD;
+  });
+}
 
 namespace {
 

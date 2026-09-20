@@ -37,14 +37,16 @@ target_include_directories(
   scoped_tmux_server_test PRIVATE "${PROJECT_SOURCE_DIR}/src/testing")
 target_link_libraries(
   scoped_tmux_server_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux_test_support)
+  PRIVATE GTest::gtest_main libtmux_build_options libtmux_test_support
+          ${CMAKE_DL_LIBS})
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_link_options(
     scoped_tmux_server_test
     PRIVATE
       "-Wl,--wrap=read"
       "-Wl,--wrap=syscall"
-      "-Wl,--wrap=waitpid")
+      "-Wl,--wrap=waitpid"
+      "-Wl,--wrap=waitid")
 endif()
 add_dependencies(scoped_tmux_server_test fake_tmux)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")

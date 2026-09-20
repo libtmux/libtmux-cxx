@@ -1,5 +1,6 @@
 #include "libtmux/testing/scoped_server.hpp"
 #include "support/descriptors.hpp"
+#include "support/reaping.hpp"
 
 #include <gtest/gtest-spi.h>
 #include <gtest/gtest.h>
@@ -24,6 +25,7 @@
 
 #include <sys/types.h>
 #if defined(__linux__)
+#include <fcntl.h>
 #include <sys/ptrace.h>
 #endif
 #include <sys/wait.h>
@@ -169,20 +171,6 @@ bool report_contains(const std::shared_ptr<libtmux::test::TeardownReport>& repor
   return false;
 }
 
-bool wait_until_not_a_child(pid_t pid, std::chrono::steady_clock::time_point deadline) {
-  while (std::chrono::steady_clock::now() < deadline) {
-    siginfo_t information{};
-    errno = 0;
-    const auto result = ::waitid(P_PID, static_cast<id_t>(pid), &information,
-                                 WEXITED | WNOHANG | WNOWAIT);
-    if (result < 0 && errno == ECHILD) {
-      return true;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds{5});
-  }
-  return false;
-}
-
 bool child_exits_before(pid_t pid, std::chrono::steady_clock::time_point deadline) {
   while (std::chrono::steady_clock::now() < deadline) {
     const auto result = ::waitpid(pid, nullptr, WNOHANG);
@@ -195,40 +183,77 @@ bool child_exits_before(pid_t pid, std::chrono::steady_clock::time_point deadlin
 }
 
 #if defined(__linux__)
-struct DelayedTracer {
-  pid_t pid;
-  int attach_result;
-};
-
-DelayedTracer start_delayed_tracer(pid_t target) {
-  std::array<int, 2> status_pipe{-1, -1};
-  if (::pipe(status_pipe.data()) != 0) {
-    return {.pid = -1, .attach_result = -errno};
-  }
-  const auto tracer = ::fork();
-  if (tracer == 0) {
-    static_cast<void>(::close(status_pipe[0]));
-    const auto result = ::ptrace(PTRACE_SEIZE, target, nullptr, nullptr);
-    const auto reported = result == 0 ? 0 : -errno;
-    static_cast<void>(::write(status_pipe[1], &reported, sizeof(reported)));
-    static_cast<void>(::close(status_pipe[1]));
-    if (reported == 0) {
-      // Long enough that "teardown waited for this" and "teardown did not" are
-      // far apart. At half a second the two were 200ms apart and a loaded
-      // runner spent 245ms of that on scheduling, which failed a teardown that
-      // had in fact handed off exactly as intended.
-      std::this_thread::sleep_for(std::chrono::seconds{2});
+class GatedTracer final {
+public:
+  explicit GatedTracer(pid_t target) {
+    std::array<int, 2> status_pipe{-1, -1};
+    if (::pipe2(status_pipe.data(), O_CLOEXEC) != 0) {
+      attach_result = -errno;
+      return;
     }
-    std::_Exit(0);
+    std::array<int, 2> release_pipe{-1, -1};
+    if (::pipe2(release_pipe.data(), O_CLOEXEC) != 0) {
+      attach_result = -errno;
+      static_cast<void>(::close(status_pipe[0]));
+      static_cast<void>(::close(status_pipe[1]));
+      return;
+    }
+    pid = ::fork();
+    if (pid == 0) {
+      static_cast<void>(::close(status_pipe[0]));
+      static_cast<void>(::close(release_pipe[1]));
+      const auto result = ::ptrace(PTRACE_SEIZE, target, nullptr, nullptr);
+      const auto reported = result == 0 ? 0 : -errno;
+      static_cast<void>(::write(status_pipe[1], &reported, sizeof(reported)));
+      static_cast<void>(::close(status_pipe[1]));
+      if (reported == 0) {
+        char release{};
+        while (::read(release_pipe[0], &release, sizeof(release)) < 0 &&
+               errno == EINTR) {
+        }
+      }
+      std::_Exit(0);
+    }
+    attach_result = pid < 0 ? -errno : -ECHILD;
+    static_cast<void>(::close(status_pipe[1]));
+    static_cast<void>(::close(release_pipe[0]));
+    release_fd_ = release_pipe[1];
+    if (pid > 0) {
+      ssize_t count = -1;
+      do {
+        count = ::read(status_pipe[0], &attach_result, sizeof(attach_result));
+      } while (count < 0 && errno == EINTR);
+      if (count != static_cast<ssize_t>(sizeof(attach_result))) {
+        attach_result = -EIO;
+      }
+    }
+    static_cast<void>(::close(status_pipe[0]));
   }
-  static_cast<void>(::close(status_pipe[1]));
-  int reported = -ECHILD;
-  if (tracer > 0) {
-    static_cast<void>(::read(status_pipe[0], &reported, sizeof(reported)));
+
+  ~GatedTracer() {
+    release();
+    if (pid > 0) {
+      while (::waitpid(pid, nullptr, 0) < 0 && errno == EINTR) {
+      }
+    }
   }
-  static_cast<void>(::close(status_pipe[0]));
-  return {.pid = tracer, .attach_result = reported};
-}
+
+  GatedTracer(const GatedTracer&) = delete;
+  GatedTracer& operator=(const GatedTracer&) = delete;
+
+  void release() {
+    if (release_fd_ >= 0) {
+      static_cast<void>(::close(release_fd_));
+      release_fd_ = -1;
+    }
+  }
+
+  pid_t pid{-1};
+  int attach_result{-ECHILD};
+
+private:
+  int release_fd_{-1};
+};
 #endif
 
 std::size_t descriptor_count() { return libtmux::test::open_descriptor_count(); }
@@ -447,7 +472,12 @@ TEST(ScopedTmuxServerFailure, TermResistantServerIsKilledAndReapedByDeadline) {
   const auto root = unique_test_directory("libtmux-term-resistant");
   const auto trace = root / "trace";
   ScopedEnvironment trace_environment{"LIBTMUX_FAKE_TRACE", trace.string()};
+#if defined(__linux__)
+  ScopedEnvironment mode_environment{"LIBTMUX_FAKE_MODE", "ptrace-reap-delay"};
+  std::optional<GatedTracer> tracer;
+#else
   ScopedEnvironment mode_environment{"LIBTMUX_FAKE_MODE", "term-resistant"};
+#endif
   auto report = std::make_shared<libtmux::test::TeardownReport>();
   pid_t pid = -1;
 
@@ -460,6 +490,11 @@ TEST(ScopedTmuxServerFailure, TermResistantServerIsKilledAndReapedByDeadline) {
                                                 .teardown_report = report});
     ASSERT_TRUE(server.has_value()) << server.error();
     pid = server->server_pid();
+#if defined(__linux__)
+    tracer.emplace(pid);
+    ASSERT_GT(tracer->pid, 0);
+    ASSERT_EQ(tracer->attach_result, 0);
+#endif
     // Started after the server is up: what is bounded is the reaping, and
     // starting a process is not part of that. Measuring both made this fail
     // under a sanitizer with the rest of the suite alongside it, which says
@@ -475,21 +510,17 @@ TEST(ScopedTmuxServerFailure, TermResistantServerIsKilledAndReapedByDeadline) {
   EXPECT_TRUE(report_contains(report, "SIGTERM"));
   EXPECT_TRUE(report_contains(report, "SIGKILL"));
 
-  // Nothing is left behind. Usually the fixture has already reaped by the time
-  // teardown returns, and this says ECHILD at once. When teardown overruns its
-  // deadline the child goes to a background reaper instead, and then this is a
-  // race the test can lose on a loaded machine — losing it means the call here
-  // does the reaping and answers with the pid.
-  //
-  // Both are acceptable and the claim survives either: after one collection
-  // the child is gone. A child nobody reaps still fails, which is the point.
+#if defined(__linux__)
+  EXPECT_FALSE(libtmux::test::wait_until_reaped(pid, std::chrono::steady_clock::now()));
+  tracer->release();
+#endif
+  ASSERT_TRUE(libtmux::test::wait_until_reaped(pid, std::chrono::steady_clock::now() +
+                                                        kTeardown));
+  siginfo_t information{};
   errno = 0;
-  auto reaped = ::waitpid(pid, nullptr, WNOHANG);
-  if (reaped == pid) {
-    errno = 0;
-    reaped = ::waitpid(pid, nullptr, WNOHANG);
-  }
-  EXPECT_EQ(reaped, -1);
+  EXPECT_EQ(::waitid(P_PID, static_cast<id_t>(pid), &information,
+                     WEXITED | WNOHANG | WNOWAIT),
+            -1);
   EXPECT_EQ(errno, ECHILD);
   std::error_code error;
   std::filesystem::remove_all(root, error);
@@ -505,7 +536,7 @@ TEST(ScopedTmuxServerFailure, LatePtraceReapUsesBoundedOwnedHandoff) {
   ASSERT_TRUE(started.has_value()) << started.error();
   fixture.emplace(std::move(*started));
   const auto server_pid = fixture->server_pid();
-  const auto tracer = start_delayed_tracer(server_pid);
+  GatedTracer tracer{server_pid};
   ASSERT_GT(tracer.pid, 0);
   ASSERT_EQ(tracer.attach_result, 0);
 
@@ -513,14 +544,13 @@ TEST(ScopedTmuxServerFailure, LatePtraceReapUsesBoundedOwnedHandoff) {
   fixture.reset();
   const auto teardown_elapsed = std::chrono::steady_clock::now() - teardown_started;
 
-  // Bounded, against a tracer that holds on for two seconds. What is being
-  // shown is that teardown handed the reap off rather than waiting, so the
-  // bound only has to sit clearly between the two.
+  // The tracer still holds the child when bounded teardown returns.
   EXPECT_LT(teardown_elapsed, std::chrono::milliseconds{1000});
-  while (::waitpid(tracer.pid, nullptr, 0) < 0 && errno == EINTR) {
-  }
-  EXPECT_TRUE(wait_until_not_a_child(server_pid, std::chrono::steady_clock::now() +
-                                                     std::chrono::seconds{2}));
+  EXPECT_FALSE(
+      libtmux::test::wait_until_reaped(server_pid, std::chrono::steady_clock::now()));
+  tracer.release();
+  EXPECT_TRUE(libtmux::test::wait_until_reaped(
+      server_pid, std::chrono::steady_clock::now() + std::chrono::milliseconds{300}));
 }
 #endif
 
