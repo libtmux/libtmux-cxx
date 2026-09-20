@@ -331,7 +331,8 @@ build_windows(const Server& server, const Workspace& description,
   // Reported as soon as the session exists -- before before_script, before
   // any window -- so a caller that only needs the new session's id is not
   // left waiting for the whole build.
-  if (auto error = notify(BuildPhase::session_started, 0, 0, std::string{built->id()}))
+  if (auto error =
+          notify(BuildPhase::session_started, 0, 0, std::string{built->id().value()}))
     return libtmux::unexpected(std::move(*error));
   if (auto error = notify(BuildPhase::waiting, 0, 0))
     return libtmux::unexpected(std::move(*error));
@@ -357,8 +358,8 @@ build_windows(const Server& server, const Workspace& description,
         return libtmux::unexpected(std::move(*error));
       if (name.empty() || name.find('=') != std::string::npos)
         return fail(0, "an environment name must be non-empty and contain no '='");
-      const auto set =
-          server.run({"set-environment", "-t", std::string{built->id()}, name, value});
+      const auto set = server.run(
+          {"set-environment", "-t", std::string{built->id().value()}, name, value});
       if (!set)
         return fail(0, set.error().diagnostic);
     }
@@ -400,8 +401,13 @@ build_windows(const Server& server, const Workspace& description,
       return libtmux::unexpected(std::move(*error));
     const Window& window = description.windows[index];
     const Pane& first = window.panes.front();
-    std::vector<std::string> command{
-        "new-window", "-d", "-P", "-F", "#{window_id}", "-t", std::string{built->id()}};
+    std::vector<std::string> command{"new-window",
+                                     "-d",
+                                     "-P",
+                                     "-F",
+                                     "#{window_id}",
+                                     "-t",
+                                     std::string{built->id().value()}};
     if ((borrowed || index != 0) && window.index.has_value()) {
       command.back() += ":" + std::to_string(*window.index);
     }
@@ -433,7 +439,8 @@ build_windows(const Server& server, const Workspace& description,
       created->pop_back();
     }
     created_windows.push_back(*created);
-    const auto target = server.window(std::string{built->id()} + ":" + *created);
+    const auto target =
+        server.window(std::string{built->id().value()} + ":" + *created);
     if (!target.has_value()) {
       return fail(index, target.error().diagnostic);
     }
@@ -455,14 +462,15 @@ build_windows(const Server& server, const Workspace& description,
       }
       // `renumber-windows on` re-indexes the session as the bootstrap window
       // closes, so the index this window held is read back after the kill.
-      const auto placed = server.window(std::string{built->id()} + ":" + *created);
+      const auto placed =
+          server.window(std::string{built->id().value()} + ":" + *created);
       if (!placed.has_value()) {
         return fail(index, placed.error().diagnostic);
       }
       if (placed->index() != desired) {
-        const auto moved =
-            server.run({"move-window", "-s", placed->target(), "-t",
-                        std::string{built->id()} + ":" + std::to_string(desired)});
+        const auto moved = server.run(
+            {"move-window", "-s", placed->target(), "-t",
+             std::string{built->id().value()} + ":" + std::to_string(desired)});
         if (!moved.has_value()) {
           return fail(index, moved.error().diagnostic);
         }
@@ -520,7 +528,8 @@ build_windows(const Server& server, const Workspace& description,
     const Window& described = description.windows[index];
     const auto& panes = created_panes[index];
     if (auto error = notify(BuildPhase::window_started, index, 0,
-                            std::string{built->id()}, std::string{windows[index].id()}))
+                            std::string{built->id().value()},
+                            std::string{windows[index].id().value()}))
       return libtmux::unexpected(std::move(*error));
     // The layout is applied before anything runs, so a command that reacts to
     // its pane's size sees the size it will keep.
@@ -532,9 +541,10 @@ build_windows(const Server& server, const Workspace& description,
     }
     for (std::size_t pane = 0; pane < described.panes.size(); ++pane) {
       const libtmux::Pane& target = panes[pane];
-      if (auto error =
-              notify(BuildPhase::pane_started, index, pane, std::string{built->id()},
-                     std::string{windows[index].id()}, std::string{target.id()}))
+      if (auto error = notify(BuildPhase::pane_started, index, pane,
+                              std::string{built->id().value()},
+                              std::string{windows[index].id().value()},
+                              std::string{target.id().value()}))
         return libtmux::unexpected(std::move(*error));
       // A pane whose shell is replaced by a launcher command never draws an
       // interactive prompt, so there is nothing to wait for.
@@ -579,9 +589,10 @@ build_windows(const Server& server, const Workspace& description,
           return fail(index, selected.error().diagnostic);
         }
       }
-      if (auto error =
-              notify(BuildPhase::pane_completed, index, pane, std::string{built->id()},
-                     std::string{windows[index].id()}, std::string{target.id()}))
+      if (auto error = notify(BuildPhase::pane_completed, index, pane,
+                              std::string{built->id().value()},
+                              std::string{windows[index].id().value()},
+                              std::string{target.id().value()}))
         return libtmux::unexpected(std::move(*error));
     }
     // Nothing in this window asked for the cursor, so it is left in the pane
@@ -600,9 +611,9 @@ build_windows(const Server& server, const Workspace& description,
         return fail(index, set.error().diagnostic);
       }
     }
-    if (auto error =
-            notify(BuildPhase::window_completed, index, described.panes.size() - 1,
-                   std::string{built->id()}, std::string{windows[index].id()}))
+    if (auto error = notify(
+            BuildPhase::window_completed, index, described.panes.size() - 1,
+            std::string{built->id().value()}, std::string{windows[index].id().value()}))
       return libtmux::unexpected(std::move(*error));
   }
 

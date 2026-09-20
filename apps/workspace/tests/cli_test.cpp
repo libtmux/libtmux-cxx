@@ -678,13 +678,13 @@ TEST(WorkspaceCliTmux, BeforeScriptsRetainOutputAndRespectSessionOwnership) {
   EXPECT_FALSE(server->session("=script-failed:").has_value());
   libtmux::test::EnvironmentGuard tmux{"TMUX", fixture->socket_path().string() + "," +
                                                    *pid + ",0"};
-  libtmux::test::EnvironmentGuard current_pane{"TMUX_PANE", pane->id()};
+  libtmux::test::EnvironmentGuard current_pane{"TMUX_PANE", pane->id().value()};
   const auto appended = invoke({"load", "script.json", "--append", "--json"});
   ASSERT_EQ(appended.code, 1) << appended.err << appended.out;
   const auto partial = Json::parse(appended.out);
   EXPECT_EQ(partial.at("status"), "partial");
   EXPECT_EQ(partial.at("errors")[0].at("retained_state").at("session_id"),
-            session->id());
+            session->id().value());
   EXPECT_EQ(partial.at("errors")[0].at("script_output").at("stderr"), "detail");
   ASSERT_TRUE(session->windows().has_value());
   EXPECT_EQ(session->windows()->size(), 1U);
@@ -1867,7 +1867,7 @@ TEST(WorkspaceCliTmux, CaptureReloadsExplicitLocalOptions) {
   EXPECT_EQ(window_options.value("automatic-rename", "missing"), "off");
   EXPECT_EQ(window_options.value("@window-note", "missing"), value);
   EXPECT_EQ(window_options.value("synchronize-panes", "missing"), "on");
-  const auto by_id = invoke({"freeze", std::string{source->id()}, "-S",
+  const auto by_id = invoke({"freeze", std::string{source->id().value()}, "-S",
                              fixture->socket_path().string(), "--json"});
   ASSERT_EQ(by_id.code, 0) << by_id.err;
   EXPECT_EQ(Json::parse(by_id.out), document);
@@ -1907,15 +1907,25 @@ TEST(WorkspaceCliTmux, CaptureLeavesOutTheShellTmuxStartedForThePane) {
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
   ASSERT_TRUE(server.has_value());
-  const auto session = server->new_session("capture-shell");
+  ASSERT_TRUE(server->set_global_option("default-shell", "/bin/sh").has_value());
+  const auto session =
+      server->new_session({.name = "capture-shell",
+                           .shell_command = "exec /bin/sh -i",
+                           .environment = {{"ENV", ""}, {"PS1", "capture-ready\n"}}});
   ASSERT_TRUE(session.has_value());
   const auto window = session->active_window();
   ASSERT_TRUE(window.has_value());
   const auto panes = window->panes();
   ASSERT_TRUE(panes.has_value());
+  const auto ready = panes->front().wait_for_text("capture-ready",
+                                                  {.timeout = std::chrono::seconds{1}});
+  ASSERT_TRUE(ready.has_value()) << ready.error().diagnostic;
+  ASSERT_TRUE(ready->matched);
+  const auto settled = panes->front().refresh();
+  ASSERT_TRUE(settled.has_value());
   // How tmux names the shell it started is its business and differs by
   // platform, so the option is pointed at that name rather than the reverse.
-  const std::string running{panes->front().command()};
+  const std::string running{settled->command()};
   ASSERT_FALSE(running.empty());
   const auto directory = fixture->socket_path().parent_path();
   for (const auto& name : {running, std::string{"not-a-shell"}})
@@ -1948,21 +1958,24 @@ TEST(WorkspaceCliTmux, CaptureTreatsAnyOrdinaryShellAsTheDefaultOne) {
   ASSERT_TRUE(server.has_value());
   // default-command reproduces macOS's /bin/sh-is-bash mismatch on Linux.
   ASSERT_TRUE(server->set_global_option("default-shell", "/bin/sh").has_value());
-  ASSERT_TRUE(server->set_global_option("default-command", "/bin/bash -i").has_value());
-  const auto session = server->new_session("capture-mismatch");
+  ASSERT_TRUE(
+      server
+          ->set_global_option("default-command", "exec /bin/bash --noprofile --norc -i")
+          .has_value());
+  const auto session = server->new_session(
+      {.name = "capture-mismatch", .environment = {{"PS1", "capture-ready\n"}}});
   ASSERT_TRUE(session.has_value());
   const auto window = session->active_window();
   ASSERT_TRUE(window.has_value());
   const auto panes = window->panes();
   ASSERT_TRUE(panes.has_value());
-  std::string observed;
-  for (int attempt = 0; attempt < 200; ++attempt) {
-    observed = panes->front().command();
-    if (observed == "bash")
-      break;
-    std::this_thread::sleep_for(std::chrono::milliseconds{10});
-  }
-  ASSERT_EQ(observed, "bash") << "fixture did not settle on bash";
+  const auto ready = panes->front().wait_for_text("capture-ready",
+                                                  {.timeout = std::chrono::seconds{1}});
+  ASSERT_TRUE(ready.has_value()) << ready.error().diagnostic;
+  ASSERT_TRUE(ready->matched);
+  const auto settled = panes->front().refresh();
+  ASSERT_TRUE(settled.has_value());
+  ASSERT_EQ(settled->command(), "bash");
   const auto result = invoke(
       {"freeze", "capture-mismatch", "-S", fixture->socket_path().string(), "--json"});
   ASSERT_EQ(result.code, 0) << result.err;
@@ -2091,7 +2104,7 @@ TEST(WorkspaceCliTmux, AppendKeepsItsBorrowedSessionAndReportsRetainedWindows) {
   ASSERT_TRUE(pid.has_value());
   libtmux::test::EnvironmentGuard tmux{"TMUX", fixture->socket_path().string() + "," +
                                                    *pid + ",0"};
-  libtmux::test::EnvironmentGuard current_pane{"TMUX_PANE", pane->id()};
+  libtmux::test::EnvironmentGuard current_pane{"TMUX_PANE", pane->id().value()};
   const auto file = fixture->socket_path().parent_path() / "append.yaml";
   std::ofstream{file}
       << "session_name: ignored-name\nenvironment: {WS_APPEND: 'yes'}\n"
@@ -2107,13 +2120,13 @@ TEST(WorkspaceCliTmux, AppendKeepsItsBorrowedSessionAndReportsRetainedWindows) {
   ASSERT_TRUE(windows.has_value());
   ASSERT_EQ(windows->size(), 2U);
   EXPECT_TRUE(original_window->panes().has_value());
-  const auto appended = server->window(std::string{session->id()} + ":9");
+  const auto appended = server->window(std::string{session->id().value()} + ":9");
   ASSERT_TRUE(appended.has_value());
   const auto panes = appended->panes();
   ASSERT_TRUE(panes.has_value());
   EXPECT_EQ(panes->size(), 2U);
-  const auto environment =
-      server->run({"show-environment", "-t", std::string{session->id()}, "WS_APPEND"});
+  const auto environment = server->run(
+      {"show-environment", "-t", std::string{session->id().value()}, "WS_APPEND"});
   ASSERT_TRUE(environment.has_value());
   EXPECT_EQ(*environment, "WS_APPEND=yes\n");
 
@@ -2125,10 +2138,10 @@ TEST(WorkspaceCliTmux, AppendKeepsItsBorrowedSessionAndReportsRetainedWindows) {
   const auto partial = Json::parse(failed.out);
   EXPECT_EQ(partial.at("status"), "partial");
   const auto retained = partial.at("errors")[0].at("retained_state");
-  EXPECT_EQ(retained.at("session_id"), session->id());
+  EXPECT_EQ(retained.at("session_id"), session->id().value());
   ASSERT_EQ(retained.at("window_ids").size(), 1U);
   EXPECT_TRUE(server
-                  ->window(std::string{session->id()} + ":" +
+                  ->window(std::string{session->id().value()} + ":" +
                            retained.at("window_ids")[0].get<std::string>())
                   .has_value());
   EXPECT_TRUE(original_window->panes().has_value());
@@ -2441,7 +2454,7 @@ TEST(WorkspaceCliTmux, BrokenInvokingContextRefusesAsUsageBeforeBuilding) {
   struct Broken {
     std::string name, context, pane_id;
   };
-  const std::string here{pane->id()};
+  const std::string here{pane->id().value()};
   const std::vector<Broken> broken{
       {"restarted server", socket + ",999999,0", here},
       {"socket gone", socket + ".gone," + *daemon + ",0", here},
@@ -2501,7 +2514,7 @@ TEST(WorkspaceCliTmux, PromptedLoadRoutesEachAnswerToItsOwnPath) {
   ASSERT_TRUE(pid.has_value());
   libtmux::test::EnvironmentGuard tmux{"TMUX", fixture->socket_path().string() + "," +
                                                    *pid + ",0"};
-  libtmux::test::EnvironmentGuard current_pane{"TMUX_PANE", pane->id()};
+  libtmux::test::EnvironmentGuard current_pane{"TMUX_PANE", pane->id().value()};
   const auto noop = [](const std::string&, const libtmux::workspace::cli::Json&) {};
   const auto run = [&](const Request& request, const PromptSink& prompt) {
     try {
@@ -2583,7 +2596,8 @@ TEST(WorkspaceCliTmux, PromptedLoadRoutesEachAnswerToItsOwnPath) {
       // rather than silently dropped.
       ASSERT_EQ(execution.value.at("results").size(), 1U) << execution.value.dump();
       EXPECT_EQ(execution.value.at("results")[0].at("action"), "left");
-      EXPECT_EQ(execution.value.at("results")[0].at("session_id"), existing->id());
+      EXPECT_EQ(execution.value.at("results")[0].at("session_id"),
+                existing->id().value());
       EXPECT_TRUE(execution.value.at("errors").empty());
       EXPECT_FALSE(execution.handoff);
       // Declining is a normal outcome, not silence: the envelope says
@@ -2689,7 +2703,7 @@ TEST(WorkspaceCliTmux, DeclinedAttachScopesToItsOwnInputAndStillBuildsEarlierOne
   const auto& second_result = execution.value.at("results")[1];
   EXPECT_EQ(second_result.at("input_index"), 1);
   EXPECT_EQ(second_result.at("action"), "left");
-  EXPECT_EQ(second_result.at("session_id"), second->id());
+  EXPECT_EQ(second_result.at("session_id"), second->id().value());
   EXPECT_EQ(execution.value.at("note"), "second is unchanged")
       << execution.value.dump();
   // The earlier input actually built, and the declined one is untouched.
@@ -2886,7 +2900,7 @@ TEST(WorkspaceCliTmux, FailedEventDeliveryRetainsCompletedSessionAccounting) {
     EXPECT_EQ(result.at("status"), "partial");
     EXPECT_EQ(exit_code, 1);
     ASSERT_EQ(result.at("results").size(), 1U);
-    EXPECT_EQ(result.at("results")[0].at("session_id"), retained->id());
+    EXPECT_EQ(result.at("results")[0].at("session_id"), retained->id().value());
     EXPECT_EQ(result.at("errors")[0].at("code"),
               closed ? "output_closed" : "tmux_failed");
   }
@@ -2911,7 +2925,7 @@ TEST(WorkspaceCliTmux, FailedScriptEventsRetainEffectsAndKnownStatus) {
       ASSERT_TRUE(daemon.has_value());
       libtmux::test::EnvironmentGuard tmux{"TMUX", fixture->socket_path().string() +
                                                        "," + *daemon + ",0"};
-      libtmux::test::EnvironmentGuard current_pane{"TMUX_PANE", pane->id()};
+      libtmux::test::EnvironmentGuard current_pane{"TMUX_PANE", pane->id().value()};
       std::ofstream{"first.yaml"} << "session_name: completed\nwindows: [{}]\n";
       std::ofstream{"last.yaml"} << "session_name: later\nwindows: [{}]\n";
       std::ofstream{"before.sh"}
@@ -2921,12 +2935,12 @@ TEST(WorkspaceCliTmux, FailedScriptEventsRetainEffectsAndKnownStatus) {
              "printf ready\n"
           << (rejected_event == "script-completed" ? "kill -TERM $$\n"
                                                    : "exec sleep 30\n");
-      std::ofstream{"second.json"}
-          << Json{{"session_name", "failing"},
-                  {"windows", Json::array({Json::object()})},
-                  {"before_script",
-                   "/bin/sh before.sh '" + fixture->socket_path().string() + "' '" +
-                       (appending ? std::string{borrowed->id()} : "=failing:") + "'"}};
+      std::ofstream{"second.json"} << Json{
+          {"session_name", "failing"},
+          {"windows", Json::array({Json::object()})},
+          {"before_script",
+           "/bin/sh before.sh '" + fixture->socket_path().string() + "' '" +
+               (appending ? std::string{borrowed->id().value()} : "=failing:") + "'"}};
       libtmux::workspace::cli::Request request{
           .command = "load",
           .importer = {},
@@ -2962,7 +2976,8 @@ TEST(WorkspaceCliTmux, FailedScriptEventsRetainEffectsAndKnownStatus) {
       }
       EXPECT_TRUE(rejected);
       EXPECT_FALSE(later_started);
-      const auto retained = server->session(appending ? borrowed->id() : "=completed:");
+      const auto retained =
+          server->session(appending ? borrowed->id().value() : "=completed:");
       ASSERT_TRUE(retained.has_value());
       EXPECT_FALSE(server->session("=failing:").has_value());
       EXPECT_FALSE(server->session("=later:").has_value());
@@ -2990,11 +3005,11 @@ TEST(WorkspaceCliTmux, FailedScriptEventsRetainEffectsAndKnownStatus) {
       // results[0] is the completed first input; results[1] is the failed
       // second one -- one record per attempted input, failed included.
       ASSERT_EQ(result.at("results").size(), 2U);
-      EXPECT_EQ(result.at("results")[0].at("session_id"), retained->id());
+      EXPECT_EQ(result.at("results")[0].at("session_id"), retained->id().value());
       EXPECT_EQ(result.at("results")[1].at("input_index"), 1);
       EXPECT_EQ(result.at("results")[1].at("reused"), appending);
       if (appending) {
-        EXPECT_EQ(result.at("results")[1].at("session_id"), borrowed->id());
+        EXPECT_EQ(result.at("results")[1].at("session_id"), borrowed->id().value());
       }
       const auto& problem = result.at("errors")[0];
       if (rejected_event == "script-completed") {
@@ -3005,7 +3020,8 @@ TEST(WorkspaceCliTmux, FailedScriptEventsRetainEffectsAndKnownStatus) {
         }
       }
       if (appending) {
-        EXPECT_EQ(problem.at("retained_state").at("session_id"), borrowed->id());
+        EXPECT_EQ(problem.at("retained_state").at("session_id"),
+                  borrowed->id().value());
         EXPECT_TRUE(problem.at("retained_state").at("window_ids").empty());
       }
     }
@@ -3053,7 +3069,7 @@ TEST(WorkspaceCliTmux, FailedPublicationRetainsSessionsAndPrimaryStatus) {
   ASSERT_TRUE(pid.has_value());
   libtmux::test::EnvironmentGuard tmux{"TMUX", fixture->socket_path().string() + "," +
                                                    *pid + ",0"};
-  libtmux::test::EnvironmentGuard current_pane{"TMUX_PANE", pane->id()};
+  libtmux::test::EnvironmentGuard current_pane{"TMUX_PANE", pane->id().value()};
   std::ofstream{"fail.sh"} << "exit 1\n";
   std::ofstream{"output.yaml"}
       << "session_name: append\nbefore_script: sh fail.sh\nwindows: [{}]\n";
@@ -3077,11 +3093,11 @@ TEST(WorkspaceCliTmux, FailedPublicationRetainsSessionsAndPrimaryStatus) {
   // attempted -- its session is the borrowed one, still alive since a
   // failed append never rolls back what it did not create.
   ASSERT_EQ(state.at("results").size(), 1U);
-  EXPECT_EQ(state.at("results")[0].at("session_id"), borrowed->id());
+  EXPECT_EQ(state.at("results")[0].at("session_id"), borrowed->id().value());
   EXPECT_EQ(state.at("results")[0].at("reused"), true);
   EXPECT_EQ(state.at("errors")[0].at("retained_state").at("session_id"),
-            borrowed->id());
-  EXPECT_TRUE(server->session(borrowed->id()).has_value());
+            borrowed->id().value());
+  EXPECT_TRUE(server->session(borrowed->id().value()).has_value());
   std::ofstream{"output.yaml"}
       << "session_name: interrupted\nbefore_script: /bin/sh -c 'kill -TERM $$'\n"
          "windows: [{}]\n";
@@ -3597,7 +3613,7 @@ TEST(WorkspaceCliTmux, ProgressSinkFailureReportsBorrowedWindowsAndOriginalStatu
   ASSERT_TRUE(daemon.has_value());
   libtmux::test::EnvironmentGuard tmux{"TMUX", fixture->socket_path().string() + "," +
                                                    *daemon + ",0"};
-  libtmux::test::EnvironmentGuard current_pane{"TMUX_PANE", pane->id()};
+  libtmux::test::EnvironmentGuard current_pane{"TMUX_PANE", pane->id().value()};
   for (const bool append : {false, true}) {
     const auto previous = borrowed->windows();
     ASSERT_TRUE(previous.has_value());
@@ -3630,12 +3646,13 @@ TEST(WorkspaceCliTmux, ProgressSinkFailureReportsBorrowedWindowsAndOriginalStatu
     if (append) {
       EXPECT_EQ(result.at("status"), "partial");
       const auto& retained = result.at("errors")[0].at("retained_state");
-      EXPECT_EQ(retained.at("session_id"), borrowed->id());
+      EXPECT_EQ(retained.at("session_id"), borrowed->id().value());
       ASSERT_EQ(retained.at("window_ids").size(), 1U);
       EXPECT_EQ(after->size(), previous->size() + 1);
       const auto id = retained.at("window_ids")[0].template get<std::string>();
-      EXPECT_TRUE(std::any_of(after->begin(), after->end(),
-                              [&](const auto& window) { return window.id() == id; }));
+      EXPECT_TRUE(std::any_of(after->begin(), after->end(), [&](const auto& window) {
+        return window.id().value() == id;
+      }));
     } else {
       EXPECT_EQ(result.at("status"), "error");
       EXPECT_EQ(after->size(), previous->size());

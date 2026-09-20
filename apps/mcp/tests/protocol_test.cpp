@@ -764,25 +764,26 @@ TEST_F(McpProtocol, LayoutSelectionValidatesBeforeLookupAndAcceptsSavedLayouts) 
       socket(),
       {call("select_layout", {{"windowId", "@999"}, {"layout", "invalid-layout"}}, 1),
        call("select_layout",
-            {{"windowId", window->id()}, {"layout", "32d2,80x24,0,0{}"}}, 2),
-       call("select_layout", {{"windowId", window->id()}, {"layout", "even-h"}}, 3),
-       call("select_layout", {{"windowId", window->id()}, {"layout", window->layout()}},
-            4),
+            {{"windowId", window->id().value()}, {"layout", "32d2,80x24,0,0{}"}}, 2),
+       call("select_layout", {{"windowId", window->id().value()}, {"layout", "even-h"}},
+            3),
+       call("select_layout",
+            {{"windowId", window->id().value()}, {"layout", window->layout()}}, 4),
        call("select_layout", {{"windowId", "@999"}, {"layout", "tiled"}}, 5),
        call("select_layout", {{"windowId", "@999"}, {"layout", R"({"V":2,"L":{}})"}},
             6)});
   for (const int id : {1, 2, 6}) {
     const auto answer = require_response(messages, id);
-    ASSERT_TRUE(answer.contains("error")) << answer.dump();
-    EXPECT_EQ(answer["error"]["code"], -32602);
-    EXPECT_NE(answer["error"]["message"].get<std::string>().find("layout"),
+    ASSERT_TRUE(answer.contains("result")) << answer.dump();
+    EXPECT_TRUE(answer["result"]["isError"].get<bool>()) << answer.dump();
+    EXPECT_NE(answer["result"]["content"][0]["text"].get<std::string>().find("layout"),
               std::string::npos);
   }
   for (const int id : {3, 4}) {
     const auto answer = require_response(messages, id);
     ASSERT_TRUE(answer.contains("result")) << answer.dump();
     EXPECT_FALSE(answer["result"]["isError"].get<bool>()) << answer.dump();
-    EXPECT_EQ(answer["result"]["structuredContent"]["window_id"], window->id());
+    EXPECT_EQ(answer["result"]["structuredContent"]["window_id"], window->id().value());
   }
   const auto missing = require_response(messages, 5);
   ASSERT_TRUE(missing.contains("result")) << missing.dump();
@@ -807,7 +808,8 @@ TEST_F(McpProtocol, JsonLayoutSelectionPreservesFloatingPanesAndKeeperState) {
   ASSERT_TRUE(keeper.has_value());
   const auto keeper_window = keeper->active_window();
   ASSERT_TRUE(keeper_window.has_value());
-  ASSERT_TRUE(server.run({"new-pane", "-t", window->id(), "-x", "20", "-y", "8"}));
+  ASSERT_TRUE(
+      server.run({"new-pane", "-t", window->id().value(), "-x", "20", "-y", "8"}));
   const auto saved = window->refresh();
   ASSERT_TRUE(saved.has_value());
   ASSERT_TRUE(saved->layout().starts_with('{'));
@@ -816,8 +818,9 @@ TEST_F(McpProtocol, JsonLayoutSelectionPreservesFloatingPanesAndKeeperState) {
   ASSERT_TRUE(before.has_value());
   ASSERT_EQ(before->size(), 2U);
   const auto messages = converse_ready(
-      socket(), {call("select_layout",
-                      {{"windowId", saved->id()}, {"layout", saved->layout()}}, 1)});
+      socket(),
+      {call("select_layout",
+            {{"windowId", saved->id().value()}, {"layout", saved->layout()}}, 1)});
   const auto answer = require_response(messages, 1);
   ASSERT_TRUE(answer.contains("result")) << answer.dump();
   EXPECT_FALSE(answer["result"]["isError"].get<bool>()) << answer.dump();

@@ -1059,9 +1059,9 @@ public:
   [[nodiscard]] bool control_mode() const noexcept { return detail::to_flag(value(9)); }
   [[nodiscard]] long long pid() const noexcept { return detail::to_number(value(10)); }
   /// The session window's active pane, not independent client-local focus.
-  [[nodiscard]] std::string_view active_pane_id() const noexcept { return value(11); }
+  [[nodiscard]] PaneId active_pane_id() const noexcept { return PaneId{value(11)}; }
   [[nodiscard]] std::string_view flags() const noexcept { return value(12); }
-  [[nodiscard]] std::string_view window_id() const noexcept { return value(13); }
+  [[nodiscard]] WindowId window_id() const noexcept { return WindowId{value(13)}; }
 
   /// Two values are the same client when they name the same terminal on the
   /// same connection.
@@ -1248,11 +1248,12 @@ inline constexpr NumberFieldHandle<Client> last_activity{
 inline constexpr NumberFieldHandle<Client> pid{
     {Client::kFields[10], [](const Client& row) { return row.pid(); }}};
 inline constexpr StringFieldHandle<Client> active_pane_id{
-    {Client::kFields[11], [](const Client& row) { return row.active_pane_id(); }}};
+    {Client::kFields[11],
+     [](const Client& row) { return row.active_pane_id().value(); }}};
 inline constexpr StringFieldHandle<Client> flags{
     {Client::kFields[12], [](const Client& row) { return row.flags(); }}};
 inline constexpr StringFieldHandle<Client> window_id{
-    {Client::kFields[13], [](const Client& row) { return row.window_id(); }}};
+    {Client::kFields[13], [](const Client& row) { return row.window_id().value(); }}};
 
 } // namespace client
 

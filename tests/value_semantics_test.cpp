@@ -466,7 +466,9 @@ TEST(ValueSemantics, EveryEntityFieldIsReachableFromAFilter) {
                          client::read_only.field.name, client::tty.field.name,
                          client::terminal.field.name, client::control_mode.field.name,
                          client::width.field.name, client::height.field.name,
-                         client::created.field.name, client::last_activity.field.name},
+                         client::created.field.name, client::last_activity.field.name,
+                         client::pid.field.name, client::active_pane_id.field.name,
+                         client::flags.field.name, client::window_id.field.name},
                         libtmux::Client::kFields),
             "")
       << "namespace client has no handle for these";

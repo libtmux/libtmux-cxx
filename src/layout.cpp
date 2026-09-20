@@ -16,11 +16,12 @@ LIBTMUX_NAMESPACE_BEGIN
 
 namespace {
 
+constexpr std::array<std::string_view, 7> names{
+    "even-horizontal",       "even-vertical", "main-horizontal",
+    "main-vertical",         "tiled",         "main-horizontal-mirrored",
+    "main-vertical-mirrored"};
+
 bool named_layout(std::string_view layout, bool mirrored) {
-  constexpr std::array<std::string_view, 7> names{
-      "even-horizontal",       "even-vertical", "main-horizontal",
-      "main-vertical",         "tiled",         "main-horizontal-mirrored",
-      "main-vertical-mirrored"};
   const std::size_t count = mirrored ? names.size() : 5U;
   std::size_t matches{};
   for (std::size_t index = 0; index < count; ++index) {
@@ -30,6 +31,22 @@ bool named_layout(std::string_view layout, bool mirrored) {
       ++matches;
   }
   return matches == 1;
+}
+
+std::string invalid_layout_name(std::string_view layout, bool mirrored) {
+  std::string candidates;
+  const std::size_t count = mirrored ? names.size() : 5U;
+  for (std::size_t index = 0; index < count; ++index) {
+    if (names[index].starts_with(layout)) {
+      if (!candidates.empty())
+        candidates += ", ";
+      candidates += names[index];
+    }
+  }
+  return "\"" + std::string{layout} +
+         (candidates.empty()
+              ? "\" is neither a layout preset nor a saved layout description"
+              : "\" could mean more than one layout preset: " + candidates);
 }
 
 bool layout_space(char value) {
@@ -107,8 +124,8 @@ struct LayoutSyntax {
 // numbers, nonempty strings, no null, and validated but undecoded escapes.
 // Keep only field metadata; the caller dispatches the original saved layout.
 struct JsonLayoutSyntax {
-  enum class Type { absent, string, number, boolean, object, array };
-  enum class Role { root, cell, ignored };
+  enum class Type : std::uint8_t { absent, string, number, boolean, object, array };
+  enum class Role : std::uint8_t { root, cell, ignored };
   struct Value {
     Type type{Type::absent};
     std::string_view text;
@@ -313,7 +330,7 @@ std::optional<std::string> layout_error(std::string_view layout, std::size_t pan
                : named_layout(layout, false) || named_layout(layout, true))
     return std::nullopt;
   if (layout.size() < 6 || layout[4] != ',')
-    return "unknown or ambiguous layout name";
+    return invalid_layout_name(layout, mirrored.value_or(true));
   std::uint32_t expected{};
   for (const char digit : layout.substr(0, 4)) {
     const auto value = digit >= '0' && digit <= '9'   ? digit - '0'
@@ -372,7 +389,7 @@ detail::validate_layouts(const Backend& backend, std::span<const LayoutRequest> 
   const auto& policy = backend.policy();
   const auto running = backend.run({"display-message", "-p", "#{version}"},
                                    policy.timeout, policy.output_limit);
-  std::optional<Version> version;
+  Version version;
   if (running) {
     const auto parsed = parse_version("tmux " + *running);
     if (!parsed)
@@ -391,10 +408,10 @@ detail::validate_layouts(const Backend& backend, std::span<const LayoutRequest> 
       return unexpected(LayoutFailure{*sensitive, client.error()});
     version = *client;
   }
-  const bool mirrored = *version >= Version{.major = 3, .minor = 5};
+  const bool mirrored = version >= Version{.major = 3, .minor = 5};
   for (std::size_t index = 0; index < layouts.size(); ++index) {
     const auto& request = layouts[index];
-    if (json_layout(request.layout) && *version < Version{.major = 3, .minor = 8})
+    if (json_layout(request.layout) && version < Version{.major = 3, .minor = 8})
       return unexpected(LayoutFailure{
           index, invalid_layout("JSON saved layouts require tmux 3.8 or newer")});
     if (layout_needs_version(request.layout))

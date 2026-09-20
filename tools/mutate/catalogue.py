@@ -821,11 +821,11 @@ CATALOGUE: t.Final = (
     Mutation(
         mutation_id="select-layout-rejects-unrecognised-value",
         path="src/entities.cpp",
-        find="  if (!is_universal_layout_preset(layout) && "
-        "!looks_like_classic_layout(layout)) {",
-        replace="  static_cast<void>(is_universal_layout_preset(layout));\n"
-        "  static_cast<void>(looks_like_classic_layout(layout));\n"
-        "  if (false) {",
+        find="  if (auto checked = detail::validate_layouts(*backend(), "
+        "requests, false); !checked)\n"
+        "    return unexpected(std::move(checked.error().cause));",
+        replace="  static_cast<void>("
+        "detail::validate_layouts(*backend(), requests, false));",
         target="libtmux_entity_test",
         test_regex=(
             r"^libtmux[.]entity[.]Entity[.]"

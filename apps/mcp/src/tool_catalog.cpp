@@ -2357,7 +2357,7 @@ resolve_session(const Server& server, std::string_view target) {
       },
       "Replace the pane layout of one window. Names and mirrored layouts follow "
       "the selected daemon version. Saved layouts accept v1 checksums and v2 JSON; "
-      "v2 requires tmux 3.9 (including next-3.9) or newer.");
+      "v2 requires tmux 3.8 (including 3.8-rc) or newer.");
 
   manage(
       "resize_window", "Resize a tmux window",

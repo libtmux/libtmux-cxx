@@ -34,7 +34,7 @@ only schema-keyed `inputLiteralization`, never `inputSinks` or
 `select_layout` accepts built-in names, unique abbreviations and saved layouts
 up to 4096 characters. Malformed syntax is rejected before window lookup.
 Version-sensitive names and v2 JSON layouts use the selected daemon. JSON layouts
-require tmux 3.9 (including `next-3.9`) or newer and preserve floating-pane metadata;
+require tmux 3.8 (including `3.8-rc`) or newer and preserve floating-pane metadata;
 older saved layouts retain their checksum format. tmux owns geometry and pruning.
 The result identifies the changed window; use
 `get_window_info` to read the resulting layout.

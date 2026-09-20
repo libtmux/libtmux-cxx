@@ -3499,7 +3499,7 @@ A control-mode client is a program driving tmux, not a terminal.
 #### `Client::active_pane_id`
 
 ```cpp
-[[nodiscard]] std::string_view active_pane_id() const noexcept;
+[[nodiscard]] PaneId active_pane_id() const noexcept;
 ```
 The session window's active pane, not independent client-local focus.
 
@@ -3514,7 +3514,7 @@ The session window's active pane, not independent client-local focus.
 #### `Client::window_id`
 
 ```cpp
-[[nodiscard]] std::string_view window_id() const noexcept;
+[[nodiscard]] WindowId window_id() const noexcept;
 ```
 
 <a id="libtmux-entities-hpp-client-operator"></a>

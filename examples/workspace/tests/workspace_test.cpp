@@ -667,11 +667,10 @@ TEST(WorkspaceBuilder, LayoutVersionProbePreservesPermissionFailure) {
       {.socket_namespace = libtmux::test::SocketNamespace::consumer("layout")});
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   std::vector<std::string> commands;
-  const auto server = Server::at_socket_path(
-      fixture->socket_path().string(),
-      [&](std::string_view command, const libtmux::CommandFailure*) {
-        commands.emplace_back(command);
-      });
+  const auto server = Server::at_socket_path(fixture->socket_path().string(),
+                                             [&](const libtmux::CommandReport& report) {
+                                               commands.emplace_back(report.command);
+                                             });
   ASSERT_TRUE(server.has_value());
   const auto keeper = server->session(fixture->session_name());
   ASSERT_TRUE(keeper.has_value());
@@ -709,12 +708,12 @@ TEST(WorkspaceBuilder, LayoutVersionProbePreservesLiveDaemonTimeout) {
       {.socket_namespace = libtmux::test::SocketNamespace::consumer("layout")});
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   std::vector<std::string> commands;
-  const auto server = Server::at_socket_path(
-      fixture->socket_path().string(),
-      [&](std::string_view command, const libtmux::CommandFailure*) {
-        commands.emplace_back(command);
-      },
-      {.timeout = std::chrono::milliseconds{250}});
+  const auto server =
+      Server::at_socket_path(fixture->socket_path().string(),
+                             [&](const libtmux::CommandReport& report) {
+                               commands.emplace_back(report.command);
+                             },
+                             {.timeout = std::chrono::milliseconds{250}});
   ASSERT_TRUE(server.has_value());
   struct Resume {
     pid_t process;
@@ -747,8 +746,8 @@ TEST(WorkspaceBuilder, LayoutVersionProbeUsesClientOnlyForUnboundMissingEndpoint
   const workspace::Workspace description{
       .session_name = "guarded", .windows = {{.layout = layout}, {.layout = layout}}};
   std::vector<std::string> commands;
-  const auto observe = [&](std::string_view command, const libtmux::CommandFailure*) {
-    commands.emplace_back(command);
+  const auto observe = [&](const libtmux::CommandReport& report) {
+    commands.emplace_back(report.command);
   };
   const auto selected = fixture->tmux_tmpdir() / "cold-layout.sock";
   const auto cold = Server::startable_at_socket_path(selected.string(), {}, observe);
@@ -796,11 +795,10 @@ TEST(WorkspaceBuilder, LayoutVersionProbeKeepsAnEmptyDaemonsVersion) {
       {.socket_namespace = libtmux::test::SocketNamespace::consumer("layout")});
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   std::vector<std::string> commands;
-  const auto server = Server::at_socket_path(
-      fixture->socket_path().string(),
-      [&](std::string_view command, const libtmux::CommandFailure*) {
-        commands.emplace_back(command);
-      });
+  const auto server = Server::at_socket_path(fixture->socket_path().string(),
+                                             [&](const libtmux::CommandReport& report) {
+                                               commands.emplace_back(report.command);
+                                             });
   ASSERT_TRUE(server.has_value());
   const auto daemon = server->run({"display-message", "-p", "#{version}"});
   ASSERT_TRUE(daemon.has_value());

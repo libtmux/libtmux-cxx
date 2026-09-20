@@ -102,11 +102,10 @@ TEST(WindowLayout, MalformedLayoutsLeaveTheRetainedServerUnchanged) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   std::vector<std::string> issued;
-  const auto server = Server::at_socket_path(
-      fixture->socket_path().string(),
-      [&](std::string_view command, const libtmux::CommandFailure*) {
-        issued.emplace_back(command);
-      });
+  const auto server = Server::at_socket_path(fixture->socket_path().string(),
+                                             [&](const libtmux::CommandReport& report) {
+                                               issued.emplace_back(report.command);
+                                             });
   ASSERT_TRUE(server.has_value());
   const auto session = server->session(fixture->session_name());
   ASSERT_TRUE(session.has_value());
@@ -150,7 +149,8 @@ TEST(WindowLayout, JsonSavedLayoutsPreserveFloatingPanesAndRetainedSessions) {
   ASSERT_TRUE(keeper_window.has_value());
   const auto before_keeper = keeper_window->panes();
   ASSERT_TRUE(before_keeper.has_value());
-  ASSERT_TRUE(server.run({"new-pane", "-t", window->id(), "-x", "20", "-y", "8"}));
+  ASSERT_TRUE(
+      server.run({"new-pane", "-t", window->id().value(), "-x", "20", "-y", "8"}));
   const auto saved = window->refresh();
   ASSERT_TRUE(saved.has_value());
   ASSERT_TRUE(saved->layout().starts_with('{'));
@@ -181,11 +181,10 @@ TEST(WindowLayout, JsonSavedLayoutsRefuseOlderDaemonsBeforeMutation) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   std::vector<std::string> issued;
-  const auto server = Server::at_socket_path(
-      fixture->socket_path().string(),
-      [&](std::string_view command, const libtmux::CommandFailure*) {
-        issued.emplace_back(command);
-      });
+  const auto server = Server::at_socket_path(fixture->socket_path().string(),
+                                             [&](const libtmux::CommandReport& report) {
+                                               issued.emplace_back(report.command);
+                                             });
   ASSERT_TRUE(server.has_value());
   const auto version = server->tmux_version();
   ASSERT_TRUE(version.has_value());

@@ -644,8 +644,8 @@ std::function<void()> load_handoff(Session session, std::optional<Client> caller
       const auto server = caller->server();
       if (!server)
         throw unreachable();
-      const auto current =
-          current_client(*server, caller->active_pane_id(), caller->window_id(), false);
+      const auto current = current_client(*server, caller->active_pane_id().value(),
+                                          caller->window_id().value(), false);
       if (current.connection_identity() != caller->connection_identity() ||
           current.name() != caller->name() || current.pid() != caller->pid() ||
           current.created() != caller->created() || current.tty() != caller->tty())
@@ -662,7 +662,7 @@ std::function<void()> load_handoff(Session session, std::optional<Client> caller
       if (!server)
         throw unreachable();
       const auto switched =
-          server->run({"switch-client", "-t", std::string{session.id()}});
+          server->run({"switch-client", "-t", std::string{session.id().value()}});
       if (!switched)
         throw unswitched();
     } else {
@@ -821,9 +821,10 @@ Json capture(const Request& request) {
   if (!shell)
     throw Failure{1, "tmux_failed", shell.error().diagnostic};
   const std::string login = fs::path{shell->value}.filename().string();
-  Json document{{"session_name", session->name()},
-                {"options", capture_options(server, std::string{session->id()})},
-                {"windows", Json::array()}};
+  Json document{
+      {"session_name", session->name()},
+      {"options", capture_options(server, std::string{session->id().value()})},
+      {"windows", Json::array()}};
   for (const auto& window : *windows) {
     const auto panes = window.panes();
     if (!panes)
@@ -835,8 +836,10 @@ Json capture(const Request& request) {
               {"panes", Json::array()}};
     // load applies options_after once the panes exist, which is what
     // automatic-rename: off needs.
-    auto options = capture_options(
-        server, std::string{session->id()} + ":" + std::string{window.id()}, true);
+    auto options = capture_options(server,
+                                   std::string{session->id().value()} + ":" +
+                                       std::string{window.id().value()},
+                                   true);
     if (!options.empty())
       item["options_after"] = std::move(options);
     for (const auto& pane : *panes) {
@@ -1693,7 +1696,7 @@ static Execution execute_impl(const Request& request, const EventSink& event,
       } else if (interactive && !environment("TMUX").empty()) {
         if (!environment("TMUX_PANE").empty()) {
           const auto pane = current_pane(server);
-          caller = current_client(server, pane.id(), pane.window_id());
+          caller = current_client(server, pane.id().value(), pane.window_id().value());
         } else {
           // No controlling pane to name a client from (a run-shell key
           // binding sets TMUX but not TMUX_PANE): confirm this is still the
@@ -1727,7 +1730,7 @@ static Execution execute_impl(const Request& request, const EventSink& event,
           // this one input only.
           Json result{{"input", private_path(plan.path)},
                       {"input_index", index},
-                      {"session_id", declined_session->id()},
+                      {"session_id", declined_session->id().value()},
                       {"session_name", plan.workspace.session_name},
                       {"reused", false},
                       {"action", "left"}};
@@ -1813,14 +1816,14 @@ static Execution execute_impl(const Request& request, const EventSink& event,
                               plan.workspace.session_name + " could not be read"},
                 {"input_index", index},
                 {"failed_stage", stage},
-                {"session_id", existing->id()},
+                {"session_id", existing->id().value()},
                 {"session_name", existing->name()}};
             if (absent)
               problem["missing_windows"] = *absent;
             errors.push_back(std::move(problem));
             results.push_back({{"input", private_path(plan.path)},
                                {"input_index", index},
-                               {"session_id", existing->id()},
+                               {"session_id", existing->id().value()},
                                {"session_name", plan.workspace.session_name},
                                {"reused", true},
                                {"action", "reused"}});
@@ -1835,7 +1838,7 @@ static Execution execute_impl(const Request& request, const EventSink& event,
             stage = "before-script";
             try {
               event("script-started",
-                    {{"input_index", index}, {"session_id", session.id()}});
+                    {{"input_index", index}, {"session_id", session.id().value()}});
               const auto child = run_child(
                   plan.before_script,
                   {.terminate_descendants = true,
@@ -1902,7 +1905,7 @@ static Execution execute_impl(const Request& request, const EventSink& event,
             problem["script_output"] = script_output;
           if (borrowed) {
             retained_changes = true;
-            problem["retained_state"] = {{"session_id", borrowed->id()},
+            problem["retained_state"] = {{"session_id", borrowed->id().value()},
                                          {"session_name", borrowed->name()},
                                          {"ownership", "borrowed"},
                                          {"window_ids", built.error().retained_windows},
@@ -1943,7 +1946,7 @@ static Execution execute_impl(const Request& request, const EventSink& event,
         Json result{
             {"input", private_path(plan.path)},
             {"input_index", index},
-            {"session_id", built->id()},
+            {"session_id", built->id().value()},
             {"session_name", built->name()},
             {"reused", static_cast<bool>(borrowed) || static_cast<bool>(existing)},
             {"action", borrowed   ? "appended"
