@@ -21,34 +21,41 @@
 
 namespace libtmux::test {
 
+/// Whether the test server is addressed by `tmux -L name` or `tmux -S path`.
 enum class SocketMode { Name, Path };
 
+/// What teardown could not clean up, so a suite can fail loudly rather than
+/// leave a server behind quietly.
 struct TeardownReport {
   std::vector<std::string> messages;
 };
 
-// Names the private tree, the socket and the `tmux -L` name, so concurrent
-// suites cannot collide and a leftover directory identifies its owner.
-//
-// `label` reaches the socket path, which must fit in `sockaddr_un::sun_path`
-// — 108 bytes on Linux, 104 on macOS. Keep it under about twenty characters:
-// macOS spends roughly sixty of those on `$TMPDIR` alone, once
-// `/var/folders/...` has canonicalised to `/private/var/...`, and tmux spends
-// more again on the directory it puts the socket in. A label that overruns is
-// reported by tmux as "File name too long", naming the path.
-//
-// `start` refuses one containing anything outside `[A-Za-z0-9._-]`.
+/// Names the private tree, the socket and the `tmux -L` name, so concurrent
+/// suites cannot collide and a leftover directory identifies its owner.
+///
+/// `label` reaches the socket path, which must fit in `sockaddr_un::sun_path`
+/// — 108 bytes on Linux, 104 on macOS. Keep it under about twenty characters:
+/// macOS spends roughly sixty of those on `$TMPDIR` alone, once
+/// `/var/folders/...` has canonicalised to `/private/var/...`, and tmux spends
+/// more again on the directory it puts the socket in. A label that overruns is
+/// reported by tmux as "File name too long", naming the path.
+///
+/// `start` refuses one containing anything outside `[A-Za-z0-9._-]`.
 struct SocketNamespace {
   std::string label{"libtmux-cxx-test"};
 
   [[nodiscard]] static SocketNamespace internal() { return {}; }
 
-  // Prefixed, so a consumer's servers are distinguishable from this library's.
+  /// Prefixed, so a consumer's servers are distinguishable from this library's.
   [[nodiscard]] static SocketNamespace consumer(std::string_view suite) {
     return SocketNamespace{"libtmux-cxx-" + std::string{suite}};
   }
 };
 
+/// How the test server is started and how long teardown may take.
+///
+/// Every member carries an initializer on purpose; see the note on the last
+/// one.
 struct ScopedTmuxServerOptions {
   std::filesystem::path tmux_binary{"tmux"};
   SocketMode mode{SocketMode::Path};
@@ -56,22 +63,22 @@ struct ScopedTmuxServerOptions {
   std::chrono::milliseconds teardown_timeout{2000};
   std::string session_name{"libtmux_test"};
   SocketNamespace socket_namespace{};
-  // Every member has an initializer: without one here, a designated
-  // initializer that stops short of it warns under
-  // `-Wmissing-field-initializers`.
+  /// Every member has an initializer: without one here, a designated
+  /// initializer that stops short of it warns under
+  /// `-Wmissing-field-initializers`.
   std::shared_ptr<TeardownReport> teardown_report{};
 };
 
-// Build and edit a `NAME=VALUE` block for a child process.
-// `current_environment` copies this process's; `set_environment` replaces any
-// existing entry rather than appending; `erase_environment` removes every
-// entry for the name.
+/// Build and edit a `NAME=VALUE` block for a child process.
+/// `current_environment` copies this process's; `set_environment` replaces any
+/// existing entry rather than appending; `erase_environment` removes every
+/// entry for the name.
 [[nodiscard]] std::vector<std::string> current_environment();
 void set_environment(std::vector<std::string>& environment, std::string_view name,
                      std::string_view value);
 void erase_environment(std::vector<std::string>& environment, std::string_view name);
 
-// Whether two paths name the same socket.
+/// Whether two paths name the same socket.
 //
 // Not `std::filesystem::equivalent`: [fs.op.equivalent] makes it an *error*
 // when both paths are "other" files, and a unix domain socket is one. That is
@@ -86,6 +93,12 @@ void erase_environment(std::vector<std::string>& environment, std::string_view n
 same_socket_inode(const std::filesystem::path& left,
                   const std::filesystem::path& right);
 
+/// A tmux server that exists for the lifetime of this value.
+///
+/// Owns a private socket and directory and kills the server on destruction, so
+/// suites running at once cannot see each other's sessions. Teardown reports
+/// rather than throws — a destructor that throws during a failing test hides
+/// the failure.
 class ScopedTmuxServer final {
 public:
   static libtmux::expected<ScopedTmuxServer, std::string>
@@ -106,9 +119,9 @@ public:
   [[nodiscard]] std::vector<std::string> command_prefix() const;
   [[nodiscard]] bool is_alive() const;
 
-  // `NAME=VALUE` entries for a child that should reach this server and not the
-  // surrounding one: `TMUX_TMPDIR` inside the private tree, `TMUX` and
-  // `TMUX_PANE` absent.
+  /// `NAME=VALUE` entries for a child that should reach this server and not the
+  /// surrounding one: `TMUX_TMPDIR` inside the private tree, `TMUX` and
+  /// `TMUX_PANE` absent.
   [[nodiscard]] std::vector<std::string> child_environment() const;
 
 private:

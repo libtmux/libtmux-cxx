@@ -14,7 +14,7 @@
 
 LIBTMUX_NAMESPACE_BEGIN
 
-// Escape literal text for inclusion in a format string.
+/// Escape literal text for inclusion in a format string.
 [[nodiscard]] inline std::string escape_literal(std::string_view text) {
   std::string escaped;
   escaped.reserve(text.size());
@@ -27,14 +27,14 @@ LIBTMUX_NAMESPACE_BEGIN
   return escaped;
 }
 
-// Wrap a variable name as a substitution. The name is not escaped: a name is
-// chosen by the caller from tmux's format vocabulary, not built from data.
+/// Wrap a variable name as a substitution. The name is not escaped: a name is
+/// chosen by the caller from tmux's format vocabulary, not built from data.
 [[nodiscard]] inline std::string variable(std::string_view name) {
   return "#{" + std::string{name} + "}";
 }
 
-// Build a format from alternating literal and variable pieces so a caller
-// never hand-concatenates and forgets to escape one of them.
+/// Build a format from alternating literal and variable pieces so a caller
+/// never hand-concatenates and forgets to escape one of them.
 class FormatBuilder {
 public:
   FormatBuilder& literal(std::string_view text) {

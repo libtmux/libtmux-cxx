@@ -1,0 +1,67 @@
+# Doxygen configuration for libtmux-cxx.
+#
+# XML only. Doxygen's own HTML is never published: Breathe consumes this XML
+# and Sphinx renders it through the same theme as every other libtmux port,
+# so the site stays uniform and no GPL-licensed HTML is ever distributed.
+
+PROJECT_NAME           = libtmux-cxx
+INPUT                  = include
+FILE_PATTERNS          = *.hpp *.h
+RECURSIVE              = YES
+
+GENERATE_HTML          = NO
+GENERATE_LATEX         = NO
+GENERATE_XML           = YES
+XML_PROGRAMLISTING     = NO
+
+# Emit a declaration without its initialiser. Sphinx's C++ domain cannot parse
+# a lambda inside one, and the field handles in entities.hpp are all built from
+# one — 45 declarations reached the site as unparsed text with no anchor. The
+# values stay in docs/api.md, whose renderer keeps them.
+MAX_INITIALIZER_LINES  = 0
+
+# The first sentence of a comment block is its brief description.
+#
+# Without this, a multi-line /// block becomes the detailed description and
+# the brief stays empty — which is what every consumer shows in a listing.
+# The headers document themselves in prose paragraphs, so the first sentence
+# is the summary a reader wants; without this, none of them reach the XML.
+JAVADOC_AUTOBRIEF      = YES
+
+# Public API only; the site documents what callers can use.
+EXTRACT_ALL            = NO
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = NO
+HIDE_UNDOC_MEMBERS     = YES
+
+QUIET                  = YES
+WARN_IF_UNDOCUMENTED   = NO
+
+# A warning here always means prose did not survive the parse: a comment that
+# never reached the XML, or markup that swallowed the text after it. There is
+# no benign case, and a build that only exits zero hides every one — so the
+# same failure reaches a local run, CI, and the site build.
+WARN_AS_ERROR          = FAIL_ON_WARNINGS
+
+# entities.hpp specialises std::hash for the four entity types. Without a
+# model of the STL, Doxygen cannot resolve the scope those specialisations
+# open and reports incomplete input for each — four warnings that hide any
+# real one, and four comments that never reach the XML.
+BUILTIN_STL_SUPPORT    = YES
+
+# libtmux wraps every declaration in an ABI-versioned inline namespace via a
+# macro. Without expanding it here Doxygen sees an unbalanced brace and drops
+# every declaration in the file, producing empty XML and a silently empty
+# reference.
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = YES
+PREDEFINED             = LIBTMUX_NAMESPACE_BEGIN="namespace libtmux {" \
+                         LIBTMUX_NAMESPACE_END="}" \
+                         LIBTMUX_EXPORT= \
+                         __cplusplus=202302L
+
+# build-site.sh sets OUTPUT_DIRECTORY so the XML lands in its scratch dir.
+# Doxygen expands $(VAR) from the environment; unset means "cwd", which is
+# what a bare `doxygen Doxyfile` in this checkout should do.
+OUTPUT_DIRECTORY       = $(OUTPUT_DIRECTORY)

@@ -14,6 +14,11 @@
 
 LIBTMUX_NAMESPACE_BEGIN
 
+/// How far a command is known to have got before something stopped it.
+///
+/// This is the value that decides whether retrying is safe: only
+/// `not_started` is safe blindly, and `indeterminate` is an answer rather than
+/// a missing one.
 enum class DeliveryStatus : std::uint8_t {
   not_started,
   written,

@@ -19,6 +19,10 @@
 
 LIBTMUX_NAMESPACE_BEGIN
 
+/// Why a lookup that required exactly one match did not get one.
+///
+/// The two want opposite fixes, which is why they are distinct: one needs
+/// wider criteria and the other needs narrower.
 enum class CardinalityError { none_matched, several_matched };
 
 [[nodiscard]] constexpr std::string_view to_string(CardinalityError error) noexcept {
@@ -32,6 +36,10 @@ enum class CardinalityError { none_matched, several_matched };
 }
 
 template <std::ranges::input_range Range>
+/// A borrowed element of a range, rather than a copy of it.
+///
+/// These lookups reference an element of the range they were given, so the
+/// range has to outlive the result. That is why they take an lvalue.
 using Referenced = std::reference_wrapper<const std::ranges::range_value_t<Range>>;
 
 // Both take an lvalue on purpose. The result references an element of the
@@ -39,15 +47,15 @@ using Referenced = std::reference_wrapper<const std::ranges::range_value_t<Range
 // list returned by value — leaves that reference dangling at the semicolon.
 // Requiring a name makes the storage the caller must keep alive visible.
 
-// Both also require the range to yield references. A range whose elements are
-// produced on demand — a transform that returns by value, say — has nothing
-// for the answer to refer to, and the temporary dies with the call.
+/// Both also require the range to yield references. A range whose elements are
+/// produced on demand — a transform that returns by value, say — has nothing
+/// for the answer to refer to, and the temporary dies with the call.
 template <typename Range>
 concept ReferenceRange =
     std::ranges::input_range<Range> &&
     std::is_lvalue_reference_v<std::ranges::range_reference_t<Range>>;
 
-// `first` states that a caller tolerates extras; it never reports several.
+/// `first` states that a caller tolerates extras; it never reports several.
 template <ReferenceRange Range>
 [[nodiscard]] std::optional<Referenced<Range>> first(Range& range) {
   auto iterator = std::ranges::begin(range);
@@ -57,7 +65,7 @@ template <ReferenceRange Range>
   return std::cref(*iterator);
 }
 
-// `exactly_one` states that several is a caller error, and says which one.
+/// `exactly_one` states that several is a caller error, and says which one.
 template <ReferenceRange Range>
 [[nodiscard]] expected<Referenced<Range>, CardinalityError> exactly_one(Range& range) {
   auto iterator = std::ranges::begin(range);
@@ -76,7 +84,7 @@ template <ReferenceRange Range>
   return std::cref(*only);
 }
 
-// Copies referenced elements; moves when an iterator yields an rvalue. A
+/// Copies referenced elements; moves when an iterator yields an rvalue. A
 // temporary view over an lvalue container therefore leaves that container intact.
 // Owning the element does not extend storage borrowed by its own members.
 template <std::ranges::input_range Range>
@@ -91,7 +99,7 @@ first_owned(Range&& range) {
   return std::optional<std::ranges::range_value_t<Range>>{std::in_place, *iterator};
 }
 
-// A forward range's iterator can be copied and advanced independently of the
+/// A forward range's iterator can be copied and advanced independently of the
 // original, so a second element rules the range out before the first is
 // materialized. A single-pass range (a stream, a generator) shares mutable
 // state between copies instead, so it has no way to look ahead: the first

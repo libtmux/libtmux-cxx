@@ -32,29 +32,36 @@
 
 LIBTMUX_NAMESPACE_BEGIN
 
-// Why a control operation stopped. The stream is terminal after a protocol
-// failure: a caller cannot resynchronise it, only start a new one. `delivery`
-// says whether the affected request was untouched, fully written, answered,
-// or left indeterminate.
+/// Why a control operation stopped. The stream is terminal after a protocol
+/// failure: a caller cannot resynchronise it, only start a new one. `delivery`
+/// says whether the affected request was untouched, fully written, answered,
+/// or left indeterminate.
 struct ProtocolError {
   std::string message;
   DeliveryStatus delivery{DeliveryStatus::indeterminate};
 };
 
+/// How tmux closed a reply block: normally, or reporting a failure.
 enum class ControlTerminal : std::uint8_t { end, error };
 
-// How much of one reply a decoder holds, and how long a single line may grow
-// before the stream is called broken.
-//
-// A subprocess ends and gives its memory back; a connection does not, so the
-// bound has to be in the decoder rather than in whatever reads it afterwards.
-// The reply bound is the subprocess transport's capture limit, so the same
-// call costs the same memory over either transport. The line bound has no
-// subprocess equivalent: it is the point past which an unterminated line is
-// evidence of a broken stream rather than a large answer.
+/// How much of one reply a decoder holds, and how long a single line may grow
+/// before the stream is called broken.
+///
+/// A subprocess ends and gives its memory back; a connection does not, so the
+/// bound has to be in the decoder rather than in whatever reads it afterwards.
+/// The reply bound is the subprocess transport's capture limit, so the same
+/// call costs the same memory over either transport. The line bound has no
+/// subprocess equivalent: it is the point past which an unterminated line is
+/// evidence of a broken stream rather than a large answer.
 inline constexpr std::size_t kDefaultRetainedReplyBytes = 1024U * 1024U;
 inline constexpr std::size_t kDefaultLineBytes = 1024U * 1024U;
 
+/// One reply block, framed between tmux's `%begin` and its terminator.
+///
+/// Framing is all this is: whether the command succeeded is
+/// `terminal`, and what it said is `body`. A body that hit the decoder's
+/// retention bound is still framed and still attributable — see
+/// `body_truncated`.
 struct ControlBlock {
   std::uint64_t sequence;
   std::uint64_t command_number;
@@ -62,21 +69,28 @@ struct ControlBlock {
   std::vector<std::byte> begin_metadata;
   std::vector<std::byte> terminal_metadata;
   std::vector<std::byte> body;
-  // `body` holds the first `retained_reply_bytes` and stopped; `body_bytes` is
-  // how many there were. Set rather than reported as an error because framing
-  // is the parser's job and judging the answer is the caller's: the rest of the
-  // reply is still drained, so the next command's reply is still attributable.
+  /// `body` holds the first `retained_reply_bytes` and stopped; `body_bytes` is
+  /// how many there were. Set rather than reported as an error because framing
+  /// is the parser's job and judging the answer is the caller's: the rest of the
+  /// reply is still drained, so the next command's reply is still attributable.
   bool body_truncated{false};
   std::size_t body_bytes{0};
 };
 
+/// Anything the parser produces: a reply to something asked, or something tmux
+/// said on its own. The two arrive interleaved on one stream.
 using Event = std::variant<ControlBlock, Notification>;
 
+/// The control-mode wire format, decoded into whole events.
+///
+/// Owns the partial state between reads, so a caller feeds whatever bytes
+/// arrived and gets back only complete events. It bounds what it retains
+/// because a connection, unlike a subprocess, never gives its memory back.
 class Parser final {
 public:
   Parser() = default;
-  // Zero means unbounded, which only a test that owns both ends should ask
-  // for.
+  /// Zero means unbounded, which only a test that owns both ends should ask
+  /// for.
   Parser(std::size_t retained_reply_bytes, std::size_t line_bytes) noexcept
       : retained_reply_bytes_{retained_reply_bytes}, line_bytes_{line_bytes} {}
 
@@ -92,24 +106,36 @@ private:
   bool finished_{false};
 };
 
+/// One command as argv, before it is joined into a control-mode line.
 struct ControlCommand {
   std::vector<std::string> argv;
 };
 
+/// The commands sent as one group, which tmux runs until one fails.
 struct ControlRequest {
   std::vector<ControlCommand> group;
 };
 
+/// What one request produced: its reply blocks, and the connection error that
+/// ended the exchange if one did.
+///
+/// A connection error is separate from a failed block because they need
+/// different handling: a failed command leaves the connection usable.
 struct ControlRequestResult {
-  // Every synchronous reply block tmux emitted for this request, in wire
-  // order. tmux does not put a request or operation ID on its guards, so a
-  // command alias or inserted command may make this differ from `group`.
+  /// Every synchronous reply block tmux emitted for this request, in wire
+  /// order. tmux does not put a request or operation ID on its guards, so a
+  /// command alias or inserted command may make this differ from `group`.
   std::vector<ControlBlock> blocks;
   std::optional<ProtocolError> connection_error;
 };
 
+/// How to start a control-mode connection, and what it is allowed to buffer.
+///
+/// Two of these cannot be changed later because tmux cannot: whether pane
+/// output is delivered at all is fixed when the connection starts, and the
+/// decoder's bounds belong to the decoder rather than to whatever reads it.
 struct ConnectionOptions {
-  // Which tmux to run. Absent means `tmux` from `PATH` — or, through
+  /// Which tmux to run. Absent means `tmux` from `PATH` — or, through
   // `Server::control`, the tmux that Server's policy names. Absent rather than
   // defaulting to `tmux`, so that a caller who writes `tmux` here gets it,
   // instead of being indistinguishable from one who wrote nothing.
@@ -118,50 +144,52 @@ struct ConnectionOptions {
   std::string session_name{};
   std::chrono::milliseconds startup_timeout{2000};
   std::chrono::milliseconds shutdown_timeout{2000};
-  // Passed to the decoder. Raise the first to hold a bigger capture; the
-  // second bounds a line that never ends. A connection accepts zero
-  // (unbounded) or at least 128 bytes, which leaves room for its private
-  // request boundary.
+  /// Passed to the decoder. Raise the first to hold a bigger capture; the
+  /// second bounds a line that never ends. A connection accepts zero
+  /// (unbounded) or at least 128 bytes, which leaves room for its private
+  /// request boundary.
   std::size_t retained_reply_bytes{kDefaultRetainedReplyBytes};
   std::size_t line_bytes{kDefaultLineBytes};
 
-  // Deliver `%output` for every pane, as notifications.
-  //
-  // Off, so tmux is not asked to buffer pane output for a caller who never
-  // reads it. It is fixed at connect time because tmux fixes it: a connection
-  // started without output cannot be made to listen later, so this cannot be
-  // a subscription. See `docs/design/pane-output-streaming.md`.
+  /// Deliver `%output` for every pane, as notifications.
+  ///
+  /// Off, so tmux is not asked to buffer pane output for a caller who never
+  /// reads it. It is fixed at connect time because tmux fixes it: a connection
+  /// started without output cannot be made to listen later, so this cannot be
+  /// a subscription. See `docs/design/pane-output-streaming.md`.
   bool pane_output{false};
 
-  // Discard a pane's queued output once it is this far behind, and say so
-  // with `%pause`.
-  //
-  // A data-loss policy rather than backpressure, and unset is a policy too:
-  // tmux then buffers until a queued block is five minutes old and closes the
-  // connection with `too far behind`. Set this and a slow reader survives
-  // having lost output; leave it and a slow enough reader loses the
-  // connection. Only meaningful with `pane_output`.
-  //
-  // `%pause` is the sole report that anything was dropped, and it names the
-  // pane. A caller that sets this and ignores notifications has chosen to
-  // lose output silently.
+  /// Discard a pane's queued output once it is this far behind, and say so
+  /// with `%pause`.
+  ///
+  /// A data-loss policy rather than backpressure, and unset is a policy too:
+  /// tmux then buffers until a queued block is five minutes old and closes the
+  /// connection with `too far behind`. Set this and a slow reader survives
+  /// having lost output; leave it and a slow enough reader loses the
+  /// connection. Only meaningful with `pane_output`.
+  ///
+  /// `%pause` is the sole report that anything was dropped, and it names the
+  /// pane. A caller that sets this and ignores notifications has chosen to
+  /// lose output silently.
   std::optional<std::chrono::seconds> pause_after{};
 };
 
 class Connection;
 
-// Everything tmux says, until the deadline, as one loop.
-//
-// Draining by hand is two nested loops and a break: ask for a batch, stop if
-// it is empty, walk it, ask again. That shape was written six times across
-// this repository's own tests and examples before this existed, which is the
-// argument for it.
-//
-// An input range, single pass. A `ParsedNotification` views the notification
-// it was read from, and this owns that notification only until the iterator
-// advances — so copy what you need out of one before asking for the next.
+/// Everything tmux says, until the deadline, as one loop.
+///
+/// Draining by hand is two nested loops and a break: ask for a batch, stop if
+/// it is empty, walk it, ask again. That shape was written six times across
+/// this repository's own tests and examples before this existed, which is the
+/// argument for it.
+///
+/// An input range, single pass. A `ParsedNotification` views the notification
+/// it was read from, and this owns that notification only until the iterator
+/// advances — so copy what you need out of one before asking for the next.
 class NotificationRange final {
 public:
+  /// Single-pass, and the value it yields is borrowed: advancing invalidates
+  /// the notification the previous dereference viewed.
   class iterator final {
   public:
     using difference_type = std::ptrdiff_t;
@@ -200,7 +228,7 @@ public:
 
 private:
   friend class iterator;
-  // The next outside-block event, or nothing after an empty deadline.
+  /// The next outside-block event, or nothing after an empty deadline.
   [[nodiscard]] const Notification* next();
 
   Connection* connection_{nullptr};
@@ -209,21 +237,21 @@ private:
   std::size_t index_{0};
 };
 
-// One held-open control client.
-//
-// Shared freely between threads. `execute`, `take_notifications`,
-// `wait_for_notifications`, `watch_notifications`, `set_pane_output` and the
-// muting pair may all be called at once: writes are serialized, and each
-// reply is matched to its own request through a private boundary, which is
-// what lets concurrent callers tell their blocks apart even though tmux puts
-// no request id on a guard.
-//
-// Moving from a connection, or destroying one, may not race with any of
-// those — the same rule `CommandRuntime` states for itself.
-//
-// It remains one FIFO client, so a command that waits on the server also
-// delays whatever another thread asked for next. That is why `Server::run`
-// stays the surface for a command whose final result matters.
+/// One held-open control client.
+///
+/// Shared freely between threads. `execute`, `take_notifications`,
+/// `wait_for_notifications`, `watch_notifications`, `set_pane_output` and the
+/// muting pair may all be called at once: writes are serialized, and each
+/// reply is matched to its own request through a private boundary, which is
+/// what lets concurrent callers tell their blocks apart even though tmux puts
+/// no request id on a guard.
+///
+/// Moving from a connection, or destroying one, may not race with any of
+/// those — the same rule `CommandRuntime` states for itself.
+///
+/// It remains one FIFO client, so a command that waits on the server also
+/// delays whatever another thread asked for next. That is why `Server::run`
+/// stays the surface for a command whose final result matters.
 class Connection final {
 public:
   static expected<Connection, ProtocolError> connect(ConnectionOptions options);
@@ -234,82 +262,82 @@ public:
   Connection(const Connection&) = delete;
   Connection& operator=(const Connection&) = delete;
 
-  // Completes at this request's private protocol boundary and preserves every
-  // guarded block before it. This is wire evidence, not a final command
-  // result: tmux may end a block before a waiting job or file operation later
-  // reports unguarded output or failure. Use `Server::run` when final success
-  // or failure is required.
+  /// Completes at this request's private protocol boundary and preserves every
+  /// guarded block before it. This is wire evidence, not a final command
+  /// result: tmux may end a block before a waiting job or file operation later
+  /// reports unguarded output or failure. Use `Server::run` when final success
+  /// or failure is required.
   ControlRequestResult execute(ControlRequest request,
                                std::chrono::steady_clock::time_point deadline);
-  // Every outside-block event tmux has written since the last call.
-  //
-  // Taking drains: what comes back will not come back again. It says nothing
-  // about what happens next, so an empty result does not mean the stream has
-  // gone quiet, and a later one is new traffic rather than a repeat. Wait for
-  // the next event with `wait_for_notifications` rather than polling for one.
+  /// Every outside-block event tmux has written since the last call.
+  ///
+  /// Taking drains: what comes back will not come back again. It says nothing
+  /// about what happens next, so an empty result does not mean the stream has
+  /// gone quiet, and a later one is new traffic rather than a repeat. Wait for
+  /// the next event with `wait_for_notifications` rather than polling for one.
   [[nodiscard]] std::vector<Notification> take_notifications();
 
-  // Open an independent cursor at the next outside-block event. Unlike the
-  // legacy taking methods above, watches do not steal events from each other.
+  /// Open an independent cursor at the next outside-block event. Unlike the
+  /// legacy taking methods above, watches do not steal events from each other.
   [[nodiscard]] NotificationWatch watch_notifications();
 
-  // The same, but waits for something to arrive.
-  //
-  // `take_notifications` returns immediately, so a caller reacting to tmux had
-  // to call it in a loop and sleep between — which either wakes too often or
-  // reacts too late, and picks that trade with no idea how long the next event
-  // will take. This blocks until at least one event is available, the
-  // connection fails, or the deadline passes, and returns whatever it has.
-  //
-  // An empty result means the deadline passed or the stream ended; the two are
-  // told apart by asking `execute` or `shutdown`, which report the failure.
-  // Events already buffered are returned without waiting at all.
+  /// The same, but waits for something to arrive.
+  ///
+  /// `take_notifications` returns immediately, so a caller reacting to tmux had
+  /// to call it in a loop and sleep between — which either wakes too often or
+  /// reacts too late, and picks that trade with no idea how long the next event
+  /// will take. This blocks until at least one event is available, the
+  /// connection fails, or the deadline passes, and returns whatever it has.
+  ///
+  /// An empty result means the deadline passed or the stream ended; the two are
+  /// told apart by asking `execute` or `shutdown`, which report the failure.
+  /// Events already buffered are returned without waiting at all.
   [[nodiscard]] std::vector<Notification>
   wait_for_notifications(std::chrono::steady_clock::time_point deadline);
-  // A descriptor that is readable exactly when a take would return something.
-  //
-  // For a caller who owns their own event loop. Without it, integrating means
-  // a thread blocked in `wait_for_notifications`, a queue of their own, and a
-  // self-pipe to wake the loop — which is this descriptor, rebuilt by hand on
-  // top of the thread and queue this connection already has.
-  //
-  // Do not read from it: readability is the signal and the byte is this
-  // connection's to consume. Drain with `take_notifications`, which clears it.
-  // A broken stream makes it readable too, so a poller learns of the failure
-  // rather than waiting for an answer that cannot come.
-  //
-  // Valid until the connection is destroyed or moved from; `-1` if the pipe
-  // could not be created.
+  /// A descriptor that is readable exactly when a take would return something.
+  ///
+  /// For a caller who owns their own event loop. Without it, integrating means
+  /// a thread blocked in `wait_for_notifications`, a queue of their own, and a
+  /// self-pipe to wake the loop — which is this descriptor, rebuilt by hand on
+  /// top of the thread and queue this connection already has.
+  ///
+  /// Do not read from it: readability is the signal and the byte is this
+  /// connection's to consume. Drain with `take_notifications`, which clears it.
+  /// A broken stream makes it readable too, so a poller learns of the failure
+  /// rather than waiting for an answer that cannot come.
+  ///
+  /// Valid until the connection is destroyed or moved from; `-1` if the pipe
+  /// could not be created.
   [[nodiscard]] int notification_fd() const noexcept;
 
-  // Stop or resume `%output` for one pane, on a connection that asked for it.
-  //
-  // The direction is not symmetrical, because tmux is not: a connection that
-  // started without `pane_output` cannot be made to listen to anything, and
-  // muting is the only per-pane control it offers. So this narrows what a
-  // listening connection receives; it cannot widen a silent one.
-  //
-  // Resuming clears both mute and pause, starting at tmux's current output
-  // offset. What a caller sees for output produced while muted differs by
-  // tmux version, and is not this library's choice either way:
-  //
-  //   - Before tmux 3.7, muting stops delivery to this connection only.
-  //     What the pane printed while muted is lost — resuming never replays
-  //     it.
-  //   - On tmux 3.7+, muting stops tmux from reading the pane's pty at all.
-  //     The pane freezes for every attached client and tool, not only this
-  //     connection, and what it printed while muted arrives as a backlog on
-  //     resume (measured against raw tmux, both directions).
+  /// Stop or resume `%output` for one pane, on a connection that asked for it.
+  ///
+  /// The direction is not symmetrical, because tmux is not: a connection that
+  /// started without `pane_output` cannot be made to listen to anything, and
+  /// muting is the only per-pane control it offers. So this narrows what a
+  /// listening connection receives; it cannot widen a silent one.
+  ///
+  /// Resuming clears both mute and pause, starting at tmux's current output
+  /// offset. What a caller sees for output produced while muted differs by
+  /// tmux version, and is not this library's choice either way:
+  ///
+  ///   - Before tmux 3.7, muting stops delivery to this connection only.
+  ///     What the pane printed while muted is lost — resuming never replays
+  ///     it.
+  ///   - On tmux 3.7+, muting stops tmux from reading the pane's pty at all.
+  ///     The pane freezes for every attached client and tool, not only this
+  ///     connection, and what it printed while muted arrives as a backlog on
+  ///     resume (measured against raw tmux, both directions).
   expected<void, ProtocolError>
   set_pane_output(std::string_view pane, bool deliver,
                   std::chrono::steady_clock::time_point deadline);
 
-  // Named forms of set_pane_output; the same connection policy applies.
-  //
-  // Muting is not this connection's private business on tmux 3.7+: tmux stops
-  // reading the pane's pty, so the pane freezes for every attached client and
-  // tool until it is resumed. `set_pane_output` has the version-by-version
-  // detail; this is the part worth knowing before reaching for the name.
+  /// Named forms of set_pane_output; the same connection policy applies.
+  ///
+  /// Muting is not this connection's private business on tmux 3.7+: tmux stops
+  /// reading the pane's pty, so the pane freezes for every attached client and
+  /// tool until it is resumed. `set_pane_output` has the version-by-version
+  /// detail; this is the part worth knowing before reaching for the name.
   [[nodiscard]] expected<void, ProtocolError>
   mute_pane_output(std::string_view pane,
                    std::chrono::steady_clock::time_point deadline) {
@@ -321,14 +349,14 @@ public:
     return set_pane_output(pane, true, deadline);
   }
 
-  // Everything tmux says until the deadline, as one loop rather than two.
-  //
-  // Borrows this connection, which must outlive it.
+  /// Everything tmux says until the deadline, as one loop rather than two.
+  ///
+  /// Borrows this connection, which must outlive it.
   [[nodiscard]] NotificationRange
   events(std::chrono::steady_clock::time_point deadline);
 
-  // How many outside-block events this Connection's legacy taking cursor
-  // missed to keep the shared log bounded. Each watch has its own count.
+  /// How many outside-block events this Connection's legacy taking cursor
+  /// missed to keep the shared log bounded. Each watch has its own count.
   [[nodiscard]] std::size_t dropped_notifications() const noexcept;
   [[nodiscard]] std::int64_t native_child_pid() const noexcept;
   expected<void, ProtocolError>

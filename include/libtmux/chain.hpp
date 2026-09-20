@@ -22,6 +22,11 @@
 
 LIBTMUX_NAMESPACE_BEGIN
 
+/// Several commands built up and sent as one tmux invocation.
+///
+/// tmux runs a chain until a command fails and discards the rest, so the chain
+/// is the unit of atomicity a caller gets — and the reply count alone cannot
+/// say which command failed.
 class Chain {
 public:
   Chain& new_session(std::string_view name, bool detached = true) {
@@ -55,7 +60,7 @@ public:
     return add({"split-window", "-t", *target});
   }
 
-  // Literal text, never interpreted as key names or formats.
+  /// Literal text, never interpreted as key names or formats.
   Chain& send_text(std::string_view target, std::string_view text) {
     const auto arguments = literal_arguments(text);
     if (!arguments.has_value()) {
@@ -73,7 +78,7 @@ public:
     return add({"send-keys", "-t", std::string{target}, std::string{key}});
   }
 
-  // Escape hatch for a command the typed steps do not cover.
+  /// Escape hatch for a command the typed steps do not cover.
   Chain& command(std::vector<std::string> argv) { return add(std::move(argv)); }
 
   [[nodiscard]] bool valid() const noexcept { return error_.empty(); }

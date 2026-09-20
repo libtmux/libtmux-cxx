@@ -16,6 +16,8 @@
 
 LIBTMUX_NAMESPACE_BEGIN
 
+/// One node of a filter after it has been reduced to what tmux's `-f` format
+/// language can express.
 struct LoweredNode {
   enum class Kind {
     string_test,
@@ -30,22 +32,26 @@ struct LoweredNode {
   };
 
   Kind kind{Kind::string_test};
-  // Field name for a test, relation name for a relation, empty otherwise.
+  /// Field name for a test, relation name for a relation, empty otherwise.
   std::string name;
   std::string op;
   std::string operand;
-  // The value a number_test compares against, kept as a number so a future
-  // tmux `-f` compiler does not have to parse it back out of the operand.
+  /// The value a number_test compares against, kept as a number so a future
+  /// tmux `-f` compiler does not have to parse it back out of the operand.
   long long number{};
   bool conjunction{};
   bool expected{};
   int quantifier{};
 };
 
+/// A whole lowered filter, flat: children are referenced by index rather than
+/// owned, so the vector can be walked without recursion.
 using LoweredExpression = std::vector<LoweredNode>;
 
-// Collects a lowered expression. This is the sink the relation builders use to
-// capture their child, and it is a plain value so the result is copyable.
+/// Collects a lowered expression. This is the sink the relation builders use to
+/// capture their child, and it is a plain value so the result is copyable.
+/// Builds the flat node list a lowered expression is, keeping the indices
+/// stable so a parent can reference a child it has not finished emitting.
 class NodeCollector {
 public:
   void string_test(std::string_view field, std::string_view op,

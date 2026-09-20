@@ -51,7 +51,7 @@ LIBTMUX_NAMESPACE_BEGIN
   return "eq";
 }
 
-// Replay an already-lowered child into a sink.
+/// Replay an already-lowered child into a sink.
 template <typename Sink> void replay(const LoweredExpression& nodes, Sink& sink) {
   for (const LoweredNode& node : nodes) {
     switch (node.kind) {
@@ -86,8 +86,8 @@ template <typename Sink> void replay(const LoweredExpression& nodes, Sink& sink)
   }
 }
 
-// A sink receives one call per node in prefix order. Groups and negations are
-// bracketed by begin/end so a sink never has to count operands itself.
+/// A sink receives one call per node in prefix order. Groups and negations are
+/// bracketed by begin/end so a sink never has to count operands itself.
 template <typename Entity, typename Sink>
 void lower(const FilterExpr<Entity>& expr, Sink& sink) {
   using Expr = FilterExpr<Entity>;

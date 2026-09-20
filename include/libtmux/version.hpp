@@ -15,6 +15,7 @@
 
 LIBTMUX_NAMESPACE_BEGIN
 
+/// Why a tmux version string could not be read.
 enum class VersionError { missing_prefix, malformed };
 
 [[nodiscard]] constexpr std::string_view to_string(VersionError error) noexcept {
@@ -27,14 +28,18 @@ enum class VersionError { missing_prefix, malformed };
   return "unknown version error";
 }
 
+/// A tmux version, ordered so a feature gate can compare against a literal.
+///
+/// tmux marks a development build with a suffix, which orders after the
+/// release it follows rather than before it.
 struct Version {
   std::uint32_t major{};
   std::uint32_t minor{};
-  // 0 for a bare release, 1 for `a`, 2 for `b`, and so on. Psmux's numeric
-  // third component occupies this existing slot as the corresponding number.
+  /// 0 for a bare release, 1 for `a`, 2 for `b`, and so on. Psmux's numeric
+  /// third component occupies this existing slot as the corresponding number.
   std::uint32_t revision{};
-  // A `next-` build precedes the release it leads to; `master` follows every
-  // numbered release.
+  /// A `next-` build precedes the release it leads to; `master` follows every
+  /// numbered release.
   bool prerelease{false};
   bool unbounded{false};
 
@@ -60,7 +65,7 @@ struct Version {
   [[nodiscard]] constexpr bool operator==(const Version&) const noexcept = default;
 };
 
-// Parse the first line of `tmux -V`, with or without its trailing newline.
+/// Parse the first line of `tmux -V`, with or without its trailing newline.
 [[nodiscard]] inline expected<Version, VersionError>
 parse_version(std::string_view output) {
   if (const auto line_end = output.find_first_of("\r\n");
@@ -132,19 +137,19 @@ parse_version(std::string_view output) {
   return version;
 }
 
-// The oldest release this library supports, matching the Python package.
+/// The oldest release this library supports, matching the Python package.
 inline constexpr Version kMinimumSupported{.major = 3, .minor = 2, .revision = 1};
 
 [[nodiscard]] constexpr bool is_supported(const Version& version) noexcept {
   return version >= kMinimumSupported;
 }
 
-// This package's own version, not tmux's.
+/// This package's own version, not tmux's.
 [[nodiscard]] std::string_view library_version() noexcept;
 
 LIBTMUX_NAMESPACE_END
 
-// The same version, available to the preprocessor.
+/// The same version, available to the preprocessor.
 //
 // `library_version()` answers what was linked; these answer what was compiled
 // against, which is the question a consumer has to ask before using something
