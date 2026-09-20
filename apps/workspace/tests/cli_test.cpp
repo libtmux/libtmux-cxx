@@ -1908,19 +1908,20 @@ TEST(WorkspaceCliTmux, CaptureLeavesOutTheShellTmuxStartedForThePane) {
   const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
   ASSERT_TRUE(server.has_value());
   ASSERT_TRUE(server->set_global_option("default-shell", "/bin/sh").has_value());
-  const auto session =
-      server->new_session({.name = "capture-shell",
-                           .shell_command = "exec /bin/sh -i",
-                           .environment = {{"ENV", ""}, {"PS1", "capture-ready\n"}}});
+  const auto session = server->new_session({.name = "capture-shell",
+                                            .shell_command = "exec /bin/sh -i",
+                                            .environment = {{"ENV", ""}}});
   ASSERT_TRUE(session.has_value());
   const auto window = session->active_window();
   ASSERT_TRUE(window.has_value());
   const auto panes = window->panes();
   ASSERT_TRUE(panes.has_value());
+  // The typed command cannot match the marker before the shell runs it.
+  ASSERT_TRUE(panes->front().send_line("printf 'capture-%s\\n' ready").has_value());
   const auto ready = panes->front().wait_for_text("capture-ready",
                                                   {.timeout = std::chrono::seconds{1}});
   ASSERT_TRUE(ready.has_value()) << ready.error().diagnostic;
-  ASSERT_TRUE(ready->matched);
+  ASSERT_TRUE(ready->matched) << ready->text;
   const auto settled = panes->front().refresh();
   ASSERT_TRUE(settled.has_value());
   // How tmux names the shell it started is its business and differs by
@@ -1962,17 +1963,17 @@ TEST(WorkspaceCliTmux, CaptureTreatsAnyOrdinaryShellAsTheDefaultOne) {
       server
           ->set_global_option("default-command", "exec /bin/bash --noprofile --norc -i")
           .has_value());
-  const auto session = server->new_session(
-      {.name = "capture-mismatch", .environment = {{"PS1", "capture-ready\n"}}});
+  const auto session = server->new_session("capture-mismatch");
   ASSERT_TRUE(session.has_value());
   const auto window = session->active_window();
   ASSERT_TRUE(window.has_value());
   const auto panes = window->panes();
   ASSERT_TRUE(panes.has_value());
+  ASSERT_TRUE(panes->front().send_line("printf 'capture-%s\\n' ready").has_value());
   const auto ready = panes->front().wait_for_text("capture-ready",
                                                   {.timeout = std::chrono::seconds{1}});
   ASSERT_TRUE(ready.has_value()) << ready.error().diagnostic;
-  ASSERT_TRUE(ready->matched);
+  ASSERT_TRUE(ready->matched) << ready->text;
   const auto settled = panes->front().refresh();
   ASSERT_TRUE(settled.has_value());
   ASSERT_EQ(settled->command(), "bash");
