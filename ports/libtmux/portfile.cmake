@@ -15,6 +15,11 @@ vcpkg_check_features(
 # follow the library onto Windows when the `supports` clause admits it.
 if(VCPKG_TARGET_IS_WINDOWS)
   set(LIBTMUX_PORT_BUILD_TESTING_LIBRARY OFF)
+  # The Windows preview carries no symbol export annotations, so the library
+  # refuses `BUILD_SHARED_LIBS` at configure time rather than produce a DLL
+  # that exports nothing. Declare the linkage the port can actually build, so
+  # a dynamic triplet installs the static library instead of failing.
+  set(VCPKG_LIBRARY_LINKAGE static)
 else()
   set(LIBTMUX_PORT_BUILD_TESTING_LIBRARY ON)
 endif()
