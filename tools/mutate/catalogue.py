@@ -684,15 +684,7 @@ CATALOGUE: t.Final = (
         guards="a formatted failure names how far the command got, which is "
         "what says whether repeating it is safe",
     ),
-    # These two entries hang rather than fail cleanly when removed. No extra
-    # timeout is needed: `libtmux_server_contract_test` and
-    # `libtmux_operation_state_test` already carry a per-test CMake `TIMEOUT`
-    # (tests/CMakeLists.txt), so ctest reports the hang as `***Timeout`, a
-    # failure like any other.
-    #
-    # Not entered: the empty-notification-batch spin (no clean assertion for a
-    # CPU-spin) and the `at_socket_path`/`startable_at_socket_path` overloads,
-    # already proven at compile time by `tests/compile/valid_uses.cpp`.
+    # Per-test CMake timeouts turn both waiter deadlocks below into failures.
     Mutation(
         mutation_id="readiness-wait-drain",
         path="src/async.cpp",
@@ -883,16 +875,8 @@ CATALOGUE: t.Final = (
         guards="a diagnostic truncated at the byte budget backs up to a UTF-8 "
         "character boundary instead of cutting one in half",
     ),
-    # The consequence of this guard -- JSON rather than the classic layout form
-    # -- is invisible below tmux 3.8: 3.2a through 3.7c answer
-    # `refresh-client -f new-layouts` exactly as they answer not sending it,
-    # and neither records it in `#{client_flags}` (verified by hand on 3.2a,
-    # 3.7c and next-3.9). The test that compares the two forms therefore skips
-    # itself below 3.8, and ctest reports a skip as a pass, so pointing this
-    # mutation at that test left it surviving on every run whose tmux is older
-    # -- including this repository's own CI job, which installs Ubuntu's
-    # packaged tmux. The guard below watches the request instead of its
-    # consequence, which every version can answer.
+    # tmux before 3.8 does not expose new-layouts in client_flags.
+    # Observe the request because layout-output assertions skip those versions.
     Mutation(
         mutation_id="connect-requests-json-layouts",
         path="src/connection.cpp",
