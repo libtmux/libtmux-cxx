@@ -9,6 +9,26 @@ was recorded as it landed.
 
 ## Unreleased
 
+## 0.1.0-alpha.9 (2026-09-19)
+
+This alpha types the entity surface and replaces polling with completion
+events. Sessions, windows and panes carry distinct id types, so a pane id no
+longer passes where a window id belongs; `CommandObserver` receives a
+`CommandReport` carrying the arguments and elapsed time behind a command; and
+`ExecutionPolicy::tmux_binary` names the executable for command and control
+paths alike. Each of those is source- and ABI-breaking, and `Pane::kFields` is
+wire-breaking for handwritten positional recordings.
+
+Waiting no longer re-reads snapshots. `CommandRuntime` blocks or hands out a
+descriptor an event loop can select on, `CommandOperation` waits without being
+consumed, and `Pane::wait_for_text` waits for output tmux has confirmed rather
+than for the caller's own echo. `Server::over` takes a transport the
+application owns and `Server::over_control` reuses held-open control clients
+instead of one process per command.
+
+The library installs as static or shared on POSIX, with version macros and a
+pkg-config file for consumers that do not use CMake.
+
 ### Breaking
 
 - Entity IDs now distinguish sessions, windows and panes. Use
