@@ -9,6 +9,19 @@ was recorded as it landed.
 
 ## Unreleased
 
+## 0.1.0-alpha.11 (2026-09-26)
+
+This alpha adds `tmux-workspace`, an optional POSIX executable for workspace
+discovery, loading, capture, conversion and Teamocil and tmuxinator imports,
+whose JSON and NDJSON output shares the error codes and event names the other
+libtmux workspace ports use. Saved layouts are validated before dispatch
+through `validate_layout` and `Server::validate_layouts`, and tmux 3.8's v2
+JSON layouts are accepted.
+
+A session lookup that misses no longer crashes a tmux 3.2a server, a control
+connection reaches a session whose name holds `.` or `:`, and the MCP server
+matches session arguments by exact name rather than by prefix.
+
 ### Documentation
 
 - The public headers now render as an API reference through Doxygen and
