@@ -220,6 +220,31 @@ TEST(PosixChild, WaitsOnExitWherePlatformAllows) {
   EXPECT_EQ(launched->status(), ChildStatus::exited);
 }
 
+TEST(PosixChild, SignalsAnExitedGroupBeforeReapingItsLeader) {
+  auto launched = PosixChild::launch(shell("exit 0"));
+  ASSERT_TRUE(launched.has_value()) << launched.error().diagnostic;
+  const auto deadline = ChildClock::now() + std::chrono::seconds{5};
+  bool exited{};
+  while (ChildClock::now() < deadline) {
+    const auto observed =
+        launched->exit_pending(libtmux::DeliveryStatus::indeterminate);
+    ASSERT_TRUE(observed.has_value()) << observed.error().diagnostic;
+    if (*observed) {
+      exited = true;
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds{1});
+  }
+  ASSERT_TRUE(exited);
+  EXPECT_EQ(launched->status(), ChildStatus::running);
+  EXPECT_FALSE(launched->signal_group(SIGTERM).has_value());
+  EXPECT_FALSE(launched->signal_group(SIGKILL).has_value());
+  EXPECT_EQ(launched->status(), ChildStatus::running);
+  ASSERT_FALSE(launched->wait_for_exit().has_value());
+  ASSERT_TRUE(std::holds_alternative<Exited>(launched->termination()));
+  EXPECT_EQ(std::get<Exited>(launched->termination()).code, 0);
+}
+
 TEST(PosixChild, APortableDrainTurnReadsAReadyChunkPastItsBoundary) {
   auto launched =
       PosixChild::launch(shell("printf prefix; sleep 30"), ExitReadiness::poll);

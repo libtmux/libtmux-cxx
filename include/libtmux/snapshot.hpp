@@ -73,6 +73,11 @@ inline constexpr std::string_view kFormatEscape = "␛";
 format_request(std::span<const std::string_view> fields) {
   std::string request;
   for (const std::string_view field : fields) {
+    // tmux 3.2a dereferences a missing session for session_created. The
+    // conditional is lazy, so an absent target still yields an empty field.
+    if (field == "session_created") {
+      request += "#{?session_id,";
+    }
     request += "#{s/";
     request += kFormatSeparator;
     request += '/';
@@ -84,6 +89,9 @@ format_request(std::span<const std::string_view> fields) {
     request += "E/:";
     request += field;
     request += "}}";
+    if (field == "session_created") {
+      request += ",}";
+    }
     request += kFormatSeparator;
   }
   return request;

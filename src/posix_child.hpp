@@ -85,6 +85,9 @@ public:
              DeliveryStatus delivery) noexcept;
   [[nodiscard]] std::optional<ProcessError>
   update_status(DeliveryStatus delivery) noexcept;
+  // Observes exit without reaping, keeping the group ID owned until escalation ends.
+  [[nodiscard]] expected<bool, ProcessError>
+  exit_pending(DeliveryStatus delivery) noexcept;
   std::optional<ProcessError>
   signal_group(int signal_number,
                DeliveryStatus delivery = DeliveryStatus::indeterminate) noexcept;
@@ -96,6 +99,8 @@ public:
   void close_stream(ChildStream stream) noexcept;
   void close_output() noexcept;
 
+  [[nodiscard]] bool output_truncated() const noexcept { return capture_.truncated; }
+  [[nodiscard]] const Capture& capture() const noexcept { return capture_; }
   [[nodiscard]] Capture take_capture() noexcept;
   [[nodiscard]] Termination termination() const noexcept;
 

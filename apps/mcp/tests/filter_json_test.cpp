@@ -49,6 +49,8 @@ template <typename Expression> LoweredExpression lowered(const Expression& expr)
 std::vector<LoweredExpression> corpus() {
   std::vector<LoweredExpression> all;
   all.push_back(lowered(pane::command == "nvim"));
+  all.push_back(lowered(libtmux::client::flags.contains("active-pane")));
+  all.push_back(lowered(libtmux::client::window_id == "@0"));
   all.push_back(lowered(pane::command.contains("vi")));
   all.push_back(lowered(pane::command.starts_with("nv")));
   all.push_back(lowered(pane::command.ends_with("im")));
@@ -105,6 +107,7 @@ TEST(FilterJson, KnowsWhichFieldsTheLibraryReallyReads) {
   EXPECT_TRUE(libtmux::json_wire::is_known_field("session_name"));
   EXPECT_TRUE(libtmux::json_wire::is_known_field("window_active"));
   EXPECT_TRUE(libtmux::json_wire::is_known_field("client_name"));
+  EXPECT_TRUE(libtmux::json_wire::is_known_field("client_flags"));
 
   EXPECT_FALSE(libtmux::json_wire::is_known_field(""));
   EXPECT_FALSE(libtmux::json_wire::is_known_field("pane_titl"));

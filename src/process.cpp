@@ -87,17 +87,33 @@ poll_and_drain(PosixChild& child, Clock::time_point boundary, DeliveryStatus del
 
 // Ends the child and reads what it left. Cleanup still reports its first fault
 // so a provisional timeout can match the asynchronous runner.
-[[nodiscard]] std::optional<ProcessError> cleanup_group(PosixChild& child,
-                                                        bool allow_term) {
+[[nodiscard]] std::optional<ProcessError>
+cleanup_group(PosixChild& child, bool allow_term, DescendantPolicy descendants) {
   std::optional<ProcessError> failure;
   const auto retain = [&failure](std::optional<ProcessError> candidate) {
     if (candidate && !failure) {
       failure = std::move(*candidate);
     }
   };
+  // The leader stays unreaped under `terminate`, so its status never leaves
+  // `running` here and the grace has to end on what the group still holds: a
+  // descendant that outlived the leader keeps the inherited pipes open.
+  const auto waited_out = [&] {
+    if (descendants == DescendantPolicy::leave_running) {
+      retain(child.update_status(DeliveryStatus::indeterminate));
+      return child.status() != ChildStatus::running;
+    }
+    auto observed = child.exit_pending(DeliveryStatus::indeterminate);
+    if (!observed) {
+      retain(std::move(observed.error()));
+      return true;
+    }
+    return *observed && child.output_closed();
+  };
   const auto settle = [&](Clock::time_point until) {
     while (child.status() == ChildStatus::running && Clock::now() < until) {
-      retain(child.update_status(DeliveryStatus::indeterminate));
+      if (waited_out())
+        return;
       auto drain = poll_and_drain(child, std::min(until, Clock::now() + poll_quantum),
                                   DeliveryStatus::indeterminate);
       if (drain) {
@@ -107,11 +123,24 @@ poll_and_drain(PosixChild& child, Clock::time_point boundary, DeliveryStatus del
     }
   };
 
+  // Escalation is only about descendants once the leader has exited, and BSD
+  // drops an emptied process group before its zombie leader is reaped, so a
+  // signal that finds nothing left must not replace the child's own result.
+  const auto escalate = [&](int signal_number) {
+    auto refused = child.signal_group(signal_number);
+    if (refused && descendants == DescendantPolicy::terminate) {
+      const auto observed = child.exit_pending(DeliveryStatus::indeterminate);
+      if (observed && *observed)
+        return;
+    }
+    retain(std::move(refused));
+  };
+
   if (allow_term) {
-    retain(child.signal_group(SIGTERM));
+    escalate(SIGTERM);
     settle(Clock::now() + terminate_grace);
   }
-  retain(child.signal_group(SIGKILL));
+  escalate(SIGKILL);
   while (child.status() == ChildStatus::running) {
     retain(child.wait_for_exit());
   }
@@ -141,6 +170,17 @@ poll_and_drain(PosixChild& child, Clock::time_point boundary, DeliveryStatus del
 } // namespace
 
 expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) {
+  return run_process(request, {});
+}
+
+expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request,
+                                                 const ProcessOutputObserver& output,
+                                                 DescendantPolicy descendants) {
+  if (request.cancelled && request.cancelled()) {
+    return unexpected(process_error(
+        ProcessError::Kind::cancelled, DeliveryStatus::not_started, "cancelled",
+        render_request(request), std::make_error_code(std::errc::operation_canceled)));
+  }
   if (request.timeout.has_value() &&
       *request.timeout <= std::chrono::milliseconds::zero()) {
     return unexpected(process_error(
@@ -157,9 +197,32 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
     return unexpected(std::move(launched.error()));
   }
   auto& child = *launched;
+  // Capture buffers accumulate; publish each new byte exactly once.
+  std::array<std::size_t, 2> emitted{};
+  const auto publish = [&] {
+    if (!output)
+      return;
+    try {
+      const auto& capture = child.capture();
+      const std::array streams{&capture.stdout_bytes, &capture.stderr_bytes};
+      for (std::size_t index = 0; index < streams.size(); ++index) {
+        const auto& bytes = *streams[index];
+        if (bytes.size() > emitted[index]) {
+          output(index == 0 ? "stdout" : "stderr",
+                 {reinterpret_cast<const char*>(bytes.data() + emitted[index]),
+                  bytes.size() - emitted[index]});
+          emitted[index] = bytes.size();
+        }
+      }
+    } catch (...) {
+      (void)cleanup_group(child, true, descendants);
+      throw;
+    }
+  };
 
   const auto abandon = [&](ProcessError error, bool allow_term) {
-    auto cleanup_failure = cleanup_group(child, allow_term);
+    auto cleanup_failure = cleanup_group(child, allow_term, descendants);
+    publish();
     // Timeout is provisional until termination, drain and reap finish. A
     // concrete cleanup fault is the synchronous/asynchronous shared cause.
     if (error.kind == ProcessError::Kind::timeout && cleanup_failure) {
@@ -171,6 +234,18 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
     error.output_truncated = capture.truncated;
     return unexpected(std::move(error));
   };
+
+  if (request.on_started) {
+    if (const auto failed = request.on_started(child.pid())) {
+      return abandon(ProcessError{.kind = ProcessError::Kind::pre_exec,
+                                  .delivery = DeliveryStatus::indeterminate,
+                                  .diagnostic = *failed,
+                                  .stdout_bytes = {},
+                                  .stderr_bytes = {},
+                                  .output_truncated = false},
+                     true);
+    }
+  }
 
   if (deadline.has_value() && Clock::now() >= *deadline) {
     return abandon(timed_out(child, DeliveryStatus::indeterminate), true);
@@ -185,18 +260,43 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
 
   auto exit_drain_deadline = Clock::time_point::max();
   for (;;) {
-    if (auto failure = child.update_status(DeliveryStatus::indeterminate)) {
-      return abandon(std::move(*failure), false);
+    if (request.cancelled && request.cancelled()) {
+      return abandon(process_error(ProcessError::Kind::cancelled,
+                                   DeliveryStatus::indeterminate, "cancelled",
+                                   child.rendered_request(),
+                                   std::make_error_code(std::errc::operation_canceled)),
+                     true);
     }
-    const bool finished = child.status() != ChildStatus::running;
+    if (request.fail_on_capture_limit && child.output_truncated()) {
+      return abandon(process_error(ProcessError::Kind::output_limit,
+                                   DeliveryStatus::indeterminate, "output limit",
+                                   child.rendered_request(),
+                                   std::make_error_code(std::errc::file_too_large)),
+                     true);
+    }
+    bool finished;
+    if (descendants == DescendantPolicy::terminate) {
+      // Leave the leader unreaped until cleanup to reserve its process-group ID.
+      const auto observed = child.exit_pending(DeliveryStatus::indeterminate);
+      if (!observed)
+        return abandon(observed.error(), false);
+      finished = *observed;
+    } else {
+      if (auto failure = child.update_status(DeliveryStatus::indeterminate))
+        return abandon(std::move(*failure), false);
+      finished = child.status() != ChildStatus::running;
+    }
     if (finished && exit_drain_deadline == Clock::time_point::max()) {
       exit_drain_deadline = Clock::now() + post_exit_drain;
     }
-    if (finished && child.output_closed()) {
-      break;
-    }
-    if (finished && Clock::now() >= exit_drain_deadline) {
-      child.close_output();
+    if (finished && (child.output_closed() || Clock::now() >= exit_drain_deadline)) {
+      if (descendants == DescendantPolicy::terminate) {
+        if (auto failure = cleanup_group(child, true, descendants))
+          return abandon(std::move(*failure), false);
+        publish();
+      } else {
+        child.close_output();
+      }
       break;
     }
     if (!finished && deadline.has_value() && Clock::now() >= *deadline) {
@@ -211,6 +311,7 @@ expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) 
     if (auto failure = poll_and_drain(child, boundary, DeliveryStatus::indeterminate)) {
       return abandon(std::move(*failure), false);
     }
+    publish();
   }
 
   auto capture = child.take_capture();

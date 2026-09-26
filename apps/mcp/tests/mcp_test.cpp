@@ -308,6 +308,30 @@ TEST(McpToolsTmux, SeparatesACallerMistakeFromATmuxRefusal) {
   EXPECT_FALSE(refused.error().caller_error);
 }
 
+// A name argument is a tmux target, and tmux resolves one that matches no
+// session as a prefix of a longer name instead of refusing it -- "doom"
+// answering for "doomsday". A stale or mistyped name given to kill_session
+// must report "no such session", never destroy the session it happened to
+// prefix.
+TEST(McpToolsTmux, KillSessionRefusesAPrefixInsteadOfDestroyingIt) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const auto created = server.new_session("doomsday");
+  ASSERT_TRUE(created.has_value()) << created.error().diagnostic;
+
+  const auto killed =
+      all_tools().call(server, "kill_session", Arguments{{"session", "doom"}});
+  ASSERT_FALSE(killed.has_value());
+  EXPECT_FALSE(killed.error().caller_error);
+
+  const auto sessions = server.sessions();
+  ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
+  EXPECT_TRUE(std::ranges::any_of(*sessions, [](const libtmux::Session& session) {
+    return session.name() == "doomsday";
+  }));
+}
+
 TEST(McpToolsTmux, RunsShellFramingThroughThePinnedServerEndpoint) {
   auto original = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(original.has_value()) << original.error();

@@ -318,6 +318,35 @@ def _run_python_mutation(
     return Outcome(mutation, "killed")
 
 
+def _output_tail(result: subprocess.CompletedProcess[bytes]) -> str:
+    """Return a bounded, decode-safe tail of a completed process's output.
+
+    Parameters
+    ----------
+    result : subprocess.CompletedProcess[bytes]
+        A process run with combined or separate stdout/stderr capture.
+
+    Returns
+    -------
+    str
+        The last 8192 decoded characters of stdout followed by stderr, with
+        invalid UTF-8 replaced rather than raising. Empty when both are.
+
+    Examples
+    --------
+    >>> import subprocess
+    >>> _output_tail(subprocess.CompletedProcess([], 1, b"out", b"err"))
+    'outerr'
+    >>> _output_tail(subprocess.CompletedProcess([], 0, b"", b""))
+    ''
+    """
+    return (
+        ((result.stdout or b"") + (result.stderr or b""))
+        .decode("utf-8", errors="replace")[-8192:]
+        .strip()
+    )
+
+
 def run(
     mutation: Mutation,
     repository: pathlib.Path,
@@ -405,12 +434,17 @@ def run(
         "--preset",
         preset,
         "--no-tests=error",
+        "--output-on-failure",
         "--tests-regex",
         test_regex,
     ]
     baseline = execute(test_command)
     if baseline.returncode != 0:
-        return Outcome(mutation, "not a result", "the selected tests already fail")
+        detail = "the selected tests already fail"
+        output = _output_tail(baseline)
+        if output:
+            detail += f":\n{output}"
+        return Outcome(mutation, "not a result", detail)
     if _all_selected_tests_skipped(baseline.stdout, len(selection["tests"])):
         return Outcome(
             mutation,
@@ -479,8 +513,13 @@ def run(
                 "not a result",
                 "the restoration did not reach the binary that was retested",
             )
-    if execute(test_command).returncode != 0:
-        return Outcome(mutation, "not a result", "the selected tests did not recover")
+    recovered = execute(test_command)
+    if recovered.returncode != 0:
+        detail = "the selected tests did not recover"
+        output = _output_tail(recovered)
+        if output:
+            detail += f":\n{output}"
+        return Outcome(mutation, "not a result", detail)
     return Outcome(mutation, "killed")
 
 

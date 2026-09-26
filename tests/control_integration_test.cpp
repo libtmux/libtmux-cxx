@@ -1002,6 +1002,42 @@ TEST(ControlModeConnection, ServerOwnsTheRouteAndPreservesStreamPolicy) {
   EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
 }
 
+// "=name" is tmux's exact session target, but it still splits on a "." or
+// ":" inside the name before comparing, so it cannot reach a session named
+// with either that way. control_with_options resolves such a name to its
+// session id first, which has no such split.
+//
+// tmux does not keep a requested "." verbatim on every supported release:
+// 3.2a-3.6b rewrite it to "_", and 3.7 alone refuses the name outright; only
+// 3.7a+ keep it. This asks tmux to create the session, reads back whatever
+// name it actually assigned, and anchors on that -- so the assertion holds
+// on every era, and only skips where creating the scenario is impossible.
+TEST(ControlModeConnection, ReachesASessionNamedWithADot) {
+  auto fixture = start_server(unique_name("control-dotted"));
+  ASSERT_TRUE(fixture.has_value()) << (fixture.has_value() ? "" : fixture.error());
+
+  auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+
+  auto dotted = server->new_session(unique_name("control-dotted") + ".sub");
+  if (!dotted.has_value() && dotted.error().kind == libtmux::FailureKind::refused) {
+    GTEST_SKIP() << "this tmux refuses a session name holding \".\": "
+                 << dotted.error().diagnostic;
+  }
+  ASSERT_TRUE(dotted.has_value()) << dotted.error().diagnostic;
+  const std::string actual_name{dotted->name()};
+
+  auto connected = server->control_with_options(
+      actual_name, {.tmux_binary = LIBTMUX_CONTROL_TMUX_PATH,
+                    .startup_timeout = 2s,
+                    .shutdown_timeout = 2s});
+  ASSERT_TRUE(connected.has_value())
+      << (connected.has_value() ? "" : connected.error().message);
+  auto connection = std::move(*connected);
+
+  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+}
+
 TEST(ControlModeConnection, DeliversPaneOutputOnlyWhenAskedAtConnectTime) {
   auto server = start_server(unique_name("control-output"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());

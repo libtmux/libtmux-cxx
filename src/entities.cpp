@@ -685,155 +685,16 @@ expected<void, CommandFailure> Window::kill() const {
   return effect(run({"kill-window", "-t", window_command_target(*this)}));
 }
 
-namespace {
-
-constexpr std::array kUniversalLayoutPresets{
-    std::string_view{"even-horizontal"}, std::string_view{"even-vertical"},
-    std::string_view{"main-horizontal"}, std::string_view{"main-vertical"},
-    std::string_view{"tiled"}};
-
-constexpr std::array kMirroredLayoutPresets{
-    std::string_view{"main-horizontal-mirrored"},
-    std::string_view{"main-vertical-mirrored"}};
-
-// The oldest release whose preset table includes the mirrored pair. Below it,
-// `main-v`/`main-h` apply cleanly (3.2a, 3.3a); at or above it, the same prefix
-// is ambiguous and refused rather than crashing (3.7c, master).
-constexpr Version kMirroredLayoutFloor{.major = 3, .minor = 5};
-
-bool is_universal_layout_preset(std::string_view layout) {
-  return std::ranges::find(kUniversalLayoutPresets, layout) !=
-         kUniversalLayoutPresets.end();
-}
-
-bool is_mirrored_layout_preset(std::string_view layout) {
-  return std::ranges::find(kMirroredLayoutPresets, layout) !=
-         kMirroredLayoutPresets.end();
-}
-
-// tmux's classic layout string always opens with a 4-digit lowercase-hex
-// checksum then a comma (layout-custom.c). Something in this shape reaches
-// tmux's own classic parser, which refuses a bad checksum cleanly on every
-// supported version (measured by hand on 3.2a, 3.3a, 3.7c and master).
-bool looks_like_classic_layout(std::string_view layout) {
-  if (layout.size() < 5 || layout[4] != ',') {
-    return false;
-  }
-  return std::ranges::all_of(layout.substr(0, 4), [](char digit) {
-    return (digit >= '0' && digit <= '9') || (digit >= 'a' && digit <= 'f');
-  });
-}
-
-// tmux resolves a preset name by unique prefix (`layout_set_lookup`,
-// layout-set.c), never through the layout-string parser 3.3/3.3a crash on. A
-// prefix naming only a mirrored preset counts once the connected version has
-// it.
-expected<std::vector<std::string_view>, CommandFailure>
-resolve_layout_preset_prefix(const Window& window, std::string_view layout) {
-  std::vector<std::string_view> candidates;
-  for (const std::string_view preset : kUniversalLayoutPresets) {
-    if (preset.starts_with(layout)) {
-      candidates.push_back(preset);
-    }
-  }
-  const bool mirrored_candidate =
-      std::ranges::any_of(kMirroredLayoutPresets, [layout](std::string_view preset) {
-        return preset.starts_with(layout);
-      });
-  if (mirrored_candidate) {
-    const auto server_handle = window.server();
-    if (!server_handle.has_value()) {
-      return unexpected(server_handle.error());
-    }
-    const auto version = server_handle->tmux_version();
-    if (!version.has_value()) {
-      return unexpected(version.error());
-    }
-    if (*version >= kMirroredLayoutFloor) {
-      for (const std::string_view preset : kMirroredLayoutPresets) {
-        if (preset.starts_with(layout)) {
-          candidates.push_back(preset);
-        }
-      }
-    }
-  }
-  return candidates;
-}
-
-} // namespace
-
 expected<void, CommandFailure> Window::select_layout(std::string_view layout) const {
-  if (layout.empty()) {
-    return unexpected(rejected("layout is empty"));
-  }
-  // A leading `-` (tmux's own undo flag `-o` included), a name tmux does not
-  // know, or an incomplete layout string crashes tmux 3.3 and 3.3a outright
-  // rather than being refused (measured by hand); every other supported
-  // version refuses it cleanly instead. `--` alone is not the guard: on 3.3
-  // and 3.3a it turns a bad value into exactly the shape that crashes them.
-  // A universal preset or a classic-shaped layout is safe on every
-  // supported version without asking; a mirrored preset or a JSON layout
-  // needs the connected version checked first, because whether either
-  // belongs in that safe set depends on it.
-  if (!is_universal_layout_preset(layout) && !looks_like_classic_layout(layout)) {
-    const bool mirrored = is_mirrored_layout_preset(layout);
-    const bool json = layout.starts_with('{');
-    if (!mirrored && !json) {
-      const auto prefix = resolve_layout_preset_prefix(*this, layout);
-      if (!prefix.has_value()) {
-        return unexpected(prefix.error());
-      }
-      if (prefix->size() > 1) {
-        std::string candidates;
-        for (std::size_t index = 0; index < prefix->size(); ++index) {
-          if (index != 0) {
-            candidates += ", ";
-          }
-          candidates += (*prefix)[index];
-        }
-        return unexpected(
-            rejected("\"" + std::string{layout} +
-                     "\" could mean more than one layout preset: " + candidates));
-      }
-      if (prefix->empty()) {
-        return unexpected(
-            rejected("\"" + std::string{layout} +
-                     "\" is neither a layout preset nor a saved layout description"));
-      }
-      // Exactly one candidate: safe to dispatch below using the caller's
-      // own spelling. tmux resolves the same unique prefix itself
-      // (layout_set_lookup), so nothing here needs to rewrite it to the
-      // resolved full name.
-    } else {
-      const auto server_handle = server();
-      if (!server_handle.has_value()) {
-        return unexpected(server_handle.error());
-      }
-      const auto version = server_handle->tmux_version();
-      if (!version.has_value()) {
-        return unexpected(version.error());
-      }
-      const Version floor =
-          mirrored ? Version{.major = 3, .minor = 5} : Version{.major = 3, .minor = 8};
-      if (*version < floor) {
-        return unexpected(rejected(
-            "this server's tmux is older than " +
-            std::string{mirrored ? "3.5" : "3.8"} + "; a " +
-            std::string{mirrored ? "mirrored preset" : "JSON layout"} +
-            " needs at least that, and tmux 3.3/3.3a crash outright on a layout "
-            "they do not recognise"));
-      }
-    }
-  }
   if (auto refusal = refused(ServerFeature::captured_mutation,
                              "psmux cannot safely target select-layout")) {
     return unexpected(std::move(*refusal));
   }
-  // `--` before the layout, like every other user-text command in this file:
-  // without it, a leading dash is a flag rather than data, and `-o` in
-  // particular is tmux's own undo flag for this command. The check above is
-  // the actual guard against a hostile or malformed value; this is defence
-  // in depth once a value has already been accepted.
+  if (!backend())
+    return unexpected(detail::disconnected());
+  const std::array requests{LayoutRequest{layout}};
+  if (auto checked = detail::validate_layouts(*backend(), requests, false); !checked)
+    return unexpected(std::move(checked.error().cause));
   return effect(run({"select-layout", "-t", window_command_target(*this), "--",
                      std::string{layout}}));
 }

@@ -31,6 +31,7 @@ FailureKind kind_of(ProcessError::Kind kind) noexcept {
   case ProcessError::Kind::pre_exec:
     return FailureKind::pre_exec;
   case ProcessError::Kind::pipe:
+  case ProcessError::Kind::output_limit:
     return FailureKind::pipe;
   case ProcessError::Kind::timeout:
     return FailureKind::timeout;
