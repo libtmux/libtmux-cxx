@@ -1,6 +1,6 @@
 {
   "name": "libtmux",
-  "version-semver": "0.1.0-alpha.10",
+  "version-semver": "0.1.0-alpha.11",
   "maintainers": "Tony Narlock <tony@git-pull.com>",
   "description": [
     "A typed C++ interface to the tmux terminal multiplexer.",
