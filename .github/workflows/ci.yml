@@ -842,10 +842,11 @@ jobs:
       # The same Sphinx build libtmux.org serves, run over the XML above. A
       # declaration Sphinx cannot parse is not a Doxygen warning: it reaches
       # the page as unparsed text with no anchor, and only this lane sees it.
+      # Breathe 5.0.0 cannot find the header a `doxygenfile` directive names.
       - name: Check the reference renders
         run: |
           cd docs
-          uv run --no-project --with sphinx --with breathe --with furo \
+          uv run --no-project --with sphinx --with breathe==4.36.0 --with furo \
             sphinx-build -q -W -b dirhtml \
             -D breathe_projects.cxx="${{ runner.temp }}/doxygen/xml" \
             -d "${{ runner.temp }}/doctrees" . "${{ runner.temp }}/reference"
