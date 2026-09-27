@@ -1,3 +1,12 @@
+<!-- libtmux-logo -->
+<p align="center">
+  <picture>
+    <source srcset="../../assets/workspace.svg" type="image/svg+xml">
+    <img src="../../assets/workspace.png" width="128" height="128" alt="libtmux for C++ workspace">
+  </picture>
+</p>
+<!-- /libtmux-logo -->
+
 # tmux-workspace
 
 This optional C++ application manages tmux workspaces using CLI11, yaml-cpp
