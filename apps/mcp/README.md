@@ -1,3 +1,12 @@
+<!-- libtmux-logo -->
+<p align="center">
+  <picture>
+    <source srcset="../../assets/mcp.svg" type="image/svg+xml">
+    <img src="../../assets/mcp.png" width="128" height="128" alt="libtmux for C++ MCP">
+  </picture>
+</p>
+<!-- /libtmux-logo -->
+
 # libtmux-mcp-server
 
 A [Model Context Protocol](https://modelcontextprotocol.io) server for
