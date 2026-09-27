@@ -3,3 +3,8 @@
 self-hosted-runner:
   labels:
     - macos-15-intel
+paths:
+  .github/workflows/docs.yml:
+    ignore:
+      # GitHub accepts concurrency.queue; actionlint does not know it yet.
+      - '^unexpected key "queue" for "concurrency" section\. expected one of "cancel-in-progress", "group"$'
