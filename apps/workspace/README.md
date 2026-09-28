@@ -7,6 +7,8 @@
 </p>
 <!-- /libtmux-logo -->
 
+<div align="center">
+
 # tmux-workspace
 
 This optional C++ application manages tmux workspaces using CLI11, yaml-cpp
@@ -14,6 +16,8 @@ and nlohmann JSON. The implementation is partial. Core libtmux remains free of
 these dependencies. The pinned CLI11 fallback builds as a static library to
 reduce repeated CLI compilation. An installed CLI11 package keeps its supplied
 compiled or header-only form.
+
+</div>
 
 It builds workspaces through the builder in `examples/workspace/` rather than
 through one of its own, so a program calling that builder and this command

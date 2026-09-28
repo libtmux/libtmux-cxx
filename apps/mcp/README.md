@@ -7,12 +7,16 @@
 </p>
 <!-- /libtmux-logo -->
 
+<div align="center">
+
 # libtmux-mcp-server
 
 A [Model Context Protocol](https://modelcontextprotocol.io) server for
 [tmux](https://github.com/tmux/tmux), built on the C++
 [libtmux](../../README.md). It speaks newline-delimited JSON-RPC over stdio and
 ships as one native executable.
+
+</div>
 
 This is an alpha interface. The same startup-frozen 45-tool manifest is
 advertised on POSIX and native Windows. Psmux support remains
