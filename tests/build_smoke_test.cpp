@@ -24,21 +24,12 @@
 #endif
 #endif
 
-#if defined(LIBTMUX_USE_TL_EXPECTED)
-#include <tl/expected.hpp>
-#else
 #include <expected>
-#endif
 
 TEST(BuildSmoke, TheExpectedBackendIsTheOneThisStandardSelects) {
-#if defined(LIBTMUX_USE_TL_EXPECTED)
-  static_assert(std::is_same_v<libtmux::expected<int, int>, tl::expected<int, int>>,
-                "the C++20 configuration selects the compatibility type");
-#else
   static_assert(__cpp_lib_expected >= 202202L);
   static_assert(std::is_same_v<libtmux::expected<int, int>, std::expected<int, int>>,
-                "the C++23 configuration selects the standard type");
-#endif
+                "the package selects the standard type");
 
   libtmux::expected<int, int> value{42};
   EXPECT_EQ(*value, 42);
@@ -52,11 +43,7 @@ TEST(BuildSmoke, TheAbiNamespaceNamesTheBackend) {
   // Spelled through the inline namespace, which is how an object built one way
   // fails to link against a library built the other rather than reading the
   // wrong bytes.
-#if defined(LIBTMUX_USE_TL_EXPECTED)
-  const libtmux::v2_cxx20::Version version{.major = 3, .minor = 4};
-#else
   const libtmux::v2_cxx23::Version version{.major = 3, .minor = 4};
-#endif
   EXPECT_EQ(version.major, 3U);
   EXPECT_TRUE(libtmux::is_supported(version));
 }

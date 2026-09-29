@@ -36,7 +36,6 @@
 #include <charconv>
 #include <chrono>
 #include <cstddef>
-#include <format>
 #include <functional>
 #include <iosfwd>
 #include <memory>
@@ -1310,6 +1309,7 @@ template <> struct std::hash<libtmux::Client> {
   [[nodiscard]] std::size_t operator()(const libtmux::Client& value) const noexcept;
 };
 
+#if defined(LIBTMUX_HAS_STD_FORMAT)
 /// An entity formats as it prints.
 //
 // Inheriting the string formatter keeps fill, alignment and width working, so
@@ -1341,3 +1341,4 @@ template <> struct std::formatter<libtmux::Client> : std::formatter<std::string>
     return std::formatter<std::string>::format(libtmux::to_string(value), context);
   }
 };
+#endif

@@ -14,7 +14,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
-#include <format>
 #include <functional>
 #include <initializer_list>
 #include <optional>
@@ -23,6 +22,17 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+
+// `<format>` arrived with libstdc++ 13, so a toolchain older than that has no
+// header to include. The formatters below are the only thing here that needs
+// it, and everything else works without them. Tested with `__has_include`
+// rather than `__cpp_lib_format`, which libc++ 18 leaves undefined.
+#if defined(__has_include)
+#if __has_include(<format>)
+#include <format>
+#define LIBTMUX_HAS_STD_FORMAT 1
+#endif
+#endif
 
 LIBTMUX_NAMESPACE_BEGIN
 
@@ -319,6 +329,7 @@ public:
 
 LIBTMUX_NAMESPACE_END
 
+#if defined(LIBTMUX_HAS_STD_FORMAT)
 /// Formatting a failure is how it reaches a log line, so the type every call
 // can return knows how to write itself.
 //
@@ -334,3 +345,4 @@ struct std::formatter<libtmux::CommandFailure> : std::formatter<std::string> {
     return std::formatter<std::string>::format(libtmux::to_string(failure), context);
   }
 };
+#endif

@@ -10,7 +10,6 @@
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
-#include <expected>
 #include <filesystem>
 #include <mutex>
 #include <optional>

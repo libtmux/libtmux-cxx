@@ -11,7 +11,6 @@
 #include "libtmux/expected.hpp"
 
 #include <chrono>
-#include <expected>
 #include <filesystem>
 #include <memory>
 #include <optional>

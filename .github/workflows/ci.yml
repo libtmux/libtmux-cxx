@@ -133,7 +133,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        standard: [20, 23]
+        standard: [23]
     # The preset intentionally targets Visual Studio 2022, and this image also
     # keeps WSLv1 enabled for the interop gate below.
     runs-on: windows-2022
@@ -517,34 +517,6 @@ jobs:
       - name: Run the operations benchmark
         run: ./build/cxx-dev/benchmarks/libtmux_operations_bench
 
-  standards:
-    # The C++20 configuration substitutes a different expected and carries its
-    # own ABI namespace. Until this lane existed, the only thing that had ever
-    # been built against it was one example program.
-
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - uses: hendrikmuhs/ccache-action@f09c25b45002a07be2955cbe52e8cee55643f89d # v1.2.24
-        with:
-          key: ${{ github.job }}
-          max-size: 400M
-
-      - name: Install the pinned toolchain and tmux
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang-18 libc++-18-dev libc++abi-18-dev ninja-build tmux
-          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
-          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
-
-      - name: Build and test the C++20 configuration
-        run: |
-          cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache --preset cxx20
-          cmake --build --preset cxx20
-          ctest --preset cxx20 --no-tests=error --output-on-failure
-
   fuzz:
     # Four parsers read input the library does not choose. A short run over the
     # checked-in corpus is the gate; it found a real ambiguity between an
@@ -561,23 +533,19 @@ jobs:
           key: ${{ github.job }}
           max-size: 400M
 
-      - name: Install the pinned toolchain
+      - name: Install clang 19, whose libstdc++ pairing has std::expected
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang-18 ninja-build
-          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
-          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
+          sudo apt-get install -y clang-19 ninja-build
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-19 100
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-19 100
 
       - name: Fuzz the parsers
         run: |
-          # The fuzzer runtime this toolchain ships is built against libstdc++,
-          # which has no usable <expected> here, so the fuzzers build in the
-          # C++20 configuration over the pinned compatibility type.
           cmake -S . -B build/fuzz -G Ninja \
             -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
-            -DLIBTMUX_CXX_STANDARD=20 -DLIBTMUX_BUILD_FUZZERS=ON \
-            -DLIBTMUX_BUILD_TESTS=OFF -DLIBTMUX_BUILD_EXAMPLES=OFF \
-            -DLIBTMUX_FETCH_DEPS=ON
+            -DLIBTMUX_BUILD_FUZZERS=ON \
+            -DLIBTMUX_BUILD_TESTS=OFF -DLIBTMUX_BUILD_EXAMPLES=OFF
           cmake --build build/fuzz
           ctest --test-dir build/fuzz --no-tests=error --output-on-failure
 
@@ -623,7 +591,7 @@ jobs:
       matrix:
         # Address and thread sanitizers need separate build trees; enabling
         # both at once is rejected at configure time.
-        sanitizer: [cxx-sanitize, cxx-sanitize-cxx20, cxx-tsan]
+        sanitizer: [cxx-sanitize, cxx-tsan]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -890,7 +858,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        standard: ['23', '20']
+        standard: ['23']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -936,12 +904,7 @@ jobs:
           COMP_CWORD=2
           _tmux_workspace_complete
           test "${COMPREPLY[*]}" = tmuxinator
-          if [ '${{ matrix.standard }}' = 20 ]; then
-            test -f build/prefix/include/tl/expected.hpp
-          else
-            test ! -e build/prefix/include/tl/expected.hpp
-          fi
-          test ! -e build/prefix/share/cmake/tl-expected
+          test ! -e build/prefix/include/tl/expected.hpp
           cmake -S examples/consume -B build/consume \
             -DCMAKE_PREFIX_PATH="$PWD/build/prefix" \
             -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CXX_FLAGS=-stdlib=libc++
@@ -1126,7 +1089,6 @@ jobs:
       - windows
       - toolchains
       - benchmarks
-      - standards
       - fuzz
       - locale
       - sanitizers

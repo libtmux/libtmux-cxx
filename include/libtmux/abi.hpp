@@ -13,11 +13,7 @@
 
 #include "libtmux/expected.hpp"
 
-#if defined(LIBTMUX_USE_TL_EXPECTED)
-#define LIBTMUX_ABI_NAMESPACE v2_cxx20
-#else
 #define LIBTMUX_ABI_NAMESPACE v2_cxx23
-#endif
 
 #define LIBTMUX_NAMESPACE_BEGIN                                                        \
   namespace libtmux {                                                                  \

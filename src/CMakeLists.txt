@@ -60,22 +60,6 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   endif()
 endif()
 
-if(LIBTMUX_CXX_STANDARD STREQUAL "20")
-  include("${PROJECT_SOURCE_DIR}/cmake/TlExpected.cmake")
-  libtmux_resolve_tl_expected(LIBTMUX_TL_EXPECTED_INCLUDE LIBTMUX_TL_EXPECTED_INSTALL)
-  # Never linked, only included. tl::expected is header-only, so linking it
-  # adds nothing but would put the resolved target in our exported link
-  # interface, where a consumer cannot resolve it.
-  target_include_directories(
-    libtmux PUBLIC $<BUILD_INTERFACE:${LIBTMUX_TL_EXPECTED_INCLUDE}>)
-  target_compile_definitions(libtmux PUBLIC LIBTMUX_USE_TL_EXPECTED)
-  if(LIBTMUX_INSTALL AND LIBTMUX_TL_EXPECTED_INSTALL)
-    # Only the copy this build fetched. One the system already provides is
-    # already installed, and copying it under this prefix would shadow it.
-    install(DIRECTORY "${LIBTMUX_TL_EXPECTED_INSTALL}"
-            DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
-  endif()
-endif()
 # The full version, prerelease tag and all — `PROJECT_VERSION` has had the tag
 # stripped so CMake would accept it, and a library that reports "0.1.0" while
 # it is an alpha is telling the truth to nobody.
@@ -116,15 +100,7 @@ endif()
 if(LIBTMUX_INSTALL)
   include(CMakePackageConfigHelpers)
 
-  # A consumer reaching this through pkg-config gets no CMake target and so no
-  # `target_compile_definitions`. The C++20 build selects a different ABI
-  # namespace through `LIBTMUX_USE_TL_EXPECTED`, so a translation unit that
-  # does not define it links against symbols that are not there — the pc file
-  # carries it rather than leaving that to be discovered at link time.
   set(LIBTMUX_PC_CFLAGS "-std=c++${LIBTMUX_CXX_STANDARD}")
-  if(LIBTMUX_CXX_STANDARD STREQUAL "20")
-    string(APPEND LIBTMUX_PC_CFLAGS " -DLIBTMUX_USE_TL_EXPECTED")
-  endif()
   configure_file(
     "${PROJECT_SOURCE_DIR}/cmake/libtmux.pc.in"
     "${CMAKE_CURRENT_BINARY_DIR}/libtmux.pc" @ONLY)

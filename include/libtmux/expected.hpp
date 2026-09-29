@@ -3,26 +3,18 @@
 // The one C++23 library facility this package's public surface needs.
 //
 // Recoverable failure is reported by value, not by exception, which means
-// `std::expected`. That type arrived in C++23, so a toolchain shipping a C++20
-// standard library cannot provide it. Rather than fork the API, the C++20 build
-// substitutes the reference implementation the standard type was modelled on.
-//
-// Callers write `libtmux::expected` and never name either underlying type, so
-// the same source compiles under both.
+// `std::expected`. Callers write `libtmux::expected` and never name the
+// standard type, so a later change of representation stays source compatible.
 
-#if defined(LIBTMUX_USE_TL_EXPECTED)
-#include <tl/expected.hpp>
-#else
 #include <expected>
 // libstdc++ defines `std::expected` only when the compiler advertises the
-// concepts support its header is written against, which clang does not when it
-// drives libstdc++ — the pairing a distribution gives you by default. Without
-// this the first thing a builder sees is a template error inside this header,
-// which names neither the toolchain nor the way out.
+// concepts support its header is written against, which clang before 19 does
+// not when it drives libstdc++. Without this the first thing a builder sees is
+// a template error inside this header, which names neither the toolchain nor
+// the way out.
 #if !defined(__cpp_lib_expected)
 #error                                                                                 \
-    "libtmux needs std::expected, and this standard library does not provide it. Build with libc++ (-stdlib=libc++), with GCC, or configure -DLIBTMUX_CXX_STANDARD=20 to use tl::expected instead."
-#endif
+    "libtmux needs std::expected, and this standard library does not provide it. Build with libc++ (-stdlib=libc++), with GCC 13 or newer, or with clang 19 or newer."
 #endif
 
 #include <type_traits>
@@ -30,54 +22,20 @@
 
 namespace libtmux {
 
-#if defined(LIBTMUX_USE_TL_EXPECTED)
-
-/// A value or the reason there is not one.
-///
-/// `std::expected` where the standard library has it, and a drop-in otherwise,
-/// so a caller writes the same code either way. Nothing in this library throws
-/// to report a tmux failure.
-template <typename Value, typename Error> using expected = tl::expected<Value, Error>;
-
-#else
-
-/// A value or the reason there is not one.
-///
-/// `std::expected` where the standard library has it, and a drop-in otherwise,
-/// so a caller writes the same code either way. Nothing in this library throws
-/// to report a tmux failure.
+/// A value or the reason there is not one. An alias of `std::expected`.
 template <typename Value, typename Error> using expected = std::expected<Value, Error>;
 
-#endif
-
-// The unexpected type itself, for the rare declaration that names it.
-#if defined(LIBTMUX_USE_TL_EXPECTED)
-/// The error side of `expected`, named for the rare declaration that has to
-/// spell it. Returning one is how a function reports a failure.
-template <typename Error> using unexpected_t = tl::unexpected<Error>;
-#else
 /// The error side of `expected`, named for the rare declaration that has to
 /// spell it. Returning one is how a function reports a failure.
 template <typename Error> using unexpected_t = std::unexpected<Error>;
-#endif
 
-/// What `value()` throws when there is none. Named here so a caller who wants an
-/// exception at a boundary can catch it in either standard's build.
-#if defined(LIBTMUX_USE_TL_EXPECTED)
-template <typename Error> using bad_expected_access = tl::bad_expected_access<Error>;
-#else
+/// What `value()` throws when there is none.
 template <typename Error> using bad_expected_access = std::bad_expected_access<Error>;
-#endif
 
 /// A factory rather than an alias: an alias template cannot deduce its argument,
 /// so `unexpected(error)` would stop compiling at every call site.
 template <typename Error> [[nodiscard]] constexpr auto unexpected(Error&& error) {
-  using Decayed = std::decay_t<Error>;
-#if defined(LIBTMUX_USE_TL_EXPECTED)
-  return tl::unexpected<Decayed>(std::forward<Error>(error));
-#else
-  return std::unexpected<Decayed>(std::forward<Error>(error));
-#endif
+  return std::unexpected<std::decay_t<Error>>(std::forward<Error>(error));
 }
 
 } // namespace libtmux
