@@ -1200,6 +1200,19 @@ at a time and reports any that nothing notices.
 [libtmux-mcp](https://github.com/tmux-python/libtmux-mcp) ·
 [The Tao of tmux](https://leanpub.com/the-tao-of-tmux)
 
+## Attribution
+
+Please use the following BibTeX template to cite libtmux-cxx in scientific discourse:
+
+```bibtex
+@misc{libtmux-cxx,
+   author = {Tony Narlock},
+   year = {2026},
+   note = {https://libtmux.org/en/cxx/},
+   title = {libtmux-cxx: C++ wrapper for tmux}
+}
+```
+
 ## Contributing
 
 [CONTRIBUTING.md](.github/CONTRIBUTING.md) covers getting a build, what a
