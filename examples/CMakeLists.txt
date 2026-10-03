@@ -48,6 +48,8 @@ foreach(example 01-tour 02-workspace 03-filter 04-errors 05-readme 06-streaming)
     example.${example} PROPERTIES LABELS "example;real-tmux" TIMEOUT 60)
 endforeach()
 
+add_subdirectory(api)
+
 # A separate project; see `tests/README.md`.
 if(LIBTMUX_EXAMPLES_BUILD_TESTS OR TARGET GTest::gtest_main)
   add_subdirectory(tests)

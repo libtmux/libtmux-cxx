@@ -41,6 +41,12 @@ That is the only way to prove an example compiles against what a reader would
 actually install, rather than against a build tree with this repository's
 include paths and warning flags leaking into it.
 
+## Complete API programs
+
+[`api/`](api/README.md) contains standalone programs for construction, listings,
+relations, creation, filtering, input, and capture. Each has its own entry point
+and error handling and can be built against an installed package.
+
 ## The short ones
 
 | Example | Reads as | Shows |

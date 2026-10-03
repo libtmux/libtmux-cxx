@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "projectFile": "examples/api/project/CMakeLists.txt",
+  "programs": [
+    {
+      "id": "server",
+      "title": "Connect to an owned server",
+      "description": "Construct a Server handle for an explicit socket. Construction sends no command; sessions() reads the running server. The fixture controls daemon lifetime, while copies of Server share the connection.",
+      "file": "examples/api/server.cpp",
+      "symbols": [
+        "libtmux::Server",
+        "libtmux::Server::at_socket_path"
+      ],
+      "expectedOutput": "Connected to the private api session.\n",
+      "failureCommand": "list-sessions"
+    },
+    {
+      "id": "listings",
+      "title": "List server objects",
+      "description": "Read independent snapshots of every session, window, pane, and client. Iterating these vectors makes no further tmux calls. The detached fixture has one session, one window, one pane, and no attached clients.",
+      "file": "examples/api/listings.cpp",
+      "symbols": [
+        "libtmux::Server::sessions",
+        "libtmux::Server::windows",
+        "libtmux::Server::panes",
+        "libtmux::Server::clients"
+      ],
+      "expectedOutput": "sessions=1 windows=1 panes=1 clients=0\n",
+      "failureCommand": "list-sessions"
+    },
+    {
+      "id": "relations",
+      "title": "Traverse a session and its children",
+      "description": "List windows and panes within one session, then follow a pane back to its owning window and session. Each relation method performs a new read; the original entity still holds its earlier snapshot.",
+      "file": "examples/api/relations.cpp",
+      "symbols": [
+        "libtmux::Session",
+        "libtmux::Window",
+        "libtmux::Pane",
+        "libtmux::Session::windows",
+        "libtmux::Session::panes",
+        "libtmux::Window::panes",
+        "libtmux::Pane::window",
+        "libtmux::Pane::session"
+      ],
+      "expectedOutput": "api session -> one window -> one pane; owners match.\n",
+      "failureCommand": "list-panes"
+    },
+    {
+      "id": "new-session",
+      "title": "Create a detached session",
+      "description": "Create a detached session with a named first window, then read back its name and owner. The cat process keeps the first pane alive until fixture cleanup. A fresh listing sees both the fixture session and the new session.",
+      "file": "examples/api/new-session.cpp",
+      "symbols": [
+        "libtmux::Server::new_session",
+        "libtmux::NewSessionOptions"
+      ],
+      "expectedOutput": "Created work with the main window; two sessions are available.\n",
+      "failureCommand": "new-session"
+    },
+    {
+      "id": "new-window-pane",
+      "title": "Create a window and split a pane",
+      "description": "Create a detached window, split it side by side, and verify both panes belong to it. The cat processes keep each pane alive until fixture cleanup. Creation leaves the session selection unchanged because focus defaults to false.",
+      "file": "examples/api/new-window-pane.cpp",
+      "symbols": [
+        "libtmux::Session::new_window",
+        "libtmux::Pane::split",
+        "libtmux::NewWindowOptions",
+        "libtmux::SplitOptions"
+      ],
+      "expectedOutput": "Created editor with two panes; the active window is unchanged.\n",
+      "failureCommand": "split-window"
+    },
+    {
+      "id": "query",
+      "title": "Filter snapshots and require one match",
+      "description": "Filter a window snapshot with typed fields and standard ranges. exactly_one_owned copies a unique match, so the temporary view is safe. Missing and ambiguous matches have different CardinalityError values; these lookups make no tmux calls.",
+      "file": "examples/api/query.cpp",
+      "symbols": [
+        "libtmux::matching",
+        "libtmux::exactly_one",
+        "libtmux::exactly_one_owned",
+        "libtmux::CardinalityError"
+      ],
+      "expectedOutput": "Selected editor; two matches; missing and ambiguous are distinct.\n",
+      "failureCommand": "list-windows"
+    },
+    {
+      "id": "input-capture",
+      "title": "Send input and capture confirmed output",
+      "description": "Start a small shell reader with terminal echo disabled, wait for readiness, send one line, and capture its response. The two bounded waits prevent startup races and confirm output from the program. The final cat keeps the pane available for capture until cleanup.",
+      "file": "examples/api/input-capture.cpp",
+      "symbols": [
+        "libtmux::Pane::send_text",
+        "libtmux::Pane::send_line",
+        "libtmux::Pane::capture",
+        "libtmux::Pane::wait_for_text",
+        "libtmux::capture_lines"
+      ],
+      "expectedOutput": "got:hello C++\n",
+      "failureCommand": "capture-pane"
+    }
+  ]
+}
