@@ -85,8 +85,8 @@ template <ReferenceRange Range>
 }
 
 /// Copies referenced elements; moves when an iterator yields an rvalue. A
-// temporary view over an lvalue container therefore leaves that container intact.
-// Owning the element does not extend storage borrowed by its own members.
+/// temporary view over an lvalue container therefore leaves that container intact.
+/// Owning the element does not extend storage borrowed by its own members.
 template <std::ranges::input_range Range>
   requires std::constructible_from<std::ranges::range_value_t<Range>,
                                    std::ranges::range_reference_t<Range>>
@@ -100,11 +100,11 @@ first_owned(Range&& range) {
 }
 
 /// A forward range's iterator can be copied and advanced independently of the
-// original, so a second element rules the range out before the first is
-// materialized. A single-pass range (a stream, a generator) shares mutable
-// state between copies instead, so it has no way to look ahead: the first
-// element must be materialized before the range can be advanced to check for
-// a second, and an error there still consumes it.
+/// original, so a second element rules the range out before the first is
+/// materialized. A single-pass range (a stream, a generator) shares mutable
+/// state between copies instead, so it has no way to look ahead: the first
+/// element must be materialized before the range can be advanced to check for
+/// a second, and an error there still consumes it.
 template <std::ranges::input_range Range>
   requires std::constructible_from<std::ranges::range_value_t<Range>,
                                    std::ranges::range_reference_t<Range>> &&

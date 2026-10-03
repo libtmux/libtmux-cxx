@@ -49,22 +49,22 @@ namespace detail {
 } // namespace detail
 
 /// What a caller-supplied transport tells the library about itself.
-//
-// `implementation` answers what a caller may rely on, and only that. Leaving it
-// `unknown` makes `capabilities().supports(...)` answer no for every feature —
-// the library will not promise what it cannot recognise — but it does not stop
-// a typed call: `refuses` asks a separate question from `supports` rather than
-// its negation, so that a transport reaching a real tmux is not blocked for
-// being unfamiliar. Name `tmux` when the executor really does reach a POSIX
-// tmux server, so a caller asking what it may rely on gets a useful answer.
+///
+/// `implementation` answers what a caller may rely on, and only that. Leaving it
+/// `unknown` makes `capabilities().supports(...)` answer no for every feature —
+/// the library will not promise what it cannot recognise — but it does not stop
+/// a typed call: `refuses` asks a separate question from `supports` rather than
+/// its negation, so that a transport reaching a real tmux is not blocked for
+/// being unfamiliar. Name `tmux` when the executor really does reach a POSIX
+/// tmux server, so a caller asking what it may rely on gets a useful answer.
 struct ExecutorOptions {
   ServerImplementation implementation{ServerImplementation::unknown};
   /// What `Server::socket_path()` reports. Informational; the library never
-  // resolves it, because the executor has already decided where it is talking.
+  /// resolves it, because the executor has already decided where it is talking.
   std::string socket_path{};
   /// The tmux this transport speaks to. Absent asks the executor by running
-  // `-V`, which a transport that only speaks tmux subcommands cannot answer —
-  // such an executor names the version here instead.
+  /// `-V`, which a transport that only speaks tmux subcommands cannot answer —
+  /// such an executor names the version here instead.
   std::optional<Version> version{};
 };
 

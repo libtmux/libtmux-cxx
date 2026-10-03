@@ -95,7 +95,7 @@ struct CommandFailure {
 };
 
 /// One line naming what happened, what tmux said, and — through the delivery
-// status — whether the call is safe to repeat.
+/// status — whether the call is safe to repeat.
 [[nodiscard]] inline std::string to_string(const CommandFailure& failure) {
   std::string text{to_string(failure.kind)};
   if (!failure.diagnostic.empty()) {
@@ -259,47 +259,47 @@ struct ExecutionPolicy {
   /// Absent leaves the transport's own bound, which is one megabyte.
   std::optional<std::size_t> output_limit{};
   /// Which tmux to run. A bare name is resolved through `PATH`, as tmux's own
-  // documentation assumes; a path containing a separator is used as given.
-  //
-  // Naming it is how a caller stops `PATH` deciding: a hermetic build, a
-  // pinned version under test, or a wrapper that reaches tmux on another
-  // machine. It rides the policy rather than the call because a Server's
-  // connection is immutable, and because a handle that changed which tmux it
-  // meant between two calls would make its own entities disagree.
-  //
-  // `Server::control` passes this to the connection it opens, so both
-  // transports run the same executable unless the caller overrides it in
-  // `ConnectionOptions`.
+  /// documentation assumes; a path containing a separator is used as given.
+  ///
+  /// Naming it is how a caller stops `PATH` deciding: a hermetic build, a
+  /// pinned version under test, or a wrapper that reaches tmux on another
+  /// machine. It rides the policy rather than the call because a Server's
+  /// connection is immutable, and because a handle that changed which tmux it
+  /// meant between two calls would make its own entities disagree.
+  ///
+  /// `Server::control` passes this to the connection it opens, so both
+  /// transports run the same executable unless the caller overrides it in
+  /// `ConnectionOptions`.
   std::filesystem::path tmux_binary{"tmux"};
 };
 
 /// A transport a caller supplies.
-//
-// `BackendKind::custom` named this possibility from the first release, but
-// nothing implemented it: the interface a backend had to satisfy lived in the
-// library's private headers, so the only reachable transport was the one that
-// launches a subprocess per command. This is the seam that makes the name
-// true.
-//
-// One method, deliberately. Everything else a backend does — routing an entity
-// command through its owning psmux session, proving a session belongs,
-// preparing an attach argv — is either psmux's problem or the library's, and
-// freezing it here would make a private arrangement permanent. What a
-// transport owes is an answer to one command; the library supplies the rest
-// and asks this for the tmux version too, by running `-V` through it.
-//
-// `run` is const and may be called from any thread, because a `Server` is
-// copyable across threads and shares one executor. An implementation that
-// keeps a connection or a buffer synchronises itself.
-//
-// Returning the command's standard output is the whole contract: a listing
-// answers its rows, a mutation answers whatever tmux printed, and a failure
-// answers `CommandFailure` rather than throwing.
-//
-// A batch arrives here too, as one request whose argv carries `;` between the
-// grouped commands — there is no second method to implement, but the
-// separators must reach tmux as they are. A transport that interprets or drops
-// them turns one fail-fast group into something else without saying so.
+///
+/// `BackendKind::custom` named this possibility from the first release, but
+/// nothing implemented it: the interface a backend had to satisfy lived in the
+/// library's private headers, so the only reachable transport was the one that
+/// launches a subprocess per command. This is the seam that makes the name
+/// true.
+///
+/// One method, deliberately. Everything else a backend does — routing an entity
+/// command through its owning psmux session, proving a session belongs,
+/// preparing an attach argv — is either psmux's problem or the library's, and
+/// freezing it here would make a private arrangement permanent. What a
+/// transport owes is an answer to one command; the library supplies the rest
+/// and asks this for the tmux version too, by running `-V` through it.
+///
+/// `run` is const and may be called from any thread, because a `Server` is
+/// copyable across threads and shares one executor. An implementation that
+/// keeps a connection or a buffer synchronises itself.
+///
+/// Returning the command's standard output is the whole contract: a listing
+/// answers its rows, a mutation answers whatever tmux printed, and a failure
+/// answers `CommandFailure` rather than throwing.
+///
+/// A batch arrives here too, as one request whose argv carries `;` between the
+/// grouped commands — there is no second method to implement, but the
+/// separators must reach tmux as they are. A transport that interprets or drops
+/// them turns one fail-fast group into something else without saying so.
 class CommandExecutor {
 public:
   CommandExecutor() = default;
@@ -310,8 +310,8 @@ public:
   virtual ~CommandExecutor() = default;
 
   /// Absent timeout means the caller named none; absent limit means the same.
-  // An implementation that cannot bound itself should refuse rather than wait
-  // forever, the way every transport here already does.
+  /// An implementation that cannot bound itself should refuse rather than wait
+  /// forever, the way every transport here already does.
   [[nodiscard]] virtual expected<std::string, CommandFailure>
   run(const CommandRequest& command, std::optional<std::chrono::milliseconds> timeout,
       std::optional<std::size_t> output_limit) const = 0;
@@ -320,13 +320,13 @@ public:
 LIBTMUX_NAMESPACE_END
 
 /// Formatting a failure is how it reaches a log line, so the type every call
-// can return knows how to write itself.
-//
-// Inheriting the string formatter keeps fill, alignment and width working, so
-// `{:>40}` pads a failure exactly as it pads its text. `__cpp_lib_format` is
-// deliberately not tested here: libc++ 18 leaves it undefined while
-// `std::format` works, so guarding on it would drop this from the clang lane
-// and keep it on the GCC one.
+/// can return knows how to write itself.
+///
+/// Inheriting the string formatter keeps fill, alignment and width working, so
+/// `{:>40}` pads a failure exactly as it pads its text. `__cpp_lib_format` is
+/// deliberately not tested here: libc++ 18 leaves it undefined while
+/// `std::format` works, so guarding on it would drop this from the clang lane
+/// and keep it on the GCC one.
 template <>
 struct std::formatter<libtmux::CommandFailure> : std::formatter<std::string> {
   template <typename Context>

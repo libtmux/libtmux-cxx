@@ -17,12 +17,12 @@
 LIBTMUX_NAMESPACE_BEGIN
 
 /// One name in the environment tmux gives processes it starts.
-//
-// The value is optional because tmux distinguishes two things a listing shows
-// side by side: a name bound to a value, printed `NAME=value`, and a name
-// marked so that a child does *not* inherit it, printed `-NAME`. The second is
-// an instruction rather than an empty value, and flattening it to `""` would
-// tell a caller the child sees an empty string when it sees nothing at all.
+///
+/// The value is optional because tmux distinguishes two things a listing shows
+/// side by side: a name bound to a value, printed `NAME=value`, and a name
+/// marked so that a child does *not* inherit it, printed `-NAME`. The second is
+/// an instruction rather than an empty value, and flattening it to `""` would
+/// tell a caller the child sees an empty string when it sees nothing at all.
 struct EnvironmentEntry {
   std::string name;
   std::optional<std::string> value;
