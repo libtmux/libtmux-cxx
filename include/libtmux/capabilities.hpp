@@ -37,7 +37,7 @@ enum class BackendKind {
   custom,
   subprocess,
   /// Held-open control clients, with a launch for what they cannot answer
-  // completely. Appended: the values before it are an installed ABI.
+  /// completely. Appended: the values before it are an installed ABI.
   control,
 };
 

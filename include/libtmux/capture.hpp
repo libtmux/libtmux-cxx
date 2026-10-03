@@ -107,25 +107,25 @@ namespace detail {
 } // namespace detail
 
 /// Whether `wanted` appears in captured text as something the pane produced,
-// rather than as text that is merely on screen.
-//
-// Waiting for a pane to say something is the first thing a supervising program
-// needs and the easiest to get wrong, because a capture shows two things that
-// are not output. The first is a command still sitting on the prompt: it has
-// been typed, nothing has run it, and searching for it succeeds immediately.
-// The second is its echo. A shell echoes typed input at least once — the
-// kernel's own cooked-mode echo — and often twice more before anything runs,
-// from the line editor's redisplay and from any unrelated repaint. None of
-// those are output, however many rows they end up spread across.
-//
-// `sent` is what the calling program itself typed into this pane and has not
-// had confirmed. Every whole occurrence of every entry is masked before
-// `wanted` is looked for, so an echo cannot be credited to the pane no matter
-// where a redraw moved it, and a short entry cannot corrupt a longer real
-// word that merely contains it. That is the check row position alone misses:
-// the same unsubmitted line, unchanged, after something else pushed it off
-// the last row without the pane having produced anything.
-//
+/// rather than as text that is merely on screen.
+///
+/// Waiting for a pane to say something is the first thing a supervising program
+/// needs and the easiest to get wrong, because a capture shows two things that
+/// are not output. The first is a command still sitting on the prompt: it has
+/// been typed, nothing has run it, and searching for it succeeds immediately.
+/// The second is its echo. A shell echoes typed input at least once — the
+/// kernel's own cooked-mode echo — and often twice more before anything runs,
+/// from the line editor's redisplay and from any unrelated repaint. None of
+/// those are output, however many rows they end up spread across.
+///
+/// `sent` is what the calling program itself typed into this pane and has not
+/// had confirmed. Every whole occurrence of every entry is masked before
+/// `wanted` is looked for, so an echo cannot be credited to the pane no matter
+/// where a redraw moved it, and a short entry cannot corrupt a longer real
+/// word that merely contains it. That is the check row position alone misses:
+/// the same unsubmitted line, unchanged, after something else pushed it off
+/// the last row without the pane having produced anything.
+///
 [[nodiscard]] inline bool output_confirms(std::string_view captured,
                                           std::string_view wanted,
                                           const std::vector<std::string>& sent = {}) {

@@ -33,9 +33,9 @@
 LIBTMUX_NAMESPACE_BEGIN
 
 /// A control-wire failure as a command failure, keeping what it says about
-// delivery — the one thing a caller cannot reconstruct. A protocol error that
-// never started is a validation refusal; past that point the wire is what
-// broke, which is `pipe`.
+/// delivery — the one thing a caller cannot reconstruct. A protocol error that
+/// never started is a validation refusal; past that point the wire is what
+/// broke, which is `pipe`.
 [[nodiscard]] inline CommandFailure as_command_failure(ProtocolError error) {
   return CommandFailure{.kind = error.delivery == DeliveryStatus::not_started
                                     ? FailureKind::validation
@@ -46,16 +46,16 @@ LIBTMUX_NAMESPACE_BEGIN
 }
 
 /// The other direction, for a caller handing a command failure to a surface
-// that speaks the wire's type. The kind is dropped because the wire has no
-// word for it; the diagnostic carries what it said.
+/// that speaks the wire's type. The kind is dropped because the wire has no
+/// word for it; the diagnostic carries what it said.
 [[nodiscard]] inline ProtocolError as_protocol_error(CommandFailure failure) {
   return ProtocolError{.message = std::move(failure.diagnostic),
                        .delivery = failure.delivery};
 }
 
 /// Which error types name a validation reason rather than a runtime failure.
-// Opted in one by one rather than matched on being an enum: `FailureKind` and
-// `DeliveryStatus` are enums too, and neither is a reason a call was refused.
+/// Opted in one by one rather than matched on being an enum: `FailureKind` and
+/// `DeliveryStatus` are enums too, and neither is a reason a call was refused.
 template <typename Reason> inline constexpr bool is_validation_reason = false;
 template <> inline constexpr bool is_validation_reason<TargetError> = true;
 template <> inline constexpr bool is_validation_reason<SocketError> = true;
@@ -65,7 +65,7 @@ template <> inline constexpr bool is_validation_reason<VersionError> = true;
 template <> inline constexpr bool is_validation_reason<KeyError> = true;
 
 /// Why a pure argument builder refused, as a command failure. Nothing was
-// dispatched, so the delivery is `not_started` and there is no exit status.
+/// dispatched, so the delivery is `not_started` and there is no exit status.
 template <typename Reason>
   requires is_validation_reason<Reason>
 [[nodiscard]] CommandFailure as_command_failure(Reason reason) {

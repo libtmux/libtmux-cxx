@@ -153,8 +153,8 @@ struct NewSessionOptions {
 struct RespawnOptions {
   bool replace_running{false};
   /// Where the configured replacement process starts. Empty inherits the
-  // pane's current directory. The command builder escapes tmux format markers
-  // exactly once before this value reaches tmux.
+  /// pane's current directory. The command builder escapes tmux format markers
+  /// exactly once before this value reaches tmux.
   std::string start_directory{};
 };
 
@@ -182,20 +182,21 @@ struct CaptureOptions {
 };
 
 /// A tmux object id, typed by what it names.
-//
-// tmux spells these `$0`, `@1` and `%2`. The prefix says which kind it is, and
-// nothing in the type did: six accessors returned `std::string_view`, so a
-// window id compiled wherever a pane id belonged, and `pane.id() ==
-// window.id()` was a comparison that can never be true but always built.
-//
-// The string is reached through `value()` rather than through a conversion.
-// A conversion is what let the mix-up through in the first place: with one,
-// every `std::string_view` parameter accepts any id again, and this would read
-// as type safety while providing none.
-//
-// Comparing an id to plain text still works, because that cannot confuse two
-// kinds — `pane.id() == "%0"` asks something answerable. Comparing two ids of
-// different kinds does not compile.
+///
+/// tmux spells these `$0`, `@1` and `%2`. The prefix says which kind it is, and
+/// nothing in the type did: six accessors returned `std::string_view`, so a
+/// window id compiled wherever a pane id belonged, and
+/// `pane.id() == window.id()` was a comparison that can never be true but
+/// always built.
+///
+/// The string is reached through `value()` rather than through a conversion.
+/// A conversion is what let the mix-up through in the first place: with one,
+/// every `std::string_view` parameter accepts any id again, and this would read
+/// as type safety while providing none.
+///
+/// Comparing an id to plain text still works, because that cannot confuse two
+/// kinds — `pane.id() == "%0"` asks something answerable. Comparing two ids of
+/// different kinds does not compile.
 template <typename Kind> class EntityId {
 public:
   EntityId() = default;
@@ -826,11 +827,11 @@ public:
   capture(CaptureOptions options) const;
 
   /// Wait until this pane produces `wanted`, rather than until it merely
-  // appears on screen. Prefers the control stream's `%output` and falls back
-  // to re-reading the screen when no connection can be opened; `WaitOptions`
-  // says which, and `WaitResult::path` says which answered. A caller that
-  // typed the text it is waiting for names it in `WaitOptions::sent`, or the
-  // shell's echo of its own command is credited to the pane as output.
+  /// appears on screen. Prefers the control stream's <code>\%output</code> and falls
+  /// back to re-reading the screen when no connection can be opened; `WaitOptions` says
+  /// which, and `WaitResult::path` says which answered. A caller that typed the text it
+  /// is waiting for names it in `WaitOptions::sent`, or the shell's echo of its own
+  /// command is credited to the pane as output.
   [[nodiscard]] expected<WaitResult, CommandFailure>
   wait_for_text(std::string_view wanted, const WaitOptions& options = {}) const;
 
@@ -902,7 +903,7 @@ public:
   [[nodiscard]] expected<void, CommandFailure> respawn(RespawnOptions options) const;
 
   /// Forget the scrollback, which is the only way to bound a pane's memory
-  // without restarting what is running in it.
+  /// without restarting what is running in it.
   [[nodiscard]] expected<void, CommandFailure> clear_history() const;
 
   /// Ask tmux to expand a format against this pane. `#{pane_current_command}`
@@ -1093,8 +1094,8 @@ std::ostream& operator<<(std::ostream& stream, const Pane& pane);
 std::ostream& operator<<(std::ostream& stream, const Client& client);
 
 /// The same text as a value, for a caller building a message rather than
-// writing to a stream. `std::format` reaches these through the formatters at
-// the end of this header.
+/// writing to a stream. `std::format` reaches these through the formatters at
+/// the end of this header.
 [[nodiscard]] std::string to_string(const Session& session);
 [[nodiscard]] std::string to_string(const Window& window);
 [[nodiscard]] std::string to_string(const Pane& pane);
@@ -1119,8 +1120,8 @@ inline constexpr NumberFieldHandle<Session> client_count{
 inline constexpr NumberFieldHandle<Session> window_count{
     {Session::kFields[3], [](const Session& row) { return row.window_count(); }}};
 /// tmux renders a timestamp as epoch seconds, which is what a filter compares
-// and what `-f` would compare on the server. The accessor beside this one
-// answers `sys_seconds` because that is what a caller wants to hold.
+/// and what `-f` would compare on the server. The accessor beside this one
+/// answers `sys_seconds` because that is what a caller wants to hold.
 inline constexpr NumberFieldHandle<Session> created{
     {Session::kFields[5], [](const Session& row) {
        return static_cast<long long>(row.created().time_since_epoch().count());
@@ -1208,10 +1209,10 @@ inline constexpr NumberFieldHandle<Pane> left{
 inline constexpr NumberFieldHandle<Pane> top{
     {Pane::kFields[20], [](const Pane& row) { return row.top(); }}};
 /// A pane that has not exited reads -1, which tmux cannot report: the field is
-// `WEXITSTATUS` and so is 0 through 255, or empty. That makes
-// `pane::exit_status == 0` exactly the panes that exited cleanly and
-// `pane::exit_status >= 0` exactly the ones that exited at all, rather than
-// folding "still running" into status zero.
+/// `WEXITSTATUS` and so is 0 through 255, or empty. That makes
+/// `pane::exit_status == 0` exactly the panes that exited cleanly and
+/// `pane::exit_status >= 0` exactly the ones that exited at all, rather than
+/// folding "still running" into status zero.
 inline constexpr NumberFieldHandle<Pane> exit_status{
     {Pane::kFields[21], [](const Pane& row) {
        return static_cast<long long>(row.exit_status().value_or(-1));
@@ -1282,7 +1283,7 @@ inline constexpr NumberFieldHandle<Buffer> size{
 inline constexpr StringFieldHandle<Buffer> sample{
     {Buffer::kFields[2], [](const Buffer& row) { return row.sample(); }}};
 /// Epoch seconds, as tmux renders it and as `-f` would compare it; the accessor
-// beside this one answers `sys_seconds` because that is what a caller holds.
+/// beside this one answers `sys_seconds` because that is what a caller holds.
 inline constexpr NumberFieldHandle<Buffer> created{
     {Buffer::kFields[3], [](const Buffer& row) {
        return static_cast<long long>(row.created().time_since_epoch().count());
@@ -1311,12 +1312,12 @@ template <> struct std::hash<libtmux::Client> {
 };
 
 /// An entity formats as it prints.
-//
-// Inheriting the string formatter keeps fill, alignment and width working, so
-// `{:>24}` pads a pane exactly as it pads its text. `__cpp_lib_format` is
-// deliberately not tested: libc++ 18 leaves it undefined while `std::format`
-// works, so guarding on it would drop these from the clang lane and keep them
-// on the GCC one.
+///
+/// Inheriting the string formatter keeps fill, alignment and width working, so
+/// `{:>24}` pads a pane exactly as it pads its text. `__cpp_lib_format` is
+/// deliberately not tested: libc++ 18 leaves it undefined while `std::format`
+/// works, so guarding on it would drop these from the clang lane and keep them
+/// on the GCC one.
 template <> struct std::formatter<libtmux::Session> : std::formatter<std::string> {
   template <typename Context>
   auto format(const libtmux::Session& value, Context& context) const {

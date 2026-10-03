@@ -3018,7 +3018,7 @@ The visible contents, as tmux printed them. `capture_lines` frames it into lines
 ```cpp
 [[nodiscard]] expected<WaitResult, CommandFailure> wait_for_text(std::string_view wanted, const WaitOptions& options = {}) const;
 ```
-Wait until this pane produces `wanted`, rather than until it merely appears on screen. Prefers the control stream's `%output` and falls back to re-reading the screen when no connection can be opened; `WaitOptions` says which, and `WaitResult::path` says which answered. A caller that typed the text it is waiting for names it in `WaitOptions::sent`, or the shell's echo of its own command is credited to the pane as output.
+Wait until this pane produces `wanted`, rather than until it merely appears on screen. Prefers the control stream's <code>\%output</code> and falls back to re-reading the screen when no connection can be opened; `WaitOptions` says which, and `WaitResult::path` says which answered. A caller that typed the text it is waiting for names it in `WaitOptions::sent`, or the shell's echo of its own command is credited to the pane as output.
 
 <a id="libtmux-entities-hpp-pane-set-width"></a>
 #### `Pane::set_width`
@@ -7086,7 +7086,7 @@ ParsedNotification parse(Notification&&) = delete;
 ```cpp
 [[nodiscard]] std::optional<bool> layout_contains_pane(std::string_view layout_change_text, std::string_view pane_id);
 ```
-Whether `pane_id` (`%N`) is still part of a window's arrangement, reading a `layout_change` notification's own `text` — `window_layout` followed by `window_visible_layout` and the window's flags (control-notify.c) — for its first, whitespace-delimited token.  tmux gives no notification dedicated to a pane leaving its window; a `%layout-change` naming the pane gone is the only signal there is. This answers only from the JSON layout (3.8+, and only for a connection that requested it — see `Window::layout()`), which carries each pane's stable id. The classic layout string encodes each pane's position by index instead, which the removal of any other pane in the window renumbers, so this returns `std::nullopt` there rather than guessing: killing the observed pane is the one case a caller most wants an honest answer for, and a stale index is exactly where a guess would be wrong.
+Whether `pane_id` (<code>\%N</code>) is still part of a window's arrangement, reading a `layout_change` notification's own `text` — `window_layout` followed by `window_visible_layout` and the window's flags (control-notify.c) — for its first, whitespace-delimited token.  tmux gives no notification dedicated to a pane leaving its window; a <code>\%layout-change</code> naming the pane gone is the only signal there is. This answers only from the JSON layout (3.8+, and only for a connection that requested it — see `Window::layout()`), which carries each pane's stable id. The classic layout string encodes each pane's position by index instead, which the removal of any other pane in the window renumbers, so this returns `std::nullopt` there rather than guessing: killing the observed pane is the one case a caller most wants an honest answer for, and a stale index is exactly where a guess would be wrong.
 
 <a id="libtmux-batch-hpp"></a>
 ## `libtmux/batch.hpp`
@@ -7988,7 +7988,7 @@ This package's own version, not tmux's.
 ```cpp
 #define LIBTMUX_VERSION_MAJOR 0
 ```
-The same version, available to the preprocessor.  `library_version()` answers what was linked; these answer what was compiled against, which is the question a consumer has to ask before using something that may not exist yet:  #if LIBTMUX_VERSION_MAJOR > 0 || LIBTMUX_VERSION_MINOR >= 2  Written here rather than generated into the build directory, so that `include/libtmux/` stays self-contained for anyone reading or vendoring it without CMake. A test compares `LIBTMUX_VERSION_STRING` against `library_version()`, which the build takes from the `VERSION` file, so the two cannot drift apart unnoticed.
+The same version, available to the preprocessor.  `library_version()` answers what was linked; these answer what was compiled against, which is the question a consumer has to ask before using something that may not exist yet:  `#if LIBTMUX_VERSION_MAJOR > 0 || LIBTMUX_VERSION_MINOR >= 2`  Written here rather than generated into the build directory, so that `include/libtmux/` stays self-contained for anyone reading or vendoring it without CMake. A test compares `LIBTMUX_VERSION_STRING` against `library_version()`, which the build takes from the `VERSION` file, so the two cannot drift apart unnoticed.
 
 <a id="libtmux-version-hpp-free-symbols-libtmux-version-minor"></a>
 #### `LIBTMUX_VERSION_MINOR`
