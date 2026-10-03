@@ -860,6 +860,7 @@ jobs:
           uvx --from ruff==0.16.1 ruff check .
           uv run --no-project python -m unittest \
             tools.docs.test_api_index tools.docs.test_check_readme \
+            tools.docs.test_check_api_examples \
             tools.mutate.test_main tools.mutate.test_runner \
             tools.vcpkg.test_probe tools.vcpkg.test_release \
             tools.vcpkg.test_archive
