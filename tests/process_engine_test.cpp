@@ -1,5 +1,6 @@
 // The asynchronous engine against real processes: two threads, whatever the
 // load, and an answer only once the child has exited and its output has ended.
+#include "libtmux/testing/scoped_server.hpp"
 #include "process_engine.hpp"
 
 #include <gtest/gtest.h>
@@ -109,12 +110,12 @@ public:
   }
 
   [[nodiscard]] bool wait_until_launch_is_withheld() {
-    return launch_withheld_.try_acquire_for(std::chrono::seconds{2});
+    return launch_withheld_.try_acquire_for(libtmux::test::kHangGuard);
   }
 
   [[nodiscard]] std::optional<libtmux::detail::EngineReactorEvent>
   wait_for_reactor_event() {
-    if (!event_reached_.try_acquire_for(std::chrono::seconds{2})) {
+    if (!event_reached_.try_acquire_for(libtmux::test::kHangGuard)) {
       return std::nullopt;
     }
     return first_event_.load(std::memory_order_relaxed);
@@ -198,7 +199,7 @@ TEST(ProcessEngine, TransportRetirementFiresOnceAfterPublishingAndReaping) {
   ASSERT_TRUE(reply.has_value()) << reply.error().diagnostic;
   EXPECT_EQ(text(reply->stdout_bytes), "retired");
   const auto retirement_deadline =
-      std::chrono::steady_clock::now() + std::chrono::seconds{1};
+      std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
   while (!retired->ready.load(std::memory_order_acquire) &&
          std::chrono::steady_clock::now() < retirement_deadline) {
     std::this_thread::sleep_for(std::chrono::milliseconds{1});
@@ -377,12 +378,12 @@ TEST(ProcessEngine, EveryReadableChildMakesOutputProgress) {
         shell("printf ready; printf ready > " + marker_template + "/" +
               std::to_string(index) + "; while [ ! -e " + gate +
               " ]; do sleep 0.05; done; printf -- -" + std::to_string(index));
-    producer.timeout = std::chrono::seconds{2};
+    producer.timeout = libtmux::test::kHangGuard;
     producers.push_back((*engine)->submit(std::move(producer)));
   }
 
   const auto marker_deadline =
-      std::chrono::steady_clock::now() + std::chrono::seconds{2};
+      std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
   const auto all_ready = [&] {
     for (int index = 0; index < producer_count; ++index) {
       if (!std::filesystem::exists(marker_template + "/" + std::to_string(index))) {

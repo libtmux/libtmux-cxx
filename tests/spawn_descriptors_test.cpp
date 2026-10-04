@@ -1,3 +1,4 @@
+#include "libtmux/testing/scoped_server.hpp"
 #include "spawn_descriptors.hpp"
 
 #include <gtest/gtest.h>
@@ -112,7 +113,8 @@ int retained_descriptor_is_safe_after_hard_limit_is_lowered() {
     return 6;
   }
   pollfd watched{.fd = marker[1], .events = POLLOUT, .revents = 0};
-  const auto polled = ::poll(&watched, 1, 1000);
+  const auto polled =
+      ::poll(&watched, 1, static_cast<int>(libtmux::test::kHangGuard.count()));
   static_cast<void>(::kill(child, SIGKILL));
   int status = 0;
   static_cast<void>(::waitpid(child, &status, 0));
@@ -143,7 +145,8 @@ TEST(SpawnDescriptors, PlatformPolicyClosesAnUnrelatedDescriptor) {
   marker[0] = -1;
 
   pollfd watched{.fd = marker[1], .events = POLLOUT, .revents = 0};
-  const auto polled = ::poll(&watched, 1, 1000);
+  const auto polled =
+      ::poll(&watched, 1, static_cast<int>(libtmux::test::kHangGuard.count()));
 
   static_cast<void>(::kill(child, SIGKILL));
   int status = 0;

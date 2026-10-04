@@ -107,13 +107,13 @@ TEST(ControlConnection, GivesEachCommandItsOwnReplyBlock) {
   request.group.push_back(
       libtmux::ControlCommand{.argv = {"display-message", "-p", "streamed"}});
   const auto result = connection.execute(
-      std::move(request), std::chrono::steady_clock::now() + std::chrono::seconds{5});
+      std::move(request), std::chrono::steady_clock::now() + libtmux::test::kHangGuard);
   ASSERT_FALSE(result.connection_error.has_value()) << result.connection_error->message;
   ASSERT_EQ(result.blocks.size(), 1U);
   EXPECT_NE(text_of(result.blocks[0].body).find("streamed"), std::string::npos);
 
   const auto closed =
-      connection.shutdown(std::chrono::steady_clock::now() + std::chrono::seconds{5});
+      connection.shutdown(std::chrono::steady_clock::now() + libtmux::test::kHangGuard);
   EXPECT_TRUE(closed.has_value());
 }
 

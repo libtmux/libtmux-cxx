@@ -147,7 +147,7 @@ read_metadata(const Selector& selector) {
   // surfaced as a server that "failed to create a session" on one lane out of
   // twenty, with exit status 1 and nothing else to go on. A real tmux client
   // finding no server is a different case and still fails, just a moment later.
-  const auto give_up = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+  const auto give_up = std::chrono::steady_clock::now() + std::chrono::seconds{20};
   for (;;) {
     std::ifstream input{metadata};
     long raw_pid = 0;

@@ -1194,7 +1194,7 @@ TEST(Entity, ADeadPaneReportsWhatItExitedWith) {
   ASSERT_TRUE(pane.send_line("trap '' HUP; exec 3< exit-gate; "
                              "{ read -r release <&3; } & exit 7")
                   .has_value());
-  const auto exited = server.wait_for("exited", std::chrono::seconds{1});
+  const auto exited = server.wait_for("exited", libtmux::test::kHangGuard);
   ASSERT_TRUE(exited.has_value()) << exited.error().diagnostic;
   gate.close();
 

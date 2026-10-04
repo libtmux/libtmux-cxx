@@ -282,7 +282,8 @@ struct PrivateTmuxEndpointCleanup final {
       return;
     }
     static_cast<void>(server.kill());
-    const auto stopped_by = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+    const auto stopped_by =
+        std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
     while (server.is_alive(std::chrono::milliseconds{50}) &&
            std::chrono::steady_clock::now() < stopped_by) {
       std::this_thread::sleep_for(std::chrono::milliseconds{1});
@@ -633,7 +634,7 @@ protected:
                shell_quote(socket().string()) + " wait-for -S " + shell_quote(channel);
     ASSERT_TRUE(pane.send_text(command).has_value());
     ASSERT_TRUE(pane.send_key("Enter").has_value());
-    const auto ready = server.wait_for(channel, std::chrono::seconds{2});
+    const auto ready = server.wait_for(channel, libtmux::test::kHangGuard);
     ASSERT_TRUE(ready.has_value()) << ready.error().diagnostic;
   }
 
@@ -1187,8 +1188,8 @@ TEST_F(McpProtocol, RunShellCommandWaitsForItsOwnValidCompletionRecord) {
                               "tmux wait-for -S mcp-legacy-marker-ready")
                   .has_value());
   ASSERT_TRUE(pane->send_key("Enter").has_value());
-  ASSERT_TRUE(
-      server.wait_for("mcp-legacy-marker-ready", std::chrono::seconds{2}).has_value());
+  ASSERT_TRUE(server.wait_for("mcp-legacy-marker-ready", libtmux::test::kHangGuard)
+                  .has_value());
 
   const json reply =
       invoke("run_shell_command",
@@ -1205,7 +1206,7 @@ TEST_F(McpProtocol, RunShellCommandWaitsForItsOwnValidCompletionRecord) {
              {{"paneId", pane->id().value()},
               {"command", "printf() { command printf '\\n%s%s%s:%s\\n' \"$2\" \"$3\" "
                           "\"$4\" 0; }; sh -c 'exit 23'"},
-              {"timeoutMs", 1000}},
+              {"timeoutMs", libtmux::test::kHangGuard.count()}},
              2);
   ASSERT_FALSE(shadowed["result"]["isError"].get<bool>()) << shadowed.dump();
   EXPECT_EQ(shadowed["result"]["structuredContent"]["exit_code"], 23);
@@ -1220,7 +1221,7 @@ TEST_F(McpProtocol, RunShellCommandWaitsForItsOwnValidCompletionRecord) {
       {{"paneId", history_pane->id().value()},
        {"command", "i=0; while [ \"$i\" -lt 300 ]; do printf 'eviction-%s\\n' \"$i\"; "
                    "i=$((i+1)); done; sh -c 'exit 19'"},
-       {"timeoutMs", 1000}},
+       {"timeoutMs", libtmux::test::kHangGuard.count()}},
       3);
   ASSERT_FALSE(evicted["result"]["isError"].get<bool>()) << evicted.dump();
   EXPECT_EQ(evicted["result"]["structuredContent"]["exit_code"], 19);
@@ -1364,7 +1365,7 @@ TEST_F(McpProtocol, ReleasesRetainedRunInputAfterPaneDeath) {
   const std::string input = encode_requests(
       {call("send_keys", {{"paneId", pane_id}, {"keys", "Escape"}}, 22)});
   const auto finish_run = [&]() -> libtmux::expected<void, std::string> {
-    const auto ready = server.wait_for(started, std::chrono::seconds{2});
+    const auto ready = server.wait_for(started, libtmux::test::kHangGuard);
     if (!ready.has_value()) {
       return libtmux::unexpected(ready.error().diagnostic);
     }
@@ -1479,7 +1480,7 @@ TEST_F(McpProtocol, IsolatesCompletionFramingAcrossInstalledPosixShells) {
     const json output = invoke("run_shell_command",
                                {{"paneId", pane_id},
                                 {"command", "command \\printf '" + body + "\\n'"},
-                                {"timeoutMs", 2000}},
+                                {"timeoutMs", libtmux::test::kHangGuard.count()}},
                                ++request_id);
     ASSERT_FALSE(output["result"]["isError"].get<bool>()) << output.dump();
     EXPECT_EQ(output["result"]["structuredContent"]["exit_code"], 0);
@@ -1491,23 +1492,25 @@ TEST_F(McpProtocol, IsolatesCompletionFramingAcrossInstalledPosixShells) {
         invoke("run_shell_command",
                {{"paneId", pane_id},
                 {"command", "command \\printf '" + trailing + "' # trailing comment"},
-                {"timeoutMs", 2000}},
+                {"timeoutMs", libtmux::test::kHangGuard.count()}},
                ++request_id);
     ASSERT_FALSE(no_newline["result"]["isError"].get<bool>()) << no_newline.dump();
     EXPECT_EQ(no_newline["result"]["structuredContent"]["exit_code"], 0);
     EXPECT_EQ(no_newline["result"]["structuredContent"]["text"], trailing);
 
-    const json syntax =
-        invoke("run_shell_command",
-               {{"paneId", pane_id}, {"command", "if then"}, {"timeoutMs", 2000}},
-               ++request_id);
+    const json syntax = invoke("run_shell_command",
+                               {{"paneId", pane_id},
+                                {"command", "if then"},
+                                {"timeoutMs", libtmux::test::kHangGuard.count()}},
+                               ++request_id);
     ASSERT_FALSE(syntax["result"]["isError"].get<bool>()) << syntax.dump();
     EXPECT_NE(syntax["result"]["structuredContent"]["exit_code"], 0);
 
-    const json bare_exit =
-        invoke("run_shell_command",
-               {{"paneId", pane_id}, {"command", "exit 23"}, {"timeoutMs", 2000}},
-               ++request_id);
+    const json bare_exit = invoke("run_shell_command",
+                                  {{"paneId", pane_id},
+                                   {"command", "exit 23"},
+                                   {"timeoutMs", libtmux::test::kHangGuard.count()}},
+                                  ++request_id);
     ASSERT_FALSE(bare_exit["result"]["isError"].get<bool>()) << bare_exit.dump();
     EXPECT_EQ(bare_exit["result"]["structuredContent"]["exit_code"], 23);
 
@@ -1532,7 +1535,7 @@ TEST_F(McpProtocol, IsolatesCompletionFramingAcrossInstalledPosixShells) {
                                 "cd /; MCP_PARENT_VALUE=changed; "
                                 "MCP_PARENT_EXPORT=changed; export MCP_PARENT_EXPORT; "
                                 "exit 23"},
-           {"timeoutMs", 2000}},
+           {"timeoutMs", libtmux::test::kHangGuard.count()}},
           ++request_id);
       ASSERT_FALSE(isolated["result"]["isError"].get<bool>()) << isolated.dump();
       EXPECT_EQ(isolated["result"]["structuredContent"]["exit_code"], 23)
@@ -1548,7 +1551,7 @@ TEST_F(McpProtocol, IsolatesCompletionFramingAcrossInstalledPosixShells) {
           invoke("run_shell_command",
                  {{"paneId", pane_id},
                   {"command", "false; : > " + shell_quote(side_effect.string())},
-                  {"timeoutMs", 2000}},
+                  {"timeoutMs", libtmux::test::kHangGuard.count()}},
                  ++request_id);
       ASSERT_FALSE(errexit["result"]["isError"].get<bool>()) << errexit.dump();
       EXPECT_EQ(errexit["result"]["structuredContent"]["exit_code"],
@@ -1561,7 +1564,9 @@ TEST_F(McpProtocol, IsolatesCompletionFramingAcrossInstalledPosixShells) {
 
       const json parent_check =
           invoke("run_shell_command",
-                 {{"paneId", pane_id}, {"command", checks}, {"timeoutMs", 2000}},
+                 {{"paneId", pane_id},
+                  {"command", checks},
+                  {"timeoutMs", libtmux::test::kHangGuard.count()}},
                  ++request_id);
       ASSERT_FALSE(parent_check["result"]["isError"].get<bool>())
           << parent_check.dump();
@@ -1824,7 +1829,7 @@ TEST_F(McpProtocol, KeepsEmptyPasteBufferFreeAndEnterTargetOnly) {
   ASSERT_TRUE(entered.contains("result")) << entered.dump();
   ASSERT_FALSE(entered["result"]["isError"].get<bool>()) << entered.dump();
   EXPECT_TRUE(entered["result"]["structuredContent"]["changed"].get<bool>());
-  const auto completed = server.wait_for(channel, std::chrono::seconds{2});
+  const auto completed = server.wait_for(channel, libtmux::test::kHangGuard);
   ASSERT_TRUE(completed.has_value()) << completed.error().diagnostic;
   EXPECT_NE(captured(source).find(marker), std::string::npos);
   EXPECT_EQ(captured(sibling), sibling_before);
@@ -3202,7 +3207,7 @@ TEST(McpProtocolCli, EstablishesDefaultMinimalDaemonBeforeFreezingProvenance) {
   const auto alive = opened->server.run({"show-options", "-sqv", "exit-empty"});
   const auto killed = opened->server.kill();
 
-  const auto stopped_by = std::chrono::steady_clock::now() + std::chrono::seconds{1};
+  const auto stopped_by = std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
   while (killed.has_value() && opened->server.is_alive(std::chrono::milliseconds{50}) &&
          std::chrono::steady_clock::now() < stopped_by) {
     std::this_thread::yield();
@@ -3243,7 +3248,8 @@ TEST(McpProtocolCli, StopsTheAuthenticatedDefaultDaemonWhenStdioCloses) {
   }
 
   const auto finished = libtmux::mcp::test::run_server(
-      LIBTMUX_MCP_SERVER_PATH, {}, environment, {}, std::chrono::seconds{5});
+      LIBTMUX_MCP_SERVER_PATH, {}, environment, {},
+      std::chrono::duration_cast<std::chrono::seconds>(libtmux::test::kHangGuard));
   auto server = libtmux::Server::at_socket_path(
       (fixture->socket_path().parent_path() / "libtmux-mcp").string());
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
@@ -3572,9 +3578,9 @@ TEST(McpProtocolCli, RejectsInvalidPolicyBeforeOpeningTmux) {
     auto environment = libtmux::test::current_environment();
     libtmux::test::erase_environment(environment, "TMUX");
     libtmux::test::set_environment(environment, policy.name, policy.value);
-    const auto finished = libtmux::mcp::test::run_server(LIBTMUX_MCP_SERVER_PATH, {},
-                                                         std::move(environment), {},
-                                                         std::chrono::seconds{5});
+    const auto finished = libtmux::mcp::test::run_server(
+        LIBTMUX_MCP_SERVER_PATH, {}, std::move(environment), {},
+        std::chrono::duration_cast<std::chrono::seconds>(libtmux::test::kHangGuard));
     ASSERT_FALSE(finished.has_value()) << policy.name << '=' << policy.value;
     EXPECT_NE(finished.error().find("exited with status 2"), std::string::npos)
         << policy.name << '=' << policy.value;
@@ -3604,7 +3610,8 @@ TEST(McpProtocolCli, UsesSeparateSocketEnvironmentVariables) {
 
   libtmux::test::set_environment(environment, "LIBTMUX_SOCKET", "conflict");
   const auto conflicting = libtmux::mcp::test::run_server(
-      LIBTMUX_MCP_SERVER_PATH, {}, std::move(environment), {}, std::chrono::seconds{5});
+      LIBTMUX_MCP_SERVER_PATH, {}, std::move(environment), {},
+      std::chrono::duration_cast<std::chrono::seconds>(libtmux::test::kHangGuard));
   ASSERT_FALSE(conflicting.has_value());
   EXPECT_NE(conflicting.error().find("exited with status 2"), std::string::npos);
 }
@@ -3812,7 +3819,8 @@ TEST(McpProtocolCli, DoesNotUseAnInvalidInheritedRoute) {
   auto environment = fixture->child_environment();
   libtmux::test::set_environment(environment, "TMUX", "");
   const auto finished = libtmux::mcp::test::run_server(
-      LIBTMUX_MCP_SERVER_PATH, {}, std::move(environment), {}, std::chrono::seconds{5});
+      LIBTMUX_MCP_SERVER_PATH, {}, std::move(environment), {},
+      std::chrono::duration_cast<std::chrono::seconds>(libtmux::test::kHangGuard));
   ASSERT_TRUE(finished.has_value());
   EXPECT_EQ(*finished, "");
   auto server = libtmux::Server::at_socket_path(

@@ -384,10 +384,11 @@ TEST(McpToolsTmux, RunsShellFramingThroughThePinnedServerEndpoint) {
     EXPECT_NE(collided.error().message.find("still active"), std::string::npos);
     held->release();
 
-    const auto answer = all_tools().call(server, "run_shell_command",
-                                         {{"paneId", panes->front().id().value()},
-                                          {"command", "printf pinned-endpoint-output"},
-                                          {"timeoutMs", "2000"}});
+    const auto answer = all_tools().call(
+        server, "run_shell_command",
+        {{"paneId", panes->front().id().value()},
+         {"command", "printf pinned-endpoint-output"},
+         {"timeoutMs", std::to_string(libtmux::test::kHangGuard.count())}});
     ASSERT_TRUE(answer.has_value()) << answer.error().message;
     EXPECT_EQ(string_field(*answer, "text"), "pinned-endpoint-output");
 
@@ -465,7 +466,7 @@ TEST(McpToolsTmux, ListSessionsExcludesWaitForTextsOwnObservationClient) {
   // No API exposes "the observation connection is open"; poll the raw
   // condition list_sessions itself would otherwise be fooled by, rather
   // than sleep a guessed duration.
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+  const auto deadline = std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
   bool client_seen = false;
   while (std::chrono::steady_clock::now() < deadline) {
     const auto clients = server.run({"list-clients", "-t", session_name});
@@ -1390,14 +1391,14 @@ TEST(McpToolsTmux, ReleasesTimedOutRunReservationWhenDaemonExits) {
 
   const auto killed = server.kill();
   ASSERT_TRUE(killed.has_value()) << killed.error().diagnostic;
-  const auto stopped_by = std::chrono::steady_clock::now() + 2s;
+  const auto stopped_by = std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
   while (fixture->is_alive() && std::chrono::steady_clock::now() < stopped_by) {
     std::this_thread::sleep_for(10ms);
   }
   ASSERT_FALSE(fixture->is_alive());
 
   bool released = false;
-  const auto released_by = std::chrono::steady_clock::now() + 2s;
+  const auto released_by = std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
   while (!released && std::chrono::steady_clock::now() < released_by) {
     released = libtmux::mcp::detail::reserve_pane_input(
                    std::string{server.socket_path()}, preflight->server_pid,
@@ -1759,7 +1760,9 @@ TEST(McpToolsTmux, WaitForTextAfterSendKeysDoesNotMatchTheEchoedCommandLine) {
 
   const auto waited = tools.call(
       server, "wait_for_text",
-      Arguments{{"target", pane_id}, {"text", marker}, {"timeout_ms", "8000"}});
+      Arguments{{"target", pane_id},
+                {"text", marker},
+                {"timeout_ms", std::to_string(libtmux::test::kHangGuard.count())}});
   ASSERT_TRUE(waited.has_value()) << waited.error().message;
   EXPECT_TRUE(std::get<bool>(waited->structured.at("matched").value));
   EXPECT_FALSE(std::get<bool>(waited->structured.at("timed_out").value));

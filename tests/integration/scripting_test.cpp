@@ -88,7 +88,7 @@ TEST(Scripting, ABackgroundedCommandRunsWithoutBeingWaitedFor) {
       server.run_shell("touch " + evidence.string() + "; exit 3", /*background=*/true)
           .has_value());
 
-  const auto deadline = std::chrono::steady_clock::now() + 5s;
+  const auto deadline = std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
   while (!std::filesystem::exists(evidence) &&
          std::chrono::steady_clock::now() < deadline) {
     std::this_thread::sleep_for(5ms);

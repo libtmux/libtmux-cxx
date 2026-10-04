@@ -27,7 +27,7 @@ TEST(WaitFor, ASignalSentBeforeTheWaitStillReleasesIt) {
   // Latched, not edge-triggered: signalling first is safe, which is what
   // lets two processes race without losing the exchange.
   ASSERT_TRUE(server.signal("early").has_value());
-  const auto released = server.wait_for("early", 5s);
+  const auto released = server.wait_for("early", libtmux::test::kHangGuard);
   EXPECT_TRUE(released.has_value())
       << (released.has_value() ? "" : released.error().diagnostic);
 }

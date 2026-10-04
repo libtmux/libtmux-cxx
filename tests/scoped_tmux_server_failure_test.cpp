@@ -596,7 +596,7 @@ TEST(ScopedTmuxServerFailure, ReboundSocketCannotKillUnrelatedProcess) {
       "\tif-shell\t-F\t#{==:#{pid}," + std::to_string(owned_pid) + "}\tkill-server\t";
   EXPECT_TRUE(
       trace_gains_line(trace, expected_condition,
-                       std::chrono::steady_clock::now() + std::chrono::seconds{5}));
+                       std::chrono::steady_clock::now() + libtmux::test::kHangGuard));
   if (!unrelated_was_killed) {
     static_cast<void>(::kill(unrelated, SIGKILL));
     while (::waitpid(unrelated, nullptr, 0) < 0 && errno == EINTR) {
@@ -647,7 +647,7 @@ TEST(ScopedTmuxServerFailure, EscapedPipeHolderIsNeitherWaitedForNorSignalled) {
   // deliberately let escape.
   static_cast<void>(::kill(descendant_pid, SIGKILL));
   const auto descendant_deadline =
-      std::chrono::steady_clock::now() + std::chrono::seconds{2};
+      std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
   while (::kill(descendant_pid, 0) == 0 &&
          std::chrono::steady_clock::now() < descendant_deadline) {
     std::this_thread::sleep_for(std::chrono::milliseconds{10});

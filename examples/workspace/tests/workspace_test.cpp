@@ -197,7 +197,7 @@ TEST(WorkspaceBuilder, ACommandHeldBackIsTypedButNotRun) {
   ASSERT_FALSE(panes->empty());
 
   std::string screen;
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+  const auto deadline = std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
   while (std::chrono::steady_clock::now() < deadline) {
     const auto shown = panes->front().capture();
     ASSERT_TRUE(shown.has_value()) << shown.error().diagnostic;
@@ -350,7 +350,7 @@ TEST(WorkspaceBuilder, ASuppressedCommandIsTypedWithTheSpaceThatHidesIt) {
   // Held until two readings agree. A single capture can catch the line half
   // rendered and answer with a column the terminal is about to move.
   const auto column_of = [](const libtmux::Pane& pane) -> std::optional<std::size_t> {
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+    const auto deadline = std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
     const auto reading = [&pane]() -> std::optional<std::size_t> {
       const auto shown = pane.capture();
       EXPECT_TRUE(shown.has_value());

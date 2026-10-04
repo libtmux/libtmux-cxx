@@ -240,7 +240,7 @@ bool bench_control_throughput(const libtmux::test::ScopedTmuxServer& fixture,
         "benchmarks: the burst marker never arrived; throughput not measured\n");
     return false;
   }
-  static_cast<void>(connection.shutdown(Clock::now() + std::chrono::seconds{2}));
+  static_cast<void>(connection.shutdown(Clock::now() + libtmux::test::kHangGuard));
   return true;
 }
 

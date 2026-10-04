@@ -1,4 +1,5 @@
 #include "libtmux/expected.hpp"
+#include "libtmux/testing/scoped_server.hpp"
 #include "process.hpp"
 #include "reaping.hpp"
 
@@ -425,7 +426,7 @@ TEST(ProcessSupport, CapturesBothStreamsAndReapsDirectChild) {
   ASSERT_TRUE(child.has_value()) << child.error();
   const auto pid = child->pid();
 
-  EXPECT_TRUE(child->wait_until(ProcessClock::now() + std::chrono::seconds{2}));
+  EXPECT_TRUE(child->wait_until(ProcessClock::now() + libtmux::test::kHangGuard));
   const auto wait_status = child->wait_status().value_or(-1);
   EXPECT_TRUE(WIFEXITED(wait_status));
   EXPECT_EQ(WEXITSTATUS(wait_status), 0);
@@ -455,7 +456,7 @@ TEST(ProcessSupport, BoundsCaptureWhileDrainingLargeDualPipeOutput) {
                            .capture_limit = capture_limit});
   ASSERT_TRUE(child.has_value()) << child.error();
 
-  EXPECT_TRUE(child->wait_until(ProcessClock::now() + std::chrono::seconds{5}));
+  EXPECT_TRUE(child->wait_until(ProcessClock::now() + libtmux::test::kHangGuard));
   EXPECT_EQ(child->stdout_text().size(), capture_limit);
   EXPECT_EQ(child->stderr_text().size(), capture_limit);
 }
@@ -819,7 +820,7 @@ TEST(ProcessSupport, RepeatedEintrCannotExtendWaitDeadline) {
   EXPECT_EQ(::sigaction(SIGUSR1, &previous_action, nullptr), 0);
   EXPECT_LT(elapsed, std::chrono::milliseconds{150});
   static_cast<void>(child->send_signal(SIGKILL));
-  EXPECT_TRUE(child->wait_until(ProcessClock::now() + std::chrono::seconds{2}));
+  EXPECT_TRUE(child->wait_until(ProcessClock::now() + libtmux::test::kHangGuard));
 }
 
 TEST(ProcessSupport, DoesNotWaitForEscapedDescriptorHolder) {
@@ -853,7 +854,7 @@ TEST(ProcessSupport, MoveAssignmentReapsThePreviouslyOwnedChild) {
   errno = 0;
   EXPECT_EQ(::waitpid(first_pid, nullptr, WNOHANG), -1);
   EXPECT_EQ(errno, ECHILD);
-  EXPECT_TRUE(first->wait_until(ProcessClock::now() + std::chrono::seconds{2}));
+  EXPECT_TRUE(first->wait_until(ProcessClock::now() + libtmux::test::kHangGuard));
 }
 
 } // namespace

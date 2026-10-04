@@ -169,7 +169,7 @@ TEST(ShowMessage, AMessageReachesAnAttachedControlClient) {
 
   ASSERT_TRUE(server.show_message("marker-from-the-test").has_value());
 
-  const auto deadline = std::chrono::steady_clock::now() + 5s;
+  const auto deadline = std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
   bool seen = false;
   while (!seen && std::chrono::steady_clock::now() < deadline) {
     for (const libtmux::Notification& notification : watching->take_notifications()) {
@@ -209,7 +209,7 @@ TEST(ShowMessage, TheTargetIsTheContextTheTextExpandsIn) {
   // other one if the target were being ignored.
   ASSERT_TRUE(quiet->show_message("sent from #{window_name}").has_value());
 
-  const auto deadline = std::chrono::steady_clock::now() + 5s;
+  const auto deadline = std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
   std::string seen;
   while (seen.empty() && std::chrono::steady_clock::now() < deadline) {
     for (const libtmux::Notification& notification : watching->take_notifications()) {
@@ -250,7 +250,7 @@ TEST(ShowMessage, APaneNamesItselfRatherThanTheActiveOne) {
 
   ASSERT_TRUE(quiet.show_message("sent by #{pane_id}").has_value());
 
-  const auto deadline = std::chrono::steady_clock::now() + 5s;
+  const auto deadline = std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
   std::string seen;
   while (seen.empty() && std::chrono::steady_clock::now() < deadline) {
     for (const libtmux::Notification& notification : watching->take_notifications()) {

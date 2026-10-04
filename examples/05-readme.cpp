@@ -323,7 +323,7 @@ int main() {
     std::cerr << std::format("{}\n", submitted.error());
     return 1;
   }
-  const auto ready = submitted->wait_for(std::chrono::seconds{5});
+  const auto ready = submitted->wait_for(std::chrono::seconds{20});
   if (!ready.has_value() || !*ready) {
     // A wait timeout keeps the command alive. Cancellation is a separate choice.
     static_cast<void>(submitted->request_cancel());
@@ -333,7 +333,7 @@ int main() {
     std::cerr << std::format("{}\n", result.error());
     return 1;
   }
-  if (runtime.wait_ready_for(std::chrono::seconds{5}) != libtmux::ReadyStatus::ready) {
+  if (runtime.wait_ready_for(std::chrono::seconds{20}) != libtmux::ReadyStatus::ready) {
     return 1;
   }
 
@@ -349,7 +349,7 @@ int main() {
     return 1;
   }
   std::move(*detached).detach(); // Keep no result; the observation remains.
-  if (runtime.wait_ready_for(std::chrono::seconds{5}) != libtmux::ReadyStatus::ready) {
+  if (runtime.wait_ready_for(std::chrono::seconds{20}) != libtmux::ReadyStatus::ready) {
     return 1;
   }
   std::cout << std::format("discarded {} observation(s)\n", runtime.discard_ready());

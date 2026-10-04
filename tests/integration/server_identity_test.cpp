@@ -446,7 +446,7 @@ TEST(ServerIdentity, ADeadServerDiagnosticNamesTheOperatorsSocketNotTheAlias) {
   ASSERT_TRUE(before.has_value()) << before.error().diagnostic;
 
   ASSERT_TRUE(server.kill().has_value());
-  const auto stopped_by = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+  const auto stopped_by = std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
   while (fixture->is_alive() && std::chrono::steady_clock::now() < stopped_by) {
     std::this_thread::sleep_for(std::chrono::milliseconds{1});
   }
@@ -474,7 +474,7 @@ TEST(ServerIdentity, RestartAtTheSameSocketIsANewServer) {
   ASSERT_FALSE(stale_windows->empty());
 
   ASSERT_TRUE(stale.kill().has_value());
-  const auto stopped_by = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+  const auto stopped_by = std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
   while (original->is_alive() && std::chrono::steady_clock::now() < stopped_by) {
     std::this_thread::sleep_for(std::chrono::milliseconds{1});
   }

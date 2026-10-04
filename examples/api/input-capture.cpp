@@ -50,7 +50,8 @@ int main() {
     std::fprintf(stderr, "%s\n", pane.error().diagnostic.c_str());
     return 1;
   }
-  const auto ready = pane->wait_for_text("ready", {.timeout = std::chrono::seconds{5}});
+  const auto ready =
+      pane->wait_for_text("ready", {.timeout = std::chrono::seconds{20}});
   if (!ready.has_value()) {
     std::fprintf(stderr, "%s\n", ready.error().diagnostic.c_str());
     return 1;
@@ -70,7 +71,7 @@ int main() {
     return 1;
   }
   const auto answered =
-      pane->wait_for_text("got:hello C++", {.timeout = std::chrono::seconds{5}});
+      pane->wait_for_text("got:hello C++", {.timeout = std::chrono::seconds{20}});
   if (!answered.has_value()) {
     std::fprintf(stderr, "%s\n", answered.error().diagnostic.c_str());
     return 1;

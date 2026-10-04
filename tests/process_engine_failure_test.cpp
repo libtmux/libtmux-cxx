@@ -118,7 +118,7 @@ void expect_overloaded(
 }
 
 [[nodiscard]] bool wait_for_marker(const std::filesystem::path& marker) {
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+  const auto deadline = std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
   while (!std::filesystem::exists(marker) &&
          std::chrono::steady_clock::now() < deadline) {
     std::this_thread::sleep_for(std::chrono::milliseconds{1});
@@ -248,7 +248,7 @@ public:
 
   [[nodiscard]] bool wait_until_reached() {
     std::unique_lock lock{mutex_};
-    return changed_.wait_for(lock, std::chrono::seconds{2},
+    return changed_.wait_for(lock, libtmux::test::kHangGuard,
                              [this] { return reached_; });
   }
 

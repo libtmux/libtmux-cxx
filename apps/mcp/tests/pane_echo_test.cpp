@@ -295,13 +295,13 @@ void inject_foreign_output(const Server& server, const ToolRegistry& tools,
     tty_path.pop_back();
   }
   ASSERT_FALSE(tty_path.empty());
-  const auto answer =
-      tools.call(server, "run_shell_command",
-                 Arguments{{"paneId", std::string{writer_pane_id}},
-                           {"command", "sleep " + std::to_string(delay_seconds) +
-                                           " && printf '%s\\n' '" + std::string{line} +
-                                           "' > " + tty_path},
-                           {"timeoutMs", "3000"}});
+  const auto answer = tools.call(
+      server, "run_shell_command",
+      Arguments{{"paneId", std::string{writer_pane_id}},
+                {"command", "sleep " + std::to_string(delay_seconds) +
+                                " && printf '%s\\n' '" + std::string{line} + "' > " +
+                                tty_path},
+                {"timeoutMs", std::to_string(libtmux::test::kHangGuard.count())}});
   ASSERT_TRUE(answer.has_value()) << answer.error().message;
 }
 
