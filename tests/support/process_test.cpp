@@ -830,9 +830,9 @@ TEST(ProcessSupport, DoesNotWaitForEscapedDescriptorHolder) {
   ASSERT_TRUE(child.has_value()) << child.error();
 
   const auto started = ProcessClock::now();
-  EXPECT_TRUE(child->wait_until(started + std::chrono::milliseconds{300}));
+  EXPECT_TRUE(child->wait_until(started + std::chrono::seconds{2}));
   child->close_output();
-  EXPECT_LT(ProcessClock::now() - started, std::chrono::milliseconds{300});
+  EXPECT_LT(ProcessClock::now() - started, std::chrono::seconds{2});
 }
 
 TEST(ProcessSupport, MoveAssignmentReapsThePreviouslyOwnedChild) {

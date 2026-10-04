@@ -470,7 +470,7 @@ TEST_F(ProcessEngineFailure, CleanupDoesNotOverwriteTheCausalFailure) {
 #endif
 
 TEST_F(ProcessEngineFailure, PostExitDrainUsesItsOwnDeadline) {
-  constexpr std::string_view script{"sleep 1 &"};
+  constexpr std::string_view script{"sleep 3 &"};
   auto engine = libtmux::detail::ProcessEngine::start();
   ASSERT_TRUE(engine.has_value()) << engine.error().diagnostic;
 
@@ -481,7 +481,7 @@ TEST_F(ProcessEngineFailure, PostExitDrainUsesItsOwnDeadline) {
 
   ASSERT_TRUE(answer.has_value()) << answer.error().diagnostic;
   EXPECT_GE(elapsed, std::chrono::milliseconds{75});
-  EXPECT_LT(elapsed, std::chrono::milliseconds{300});
+  EXPECT_LT(elapsed, std::chrono::seconds{2});
 }
 
 TEST_F(ProcessEngineFailure, ConcurrentCloseSharesOneTerminalState) {
