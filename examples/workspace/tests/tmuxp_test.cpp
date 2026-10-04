@@ -487,7 +487,10 @@ session_name: state
 windows:
   - panes:
       - shell_command:
-          - {cmd: first, enter: false, sleep_after: 0.25, suppress_history: false}
+          - cmd: first
+            enter: false
+            sleep_after: 0.25
+            suppress_history: false
           - null
           - second
 )");
