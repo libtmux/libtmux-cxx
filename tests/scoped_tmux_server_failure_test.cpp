@@ -339,6 +339,9 @@ TEST(ScopedTmuxServerFailure, ReboundAfterPidQueryCannotCreateSession) {
   const auto marker = root / "mutation";
   ScopedEnvironment mode_environment{"LIBTMUX_FAKE_MODE", "startup-rebind"};
   ScopedEnvironment marker_environment{"LIBTMUX_FAKE_MUTATION_MARKER", marker.string()};
+  // Hold the fake server between its metadata writes, the gap a loaded runner
+  // opens by chance, so the rebind lands inside it every run.
+  ScopedEnvironment gap_environment{"LIBTMUX_FAKE_METADATA_GAP_MS", "150"};
 
   const auto unrelated = ::fork();
   ASSERT_GE(unrelated, 0);
@@ -364,8 +367,8 @@ TEST(ScopedTmuxServerFailure, ReboundAfterPidQueryCannotCreateSession) {
   }
 
   EXPECT_FALSE(startup_succeeded);
-  EXPECT_NE(startup_error.find("session creation ownership changed"),
-            std::string::npos);
+  EXPECT_NE(startup_error.find("session creation ownership changed"), std::string::npos)
+      << "startup error: " << startup_error;
   EXPECT_FALSE(std::filesystem::exists(marker));
 
   static_cast<void>(::kill(unrelated, SIGKILL));
