@@ -195,6 +195,14 @@ line as `// Given: <type> <name>` (repeated for more than one, separated by
 $ python3 -m tools.docs.check_example_isolation
 ```
 
+Examples stay within 80 columns. The scope and any listed exceptions are in
+[`example-width.toml`](example-width.toml); this fails on a wider line, and
+`--self-test` proves it can:
+
+```console
+$ python3 tools/docs/check_example_width.py
+```
+
 This repository is also a vcpkg registry, and the versions database can drift
 from the ports beside it:
 
