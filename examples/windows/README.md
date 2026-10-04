@@ -13,7 +13,11 @@ Build the `windows-psmux` preset from a Developer PowerShell, then run the
 native example through the fixture:
 
 ```console
-$ powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\examples\windows\run_psmux_example.ps1 -Example .\build\windows-psmux\examples\windows\Debug\libtmux_example_07_windows_psmux.exe
+$ $dir = ".\build\windows-psmux\examples\windows\Debug"
+$ powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+    -File .\examples\windows\run_psmux_example.ps1 `
+    -Example `
+    "$dir\libtmux_example_07_windows_psmux.exe"
 ```
 
 The same fixture can host the MCP server. This invocation passes the generated
@@ -21,7 +25,10 @@ selector explicitly as `--socket-name`; stdin and stdout remain the MCP
 transport, and cleanup runs after the client closes stdin:
 
 ```console
-$ powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\examples\windows\run_psmux_example.ps1 -McpServer .\build\windows-psmux\apps\mcp\Debug\libtmux-mcp-server.exe
+$ powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+    -File .\examples\windows\run_psmux_example.ps1 `
+    -McpServer `
+    .\build\windows-psmux\apps\mcp\Debug\libtmux-mcp-server.exe
 ```
 
 An MCP client can use that command directly. Resolve both paths first: MCP
