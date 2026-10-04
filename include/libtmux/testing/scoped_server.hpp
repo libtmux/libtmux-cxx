@@ -21,6 +21,14 @@
 
 namespace libtmux::test {
 
+/// How long a test step that must happen may take before the test calls it hung.
+///
+/// A step returns when its event does, so the value costs time only when a
+/// test hangs. Use it for starting a server or a control client, a command round
+/// trip, and a process exiting after a signal; keep a shorter bound only where
+/// the test is asserting the bound itself.
+inline constexpr std::chrono::milliseconds kHangGuard{20000};
+
 /// Whether the test server is addressed by `tmux -L name` or `tmux -S path`.
 enum class SocketMode { Name, Path };
 
@@ -59,8 +67,8 @@ struct SocketNamespace {
 struct ScopedTmuxServerOptions {
   std::filesystem::path tmux_binary{"tmux"};
   SocketMode mode{SocketMode::Path};
-  std::chrono::milliseconds startup_timeout{5000};
-  std::chrono::milliseconds teardown_timeout{2000};
+  std::chrono::milliseconds startup_timeout{kHangGuard};
+  std::chrono::milliseconds teardown_timeout{kHangGuard};
   std::string session_name{"libtmux_test"};
   SocketNamespace socket_namespace{};
   /// Every member has an initializer: without one here, a designated

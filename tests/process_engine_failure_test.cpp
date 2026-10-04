@@ -1,3 +1,4 @@
+#include "libtmux/testing/scoped_server.hpp"
 #include "process_engine.hpp"
 
 #include <gtest/gtest.h>
@@ -81,7 +82,8 @@ void arm(Fault fault) { arm({fault}); }
 #endif
 
 libtmux::detail::ProcessRequest
-shell(std::string script, std::chrono::milliseconds timeout = std::chrono::seconds{2}) {
+shell(std::string script,
+      std::chrono::milliseconds timeout = libtmux::test::kHangGuard) {
   libtmux::detail::ProcessRequest request;
   request.executable = "/bin/sh";
   request.arguments = {{"-c"}, {std::move(script)}};

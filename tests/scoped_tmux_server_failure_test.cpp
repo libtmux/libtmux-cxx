@@ -141,7 +141,7 @@ bool trace_gains_line(const std::filesystem::path& trace, std::string_view needl
 // happened". Every caller wants the pid once it is known, and a busy runner is
 // the case that finds this.
 pid_t traced_pid(const std::filesystem::path& trace, std::string_view role,
-                 std::chrono::milliseconds patience = std::chrono::seconds{5}) {
+                 std::chrono::milliseconds patience = libtmux::test::kHangGuard) {
   const auto prefix = std::string{role} + "\t";
   const auto deadline = std::chrono::steady_clock::now() + patience;
   for (;;) {

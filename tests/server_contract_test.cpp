@@ -34,6 +34,7 @@ namespace {
 
 using libtmux::DeliveryStatus;
 using libtmux::Server;
+using libtmux::test::kHangGuard;
 
 libtmux::CommandRuntime start_runtime(libtmux::CommandRuntimeConfig config = {}) {
   auto runtime = libtmux::CommandRuntime::start(config);
@@ -44,7 +45,7 @@ libtmux::CommandRuntime start_runtime(libtmux::CommandRuntimeConfig config = {})
 }
 
 bool wait_until(const std::function<bool()>& predicate,
-                std::chrono::milliseconds timeout = std::chrono::seconds{3}) {
+                std::chrono::milliseconds timeout = kHangGuard) {
   const auto deadline = std::chrono::steady_clock::now() + timeout;
   while (!predicate() && std::chrono::steady_clock::now() < deadline) {
     std::this_thread::sleep_for(std::chrono::milliseconds{5});

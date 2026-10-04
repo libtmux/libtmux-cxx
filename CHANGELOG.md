@@ -9,6 +9,14 @@ was recorded as it landed.
 
 ## Unreleased
 
+### Testing
+
+- `libtmux::test::kHangGuard` is the bound for a test step that must happen:
+  starting a server, attaching a client, a command round trip, a process
+  exiting after a signal. `ScopedTmuxServerOptions::startup_timeout` and
+  `teardown_timeout` default to it, and `tmux_version` waits that long for
+  `tmux -V`. (#34)
+
 ### Workspace CLI
 
 - `tmux-workspace` on macOS no longer reports "terminal child could not

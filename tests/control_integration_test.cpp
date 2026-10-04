@@ -61,6 +61,7 @@ using libtmux::ControlTerminal;
 using libtmux::DeliveryStatus;
 using libtmux::Notification;
 using libtmux::ProtocolError;
+using libtmux::test::kHangGuard;
 using libtmux::test::ScopedTmuxServer;
 using libtmux::test::ScopedTmuxServerOptions;
 using libtmux::test::SocketMode;
@@ -146,8 +147,8 @@ libtmux::expected<ScopedTmuxServer, std::string>
 start_server(std::string session_name) {
   return ScopedTmuxServer::start({.tmux_binary = LIBTMUX_CONTROL_TMUX_PATH,
                                   .mode = SocketMode::Path,
-                                  .startup_timeout = 2s,
-                                  .teardown_timeout = 2s,
+                                  .startup_timeout = kHangGuard,
+                                  .teardown_timeout = kHangGuard,
                                   .session_name = std::move(session_name),
                                   .teardown_report = {}});
 }
@@ -157,8 +158,8 @@ connect_to(const ScopedTmuxServer& server) {
   return Connection::connect({.tmux_binary = LIBTMUX_CONTROL_TMUX_PATH,
                               .socket_path = server.socket_path(),
                               .session_name = std::string{server.session_name()},
-                              .startup_timeout = 2s,
-                              .shutdown_timeout = 2s});
+                              .startup_timeout = kHangGuard,
+                              .shutdown_timeout = kHangGuard});
 }
 
 ControlRequest
