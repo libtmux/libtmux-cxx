@@ -62,7 +62,9 @@ which is what a platform that reports them looks like from here. That is how the
 deadlock was reproduced on Linux, and it is how to check the guard still holds:
 
 ```console
-$ cmake -S . -B build/stopsim -G Ninja -DLIBTMUX_FETCH_DEPS=ON -DCMAKE_CXX_FLAGS=-DLIBTMUX_SIMULATE_STOP_REPORTING_WAITID
+$ cmake -S . -B build/stopsim -G Ninja \
+    -DLIBTMUX_FETCH_DEPS=ON \
+    -DCMAKE_CXX_FLAGS=-DLIBTMUX_SIMULATE_STOP_REPORTING_WAITID
 ```
 
 **A missing object is detected, not reported by tmux.** Asked to format a
