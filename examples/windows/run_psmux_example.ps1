@@ -179,8 +179,9 @@ finally {
                     "psmux left $($live.Count) exact live registry file(s)"
             }
             if ($unknown.Count -ne 0 -and $null -eq $cleanupFailure) {
+                $unknownCount = $unknown.Count
                 $cleanupFailure =
-                    "psmux left $($unknown.Count) unknown exact registry file(s)"
+                    "psmux left $unknownCount unknown exact registry file(s)"
             }
 
             if ($killSucceeded -and $live.Count -eq 0 -and
