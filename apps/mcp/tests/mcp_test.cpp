@@ -1801,6 +1801,20 @@ TEST(McpToolsTmux, WaitForTextNeverMatchesACommandThatWasNeverSubmitted) {
                                 Arguments{{"paneId", pane_id}, {"text", marker}});
   ASSERT_TRUE(typed.has_value()) << typed.error().message;
 
+  // The pane draws the paste asynchronously, and the claim below is about a
+  // marker already on screen when the wait starts. Wait for the screen, not
+  // for a guessed delay; the bound only guards a hang.
+  const auto drawn_by = std::chrono::steady_clock::now() + std::chrono::seconds{30};
+  bool drawn = false;
+  while (!drawn && std::chrono::steady_clock::now() < drawn_by) {
+    const auto screen = server.run({"capture-pane", "-p", "-J", "-t", pane_id});
+    drawn = screen.has_value() && screen->find(marker) != std::string::npos;
+    if (!drawn) {
+      std::this_thread::sleep_for(std::chrono::milliseconds{10});
+    }
+  }
+  ASSERT_TRUE(drawn) << "the pasted marker never reached the pane";
+
   const auto waited = tools.call(
       server, "wait_for_text",
       Arguments{{"target", pane_id}, {"text", marker}, {"timeout_ms", "300"}});
