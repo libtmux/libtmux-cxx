@@ -77,8 +77,8 @@ ExampleRun run_example(std::string_view name) {
                                  harness_namespace());
 
   const auto before = trees_left_behind();
-  auto finished = libtmux::examples::run_program(example_binary(name), environment,
-                                                 std::chrono::seconds{60});
+  auto finished = libtmux::examples::run_program(
+      example_binary(name), environment, std::chrono::seconds{60});
   auto after = trees_left_behind();
 
   std::vector<std::filesystem::path> leaked;
@@ -115,7 +115,8 @@ protected:
 
 TEST_F(ExampleFiles, PreserveExistingTemporaryFiles) {
   const std::vector<std::pair<std::string_view, std::string_view>> examples{
-      {"01_tour", "libtmux-tour.txt"}, {"02_workspace", "libtmux-workspace.conf"}};
+      {"01_tour", "libtmux-tour.txt"},
+      {"02_workspace", "libtmux-workspace.conf"}};
   for (const auto& [name, filename] : examples) {
     SCOPED_TRACE(name);
     const auto existing = directory / filename;
@@ -128,9 +129,10 @@ TEST_F(ExampleFiles, PreserveExistingTemporaryFiles) {
     libtmux::test::erase_environment(environment, "TMUX");
     libtmux::test::erase_environment(environment, "TMUX_PANE");
     libtmux::test::set_environment(environment, "TMPDIR", directory.string());
-    libtmux::test::set_environment(environment, "LIBTMUX_EXAMPLE_NAMESPACE", "files");
-    const auto run = libtmux::examples::run_program(example_binary(name), environment,
-                                                    std::chrono::seconds{60});
+    libtmux::test::set_environment(environment, "LIBTMUX_EXAMPLE_NAMESPACE",
+                                   "files");
+    const auto run = libtmux::examples::run_program(
+        example_binary(name), environment, std::chrono::seconds{60});
     ASSERT_TRUE(run.has_value()) << run.error();
     ASSERT_EQ(run->exit_code, 0) << run->output;
     std::ifstream input{existing};
@@ -153,14 +155,18 @@ TEST_P(Example, LeavesNoServerAndNoDirectory) {
   for (const auto& path : run.leaked) {
     left += path.string() + '\n';
   }
-  EXPECT_TRUE(run.leaked.empty()) << "the example left its private tree behind:\n"
-                                  << left;
+  EXPECT_TRUE(run.leaked.empty())
+      << "the example left its private tree behind:\n"
+      << left;
 }
 
 INSTANTIATE_TEST_SUITE_P(All, Example,
                          testing::Values("01_tour", "02_workspace", "03_filter",
-                                         "04_errors", "05_readme", "06_streaming"),
-                         [](const auto& info) { return std::string{info.param}; });
+                                         "04_errors", "05_readme",
+                                         "06_streaming"),
+                         [](const auto& info) {
+                           return std::string{info.param};
+                         });
 
 TEST(TourOutput, NamesTheSessionItCreated) {
   const auto run = run_example("01_tour");
@@ -175,10 +181,10 @@ TEST(Package, ReportsTheRunningTmuxToAConsumer) {
 }
 
 TEST(Package, NamespacedServersDoNotCollide) {
-  auto mine = ScopedTmuxServer::start(
-      ScopedTmuxServerOptions{.socket_namespace = SocketNamespace::consumer("alpha")});
-  auto theirs = ScopedTmuxServer::start(
-      ScopedTmuxServerOptions{.socket_namespace = SocketNamespace::consumer("beta")});
+  auto mine = ScopedTmuxServer::start(ScopedTmuxServerOptions{
+      .socket_namespace = SocketNamespace::consumer("alpha")});
+  auto theirs = ScopedTmuxServer::start(ScopedTmuxServerOptions{
+      .socket_namespace = SocketNamespace::consumer("beta")});
   ASSERT_TRUE(mine.has_value()) << mine.error();
   ASSERT_TRUE(theirs.has_value()) << theirs.error();
 
@@ -194,7 +200,8 @@ TEST(Package, RefusesANamespaceThatWouldNotSurviveAPath) {
   const auto refused = ScopedTmuxServer::start(
       ScopedTmuxServerOptions{.socket_namespace = {.label = "has/slash"}});
   ASSERT_FALSE(refused.has_value());
-  EXPECT_NE(refused.error().find("A-Za-z0-9._-"), std::string::npos) << refused.error();
+  EXPECT_NE(refused.error().find("A-Za-z0-9._-"), std::string::npos)
+      << refused.error();
 }
 
 } // namespace

@@ -92,8 +92,8 @@ int main() {
     return failed ? std::string{} : link.string() + " 300";
   }();
   if (!editor_command.empty()) {
-    const auto editing_window =
-        session.new_window({.name = "editing", .shell_command = editor_command});
+    const auto editing_window = session.new_window(
+        {.name = "editing", .shell_command = editor_command});
     if (!editing_window.has_value()) {
       std::cerr << std::format("{}\n", editing_window.error());
       return 1;
@@ -101,7 +101,8 @@ int main() {
     // tmux names the pane after whatever is running in it, and for a moment
     // that is still the shell on its way to exec. Wait for the name to settle,
     // or the filter below looks for an editor before there is one.
-    const auto settled_by = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+    const auto settled_by =
+        std::chrono::steady_clock::now() + std::chrono::seconds{5};
     while (std::chrono::steady_clock::now() < settled_by) {
       const auto panes = editing_window->panes();
       if (panes.has_value() && !panes->empty() &&
@@ -161,7 +162,8 @@ int main() {
 
     const auto windows = server.windows();
     if (windows.has_value()) {
-      const auto found = std::ranges::distance(*windows | libtmux::matching(by_name));
+      const auto found =
+          std::ranges::distance(*windows | libtmux::matching(by_name));
       std::cout << std::format("{} window(s) called editor\n", found);
     }
   }
@@ -180,8 +182,8 @@ int main() {
     const auto active = std::ranges::count_if(ordered, libtmux::window::active);
     const libtmux::Window widest =
         std::ranges::max(ordered, {}, libtmux::window::width);
-    std::cout << std::format("{} of {} active, widest {}\n", active, ordered.size(),
-                             widest);
+    std::cout << std::format("{} of {} active, widest {}\n", active,
+                             ordered.size(), widest);
   }
   // #endregion project
 
@@ -194,15 +196,16 @@ int main() {
     std::cerr << std::format("{}\n", panes.error());
     return 1;
   }
-  auto addressed =
-      *panes | libtmux::matching(libtmux::pane::id == panes->at(0).id().value());
+  auto addressed = *panes | libtmux::matching(libtmux::pane::id ==
+                                              panes->at(0).id().value());
 
   if (const auto one = libtmux::exactly_one(addressed); one.has_value()) {
     std::cout << std::format("exactly one: {}\n", one->get());
   }
 
   // And when it is not one, the answer says which way it went wrong.
-  auto absent = *panes | libtmux::matching(libtmux::pane::command == "no-such-command");
+  auto absent =
+      *panes | libtmux::matching(libtmux::pane::command == "no-such-command");
 
   if (const auto none = libtmux::exactly_one(absent); !none.has_value()) {
     std::cout << std::format("not one: {}\n", libtmux::to_string(none.error()));
@@ -275,7 +278,8 @@ int main() {
       std::cout << "this backend cannot provide the operation safely\n";
       break;
     case libtmux::FailureKind::refused:
-      std::cout << std::format("tmux refused it: {}\n", gone.error().diagnostic);
+      std::cout << std::format("tmux refused it: {}\n",
+                               gone.error().diagnostic);
       break;
     case libtmux::FailureKind::timeout:
       std::cout << "tmux did not answer in time\n";
@@ -292,10 +296,13 @@ int main() {
   // One failure type covers the whole surface, so calls compose rather than
   // nest: each step runs only when the last one answered, and the first
   // failure is what comes out.
-  const auto columns =
-      server.session(session.name())
-          .and_then([](const libtmux::Session& found) { return found.active_pane(); })
-          .transform([](const libtmux::Pane& active) { return active.width(); });
+  const auto columns = server.session(session.name())
+                           .and_then([](const libtmux::Session& found) {
+                             return found.active_pane();
+                           })
+                           .transform([](const libtmux::Pane& active) {
+                             return active.width();
+                           });
   std::cout << std::format("the active pane is {} columns wide\n",
                            columns.value_or(-1));
   // #endregion compose
@@ -304,28 +311,30 @@ int main() {
   // Given: const libtmux::Server& server
   std::size_t observed = 0U;
   auto async_server = libtmux::Server::at_socket_path(
-      server.socket_path(), [&observed](const libtmux::CommandReport&) { ++observed; });
+      server.socket_path(),
+      [&observed](const libtmux::CommandReport&) { ++observed; });
   if (!async_server.has_value()) {
     std::cerr << std::format("{}\n", async_server.error());
     return 1;
   }
 
-  auto started_runtime =
-      libtmux::CommandRuntime::start(libtmux::CommandRuntimeConfig{.capacity = 1U});
+  auto started_runtime = libtmux::CommandRuntime::start(
+      libtmux::CommandRuntimeConfig{.capacity = 1U});
   if (!started_runtime.has_value()) {
     std::cerr << std::format("{}\n", started_runtime.error());
     return 1;
   }
   auto runtime = *std::move(started_runtime);
-  auto submitted =
-      async_server->try_submit(runtime, {"display-message", "-p", "async result"});
+  auto submitted = async_server->try_submit(
+      runtime, {"display-message", "-p", "async result"});
   if (!submitted.has_value()) { // Refused before admission.
     std::cerr << std::format("{}\n", submitted.error());
     return 1;
   }
   const auto ready = submitted->wait_for(std::chrono::seconds{5});
   if (!ready.has_value() || !*ready) {
-    // A wait timeout keeps the command alive. Cancellation is a separate choice.
+    // A wait timeout keeps the command alive. Cancellation is a separate
+    // choice.
     static_cast<void>(submitted->request_cancel());
   }
   auto result = std::move(*submitted).wait();
@@ -333,14 +342,17 @@ int main() {
     std::cerr << std::format("{}\n", result.error());
     return 1;
   }
-  if (runtime.wait_ready_for(std::chrono::seconds{5}) != libtmux::ReadyStatus::ready) {
+  if (runtime.wait_ready_for(std::chrono::seconds{5}) !=
+      libtmux::ReadyStatus::ready) {
     return 1;
   }
 
   const auto held = runtime.snapshot();
-  std::cout << std::format("{}/{} slot(s), {} observation(s) pending\n", held.in_flight,
-                           held.capacity, held.pending_observers);
-  std::cout << std::format("dispatched {} observation(s)\n", runtime.dispatch_ready());
+  std::cout << std::format("{}/{} slot(s), {} observation(s) pending\n",
+                           held.in_flight, held.capacity,
+                           held.pending_observers);
+  std::cout << std::format("dispatched {} observation(s)\n",
+                           runtime.dispatch_ready());
 
   auto detached =
       async_server->try_submit(runtime, {"display-message", "-p", "detached"});
@@ -349,20 +361,23 @@ int main() {
     return 1;
   }
   std::move(*detached).detach(); // Keep no result; the observation remains.
-  if (runtime.wait_ready_for(std::chrono::seconds{5}) != libtmux::ReadyStatus::ready) {
+  if (runtime.wait_ready_for(std::chrono::seconds{5}) !=
+      libtmux::ReadyStatus::ready) {
     return 1;
   }
-  std::cout << std::format("discarded {} observation(s)\n", runtime.discard_ready());
+  std::cout << std::format("discarded {} observation(s)\n",
+                           runtime.discard_ready());
 
   const auto shutdown = runtime.close();
   if (shutdown.failure.has_value()) {
     std::cerr << std::format("{}\n", *shutdown.failure);
     return 1;
   }
-  std::cout << std::format("runtime stopped: {}; safe to unload: {}; observed: {}\n",
-                           shutdown.transports_stopped, shutdown.safe_to_unload,
-                           observed);
-  if (!shutdown.transports_stopped || !shutdown.safe_to_unload || observed != 1U) {
+  std::cout << std::format(
+      "runtime stopped: {}; safe to unload: {}; observed: {}\n",
+      shutdown.transports_stopped, shutdown.safe_to_unload, observed);
+  if (!shutdown.transports_stopped || !shutdown.safe_to_unload ||
+      observed != 1U) {
     return 1;
   }
   // #endregion async
@@ -379,7 +394,8 @@ int main() {
   // Or run a command and read its output.
   const auto answer = server.run({"display-message", "-p", "#{version}"});
   if (answer.has_value()) {
-    std::cout << std::format("tmux {}", *answer); // tmux's answer ends in a newline
+    std::cout << std::format("tmux {}",
+                             *answer); // tmux's answer ends in a newline
   }
   // #endregion escape
 
@@ -405,20 +421,23 @@ int main() {
   // #region fixture
   // A private tmux for a suite of your own, gone when the scope ends.
   auto fixture = libtmux::test::ScopedTmuxServer::start(
-      {.socket_namespace = libtmux::test::SocketNamespace::consumer("my-suite")});
+      {.socket_namespace =
+           libtmux::test::SocketNamespace::consumer("my-suite")});
   if (!fixture.has_value()) {
     std::cerr << std::format("{}\n", fixture.error());
     return 1;
   }
   const auto under_test =
       libtmux::Server::at_socket_path(fixture->socket_path().string());
-  std::cout << std::format("sessions on it: {}\n", under_test->sessions()->size());
+  std::cout << std::format("sessions on it: {}\n",
+                           under_test->sessions()->size());
   // #endregion fixture
 
   // The stand-in editor's directory, which the scratch server does not own.
   std::error_code cleanup;
-  std::filesystem::remove_all(std::filesystem::temp_directory_path() /
-                                  ("libtmux-cxx-editor-" + std::to_string(::getpid())),
-                              cleanup);
+  std::filesystem::remove_all(
+      std::filesystem::temp_directory_path() /
+          ("libtmux-cxx-editor-" + std::to_string(::getpid())),
+      cleanup);
   return 0;
 }

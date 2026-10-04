@@ -93,14 +93,14 @@ TEST(Tmuxp, ADocumentThatCannotBeBuiltSaysWhere) {
   ASSERT_FALSE(no_windows.has_value());
   EXPECT_EQ(no_windows.error().where, "windows");
 
-  const auto bad_pane =
-      parse_tmuxp("session_name: work\nwindows:\n  - panes:\n      - {bad: value}\n");
+  const auto bad_pane = parse_tmuxp(
+      "session_name: work\nwindows:\n  - panes:\n      - {bad: value}\n");
   ASSERT_FALSE(bad_pane.has_value());
   EXPECT_EQ(bad_pane.error().where, "windows[0].panes[0]");
 
-  const auto bad_command =
-      parse_tmuxp("session_name: work\nwindows:\n  - panes:\n      - shell_command:\n"
-                  "          - [a]\n");
+  const auto bad_command = parse_tmuxp(
+      "session_name: work\nwindows:\n  - panes:\n      - shell_command:\n"
+      "          - [a]\n");
   ASSERT_FALSE(bad_command.has_value());
   EXPECT_EQ(bad_command.error().where, "windows[0].panes[0].shell_command[0]");
 
@@ -184,8 +184,9 @@ TEST(Tmuxp, EveryKeyTheDocumentCarriesReachesTheWorkspace) {
   EXPECT_EQ(texts(work.panes[1].shell_commands),
             (std::vector<std::string>{"echo setup", "echo second"}));
   // A window's own setup runs after the document's and before the pane's.
-  EXPECT_EQ(texts(workspace->windows[1].panes[0].shell_commands),
-            (std::vector<std::string>{"echo setup", "echo docs-setup", "echo only"}));
+  EXPECT_EQ(
+      texts(workspace->windows[1].panes[0].shell_commands),
+      (std::vector<std::string>{"echo setup", "echo docs-setup", "echo only"}));
 }
 
 TEST(Tmuxp, VariablesAndAWindowIndexReachTheWorkspace) {
@@ -207,23 +208,25 @@ TEST(Tmuxp, VariablesAndAWindowIndexReachTheWorkspace) {
   ASSERT_TRUE(workspace.has_value())
       << workspace.error().where << ": " << workspace.error().reason;
 
-  EXPECT_EQ(workspace->environment, (std::vector<std::pair<std::string, std::string>>{
-                                        {"SESSION_VAR", "from-session"}}));
+  EXPECT_EQ(workspace->environment,
+            (std::vector<std::pair<std::string, std::string>>{
+                {"SESSION_VAR", "from-session"}}));
   ASSERT_EQ(workspace->windows.size(), 1U);
   const auto& window = workspace->windows.front();
   ASSERT_TRUE(window.index.has_value());
   EXPECT_EQ(*window.index, 4);
-  EXPECT_EQ(window.environment, (std::vector<std::pair<std::string, std::string>>{
-                                    {"WINDOW_VAR", "from-window"}}));
+  EXPECT_EQ(window.environment,
+            (std::vector<std::pair<std::string, std::string>>{
+                {"WINDOW_VAR", "from-window"}}));
   ASSERT_EQ(window.panes.size(), 1U);
-  EXPECT_EQ(
-      window.panes.front().environment,
-      (std::vector<std::pair<std::string, std::string>>{{"PANE_VAR", "from-pane"}}));
+  EXPECT_EQ(window.panes.front().environment,
+            (std::vector<std::pair<std::string, std::string>>{
+                {"PANE_VAR", "from-pane"}}));
 }
 
 TEST(Tmuxp, AnEnvironmentThatIsNotAMappingIsRefused) {
-  const auto listed =
-      parse_tmuxp("session_name: w\nenvironment:\n  - A=b\nwindows:\n  - panes: [x]\n");
+  const auto listed = parse_tmuxp(
+      "session_name: w\nenvironment:\n  - A=b\nwindows:\n  - panes: [x]\n");
   ASSERT_FALSE(listed.has_value());
   EXPECT_EQ(listed.error().where, "environment");
   EXPECT_EQ(listed.error().reason, "an environment is a mapping");
@@ -243,7 +246,8 @@ TEST(Tmuxp, ACommandCanBeAMappingRatherThanAString) {
                                      "            sleep_after: 0.5\n");
   ASSERT_TRUE(workspace.has_value())
       << workspace.error().where << ": " << workspace.error().reason;
-  const auto& commands = workspace->windows.front().panes.front().shell_commands;
+  const auto& commands =
+      workspace->windows.front().panes.front().shell_commands;
   ASSERT_EQ(commands.size(), 3U);
 
   // A string is a command that is sent and submitted, with no waiting.
@@ -273,21 +277,23 @@ TEST(Tmuxp, ABlankCommandIsACarriageReturnRatherThanNothing) {
   const auto& panes = workspace->windows.front().panes;
   ASSERT_EQ(panes.size(), 3U);
   EXPECT_TRUE(panes[0].shell_commands.empty());
-  EXPECT_EQ(panes[1].shell_commands, (std::vector<libtmux::workspace::Command>{{}}));
+  EXPECT_EQ(panes[1].shell_commands,
+            (std::vector<libtmux::workspace::Command>{{}}));
   EXPECT_TRUE(panes[2].shell_commands.empty());
 }
 
 TEST(Tmuxp, AMalformedCommandMappingIsRefused) {
-  const auto unknown =
-      parse_tmuxp("session_name: w\nwindows:\n  - panes:\n"
-                  "      - shell_command:\n          - cmd: x\n            wat: 1\n");
-  ASSERT_FALSE(unknown.has_value());
-  EXPECT_EQ(unknown.error().reason,
-            "unsupported key: wat (prefix a custom key with \"x-\" to keep it)");
-
-  const auto backwards = parse_tmuxp(
+  const auto unknown = parse_tmuxp(
       "session_name: w\nwindows:\n  - panes:\n"
-      "      - shell_command:\n          - cmd: x\n            sleep_before: -1\n");
+      "      - shell_command:\n          - cmd: x\n            wat: 1\n");
+  ASSERT_FALSE(unknown.has_value());
+  EXPECT_EQ(
+      unknown.error().reason,
+      "unsupported key: wat (prefix a custom key with \"x-\" to keep it)");
+
+  const auto backwards = parse_tmuxp("session_name: w\nwindows:\n  - panes:\n"
+                                     "      - shell_command:\n          - cmd: "
+                                     "x\n            sleep_before: -1\n");
   ASSERT_FALSE(backwards.has_value());
   EXPECT_EQ(backwards.error().reason, "a pause cannot be negative");
 
@@ -322,15 +328,17 @@ TEST(Tmuxp, TheKeysThatTookTheCorpusToTwentyOne) {
   ASSERT_TRUE(workspace.has_value())
       << workspace.error().where << ": " << workspace.error().reason;
 
-  EXPECT_EQ(
-      workspace->global_options,
-      (std::vector<std::pair<std::string, std::string>>{{"default-shell", "/bin/sh"}}));
-  EXPECT_EQ(workspace->options, (std::vector<std::pair<std::string, std::string>>{
-                                    {"main-pane-height", "30"}}));
+  EXPECT_EQ(workspace->global_options,
+            (std::vector<std::pair<std::string, std::string>>{
+                {"default-shell", "/bin/sh"}}));
+  EXPECT_EQ(workspace->options,
+            (std::vector<std::pair<std::string, std::string>>{
+                {"main-pane-height", "30"}}));
   const auto& window = workspace->windows.front();
   EXPECT_EQ(window.shell, "/usr/bin/python3");
-  EXPECT_EQ(window.options_after, (std::vector<std::pair<std::string, std::string>>{
-                                      {"synchronize-panes", "on"}}));
+  EXPECT_EQ(window.options_after,
+            (std::vector<std::pair<std::string, std::string>>{
+                {"synchronize-panes", "on"}}));
   const auto& pane = window.panes.front();
   EXPECT_EQ(pane.shell, "/usr/bin/vim");
 
@@ -352,27 +360,27 @@ TEST(Tmuxp, AKeyThisCannotHonourIsRefusedRatherThanDropped) {
       "session_name: w\nbefore_script: ./setup.sh\nwindows:\n  - panes: [x]\n");
   ASSERT_FALSE(document.has_value());
   EXPECT_EQ(document.error().where, "");
-  EXPECT_EQ(
-      document.error().reason,
-      "unsupported key: before_script (prefix a custom key with \"x-\" to keep it)");
+  EXPECT_EQ(document.error().reason, "unsupported key: before_script (prefix a "
+                                     "custom key with \"x-\" to keep it)");
 
   const auto window = parse_tmuxp(
       "session_name: w\nwindows:\n  - not_a_window_key: 1\n    panes: [x]\n");
   ASSERT_FALSE(window.has_value());
   EXPECT_EQ(window.error().where, "windows[0]");
-  EXPECT_EQ(
-      window.error().reason,
-      "unsupported key: not_a_window_key (prefix a custom key with \"x-\" to keep it)");
+  EXPECT_EQ(window.error().reason, "unsupported key: not_a_window_key (prefix "
+                                   "a custom key with \"x-\" to keep it)");
 
-  const auto pane = parse_tmuxp("session_name: w\nwindows:\n  - panes:\n"
-                                "      - shell_command: x\n        wat: false\n");
+  const auto pane =
+      parse_tmuxp("session_name: w\nwindows:\n  - panes:\n"
+                  "      - shell_command: x\n        wat: false\n");
   ASSERT_FALSE(pane.has_value());
   EXPECT_EQ(pane.error().where, "windows[0].panes[0]");
-  EXPECT_EQ(pane.error().reason,
-            "unsupported key: wat (prefix a custom key with \"x-\" to keep it)");
+  EXPECT_EQ(
+      pane.error().reason,
+      "unsupported key: wat (prefix a custom key with \"x-\" to keep it)");
 
-  const auto options =
-      parse_tmuxp("session_name: w\nwindows:\n  - options: [a]\n    panes: [x]\n");
+  const auto options = parse_tmuxp(
+      "session_name: w\nwindows:\n  - options: [a]\n    panes: [x]\n");
   ASSERT_FALSE(options.has_value());
   EXPECT_EQ(options.error().where, "windows[0].options");
 }
@@ -454,19 +462,21 @@ TEST(Tmuxp, RefusesMalformedLayoutsBeforeBuilding) {
        {"invalid-layout", "32d2,80x24,0,0{}", "ffff,80x24,0,0,0"}) {
     SCOPED_TRACE(layout);
     const auto parsed = libtmux::workspace::parse_tmuxp(
-        "session_name: layout\nwindows: [{layout: '" + std::string{layout} + "'}]\n");
+        "session_name: layout\nwindows: [{layout: '" + std::string{layout} +
+        "'}]\n");
     ASSERT_FALSE(parsed.has_value());
     EXPECT_EQ(parsed.error().where, "windows[0].layout");
   }
 }
 
 TEST(Tmuxp, RefusesMultipleDocumentsAndUnrepresentablePauses) {
-  EXPECT_FALSE(parse_tmuxp("session_name: a\nwindows: [{}]\n---\nsession_name: b\n")
-                   .has_value());
+  EXPECT_FALSE(
+      parse_tmuxp("session_name: a\nwindows: [{}]\n---\nsession_name: b\n")
+          .has_value());
   for (const auto* pause : {".inf", ".nan", "1e100", "-1", "[1]"}) {
-    const auto parsed =
-        parse_tmuxp("session_name: a\nwindows:\n  - panes:\n      - sleep_after: " +
-                    std::string{pause} + "\n        shell_command: value\n");
+    const auto parsed = parse_tmuxp(
+        "session_name: a\nwindows:\n  - panes:\n      - sleep_after: " +
+        std::string{pause} + "\n        shell_command: value\n");
     EXPECT_FALSE(parsed.has_value()) << pause;
   }
 }
@@ -502,9 +512,9 @@ TEST(Tmuxp, MalformedCommandAndBooleanFieldsAreRefused) {
         << command;
   }
   for (const auto* field : {"focus", "suppress_history"}) {
-    EXPECT_FALSE(
-        parse_tmuxp("session_name: a\nwindows:\n  - " + std::string{field} + ": typo\n")
-            .has_value());
+    EXPECT_FALSE(parse_tmuxp("session_name: a\nwindows:\n  - " +
+                             std::string{field} + ": typo\n")
+                     .has_value());
     EXPECT_FALSE(parse_tmuxp("session_name: a\nwindows:\n  - panes:\n      - " +
                              std::string{field} + ": {}\n")
                      .has_value());

@@ -47,7 +47,8 @@ int main() {
 
   // An answer larger than the caller is prepared to hold is reported rather
   // than cut, because a cut answer reads exactly like a complete one.
-  if (const auto big = server.run({"list-panes", "-a", "-F", "#{pane_id}"}, {}, 1U);
+  if (const auto big =
+          server.run({"list-panes", "-a", "-F", "#{pane_id}"}, {}, 1U);
       !big.has_value()) {
     report("an answer that did not fit", big.error());
   }
@@ -64,8 +65,8 @@ int main() {
   }
   // A channel nobody signals is a timeout, not a hang: the deadline rides
   // on the call.
-  if (const auto waited =
-          server.wait_for("nobody-signals-this", std::chrono::milliseconds{300});
+  if (const auto waited = server.wait_for("nobody-signals-this",
+                                          std::chrono::milliseconds{300});
       !waited.has_value()) {
     std::printf("waiting timed out, as it should: %s\n",
                 waited.error().diagnostic.c_str());
