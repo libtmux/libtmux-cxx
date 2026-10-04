@@ -85,6 +85,8 @@ Run the suite under a temporary directory as long as the one macOS gives:
 $ BASE=/tmp/$(printf 'm%.0s' $(seq 1 52)) && mkdir -p "$BASE" && TMPDIR="$BASE" ctest --preset cxx-dev --no-tests=error; rmdir "$BASE"
 ```
 
+Tests must also pass on macOS; [`MACOS_CI.md`](MACOS_CI.md) lists what that takes.
+
 ## Checks that must pass
 
 Run what CI runs. The six build lanes disagree often enough to be worth the
