@@ -82,7 +82,12 @@ eight.
 Run the suite under a temporary directory as long as the one macOS gives:
 
 ```console
-$ BASE=/tmp/$(printf 'm%.0s' $(seq 1 52)) && mkdir -p "$BASE" && TMPDIR="$BASE" ctest --preset cxx-dev --no-tests=error; rmdir "$BASE"
+$ BASE=/tmp/$(printf 'm%.0s' $(seq 1 52)) && \
+    mkdir -p "$BASE" && \
+    TMPDIR="$BASE" ctest \
+      --preset cxx-dev \
+      --no-tests=error; \
+  rmdir "$BASE"
 ```
 
 ## Checks that must pass
@@ -116,7 +121,10 @@ builds the library a consumer links, and a test there asserts the archive
 exports no seam at all. Tests that need one skip by name when it is absent.
 
 ```console
-$ python3 -m tools.parity verify --manifest tools/parity/data/manifest.json --mode structural --allow-pending
+$ python3 -m tools.parity verify \
+    --manifest tools/parity/data/manifest.json \
+    --mode structural \
+    --allow-pending
 ```
 
 ```console
