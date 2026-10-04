@@ -158,7 +158,9 @@ long, and CI builds it against a real install so the package config cannot rot.
 ### Git submodule
 
 ```console
-$ git submodule add https://github.com/libtmux/libtmux-cxx.git third_party/libtmux
+$ git submodule add \
+    https://github.com/libtmux/libtmux-cxx.git \
+    third_party/libtmux
 ```
 
 ```cmake
@@ -839,7 +841,11 @@ It gives an agent hands inside the terminal, speaking the
 installed executable.
 
 ```console
-$ cmake -S . -B build/mcp -DLIBTMUX_BUILD_MCP_SERVER=ON -DLIBTMUX_FETCH_DEPS=ON -DLIBTMUX_BUILD_TESTS=OFF -DLIBTMUX_BUILD_EXAMPLES=OFF
+$ cmake -S . -B build/mcp \
+    -DLIBTMUX_BUILD_MCP_SERVER=ON \
+    -DLIBTMUX_FETCH_DEPS=ON \
+    -DLIBTMUX_BUILD_TESTS=OFF \
+    -DLIBTMUX_BUILD_EXAMPLES=OFF
 ```
 
 ```console
@@ -847,7 +853,9 @@ $ cmake --build build/mcp && cmake --install build/mcp --prefix ~/.local
 ```
 
 ```console
-$ claude mcp add tmux -- ~/.local/bin/libtmux-mcp-server --socket-name libtmux-agent
+$ claude mcp add tmux -- \
+    ~/.local/bin/libtmux-mcp-server \
+    --socket-name libtmux-agent
 ```
 
 The server advertises the same pinned 45-tool capability catalog on POSIX and
@@ -1042,33 +1050,38 @@ a Developer PowerShell in a Windows-path checkout; Linux CMake inside WSL
 cannot select the Visual Studio generator:
 
 ```console
-$ cmake --preset windows-psmux
+PS> cmake --preset windows-psmux
 ```
 
 ```console
-$ cmake --build --preset windows-psmux
+PS> cmake --build --preset windows-psmux
 ```
 
 ```console
-$ ctest --preset windows-psmux --no-tests=error
+PS> ctest --preset windows-psmux --no-tests=error
 ```
 
 The same build installs and links through `find_package`:
 
 ```console
-$ cmake --install build/windows-psmux --config Debug --prefix "$PWD/build/windows-prefix"
+PS> cmake --install build/windows-psmux `
+    --config Debug `
+    --prefix "$PWD/build/windows-prefix"
 ```
 
 ```console
-$ cmake -S examples/consume -B build/windows-consume -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH="$PWD/build/windows-prefix"
+PS> cmake -S examples/consume -B build/windows-consume `
+    -G "Visual Studio 17 2022" `
+    -A x64 `
+    -DCMAKE_PREFIX_PATH="$PWD/build/windows-prefix"
 ```
 
 ```console
-$ cmake --build build/windows-consume --config Debug
+PS> cmake --build build/windows-consume --config Debug
 ```
 
 ```console
-$ .\build\windows-consume\Debug\consume.exe
+PS> .\build\windows-consume\Debug\consume.exe
 ```
 
 This is subprocess compatibility, not transport equivalence. Windows builds
