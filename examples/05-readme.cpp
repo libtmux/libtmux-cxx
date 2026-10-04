@@ -196,8 +196,8 @@ int main() {
     std::cerr << std::format("{}\n", panes.error());
     return 1;
   }
-  auto addressed = *panes | libtmux::matching(libtmux::pane::id ==
-                                              panes->at(0).id().value());
+  const auto first_id = panes->at(0).id().value();
+  auto addressed = *panes | libtmux::matching(libtmux::pane::id == first_id);
 
   if (const auto one = libtmux::exactly_one(addressed); one.has_value()) {
     std::cout << std::format("exactly one: {}\n", one->get());
