@@ -393,8 +393,8 @@ int main() {
   // Or run a command and read its output.
   const auto answer = server.run({"display-message", "-p", "#{version}"});
   if (answer.has_value()) {
-    std::cout << std::format("tmux {}",
-                             *answer); // tmux's answer ends in a newline
+    // tmux's answer ends in a newline.
+    std::cout << std::format("tmux {}", *answer);
   }
   // #endregion escape
 
