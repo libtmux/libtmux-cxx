@@ -88,13 +88,11 @@ int main() {
     if (failed(windows->front().link_to(*shared), "sharing the first window")) {
       return 1;
     }
+    const auto linked = [](const libtmux::Window& w) {
+      return w.linked_sessions();
+    };
     std::printf("first window is held by %lld sessions\n",
-                windows->front()
-                    .refresh()
-                    .transform([](const libtmux::Window& w) {
-                      return w.linked_sessions();
-                    })
-                    .value_or(0));
+                windows->front().refresh().transform(linked).value_or(0));
 
     // And shown in one place again. tmux refuses to remove the last link
     // rather than leaving a window no session holds, so this is not a kill
