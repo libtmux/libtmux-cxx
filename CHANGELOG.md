@@ -9,6 +9,12 @@ was recorded as it landed.
 
 ## Unreleased
 
+### Workspace CLI
+
+- `tmux-workspace` on macOS no longer reports "terminal child could not
+  resume" when the editor child exits before the terminal handoff completes.
+  (#34)
+
 ## 0.1.0-alpha.11 (2026-09-26)
 
 This alpha adds `tmux-workspace`, an optional POSIX executable for workspace
