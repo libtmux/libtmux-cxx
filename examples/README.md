@@ -125,7 +125,8 @@ The findings and what remains unread are in
 [`docs/design/workspace-corpus.md`](../docs/design/workspace-corpus.md).
 
 ```console
-$ ./build/cxx-dev/examples/workspace/tmuxp_corpus_probe ~/src/tmuxp/examples/*.yaml
+$ ./build/cxx-dev/examples/workspace/tmuxp_corpus_probe \
+    ~/src/tmuxp/examples/*.yaml
 ```
 
 ## Related
