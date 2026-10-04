@@ -7,7 +7,8 @@ target_compile_features(
 libtmux_copy_mingw_runtime(libtmux_example_07_windows_psmux)
 
 if(MSVC)
-  target_compile_options(libtmux_example_07_windows_psmux PRIVATE /W4 /permissive-)
+  target_compile_options(
+    libtmux_example_07_windows_psmux PRIVATE /W4 /permissive-)
   if(LIBTMUX_WARNINGS_AS_ERRORS)
     target_compile_options(libtmux_example_07_windows_psmux PRIVATE /WX)
   endif()
