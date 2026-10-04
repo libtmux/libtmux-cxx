@@ -58,7 +58,9 @@ Server connect(const libtmux::test::ScopedTmuxServer& fixture) {
 // A control-mode client attaches without a terminal, but tmux registers it a
 // moment after the connection returns.
 std::vector<Client> clients_once_attached(const Server& server) {
-  for (int attempt = 0; attempt < 200; ++attempt) {
+  for (const auto give_up =
+           std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
+       std::chrono::steady_clock::now() < give_up;) {
     auto clients = server.clients();
     EXPECT_TRUE(clients.has_value());
     if (!clients->empty()) {
@@ -129,7 +131,9 @@ TEST(Client, AClientIsPointedAtAnotherSessionAndThenSentAway) {
   EXPECT_EQ(moved->front().window_id(), moved_pane->window_id());
 
   ASSERT_TRUE(moved->front().detach().has_value());
-  for (int attempt = 0; attempt < 200; ++attempt) {
+  for (const auto give_up =
+           std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
+       std::chrono::steady_clock::now() < give_up;) {
     const auto remaining = server.clients();
     ASSERT_TRUE(remaining.has_value()) << remaining.error().diagnostic;
     if (remaining->empty()) {
@@ -157,7 +161,9 @@ TEST(Client, ASessionSendsEveryClientAway) {
   ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
   ASSERT_TRUE(sessions->front().detach_clients().has_value());
 
-  for (int attempt = 0; attempt < 200; ++attempt) {
+  for (const auto give_up =
+           std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
+       std::chrono::steady_clock::now() < give_up;) {
     const auto remaining = server.clients();
     ASSERT_TRUE(remaining.has_value()) << remaining.error().diagnostic;
     if (remaining->empty()) {

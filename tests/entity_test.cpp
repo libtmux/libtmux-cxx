@@ -45,7 +45,9 @@ Server connect(const libtmux::test::ScopedTmuxServer& fixture) {
 // The directory a pane reports is its process's, and tmux answers before that
 // process exists: immediately after a split the field is empty, and fills in.
 std::string settled_path(const Pane& pane) {
-  for (int attempt = 0; attempt < 200; ++attempt) {
+  for (const auto give_up =
+           std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
+       std::chrono::steady_clock::now() < give_up;) {
     const auto current = pane.refresh();
     if (current.has_value() && !current->path().empty()) {
       return std::string{current->path()};
@@ -216,7 +218,9 @@ TEST(Entity, APaneRunsWhatItIsSentAndCapturesTheResult) {
   ASSERT_TRUE(pane.send_key("Enter").has_value());
 
   std::string captured;
-  for (int attempt = 0; attempt < 200; ++attempt) {
+  for (const auto give_up =
+           std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
+       std::chrono::steady_clock::now() < give_up;) {
     captured = captured_now();
     if (captured.find("libtmux-marker") != std::string::npos) {
       break;
@@ -228,7 +232,9 @@ TEST(Entity, APaneRunsWhatItIsSentAndCapturesTheResult) {
   // The same two acts as one invocation. The quotes do the same work here:
   // only a line that was submitted can produce the text.
   ASSERT_TRUE(pane.send_line("echo libtmux''-line").has_value());
-  for (int attempt = 0; attempt < 200; ++attempt) {
+  for (const auto give_up =
+           std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
+       std::chrono::steady_clock::now() < give_up;) {
     captured = captured_now();
     if (captured.find("libtmux-line") != std::string::npos) {
       break;
@@ -965,7 +971,9 @@ TEST(Entity, CaptureReadsTheScrollbackWhenAskedTo) {
   ASSERT_TRUE(pane.send_key("Enter").has_value());
 
   std::string visible;
-  for (int attempt = 0; attempt < 200; ++attempt) {
+  for (const auto give_up =
+           std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
+       std::chrono::steady_clock::now() < give_up;) {
     const auto text = pane.capture();
     ASSERT_TRUE(text.has_value()) << text.error().diagnostic;
     visible = *text;

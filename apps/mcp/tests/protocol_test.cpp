@@ -161,6 +161,27 @@ std::function<bool(std::string_view)> replied(std::vector<json> ids) {
   };
 }
 
+// Whether a progress notification for `token` is in `output`. Only whole lines
+// count, as for `replied`.
+std::function<bool(std::string_view)> progressed(std::string token) {
+  return [token = std::move(token)](std::string_view output) {
+    std::size_t start = 0U;
+    for (std::size_t end = output.find('\n'); end != std::string_view::npos;
+         end = output.find('\n', start)) {
+      const json parsed =
+          json::parse(output.substr(start, end - start), nullptr, false);
+      start = end + 1U;
+      if (parsed.is_object() &&
+          parsed.value("method", "") == "notifications/progress" &&
+          parsed.contains("params") && parsed["params"].contains("progressToken") &&
+          parsed["params"]["progressToken"] == token) {
+        return true;
+      }
+    }
+    return false;
+  };
+}
+
 // The requests the server owes a reply: well-formed calls with an ordinary id,
 // less any the same input cancels. Anything unusual is left out rather than
 // waited for, so a test sending a malformed request still sees its old timing.
@@ -496,6 +517,23 @@ protected:
     };
   }
 
+  // The wait tool's observation client shows in `list-clients` once it attaches.
+  [[nodiscard]] static std::function<libtmux::expected<void, std::string>()>
+  attached(const libtmux::Server& server, std::string session) {
+    return [&server,
+            session = std::move(session)]() -> libtmux::expected<void, std::string> {
+      const auto give_up = std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
+      while (std::chrono::steady_clock::now() < give_up) {
+        const auto clients = server.run({"list-clients", "-t", session});
+        if (clients.has_value() && !clients->empty()) {
+          return {};
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds{20});
+      }
+      return libtmux::unexpected("no control client attached to " + session);
+    };
+  }
+
   [[nodiscard]] static std::function<libtmux::expected<void, std::string>()>
   shows(libtmux::Pane pane, std::string text) {
     return [pane = std::move(pane),
@@ -716,8 +754,8 @@ TEST(McpProtocolCli, StartsAnAbsentPinnedSocketOnlyForCreateSession) {
   libtmux::test::erase_environment(environment, "TMUX_PANE");
   libtmux::test::set_environment(environment, "LIBTMUX_TOOLS", "kill_session");
   const auto messages = converse_steps(socket,
-                                       {{initialize, std::chrono::milliseconds{750}},
-                                        {teardown, std::chrono::milliseconds{750}}},
+                                       {{.text = initialize, .until = replied({1})},
+                                        {.text = teardown, .until = replied({2})}},
                                        std::move(environment));
   auto server = libtmux::Server::at_socket_path(socket.string());
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
@@ -2310,6 +2348,7 @@ TEST_F(McpProtocol, WaitsThroughControlOutputAndSearchesTheResult) {
   // on the screen when the tool captures at entry. That is what makes this the
   // streaming path; a delay in the pane only makes it likely, and stops being
   // likely on a machine slow enough to echo before the wait starts.
+  const auto server = connect_server();
   const std::vector<json> start_wait{
       initialize_request(), initialized_notification(),
       call("wait_for_text",
@@ -2322,9 +2361,10 @@ TEST_F(McpProtocol, WaitsThroughControlOutputAndSearchesTheResult) {
       call("search_panes", {{"pattern", "mcp-stream-marker"}}, 3)};
 
   const auto messages = converse_steps(
-      socket(), {{encode_requests(start_wait), std::chrono::milliseconds{1500}},
-                 {encode_requests(produce), std::chrono::milliseconds{6000}},
-                 {encode_requests(search), std::chrono::milliseconds{3000}}});
+      socket(), {{.text = encode_requests(start_wait),
+                  .barrier_after_write = attached(server, "mcp")},
+                 {.text = encode_requests(produce), .until = replied({1, 2})},
+                 {.text = encode_requests(search), .until = replied({3})}});
 
   const json* waited = response(messages, 1);
   ASSERT_NE(waited, nullptr);
@@ -2399,8 +2439,9 @@ TEST_F(McpProtocol, CancelsAnInFlightWaitWithoutAReply) {
            {"params", {{"requestId", 1}, {"reason", "test complete"}}}},
       json{{"jsonrpc", "2.0"}, {"id", 2}, {"method", "ping"}}};
   const auto messages = converse_steps(
-      socket(), {{encode_requests(start_wait), std::chrono::milliseconds{2500}},
-                 {encode_requests(cancel_wait), std::chrono::milliseconds{3500}}});
+      socket(),
+      {{.text = encode_requests(start_wait), .until = progressed("cancel-progress")},
+       {encode_requests(cancel_wait), std::chrono::milliseconds{3500}}});
   const auto progress = std::ranges::find_if(messages, [](const json& message) {
     return message.value("method", "") == "notifications/progress" &&
            message["params"]["progressToken"] == "cancel-progress";
@@ -2431,7 +2472,8 @@ TEST_F(McpProtocol, CancelsOutstandingWorkAtEndOfInput) {
                                          {"timeout_ms", 60000}},
                                         1, "eof-progress")};
   const auto messages = converse_steps(
-      socket(), {{encode_requests(requests), std::chrono::milliseconds{2500}}});
+      socket(),
+      {{.text = encode_requests(requests), .until = progressed("eof-progress")}});
   const auto elapsed = std::chrono::steady_clock::now() - started;
   const auto progress = std::ranges::find_if(messages, [](const json& message) {
     return message.value("method", "") == "notifications/progress" &&
@@ -2460,7 +2502,8 @@ TEST_F(McpProtocol, CancelsAModernCallAfterDiscovery) {
   const std::vector<json> cancel_wait{modern_cancel(1),
                                       modern_request("tools/list", 2)};
   const auto messages = converse_steps(
-      socket(), {{encode_requests(start_wait), std::chrono::milliseconds{2500}},
+      socket(), {{.text = encode_requests(start_wait),
+                  .until = progressed("modern-cancel-progress")},
                  {encode_requests(cancel_wait), std::chrono::milliseconds{3500}}});
   const auto progress = std::ranges::find_if(messages, [](const json& message) {
     return message.value("method", "") == "notifications/progress" &&
@@ -2490,9 +2533,10 @@ TEST_F(McpProtocol, CancelsALongCallInsideALegacyBatch) {
                             {"method", "notifications/cancelled"},
                             {"params", {{"requestId", 1}}}},
                        json{{"jsonrpc", "2.0"}, {"id", 3}, {"method", "ping"}}});
-  const auto messages =
-      converse_steps(socket(), {{std::move(start), std::chrono::milliseconds{2500}},
-                                {cancel, std::chrono::milliseconds{3500}}});
+  const auto messages = converse_steps(
+      socket(),
+      {{.text = std::move(start), .until = progressed("batch-cancel-progress")},
+       {cancel, std::chrono::milliseconds{3500}}});
   const auto progress = std::ranges::find_if(messages, [](const json& message) {
     return message.value("method", "") == "notifications/progress" &&
            message["params"]["progressToken"] == "batch-cancel-progress";

@@ -1638,7 +1638,9 @@ TEST(WorkspaceCliTmux, ImportedWorkspacesKeepCommandsFocusAndOptions) {
     ASSERT_EQ(loaded.code, 0) << loaded.out << loaded.err;
     const auto marker = std::string{kind} + "-marker";
     std::string contents;
-    for (int wait = 0; wait < 300; ++wait) {
+    for (const auto give_up =
+             std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
+         std::chrono::steady_clock::now() < give_up;) {
       std::ifstream observed{marker};
       contents.assign(std::istreambuf_iterator<char>{observed}, {});
       if (contents == kind)
@@ -1696,7 +1698,9 @@ TEST(WorkspaceCliTmux, LoadExpandsShellVariablesFromTheLoadingProcessEnvironment
   ASSERT_TRUE(panes.has_value());
   ASSERT_FALSE(panes->empty());
   std::string captured;
-  for (int wait = 0; wait < 300; ++wait) {
+  for (const auto give_up =
+           std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
+       std::chrono::steady_clock::now() < give_up;) {
     const auto text = panes->front().capture();
     if (text.has_value() && text->find("marker=") != std::string::npos) {
       captured = *text;

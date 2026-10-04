@@ -81,7 +81,9 @@ TEST(WorkspaceBuilder, RunsEachPaneCommandInThePaneItDescribed) {
   for (const auto& [pane, marker] : {std::pair{&panes->front(), "first-pane"},
                                      std::pair{&panes->back(), "second-pane"}}) {
     std::string captured;
-    for (int attempt = 0; attempt < 200; ++attempt) {
+    for (const auto give_up =
+             std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
+         std::chrono::steady_clock::now() < give_up;) {
       const auto text = pane->capture();
       ASSERT_TRUE(text.has_value()) << text.error().diagnostic;
       captured = *text;
@@ -120,7 +122,9 @@ TEST(WorkspaceBuilder, PanesLandInTheOrderTheyWereDescribed) {
   const std::vector<std::string> expected = {"MARK-A", "MARK-B", "MARK-C", "MARK-D"};
   for (std::size_t index = 0; index < panes->size(); ++index) {
     std::string captured;
-    for (int attempt = 0; attempt < 200; ++attempt) {
+    for (const auto give_up =
+             std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
+         std::chrono::steady_clock::now() < give_up;) {
       const auto text = (*panes)[index].capture();
       ASSERT_TRUE(text.has_value()) << text.error().diagnostic;
       captured = *text;
@@ -603,7 +607,9 @@ TEST(WorkspaceBuilder, EveryPaneReceivesItsLauncherAndEnvironment) {
        {std::pair{&panes->front(), "session:window:launcher"},
         std::pair{&panes->back(), "session:unset:launcher"}}) {
     std::string captured;
-    for (int attempt = 0; attempt < 20; ++attempt) {
+    for (const auto give_up =
+             std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
+         std::chrono::steady_clock::now() < give_up;) {
       const auto output = pane->capture();
       ASSERT_TRUE(output.has_value());
       captured = *output;
@@ -772,10 +778,10 @@ TEST(WorkspaceBuilder, LayoutVersionProbeUsesClientOnlyForUnboundMissingEndpoint
   ASSERT_TRUE(exited.has_value());
   ASSERT_TRUE(exited->run({"kill-server"}).has_value());
   auto refused = exited->run({"display-message", "-p", "#{version}"});
-  for (int attempt = 0;
-       attempt < 20 &&
-       (refused || !refused.error().diagnostic.starts_with("no server running on "));
-       ++attempt) {
+  for (const auto give_up =
+           std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
+       std::chrono::steady_clock::now() < give_up &&
+       (refused || !refused.error().diagnostic.starts_with("no server running on "));) {
     std::this_thread::sleep_for(std::chrono::milliseconds{10});
     refused = exited->run({"display-message", "-p", "#{version}"});
   }
