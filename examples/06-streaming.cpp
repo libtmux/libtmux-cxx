@@ -53,7 +53,8 @@ int main() {
   // decides it here: a control client that starts without output cannot be
   // asked for it afterwards. `docs/design/pane-output-streaming.md` measures
   // that, and what tmux does to a reader who falls behind.
-  auto connected = server.control_with_options("example", {.pane_output = true});
+  auto connected =
+      server.control_with_options("example", {.pane_output = true});
   if (!connected.has_value()) {
     std::fprintf(stderr, "%s\n", connected.error().message.c_str());
     return 1;
@@ -63,9 +64,10 @@ int main() {
   // Make something happen: a new window, and a line printed in the first pane.
   libtmux::ControlRequest request;
   request.group.push_back({{"new-window", "-d", "-n", "watched"}});
-  request.group.push_back({{"send-keys", "-t", pane, "echo hello-from-tmux", "Enter"}});
-  const auto ran =
-      connection.execute(std::move(request), std::chrono::steady_clock::now() + 5s);
+  request.group.push_back(
+      {{"send-keys", "-t", pane, "echo hello-from-tmux", "Enter"}});
+  const auto ran = connection.execute(std::move(request),
+                                      std::chrono::steady_clock::now() + 5s);
   if (ran.connection_error.has_value()) {
     std::fprintf(stderr, "%s\n", ran.connection_error->message.c_str());
     return 1;
@@ -77,7 +79,8 @@ int main() {
   // already unescaped.
   bool saw_window = false;
   bool saw_output = false;
-  for (const auto& event : connection.events(std::chrono::steady_clock::now() + 10s)) {
+  for (const auto& event :
+       connection.events(std::chrono::steady_clock::now() + 10s)) {
     switch (event.kind) {
     case libtmux::NotificationKind::window_add:
       std::printf("window added: %s\n", std::string{event.window}.c_str());
@@ -92,7 +95,8 @@ int main() {
       break;
     case libtmux::NotificationKind::paused:
       // The only report that output was dropped, and it names the pane.
-      std::printf("paused, output lost for %s\n", std::string{event.pane}.c_str());
+      std::printf("paused, output lost for %s\n",
+                  std::string{event.pane}.c_str());
       break;
     default:
       break;
@@ -114,14 +118,15 @@ int main() {
   // speaks.
   libtmux::ControlRequest second;
   second.group.push_back({{"new-window", "-d", "-n", "polled"}});
-  if (const auto again =
-          connection.execute(std::move(second), std::chrono::steady_clock::now() + 5s);
+  if (const auto again = connection.execute(
+          std::move(second), std::chrono::steady_clock::now() + 5s);
       again.connection_error.has_value()) {
     std::fprintf(stderr, "%s\n", again.connection_error->message.c_str());
     return 1;
   }
 
-  pollfd watching{.fd = connection.notification_fd(), .events = POLLIN, .revents = 0};
+  pollfd watching{
+      .fd = connection.notification_fd(), .events = POLLIN, .revents = 0};
   if (watching.fd < 0) {
     std::fprintf(stderr, "this connection has no notification descriptor\n");
     return 1;
@@ -130,7 +135,8 @@ int main() {
   // clears it. A take drains what has arrived; more may arrive straight after,
   // which is why a loop waits again rather than assuming silence.
   if (::poll(&watching, 1, 10'000) > 0) {
-    for (const libtmux::Notification& notification : connection.take_notifications()) {
+    for (const libtmux::Notification& notification :
+         connection.take_notifications()) {
       const auto read = libtmux::parse(notification);
       if (read.kind == libtmux::NotificationKind::window_add) {
         std::printf("polled a window into view: %s\n",
@@ -139,7 +145,8 @@ int main() {
     }
   }
 
-  if (const auto closed = connection.shutdown(std::chrono::steady_clock::now() + 5s);
+  if (const auto closed =
+          connection.shutdown(std::chrono::steady_clock::now() + 5s);
       !closed.has_value()) {
     std::fprintf(stderr, "%s\n", closed.error().message.c_str());
     return 1;

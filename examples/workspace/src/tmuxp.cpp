@@ -46,7 +46,8 @@ std::optional<std::string> unknown_key(const YAML::Node& node,
   return std::nullopt;
 }
 std::string unsupported_key_message(const std::string& key) {
-  return "unsupported key: " + key + " (prefix a custom key with \"x-\" to keep it)";
+  return "unsupported key: " + key +
+         " (prefix a custom key with \"x-\" to keep it)";
 }
 // `unsupported_key` is its own error code, distinct from every other
 // malformed-document `invalid_workspace`.
@@ -56,8 +57,9 @@ libtmux::unexpected_t<ParseError> fail_unsupported_key(std::string where,
       ParseError{std::move(where), unsupported_key_message(key), true});
 }
 
-libtmux::expected<bool, ParseError>
-read_boolean(const YAML::Node& node, const std::string& where, bool fallback = false) {
+libtmux::expected<bool, ParseError> read_boolean(const YAML::Node& node,
+                                                 const std::string& where,
+                                                 bool fallback = false) {
   if (!node) {
     return fallback;
   }
@@ -85,8 +87,8 @@ libtmux::expected<Command, ParseError> read_command(const YAML::Node& node,
   if (!node.IsMap()) {
     return fail(where, "a command is a string or a mapping");
   }
-  static constexpr std::string_view kCommandKeys[]{"cmd", "enter", "sleep_before",
-                                                   "sleep_after", "suppress_history"};
+  static constexpr std::string_view kCommandKeys[]{
+      "cmd", "enter", "sleep_before", "sleep_after", "suppress_history"};
   if (const auto unknown = unknown_key(node, kCommandKeys)) {
     return fail_unsupported_key(where, *unknown);
   }
@@ -100,14 +102,16 @@ libtmux::expected<Command, ParseError> read_command(const YAML::Node& node,
   for (const auto& [key, slot] :
        {std::pair{"enter", &Command::enter},
         std::pair{"suppress_history", &Command::suppress_history}}) {
-    const auto value = read_boolean(node[key], where + "." + key, command.*slot);
+    const auto value =
+        read_boolean(node[key], where + "." + key, command.*slot);
     if (!value.has_value()) {
       return libtmux::unexpected(value.error());
     }
     command.*slot = *value;
   }
-  for (const auto& [key, slot] : {std::pair{"sleep_before", &Command::pause_before},
-                                  std::pair{"sleep_after", &Command::pause_after}}) {
+  for (const auto& [key, slot] :
+       {std::pair{"sleep_before", &Command::pause_before},
+        std::pair{"sleep_after", &Command::pause_after}}) {
     const YAML::Node pause = node[key];
     if (!pause) {
       continue;
@@ -123,11 +127,13 @@ libtmux::expected<Command, ParseError> read_command(const YAML::Node& node,
       }
       if (!std::isfinite(seconds) ||
           seconds >=
-              static_cast<double>(std::numeric_limits<long long>::max()) / 1000.0) {
+              static_cast<double>(std::numeric_limits<long long>::max()) /
+                  1000.0) {
         return fail(where + "." + key,
                     "a pause must be finite, non-negative and representable");
       }
-      command.*slot = std::chrono::milliseconds{static_cast<long long>(seconds * 1000)};
+      command.*slot =
+          std::chrono::milliseconds{static_cast<long long>(seconds * 1000)};
     } catch (const YAML::Exception&) {
       return fail(where + "." + key, "a pause is a number of seconds");
     }
@@ -139,13 +145,15 @@ void append_commands(YAML::Node& commands, const YAML::Node& source) {
   if (!source || source.IsNull()) {
     return;
   }
-  const YAML::Node node =
-      source.IsMap() && source["shell_command"] ? source["shell_command"] : source;
+  const YAML::Node node = source.IsMap() && source["shell_command"]
+                              ? source["shell_command"]
+                              : source;
   const auto blank = [](const YAML::Node& item) {
-    return item.IsNull() ||
-           (item.IsScalar() && (item.Scalar() == "blank" || item.Scalar() == "pane"));
+    return item.IsNull() || (item.IsScalar() && (item.Scalar() == "blank" ||
+                                                 item.Scalar() == "pane"));
   };
-  if (blank(node) || (node.IsSequence() && node.size() == 1 && blank(node[0]))) {
+  if (blank(node) ||
+      (node.IsSequence() && node.size() == 1 && blank(node[0]))) {
     return;
   }
   if (node.IsSequence()) {
@@ -162,8 +170,8 @@ read_commands(const YAML::Node& node, const std::string& where, Command state) {
   std::vector<Command> commands;
   for (std::size_t index = 0; index < node.size(); ++index) {
     state.text.clear();
-    auto one =
-        read_command(node[index], where + "[" + std::to_string(index) + "]", state);
+    auto one = read_command(node[index],
+                            where + "[" + std::to_string(index) + "]", state);
     if (!one.has_value()) {
       return libtmux::unexpected(one.error());
     }
@@ -200,7 +208,8 @@ read_pairs(const YAML::Node& node, const std::string& where, const char* what) {
     if (!entry.first.IsScalar() || !entry.second.IsScalar()) {
       return fail(where, std::string{what} + " are names and values");
     }
-    pairs.emplace_back(entry.first.as<std::string>(), entry.second.as<std::string>());
+    pairs.emplace_back(entry.first.as<std::string>(),
+                       entry.second.as<std::string>());
   }
   return pairs;
 }
@@ -224,8 +233,9 @@ read_environment(const YAML::Node& node, const std::string& where) {
     auto value = entry.second.as<std::string>();
     if (name.empty() || name.find('=') != std::string::npos ||
         name.find('\0') != std::string::npos) {
-      return fail(where,
-                  "an environment name must be non-empty and contain no '=' or NUL");
+      return fail(
+          where,
+          "an environment name must be non-empty and contain no '=' or NUL");
     }
     if (value.find('\0') != std::string::npos) {
       return fail(where, "an environment value cannot contain NUL");
@@ -235,10 +245,9 @@ read_environment(const YAML::Node& node, const std::string& where) {
   return variables;
 }
 
-libtmux::expected<Pane, ParseError> read_pane(const YAML::Node& node,
-                                              const std::string& where,
-                                              const YAML::Node& inherited_commands,
-                                              bool suppress_history) {
+libtmux::expected<Pane, ParseError>
+read_pane(const YAML::Node& node, const std::string& where,
+          const YAML::Node& inherited_commands, bool suppress_history) {
   Pane pane;
   YAML::Node commands{YAML::NodeType::Sequence};
   append_commands(commands, inherited_commands);
@@ -257,7 +266,8 @@ libtmux::expected<Pane, ParseError> read_pane(const YAML::Node& node,
       return libtmux::unexpected(focus.error());
     }
     pane.focus = *focus;
-    auto variables = read_environment(node["environment"], where + ".environment");
+    auto variables =
+        read_environment(node["environment"], where + ".environment");
     if (!variables.has_value()) {
       return libtmux::unexpected(variables.error());
     }
@@ -291,10 +301,9 @@ libtmux::expected<Pane, ParseError> read_pane(const YAML::Node& node,
   return pane;
 }
 
-libtmux::expected<Window, ParseError> read_window(const YAML::Node& node,
-                                                  const std::string& where,
-                                                  const YAML::Node& inherited_commands,
-                                                  bool suppress_history) {
+libtmux::expected<Window, ParseError>
+read_window(const YAML::Node& node, const std::string& where,
+            const YAML::Node& inherited_commands, bool suppress_history) {
   if (!node.IsMap()) {
     return fail(where, "a window is a mapping");
   }
@@ -319,22 +328,26 @@ libtmux::expected<Window, ParseError> read_window(const YAML::Node& node,
     return libtmux::unexpected(focus.error());
   }
   window.focus = *focus;
-  if (const YAML::Node index = node["window_index"]; index && index.IsScalar()) {
+  if (const YAML::Node index = node["window_index"];
+      index && index.IsScalar()) {
     try {
       window.index = index.as<long long>();
     } catch (const YAML::Exception&) {
       return fail(where + ".window_index", "a window index is a number");
     }
   }
-  auto window_variables = read_environment(node["environment"], where + ".environment");
+  auto window_variables =
+      read_environment(node["environment"], where + ".environment");
   if (!window_variables.has_value()) {
     return libtmux::unexpected(window_variables.error());
   }
   window.environment = *std::move(window_variables);
-  if (const YAML::Node shell = node["window_shell"]; shell && shell.IsScalar()) {
+  if (const YAML::Node shell = node["window_shell"];
+      shell && shell.IsScalar()) {
     window.shell = shell.as<std::string>();
   }
-  auto after = read_pairs(node["options_after"], where + ".options_after", "options");
+  auto after =
+      read_pairs(node["options_after"], where + ".options_after", "options");
   if (!after.has_value()) {
     return libtmux::unexpected(after.error());
   }
@@ -356,8 +369,8 @@ libtmux::expected<Window, ParseError> read_window(const YAML::Node& node,
   YAML::Node commands{YAML::NodeType::Sequence};
   append_commands(commands, inherited_commands);
   append_commands(commands, node["shell_command_before"]);
-  const auto suppress = read_boolean(node["suppress_history"],
-                                     where + ".suppress_history", suppress_history);
+  const auto suppress = read_boolean(
+      node["suppress_history"], where + ".suppress_history", suppress_history);
   if (!suppress.has_value()) {
     return libtmux::unexpected(suppress.error());
   }
@@ -369,16 +382,19 @@ libtmux::expected<Window, ParseError> read_window(const YAML::Node& node,
   window.panes.clear();
   const auto count = panes && panes.size() != 0 ? panes.size() : 1U;
   for (std::size_t index = 0; index < count; ++index) {
-    const YAML::Node source = panes && panes.size() != 0 ? panes[index] : YAML::Node{};
-    auto pane = read_pane(source, where + ".panes[" + std::to_string(index) + "]",
-                          commands, suppress_history);
+    const YAML::Node source =
+        panes && panes.size() != 0 ? panes[index] : YAML::Node{};
+    auto pane =
+        read_pane(source, where + ".panes[" + std::to_string(index) + "]",
+                  commands, suppress_history);
     if (!pane.has_value()) {
       return libtmux::unexpected(pane.error());
     }
     window.panes.push_back(*std::move(pane));
   }
   if (!window.layout.empty())
-    if (auto checked = libtmux::validate_layout(window.layout, window.panes.size());
+    if (auto checked =
+            libtmux::validate_layout(window.layout, window.panes.size());
         !checked)
       return fail(where + ".layout", std::move(checked.error().diagnostic));
   return window;
@@ -386,7 +402,8 @@ libtmux::expected<Window, ParseError> read_window(const YAML::Node& node,
 
 } // namespace
 
-libtmux::expected<Workspace, ParseError> parse_tmuxp(std::string_view document) {
+libtmux::expected<Workspace, ParseError>
+parse_tmuxp(std::string_view document) {
   YAML::Node root;
   try {
     const auto documents = YAML::LoadAll(std::string{document});
@@ -403,16 +420,17 @@ libtmux::expected<Workspace, ParseError> parse_tmuxp(std::string_view document) 
   if (!root.IsMap()) {
     return fail("", "a tmuxp document is a mapping");
   }
-  static constexpr std::string_view kDocumentKeys[]{"session_name",
-                                                    "start_directory",
-                                                    "root",
-                                                    "windows",
-                                                    "shell_command_before",
-                                                    "environment",
-                                                    "options",
-                                                    "global_options",
-                                                    "suppress_history",
-                                                    "workspace_builder_options"};
+  static constexpr std::string_view kDocumentKeys[]{
+      "session_name",
+      "start_directory",
+      "root",
+      "windows",
+      "shell_command_before",
+      "environment",
+      "options",
+      "global_options",
+      "suppress_history",
+      "workspace_builder_options"};
   if (const auto unknown = unknown_key(root, kDocumentKeys)) {
     return fail_unsupported_key("", *unknown);
   }
@@ -446,9 +464,10 @@ libtmux::expected<Workspace, ParseError> parse_tmuxp(std::string_view document) 
                         "a pane readiness setting is a name");
           }
         } else if (!key.starts_with("x-")) {
-          workspace.warnings.emplace_back("workspace_builder_options." + key +
-                                          " is not a setting this builder has; it "
-                                          "was ignored");
+          workspace.warnings.emplace_back(
+              "workspace_builder_options." + key +
+              " is not a setting this builder has; it "
+              "was ignored");
         }
       }
     }
@@ -482,8 +501,9 @@ libtmux::expected<Workspace, ParseError> parse_tmuxp(std::string_view document) 
   }
   workspace.windows.clear();
   for (std::size_t index = 0; index < windows.size(); ++index) {
-    auto window = read_window(windows[index], "windows[" + std::to_string(index) + "]",
-                              root["shell_command_before"], *suppress);
+    auto window =
+        read_window(windows[index], "windows[" + std::to_string(index) + "]",
+                    root["shell_command_before"], *suppress);
     if (!window.has_value()) {
       return libtmux::unexpected(window.error());
     }

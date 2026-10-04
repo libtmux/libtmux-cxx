@@ -43,8 +43,8 @@ int main() {
     std::fprintf(stderr, "%s\n", windows.error().diagnostic.c_str());
     return 1;
   }
-  const auto wanted =
-      libtmux::window::name.starts_with("edit") || libtmux::window::name == "logs";
+  const auto wanted = libtmux::window::name.starts_with("edit") ||
+                      libtmux::window::name == "logs";
   auto matches = *windows | libtmux::matching(wanted);
   const auto editor = libtmux::exactly_one_owned(
       *windows | libtmux::matching(libtmux::window::name == "editor"));

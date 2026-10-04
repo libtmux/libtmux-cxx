@@ -44,7 +44,8 @@ int main() {
     std::fputs("unexpected detached server contents\n", stderr);
     return 1;
   }
-  std::printf("sessions=%zu windows=%zu panes=%zu clients=%zu\n", sessions->size(),
-              windows->size(), panes->size(), clients->size());
+  std::printf("sessions=%zu windows=%zu panes=%zu clients=%zu\n",
+              sessions->size(), windows->size(), panes->size(),
+              clients->size());
   return 0;
 }

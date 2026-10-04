@@ -40,8 +40,8 @@ int main(int argc, char** argv) {
     return 1;
   }
   std::printf("%s: %zu session, %zu window, %zu pane\n",
-              std::string{session->name()}.c_str(), sessions->size(), windows->size(),
-              panes->size());
+              std::string{session->name()}.c_str(), sessions->size(),
+              windows->size(), panes->size());
 
   return 0;
 }

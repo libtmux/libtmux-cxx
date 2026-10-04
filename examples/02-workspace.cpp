@@ -16,7 +16,8 @@ namespace {
 
 // Every call reports failure as a value. This is the shape a real program
 // takes: check, say what went wrong, stop.
-template <typename Result> bool failed(const Result& result, const char* doing) {
+template <typename Result>
+bool failed(const Result& result, const char* doing) {
   if (result.has_value()) {
     return false;
   }
@@ -37,8 +38,9 @@ int main() {
     return 1;
   }
 
-  const auto session = server.new_session(
-      {.name = "workspace", .start_directory = "/tmp", .first_window_name = "shell"});
+  const auto session = server.new_session({.name = "workspace",
+                                           .start_directory = "/tmp",
+                                           .first_window_name = "shell"});
   if (failed(session, "creating the session")) {
     return 1;
   }
@@ -69,8 +71,9 @@ int main() {
     return 1;
   }
   for (const libtmux::Window& window : *windows) {
-    std::printf("%s: %lld pane(s), %lldx%lld\n", std::string{window.name()}.c_str(),
-                window.pane_count(), window.width(), window.height());
+    std::printf("%s: %lld pane(s), %lldx%lld\n",
+                std::string{window.name()}.c_str(), window.pane_count(),
+                window.width(), window.height());
   }
 
   // Going back to the previously selected pane, which only the server
@@ -85,12 +88,13 @@ int main() {
     if (failed(windows->front().link_to(*shared), "sharing the first window")) {
       return 1;
     }
-    std::printf(
-        "first window is held by %lld sessions\n",
-        windows->front()
-            .refresh()
-            .transform([](const libtmux::Window& w) { return w.linked_sessions(); })
-            .value_or(0));
+    std::printf("first window is held by %lld sessions\n",
+                windows->front()
+                    .refresh()
+                    .transform([](const libtmux::Window& w) {
+                      return w.linked_sessions();
+                    })
+                    .value_or(0));
 
     // And shown in one place again. tmux refuses to remove the last link
     // rather than leaving a window no session holds, so this is not a kill
@@ -127,7 +131,8 @@ int main() {
   // A workspace can carry tmux configuration of its own. Checking it first
   // is what keeps a broken line from being half-applied: nothing in the file
   // runs until tmux says it parses.
-  const auto config = scratch.socket_path().parent_path() / "libtmux-workspace.conf";
+  const auto config =
+      scratch.socket_path().parent_path() / "libtmux-workspace.conf";
   {
     std::ofstream writing{config};
     writing << "set-option -g @workspace built\n";
@@ -157,7 +162,8 @@ int main() {
              "binding the workspace key")) {
     return 1;
   }
-  if (failed(server.unbind_key("workspace", "r"), "unbinding the workspace key")) {
+  if (failed(server.unbind_key("workspace", "r"),
+             "unbinding the workspace key")) {
     return 1;
   }
 

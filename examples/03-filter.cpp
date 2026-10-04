@@ -45,9 +45,12 @@ int main() {
   }
 
   // Plain ranges work too — a listing is a vector.
-  const auto wide = std::ranges::count_if(
-      *windows, [](const libtmux::Window& window) { return window.width() > 40; });
-  std::printf("%lld window(s) wider than 40 columns\n", static_cast<long long>(wide));
+  const auto wide =
+      std::ranges::count_if(*windows, [](const libtmux::Window& window) {
+        return window.width() > 40;
+      });
+  std::printf("%lld window(s) wider than 40 columns\n",
+              static_cast<long long>(wide));
 
   // exactly_one_owned copies the match out, so it accepts this temporary view
   // directly; exactly_one below needs a name to refer into instead.
@@ -63,7 +66,8 @@ int main() {
 
   // Asking for one says which way it went wrong. exactly_one takes a named
   // range: the answer refers into it, so a temporary is a compile error.
-  auto missing = *windows | libtmux::matching(libtmux::window::name == "absent");
+  auto missing =
+      *windows | libtmux::matching(libtmux::window::name == "absent");
   const auto none = libtmux::exactly_one(missing);
   std::printf("looking for one that is not there: %s\n",
               std::string{libtmux::to_string(none.error())}.c_str());
