@@ -41,7 +41,7 @@ consumer directory:
 
 ```console
 $ mkdir -p build/api-consumer \
-    && cp examples/api/project/CMakeLists.txt build/api-consumer/CMakeLists.txt \
+    && cp examples/api/project/CMakeLists.txt build/api-consumer/ \
     && cp examples/api/input-capture.cpp build/api-consumer/main.cpp
 ```
 
