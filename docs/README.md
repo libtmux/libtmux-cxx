@@ -18,7 +18,10 @@ $ python3 tools/docs/api_index.py --include include/libtmux --output docs/api.md
 tmux fixture installed alongside the library:
 
 ```console
-$ python3 tools/docs/api_index.py --include include/libtmux/testing --output docs/api-testing.md --page testing
+$ python3 tools/docs/api_index.py \
+    --include include/libtmux/testing \
+    --output docs/api-testing.md \
+    --page testing
 ```
 
 ## The MCP server
