@@ -547,13 +547,12 @@ One failure type covers the whole surface, so calls compose rather than nest:
 // One failure type covers the whole surface, so calls compose rather than
 // nest: each step runs only when the last one answered, and the first
 // failure is what comes out.
-const auto columns = server.session(session.name())
-                         .and_then([](const libtmux::Session& found) {
-                           return found.active_pane();
-                         })
-                         .transform([](const libtmux::Pane& active) {
-                           return active.width();
-                         });
+const auto active_pane = [](const libtmux::Session& found) {
+  return found.active_pane();
+};
+const auto width = [](const libtmux::Pane& active) { return active.width(); };
+const auto columns =
+    server.session(session.name()).and_then(active_pane).transform(width);
 std::cout << std::format("the active pane is {} columns wide\n",
                          columns.value_or(-1));
 ```
