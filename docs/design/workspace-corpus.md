@@ -81,5 +81,6 @@ $ cmake --build --preset cxx-dev --target tmuxp_corpus_probe
 ```
 
 ```console
-$ ./build/cxx-dev/examples/workspace/tmuxp_corpus_probe ~/src/tmuxp/examples/*.yaml
+$ ./build/cxx-dev/examples/workspace/tmuxp_corpus_probe \
+    ~/src/tmuxp/examples/*.yaml
 ```
