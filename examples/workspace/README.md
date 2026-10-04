@@ -34,7 +34,8 @@ Point it at tmuxp's own examples and it reports what this surface cannot yet
 express:
 
 ```console
-$ ./build/cxx-dev/examples/workspace/tmuxp_corpus_probe ~/src/tmuxp/examples/*.yaml
+$ ./build/cxx-dev/examples/workspace/tmuxp_corpus_probe \
+    ~/src/tmuxp/examples/*.yaml
 ```
 
 ## What the pressure found
