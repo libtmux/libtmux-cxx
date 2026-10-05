@@ -1,3 +1,4 @@
+#include "libtmux/testing/scoped_server.hpp"
 #include "process_engine.hpp"
 
 #include <gtest/gtest.h>
@@ -81,7 +82,8 @@ void arm(Fault fault) { arm({fault}); }
 #endif
 
 libtmux::detail::ProcessRequest
-shell(std::string script, std::chrono::milliseconds timeout = std::chrono::seconds{2}) {
+shell(std::string script,
+      std::chrono::milliseconds timeout = libtmux::test::kHangGuard) {
   libtmux::detail::ProcessRequest request;
   request.executable = "/bin/sh";
   request.arguments = {{"-c"}, {std::move(script)}};
@@ -116,7 +118,7 @@ void expect_overloaded(
 }
 
 [[nodiscard]] bool wait_for_marker(const std::filesystem::path& marker) {
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+  const auto deadline = std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
   while (!std::filesystem::exists(marker) &&
          std::chrono::steady_clock::now() < deadline) {
     std::this_thread::sleep_for(std::chrono::milliseconds{1});
@@ -246,7 +248,7 @@ public:
 
   [[nodiscard]] bool wait_until_reached() {
     std::unique_lock lock{mutex_};
-    return changed_.wait_for(lock, std::chrono::seconds{2},
+    return changed_.wait_for(lock, libtmux::test::kHangGuard,
                              [this] { return reached_; });
   }
 
@@ -468,7 +470,7 @@ TEST_F(ProcessEngineFailure, CleanupDoesNotOverwriteTheCausalFailure) {
 #endif
 
 TEST_F(ProcessEngineFailure, PostExitDrainUsesItsOwnDeadline) {
-  constexpr std::string_view script{"sleep 1 &"};
+  constexpr std::string_view script{"sleep 3 &"};
   auto engine = libtmux::detail::ProcessEngine::start();
   ASSERT_TRUE(engine.has_value()) << engine.error().diagnostic;
 
@@ -479,7 +481,7 @@ TEST_F(ProcessEngineFailure, PostExitDrainUsesItsOwnDeadline) {
 
   ASSERT_TRUE(answer.has_value()) << answer.error().diagnostic;
   EXPECT_GE(elapsed, std::chrono::milliseconds{75});
-  EXPECT_LT(elapsed, std::chrono::milliseconds{300});
+  EXPECT_LT(elapsed, std::chrono::seconds{2});
 }
 
 TEST_F(ProcessEngineFailure, ConcurrentCloseSharesOneTerminalState) {

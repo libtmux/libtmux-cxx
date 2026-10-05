@@ -81,7 +81,9 @@ TEST(WorkspaceBuilder, RunsEachPaneCommandInThePaneItDescribed) {
   for (const auto& [pane, marker] : {std::pair{&panes->front(), "first-pane"},
                                      std::pair{&panes->back(), "second-pane"}}) {
     std::string captured;
-    for (int attempt = 0; attempt < 200; ++attempt) {
+    for (const auto give_up =
+             std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
+         std::chrono::steady_clock::now() < give_up;) {
       const auto text = pane->capture();
       ASSERT_TRUE(text.has_value()) << text.error().diagnostic;
       captured = *text;
@@ -120,7 +122,9 @@ TEST(WorkspaceBuilder, PanesLandInTheOrderTheyWereDescribed) {
   const std::vector<std::string> expected = {"MARK-A", "MARK-B", "MARK-C", "MARK-D"};
   for (std::size_t index = 0; index < panes->size(); ++index) {
     std::string captured;
-    for (int attempt = 0; attempt < 200; ++attempt) {
+    for (const auto give_up =
+             std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
+         std::chrono::steady_clock::now() < give_up;) {
       const auto text = (*panes)[index].capture();
       ASSERT_TRUE(text.has_value()) << text.error().diagnostic;
       captured = *text;
@@ -193,7 +197,7 @@ TEST(WorkspaceBuilder, ACommandHeldBackIsTypedButNotRun) {
   ASSERT_FALSE(panes->empty());
 
   std::string screen;
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+  const auto deadline = std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
   while (std::chrono::steady_clock::now() < deadline) {
     const auto shown = panes->front().capture();
     ASSERT_TRUE(shown.has_value()) << shown.error().diagnostic;
@@ -346,7 +350,7 @@ TEST(WorkspaceBuilder, ASuppressedCommandIsTypedWithTheSpaceThatHidesIt) {
   // Held until two readings agree. A single capture can catch the line half
   // rendered and answer with a column the terminal is about to move.
   const auto column_of = [](const libtmux::Pane& pane) -> std::optional<std::size_t> {
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+    const auto deadline = std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
     const auto reading = [&pane]() -> std::optional<std::size_t> {
       const auto shown = pane.capture();
       EXPECT_TRUE(shown.has_value());
@@ -603,7 +607,9 @@ TEST(WorkspaceBuilder, EveryPaneReceivesItsLauncherAndEnvironment) {
        {std::pair{&panes->front(), "session:window:launcher"},
         std::pair{&panes->back(), "session:unset:launcher"}}) {
     std::string captured;
-    for (int attempt = 0; attempt < 20; ++attempt) {
+    for (const auto give_up =
+             std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
+         std::chrono::steady_clock::now() < give_up;) {
       const auto output = pane->capture();
       ASSERT_TRUE(output.has_value());
       captured = *output;
@@ -772,10 +778,10 @@ TEST(WorkspaceBuilder, LayoutVersionProbeUsesClientOnlyForUnboundMissingEndpoint
   ASSERT_TRUE(exited.has_value());
   ASSERT_TRUE(exited->run({"kill-server"}).has_value());
   auto refused = exited->run({"display-message", "-p", "#{version}"});
-  for (int attempt = 0;
-       attempt < 20 &&
-       (refused || !refused.error().diagnostic.starts_with("no server running on "));
-       ++attempt) {
+  for (const auto give_up =
+           std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
+       std::chrono::steady_clock::now() < give_up &&
+       (refused || !refused.error().diagnostic.starts_with("no server running on "));) {
     std::this_thread::sleep_for(std::chrono::milliseconds{10});
     refused = exited->run({"display-message", "-p", "#{version}"});
   }

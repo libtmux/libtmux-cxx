@@ -27,7 +27,7 @@ TEST(WaitFor, ASignalSentBeforeTheWaitStillReleasesIt) {
   // Latched, not edge-triggered: signalling first is safe, which is what
   // lets two processes race without losing the exchange.
   ASSERT_TRUE(server.signal("early").has_value());
-  const auto released = server.wait_for("early", 5s);
+  const auto released = server.wait_for("early", libtmux::test::kHangGuard);
   EXPECT_TRUE(released.has_value())
       << (released.has_value() ? "" : released.error().diagnostic);
 }
@@ -38,13 +38,14 @@ TEST(WaitFor, LeadingDashesBelongToTheChannelName) {
   const Server server = connect(*fixture);
 
   ASSERT_TRUE(server.run({"wait-for", "-S", "--", "-L"}).has_value());
-  const auto waited = server.wait_for("-L", 250ms);
+  const auto waited = server.wait_for("-L", libtmux::test::kHangGuard);
   EXPECT_TRUE(waited.has_value())
       << (waited.has_value() ? "" : waited.error().diagnostic);
 
   const auto signalled = server.signal("-S");
   ASSERT_TRUE(signalled.has_value()) << signalled.error().diagnostic;
-  EXPECT_TRUE(server.run({"wait-for", "--", "-S"}, 250ms).has_value());
+  EXPECT_TRUE(
+      server.run({"wait-for", "--", "-S"}, libtmux::test::kHangGuard).has_value());
 }
 
 TEST(WaitFor, ASignalFromAnotherThreadReleasesTheWaiter) {

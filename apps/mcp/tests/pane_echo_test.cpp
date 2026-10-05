@@ -295,13 +295,13 @@ void inject_foreign_output(const Server& server, const ToolRegistry& tools,
     tty_path.pop_back();
   }
   ASSERT_FALSE(tty_path.empty());
-  const auto answer =
-      tools.call(server, "run_shell_command",
-                 Arguments{{"paneId", std::string{writer_pane_id}},
-                           {"command", "sleep " + std::to_string(delay_seconds) +
-                                           " && printf '%s\\n' '" + std::string{line} +
-                                           "' > " + tty_path},
-                           {"timeoutMs", "3000"}});
+  const auto answer = tools.call(
+      server, "run_shell_command",
+      Arguments{{"paneId", std::string{writer_pane_id}},
+                {"command", "sleep " + std::to_string(delay_seconds) +
+                                " && printf '%s\\n' '" + std::string{line} + "' > " +
+                                tty_path},
+                {"timeoutMs", std::to_string(libtmux::test::kHangGuard.count())}});
   ASSERT_TRUE(answer.has_value()) << answer.error().message;
 }
 
@@ -333,7 +333,7 @@ TEST(McpToolsTmux, EchoShortUnsubmittedAnswerDoesNotMaskLongerRealOutput) {
   }};
   const auto waited = tools.call(
       server, "wait_for_text",
-      Arguments{{"target", pane_id}, {"text", "ready"}, {"timeout_ms", "1000"}});
+      Arguments{{"target", pane_id}, {"text", "ready"}, {"timeout_ms", "15000"}});
   injector.join();
 
   ASSERT_TRUE(waited.has_value()) << waited.error().message;
@@ -373,7 +373,7 @@ TEST(McpToolsTmux, EchoWaitBeforeSendMatchesOutputNotEcho) {
   };
   const auto waited = tools.call(
       server, "wait_for_text",
-      Arguments{{"target", pane_id}, {"text", marker}, {"timeout_ms", "1000"}},
+      Arguments{{"target", pane_id}, {"text", marker}, {"timeout_ms", "15000"}},
       context);
   EXPECT_TRUE(dispatched);
 
@@ -407,7 +407,7 @@ TEST(McpToolsTmux, EchoWaitAfterSendMatchesOutputNotEcho) {
 
   const auto waited = tools.call(
       server, "wait_for_text",
-      Arguments{{"target", pane_id}, {"text", marker}, {"timeout_ms", "1000"}});
+      Arguments{{"target", pane_id}, {"text", marker}, {"timeout_ms", "15000"}});
 
   ASSERT_TRUE(waited.has_value()) << waited.error().message;
   EXPECT_TRUE(std::get<bool>(waited->structured.at("matched").value));
@@ -464,7 +464,7 @@ TEST(McpToolsTmux, EchoBeforeTheFirstPromptIsNotOutput) {
   ASSERT_TRUE(submitted.has_value()) << submitted.error().message;
   const auto output = tools.call(
       server, "wait_for_text",
-      Arguments{{"target", "cold"}, {"text", "COLD"}, {"timeout_ms", "1000"}});
+      Arguments{{"target", "cold"}, {"text", "COLD"}, {"timeout_ms", "15000"}});
   ASSERT_TRUE(output.has_value()) << output.error().message;
   EXPECT_TRUE(std::get<bool>(output->structured.at("matched").value));
   EXPECT_TRUE(has_output_line(*output, "COLD")) << string_field(*output, "text");
@@ -483,7 +483,7 @@ TEST(McpToolsTmux, EchoSubmittedCommandDoesNotHideOutputWithoutANewline) {
   const auto waited = tools.call(server, "wait_for_text",
                                  Arguments{{"target", fixture->session_name()},
                                            {"text", "NOLINE"},
-                                           {"timeout_ms", "300"}});
+                                           {"timeout_ms", "15000"}});
   ASSERT_TRUE(waited.has_value()) << waited.error().message;
   EXPECT_TRUE(std::get<bool>(waited->structured.at("matched").value))
       << string_field(*waited, "text");
@@ -519,7 +519,7 @@ TEST(McpToolsTmux, EchoEditsAreAppliedAndKeyNamesNeverJoinTrackedText) {
 
   const auto waited = tools.call(
       server, "wait_for_text",
-      Arguments{{"target", pane_id}, {"text", "MARKER"}, {"timeout_ms", "1000"}});
+      Arguments{{"target", pane_id}, {"text", "MARKER"}, {"timeout_ms", "15000"}});
   ASSERT_TRUE(waited.has_value()) << waited.error().message;
   EXPECT_TRUE(std::get<bool>(waited->structured.at("matched").value))
       << string_field(*waited, "text");
@@ -555,7 +555,7 @@ TEST(McpToolsTmux, EchoUnknownKeyFailsOpenRatherThanHidingRealOutput) {
   }};
   const auto waited = tools.call(
       server, "wait_for_text",
-      Arguments{{"target", pane_id}, {"text", "xMARKER"}, {"timeout_ms", "1000"}});
+      Arguments{{"target", pane_id}, {"text", "xMARKER"}, {"timeout_ms", "15000"}});
   injector.join();
 
   ASSERT_TRUE(waited.has_value()) << waited.error().message;
@@ -596,7 +596,7 @@ TEST(McpToolsTmux, EchoResizeControlStillMatchesRealOutputAfterReflow) {
   }};
   const auto waited = tools.call(
       server, "wait_for_text",
-      Arguments{{"target", pane_id}, {"text", "ready"}, {"timeout_ms", "1000"}});
+      Arguments{{"target", pane_id}, {"text", "ready"}, {"timeout_ms", "15000"}});
   injector.join();
 
   ASSERT_TRUE(waited.has_value()) << waited.error().message;

@@ -1638,7 +1638,9 @@ TEST(WorkspaceCliTmux, ImportedWorkspacesKeepCommandsFocusAndOptions) {
     ASSERT_EQ(loaded.code, 0) << loaded.out << loaded.err;
     const auto marker = std::string{kind} + "-marker";
     std::string contents;
-    for (int wait = 0; wait < 300; ++wait) {
+    for (const auto give_up =
+             std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
+         std::chrono::steady_clock::now() < give_up;) {
       std::ifstream observed{marker};
       contents.assign(std::istreambuf_iterator<char>{observed}, {});
       if (contents == kind)
@@ -1696,7 +1698,9 @@ TEST(WorkspaceCliTmux, LoadExpandsShellVariablesFromTheLoadingProcessEnvironment
   ASSERT_TRUE(panes.has_value());
   ASSERT_FALSE(panes->empty());
   std::string captured;
-  for (int wait = 0; wait < 300; ++wait) {
+  for (const auto give_up =
+           std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
+       std::chrono::steady_clock::now() < give_up;) {
     const auto text = panes->front().capture();
     if (text.has_value() && text->find("marker=") != std::string::npos) {
       captured = *text;
@@ -1918,8 +1922,8 @@ TEST(WorkspaceCliTmux, CaptureLeavesOutTheShellTmuxStartedForThePane) {
   ASSERT_TRUE(panes.has_value());
   // The typed command cannot match the marker before the shell runs it.
   ASSERT_TRUE(panes->front().send_line("printf 'capture-%s\\n' ready").has_value());
-  const auto ready = panes->front().wait_for_text("capture-ready",
-                                                  {.timeout = std::chrono::seconds{1}});
+  const auto ready = panes->front().wait_for_text(
+      "capture-ready", {.timeout = libtmux::test::kHangGuard});
   ASSERT_TRUE(ready.has_value()) << ready.error().diagnostic;
   ASSERT_TRUE(ready->matched) << ready->text;
   const auto settled = panes->front().refresh();
@@ -1970,8 +1974,8 @@ TEST(WorkspaceCliTmux, CaptureTreatsAnyOrdinaryShellAsTheDefaultOne) {
   const auto panes = window->panes();
   ASSERT_TRUE(panes.has_value());
   ASSERT_TRUE(panes->front().send_line("printf 'capture-%s\\n' ready").has_value());
-  const auto ready = panes->front().wait_for_text("capture-ready",
-                                                  {.timeout = std::chrono::seconds{1}});
+  const auto ready = panes->front().wait_for_text(
+      "capture-ready", {.timeout = libtmux::test::kHangGuard});
   ASSERT_TRUE(ready.has_value()) << ready.error().diagnostic;
   ASSERT_TRUE(ready->matched) << ready->text;
   const auto settled = panes->front().refresh();
@@ -3344,7 +3348,7 @@ public:
     (void)::ioctl(terminal_, TIOCSWINSZ, &size);
   }
   int wait(const std::function<void(ProgressChild&)>& observe = {}) {
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+    const auto deadline = std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
     const auto drain = [&] {
       char bytes[8192];
       for (const auto& [fd, text] :

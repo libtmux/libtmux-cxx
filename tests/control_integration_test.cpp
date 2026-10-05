@@ -61,6 +61,7 @@ using libtmux::ControlTerminal;
 using libtmux::DeliveryStatus;
 using libtmux::Notification;
 using libtmux::ProtocolError;
+using libtmux::test::kHangGuard;
 using libtmux::test::ScopedTmuxServer;
 using libtmux::test::ScopedTmuxServerOptions;
 using libtmux::test::SocketMode;
@@ -146,8 +147,8 @@ libtmux::expected<ScopedTmuxServer, std::string>
 start_server(std::string session_name) {
   return ScopedTmuxServer::start({.tmux_binary = LIBTMUX_CONTROL_TMUX_PATH,
                                   .mode = SocketMode::Path,
-                                  .startup_timeout = 2s,
-                                  .teardown_timeout = 2s,
+                                  .startup_timeout = kHangGuard,
+                                  .teardown_timeout = kHangGuard,
                                   .session_name = std::move(session_name),
                                   .teardown_report = {}});
 }
@@ -157,8 +158,8 @@ connect_to(const ScopedTmuxServer& server) {
   return Connection::connect({.tmux_binary = LIBTMUX_CONTROL_TMUX_PATH,
                               .socket_path = server.socket_path(),
                               .session_name = std::string{server.session_name()},
-                              .startup_timeout = 2s,
-                              .shutdown_timeout = 2s});
+                              .startup_timeout = kHangGuard,
+                              .shutdown_timeout = kHangGuard});
 }
 
 ControlRequest
@@ -243,8 +244,9 @@ TEST(ControlModeConnection, ServerDoesNotInheritABlockedSignalMask) {
       << (connected.has_value() ? "" : connected.error().message);
   auto connection = std::move(*connected);
 
-  const auto reported = connection.execute(group({{"display-message", "-p", "#{pid}"}}),
-                                           std::chrono::steady_clock::now() + 2s);
+  const auto reported =
+      connection.execute(group({{"display-message", "-p", "#{pid}"}}),
+                         std::chrono::steady_clock::now() + kHangGuard);
   ASSERT_FALSE(reported.connection_error.has_value());
   ASSERT_EQ(reported.blocks.size(), 1U);
   const auto server_pid = std::stoi(text(reported.blocks[0].body));
@@ -273,7 +275,7 @@ TEST(ControlModeConnection, ControlClientDoesNotInheritABlockedSignalMask) {
 
   const auto reported =
       connection.execute(group({{"display-message", "-p", "#{client_pid}"}}),
-                         std::chrono::steady_clock::now() + 2s);
+                         std::chrono::steady_clock::now() + kHangGuard);
   ASSERT_FALSE(reported.connection_error.has_value());
   ASSERT_EQ(reported.blocks.size(), 1U);
   const auto client_pid = std::stoi(text(reported.blocks[0].body));
@@ -346,7 +348,8 @@ TEST(ControlModeConnection, ForcedNumericPolicyDoesNotLeakAConcurrentHighDescrip
   if (marker.policy_error != 0 || marker.error != 0 ||
       marker.descriptors[0] < minimum_marker_descriptor || marker.descriptors[1] < 3) {
     auto connection = std::move(*connected);
-    static_cast<void>(connection.shutdown(std::chrono::steady_clock::now() + 2s));
+    static_cast<void>(
+        connection.shutdown(std::chrono::steady_clock::now() + kHangGuard));
     for (const auto descriptor : marker.descriptors) {
       if (descriptor >= 0) {
         static_cast<void>(::close(descriptor));
@@ -368,11 +371,12 @@ TEST(ControlModeConnection, ForcedNumericPolicyDoesNotLeakAConcurrentHighDescrip
   auto connection = std::move(*connected);
 
   const auto reply = connection.execute(group({{"display-message", "-p", "intended"}}),
-                                        std::chrono::steady_clock::now() + 2s);
+                                        std::chrono::steady_clock::now() + kHangGuard);
   pollfd inherited{.fd = marker.descriptors[1], .events = POLLOUT, .revents = 0};
   const auto marker_ready = ::poll(&inherited, 1, 1000);
   static_cast<void>(::close(marker.descriptors[1]));
-  const auto stopped = connection.shutdown(std::chrono::steady_clock::now() + 2s);
+  const auto stopped =
+      connection.shutdown(std::chrono::steady_clock::now() + kHangGuard);
 
   expect_exact_end(reply, "intended\n");
   ASSERT_EQ(marker_ready, 1);
@@ -444,8 +448,8 @@ TEST(ControlModeConnection, RejectsBoundsTooSmallForItsPrivateBoundary) {
   ConnectionOptions options{.tmux_binary = LIBTMUX_CONTROL_TMUX_PATH,
                             .socket_path = server->socket_path(),
                             .session_name = std::string{server->session_name()},
-                            .startup_timeout = 2s,
-                            .shutdown_timeout = 2s};
+                            .startup_timeout = kHangGuard,
+                            .shutdown_timeout = kHangGuard};
 
   options.retained_reply_bytes = 127U;
   auto short_reply = Connection::connect(options);
@@ -467,7 +471,7 @@ TEST(ControlModeConnection, FailFastGroupStopsAtTheErrorBoundary) {
       << (connected.has_value() ? "" : connected.error().message);
   auto connection = std::move(*connected);
 
-  const auto deadline = std::chrono::steady_clock::now() + 2s;
+  const auto deadline = std::chrono::steady_clock::now() + kHangGuard;
   const auto result =
       connection.execute(group({{"kill-session", "-t", "=libtmux-control-missing"},
                                 {"display-message", "-p", "second-must-not-run"},
@@ -483,9 +487,10 @@ TEST(ControlModeConnection, FailFastGroupStopsAtTheErrorBoundary) {
 
   const auto next =
       connection.execute(group({{"display-message", "-p", "after-fail-fast"}}),
-                         std::chrono::steady_clock::now() + 2s);
+                         std::chrono::steady_clock::now() + kHangGuard);
   expect_exact_end(next, "after-fail-fast\n");
-  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+  EXPECT_TRUE(
+      connection.shutdown(std::chrono::steady_clock::now() + kHangGuard).has_value());
 }
 
 TEST(ControlModeConnection, ConcurrentIndependentRequestsKeepReplyOwnership) {
@@ -504,12 +509,12 @@ TEST(ControlModeConnection, ConcurrentIndependentRequestsKeepReplyOwnership) {
     ready.arrive_and_wait();
     first = connection.execute(
         group({{"new-window", "-d", "-P", "-F", "first-marker", "-n", window_name}}),
-        std::chrono::steady_clock::now() + 2s);
+        std::chrono::steady_clock::now() + kHangGuard);
   }};
   std::thread second_thread{[&] {
     ready.arrive_and_wait();
     second = connection.execute(group({{"display-message", "-p", "second-marker"}}),
-                                std::chrono::steady_clock::now() + 2s);
+                                std::chrono::steady_clock::now() + kHangGuard);
   }};
   ready.arrive_and_wait();
   first_thread.join();
@@ -533,7 +538,8 @@ TEST(ControlModeConnection, ConcurrentIndependentRequestsKeepReplyOwnership) {
                          std::make_move_iterator(available.end()));
   }
   EXPECT_TRUE(has_notification(notifications, "%window-add "));
-  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+  EXPECT_TRUE(
+      connection.shutdown(std::chrono::steady_clock::now() + kHangGuard).has_value());
 }
 
 TEST(ControlModeConnection, AliasExpansionKeepsEveryReplyAndTheNextRequestAligned) {
@@ -551,8 +557,8 @@ TEST(ControlModeConnection, AliasExpansionKeepsEveryReplyAndTheNextRequestAligne
       << (connected.has_value() ? "" : connected.error().message);
   auto connection = std::move(*connected);
 
-  const auto expanded = connection.execute(group({{"nested-reply"}}),
-                                           std::chrono::steady_clock::now() + 2s);
+  const auto expanded = connection.execute(
+      group({{"nested-reply"}}), std::chrono::steady_clock::now() + kHangGuard);
   ASSERT_FALSE(expanded.connection_error.has_value())
       << (expanded.connection_error ? expanded.connection_error->message : "");
   ASSERT_EQ(expanded.blocks.size(), 2U);
@@ -564,9 +570,10 @@ TEST(ControlModeConnection, AliasExpansionKeepsEveryReplyAndTheNextRequestAligne
 
   const auto after =
       connection.execute(group({{"display-message", "-p", "still-aligned"}}),
-                         std::chrono::steady_clock::now() + 2s);
+                         std::chrono::steady_clock::now() + kHangGuard);
   expect_exact_end(after, "still-aligned\n");
-  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+  EXPECT_TRUE(
+      connection.shutdown(std::chrono::steady_clock::now() + kHangGuard).has_value());
 }
 
 // The request itself, on every supported release.
@@ -605,11 +612,12 @@ TEST(ControlModeConnection, ConnectAsksForJsonLayoutsOnEveryVersion) {
       Connection::connect({.tmux_binary = wrapper,
                            .socket_path = fixture->socket_path(),
                            .session_name = std::string{fixture->session_name()},
-                           .startup_timeout = 5s,
-                           .shutdown_timeout = 2s});
+                           .startup_timeout = kHangGuard,
+                           .shutdown_timeout = kHangGuard});
   ASSERT_TRUE(connected.has_value())
       << (connected.has_value() ? "" : connected.error().message);
-  EXPECT_TRUE(connected->shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+  EXPECT_TRUE(
+      connected->shutdown(std::chrono::steady_clock::now() + kHangGuard).has_value());
 
   std::ifstream written{record};
   ASSERT_TRUE(written.is_open()) << "the wrapper recorded nothing at " << record;
@@ -659,7 +667,7 @@ TEST(ControlModeConnection, LayoutChangePayloadAgreesWithAPlainSnapshotOn38Plus)
   ASSERT_EQ(panes->size(), 1U);
   ASSERT_TRUE(panes->front().split().has_value());
 
-  const auto deadline = std::chrono::steady_clock::now() + 2s;
+  const auto deadline = std::chrono::steady_clock::now() + kHangGuard;
   std::optional<std::string> layout_change_text;
   while (!layout_change_text.has_value() &&
          std::chrono::steady_clock::now() < deadline) {
@@ -685,7 +693,8 @@ TEST(ControlModeConnection, LayoutChangePayloadAgreesWithAPlainSnapshotOn38Plus)
       << "control connection did not receive JSON: " << notified_layout;
   EXPECT_EQ(notified_layout, snapshot_layout);
 
-  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+  EXPECT_TRUE(
+      connection.shutdown(std::chrono::steady_clock::now() + kHangGuard).has_value());
 }
 
 // tmux gives no notification dedicated to a pane leaving its window: the
@@ -723,7 +732,7 @@ TEST(ControlModeConnection, LayoutContainsPaneAnswersAfterTheObservedPaneIsKille
 
   ASSERT_TRUE(split->kill().has_value());
 
-  const auto deadline = std::chrono::steady_clock::now() + 2s;
+  const auto deadline = std::chrono::steady_clock::now() + kHangGuard;
   std::optional<std::string> layout_change_text;
   while (!layout_change_text.has_value() &&
          std::chrono::steady_clock::now() < deadline) {
@@ -742,7 +751,8 @@ TEST(ControlModeConnection, LayoutContainsPaneAnswersAfterTheObservedPaneIsKille
   EXPECT_EQ(libtmux::layout_contains_pane(*layout_change_text, doomed),
             std::optional<bool>{false});
 
-  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+  EXPECT_TRUE(
+      connection.shutdown(std::chrono::steady_clock::now() + kHangGuard).has_value());
 }
 
 TEST(ControlModeConnection, InsertedReplyStaysWithItsConcurrentRequest) {
@@ -760,12 +770,12 @@ TEST(ControlModeConnection, InsertedReplyStaysWithItsConcurrentRequest) {
     ready.arrive_and_wait();
     inserted = connection.execute(
         group({{"if-shell", "-F", "1", "display-message -p inserted-marker"}}),
-        std::chrono::steady_clock::now() + 2s);
+        std::chrono::steady_clock::now() + kHangGuard);
   }};
   std::thread marker_thread{[&] {
     ready.arrive_and_wait();
     marker = connection.execute(group({{"display-message", "-p", "next-marker"}}),
-                                std::chrono::steady_clock::now() + 2s);
+                                std::chrono::steady_clock::now() + kHangGuard);
   }};
   ready.arrive_and_wait();
   inserted_thread.join();
@@ -785,9 +795,10 @@ TEST(ControlModeConnection, InsertedReplyStaysWithItsConcurrentRequest) {
   expect_exact_end(*marker, "next-marker\n");
   const auto after =
       connection.execute(group({{"display-message", "-p", "after-marker"}}),
-                         std::chrono::steady_clock::now() + 2s);
+                         std::chrono::steady_clock::now() + kHangGuard);
   expect_exact_end(after, "after-marker\n");
-  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+  EXPECT_TRUE(
+      connection.shutdown(std::chrono::steady_clock::now() + kHangGuard).has_value());
 }
 
 // Waiting, rather than asking repeatedly and sleeping in between.
@@ -806,7 +817,7 @@ TEST(ControlModeConnection, WaitForNotificationsWakesOnTheEventNotTheDeadline) {
 
   const auto created =
       connection.execute(group({{"new-window", "-d", "-n", "waited-for"}}),
-                         std::chrono::steady_clock::now() + 2s);
+                         std::chrono::steady_clock::now() + kHangGuard);
   ASSERT_FALSE(created.connection_error.has_value());
 
   // A deadline far past when the event should land: returning long before it
@@ -828,7 +839,8 @@ TEST(ControlModeConnection, WaitForNotificationsWakesOnTheEventNotTheDeadline) {
 
   EXPECT_TRUE(has_notification(notifications, "%window-add "));
   EXPECT_LT(waited, 5s) << "woke on the deadline rather than the event";
-  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+  EXPECT_TRUE(
+      connection.shutdown(std::chrono::steady_clock::now() + kHangGuard).has_value());
 }
 
 TEST(ControlModeConnection, NotificationWatchesDoNotStealFromEachOther) {
@@ -864,15 +876,15 @@ TEST(ControlModeConnection, NotificationWatchesDoNotStealFromEachOther) {
   ASSERT_TRUE(primed.has_value()) << primed.error().diagnostic;
 
   auto first_events = collect_until(first, {}, "%window-renamed ",
-                                    std::chrono::steady_clock::now() + 2s);
+                                    std::chrono::steady_clock::now() + kHangGuard);
   ASSERT_TRUE(has_notification(first_events, "%window-renamed "));
 
   const auto created =
       connection.execute(group({{"new-window", "-d", "-n", "watched"}}),
-                         std::chrono::steady_clock::now() + 2s);
+                         std::chrono::steady_clock::now() + kHangGuard);
   ASSERT_FALSE(created.connection_error.has_value());
 
-  const auto deadline = std::chrono::steady_clock::now() + 2s;
+  const auto deadline = std::chrono::steady_clock::now() + kHangGuard;
   first_events =
       collect_until(first, std::move(first_events), "%window-add ", deadline);
   std::array<pollfd, 1> second_ready{
@@ -890,7 +902,8 @@ TEST(ControlModeConnection, NotificationWatchesDoNotStealFromEachOther) {
   EXPECT_TRUE(has_notification(legacy_events, "%window-renamed "));
   EXPECT_EQ(first.dropped_notifications(), 0U);
   EXPECT_EQ(second.dropped_notifications(), 0U);
-  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+  EXPECT_TRUE(
+      connection.shutdown(std::chrono::steady_clock::now() + kHangGuard).has_value());
 }
 
 TEST(ControlModeConnection, NotificationWatchDrainsAfterConnectionDestruction) {
@@ -906,9 +919,10 @@ TEST(ControlModeConnection, NotificationWatchDrainsAfterConnectionDestruction) {
 
     const auto created =
         connection.execute(group({{"new-window", "-d", "-n", "retained"}}),
-                           std::chrono::steady_clock::now() + 2s);
+                           std::chrono::steady_clock::now() + kHangGuard);
     ASSERT_FALSE(created.connection_error.has_value());
-    EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+    EXPECT_TRUE(
+        connection.shutdown(std::chrono::steady_clock::now() + kHangGuard).has_value());
   }
 
   const auto retained = watch.take_notifications();
@@ -952,7 +966,8 @@ TEST(ControlModeConnection, WaitForNotificationsReturnsEmptyOnlyAtItsDeadline) {
     }
   }
   EXPECT_TRUE(saw_deadline) << "tmux never paused long enough to reach a deadline";
-  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+  EXPECT_TRUE(
+      connection.shutdown(std::chrono::steady_clock::now() + kHangGuard).has_value());
 }
 
 // Pane output arrives only when the connection asked for it at connect time.
@@ -973,8 +988,8 @@ TEST(ControlModeConnection, ServerOwnsTheRouteAndPreservesStreamPolicy) {
       fixture->session_name(), {.tmux_binary = LIBTMUX_CONTROL_TMUX_PATH,
                                 .socket_path = "/caller-route-must-be-ignored",
                                 .session_name = "caller-session-must-be-ignored",
-                                .startup_timeout = 2s,
-                                .shutdown_timeout = 2s,
+                                .startup_timeout = kHangGuard,
+                                .shutdown_timeout = kHangGuard,
                                 .pane_output = true,
                                 .pause_after = 17s});
   ASSERT_TRUE(connected.has_value())
@@ -984,12 +999,12 @@ TEST(ControlModeConnection, ServerOwnsTheRouteAndPreservesStreamPolicy) {
   const auto typed = connection.execute(
       group({{"send-keys", "-t", std::string{fixture->session_name()},
               "echo server-routed-stream", "Enter"}}),
-      std::chrono::steady_clock::now() + 2s);
+      std::chrono::steady_clock::now() + kHangGuard);
   ASSERT_FALSE(typed.connection_error.has_value())
       << (typed.connection_error ? typed.connection_error->message : "");
 
   bool saw_output = false;
-  const auto deadline = std::chrono::steady_clock::now() + 2s;
+  const auto deadline = std::chrono::steady_clock::now() + kHangGuard;
   while (std::chrono::steady_clock::now() < deadline && !saw_output) {
     for (const Notification& notification :
          connection.wait_for_notifications(deadline)) {
@@ -999,7 +1014,8 @@ TEST(ControlModeConnection, ServerOwnsTheRouteAndPreservesStreamPolicy) {
     }
   }
   EXPECT_TRUE(saw_output);
-  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+  EXPECT_TRUE(
+      connection.shutdown(std::chrono::steady_clock::now() + kHangGuard).has_value());
 }
 
 // "=name" is tmux's exact session target, but it still splits on a "." or
@@ -1029,13 +1045,14 @@ TEST(ControlModeConnection, ReachesASessionNamedWithADot) {
 
   auto connected = server->control_with_options(
       actual_name, {.tmux_binary = LIBTMUX_CONTROL_TMUX_PATH,
-                    .startup_timeout = 2s,
-                    .shutdown_timeout = 2s});
+                    .startup_timeout = kHangGuard,
+                    .shutdown_timeout = kHangGuard});
   ASSERT_TRUE(connected.has_value())
       << (connected.has_value() ? "" : connected.error().message);
   auto connection = std::move(*connected);
 
-  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+  EXPECT_TRUE(
+      connection.shutdown(std::chrono::steady_clock::now() + kHangGuard).has_value());
 }
 
 TEST(ControlModeConnection, DeliversPaneOutputOnlyWhenAskedAtConnectTime) {
@@ -1047,8 +1064,8 @@ TEST(ControlModeConnection, DeliversPaneOutputOnlyWhenAskedAtConnectTime) {
         Connection::connect({.tmux_binary = LIBTMUX_CONTROL_TMUX_PATH,
                              .socket_path = server->socket_path(),
                              .session_name = std::string{server->session_name()},
-                             .startup_timeout = 2s,
-                             .shutdown_timeout = 2s,
+                             .startup_timeout = kHangGuard,
+                             .shutdown_timeout = kHangGuard,
                              .pane_output = pane_output});
     EXPECT_TRUE(connected.has_value())
         << (connected.has_value() ? "" : connected.error().message);
@@ -1060,11 +1077,14 @@ TEST(ControlModeConnection, DeliversPaneOutputOnlyWhenAskedAtConnectTime) {
     const auto typed = connection.execute(
         group({{"send-keys", "-t", std::string{server->session_name()}, "echo hi",
                 "Enter"}}),
-        std::chrono::steady_clock::now() + 2s);
+        std::chrono::steady_clock::now() + kHangGuard);
     static_cast<void>(typed);
 
     int outputs = 0;
-    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    // A connection that never asked has nothing to deliver, so that case runs
+    // out the window instead of ending on the first output.
+    const auto deadline =
+        std::chrono::steady_clock::now() + (pane_output ? kHangGuard : 2s);
     while (std::chrono::steady_clock::now() < deadline) {
       const auto batch = connection.wait_for_notifications(deadline);
       if (batch.empty()) {
@@ -1079,7 +1099,8 @@ TEST(ControlModeConnection, DeliversPaneOutputOnlyWhenAskedAtConnectTime) {
         break;
       }
     }
-    static_cast<void>(connection.shutdown(std::chrono::steady_clock::now() + 2s));
+    static_cast<void>(
+        connection.shutdown(std::chrono::steady_clock::now() + kHangGuard));
     return outputs;
   };
 
@@ -1099,12 +1120,12 @@ TEST(ControlModeConnection, ParsesTheNotificationsARealServerEmits) {
 
   const auto made =
       connection.execute(group({{"new-window", "-d", "-n", "parsed-window"}}),
-                         std::chrono::steady_clock::now() + 2s);
+                         std::chrono::steady_clock::now() + kHangGuard);
   ASSERT_FALSE(made.connection_error.has_value());
 
   bool saw_window_add = false;
   std::string added_window;
-  const auto deadline = std::chrono::steady_clock::now() + 3s;
+  const auto deadline = std::chrono::steady_clock::now() + kHangGuard;
   while (std::chrono::steady_clock::now() < deadline && !saw_window_add) {
     const auto batch = connection.wait_for_notifications(deadline);
     if (batch.empty()) {
@@ -1126,7 +1147,8 @@ TEST(ControlModeConnection, ParsesTheNotificationsARealServerEmits) {
   EXPECT_TRUE(saw_window_add);
   ASSERT_FALSE(added_window.empty());
   EXPECT_EQ(added_window.front(), '@') << added_window;
-  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+  EXPECT_TRUE(
+      connection.shutdown(std::chrono::steady_clock::now() + kHangGuard).has_value());
 }
 
 // The descriptor, used the way it exists to be used: one `poll` over tmux and
@@ -1149,7 +1171,7 @@ TEST(ControlModeConnection, NotificationFdPollsBesideAnotherDescriptor) {
   static_cast<void>(connection.take_notifications());
 
   const auto made = connection.execute(group({{"new-window", "-d", "-n", "polled"}}),
-                                       std::chrono::steady_clock::now() + 2s);
+                                       std::chrono::steady_clock::now() + kHangGuard);
   ASSERT_FALSE(made.connection_error.has_value());
 
   bool saw_window_add = false;
@@ -1198,7 +1220,8 @@ TEST(ControlModeConnection, NotificationFdPollsBesideAnotherDescriptor) {
 
   ::close(other[0]);
   ::close(other[1]);
-  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+  EXPECT_TRUE(
+      connection.shutdown(std::chrono::steady_clock::now() + kHangGuard).has_value());
 }
 
 // Muting one pane, and the asymmetry that makes muting the only per-pane
@@ -1213,28 +1236,29 @@ TEST(ControlModeConnection, MutesOnePaneAndRefusesToWidenASilentConnection) {
     ASSERT_TRUE(silent.has_value())
         << (silent.has_value() ? "" : silent.error().message);
     auto connection = std::move(*silent);
-    const auto refused =
-        connection.resume_pane_output("%0", std::chrono::steady_clock::now() + 2s);
+    const auto refused = connection.resume_pane_output(
+        "%0", std::chrono::steady_clock::now() + kHangGuard);
     ASSERT_FALSE(refused.has_value());
     EXPECT_NE(refused.error().message.find("did not ask for pane output"),
               std::string::npos)
         << refused.error().message;
-    static_cast<void>(connection.shutdown(std::chrono::steady_clock::now() + 2s));
+    static_cast<void>(
+        connection.shutdown(std::chrono::steady_clock::now() + kHangGuard));
   }
 
   auto connected =
       Connection::connect({.tmux_binary = LIBTMUX_CONTROL_TMUX_PATH,
                            .socket_path = server->socket_path(),
                            .session_name = std::string{server->session_name()},
-                           .startup_timeout = 2s,
-                           .shutdown_timeout = 2s,
+                           .startup_timeout = kHangGuard,
+                           .shutdown_timeout = kHangGuard,
                            .pane_output = true});
   ASSERT_TRUE(connected.has_value())
       << (connected.has_value() ? "" : connected.error().message);
   auto connection = std::move(*connected);
 
   const auto listed = connection.execute(group({{"list-panes", "-F", "#{pane_id}"}}),
-                                         std::chrono::steady_clock::now() + 2s);
+                                         std::chrono::steady_clock::now() + kHangGuard);
   ASSERT_FALSE(listed.connection_error.has_value());
   ASSERT_FALSE(listed.blocks.empty());
   auto pane = text(listed.blocks.front().body);
@@ -1244,13 +1268,13 @@ TEST(ControlModeConnection, MutesOnePaneAndRefusesToWidenASilentConnection) {
   ASSERT_FALSE(pane.empty());
 
   const auto muted =
-      connection.mute_pane_output(pane, std::chrono::steady_clock::now() + 2s);
+      connection.mute_pane_output(pane, std::chrono::steady_clock::now() + kHangGuard);
   ASSERT_TRUE(muted.has_value()) << muted.error().message;
 
   static_cast<void>(connection.take_notifications());
   const auto typed = connection.execute(
       group({{"send-keys", "-t", pane, "echo muted-pane-marker", "Enter"}}),
-      std::chrono::steady_clock::now() + 2s);
+      std::chrono::steady_clock::now() + kHangGuard);
   ASSERT_FALSE(typed.connection_error.has_value());
 
   int outputs = 0;
@@ -1270,16 +1294,17 @@ TEST(ControlModeConnection, MutesOnePaneAndRefusesToWidenASilentConnection) {
 
   const auto paused =
       connection.execute(group({{"refresh-client", "-A", pane + ":pause"}}),
-                         std::chrono::steady_clock::now() + 2s);
+                         std::chrono::steady_clock::now() + kHangGuard);
   ASSERT_FALSE(paused.connection_error.has_value());
-  ASSERT_TRUE(connection.resume_pane_output(pane, std::chrono::steady_clock::now() + 2s)
-                  .has_value());
+  ASSERT_TRUE(
+      connection.resume_pane_output(pane, std::chrono::steady_clock::now() + kHangGuard)
+          .has_value());
   const auto resumed = connection.execute(
       group({{"send-keys", "-t", pane, "echo resumed-pane-marker", "Enter"}}),
-      std::chrono::steady_clock::now() + 2s);
+      std::chrono::steady_clock::now() + kHangGuard);
   ASSERT_FALSE(resumed.connection_error.has_value());
   std::string received;
-  const auto resumed_deadline = std::chrono::steady_clock::now() + 2s;
+  const auto resumed_deadline = std::chrono::steady_clock::now() + kHangGuard;
   while (std::chrono::steady_clock::now() < resumed_deadline &&
          received.find("resumed-pane-marker") == std::string::npos) {
     const auto batch = connection.wait_for_notifications(resumed_deadline);
@@ -1295,7 +1320,8 @@ TEST(ControlModeConnection, MutesOnePaneAndRefusesToWidenASilentConnection) {
   EXPECT_NE(received.find("resumed-pane-marker"), std::string::npos)
       << "a resumed pane did not deliver new output";
 
-  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+  EXPECT_TRUE(
+      connection.shutdown(std::chrono::steady_clock::now() + kHangGuard).has_value());
 }
 
 // The same waiting, as one loop.
@@ -1309,11 +1335,12 @@ TEST(ControlModeConnection, EventsRangeYieldsWhatTheHandLoopWould) {
 
   static_cast<void>(connection.take_notifications());
   const auto made = connection.execute(group({{"new-window", "-d", "-n", "ranged"}}),
-                                       std::chrono::steady_clock::now() + 2s);
+                                       std::chrono::steady_clock::now() + kHangGuard);
   ASSERT_FALSE(made.connection_error.has_value());
 
   std::string window;
-  for (const auto& event : connection.events(std::chrono::steady_clock::now() + 3s)) {
+  for (const auto& event :
+       connection.events(std::chrono::steady_clock::now() + kHangGuard)) {
     EXPECT_FALSE(event.name.empty());
     if (event.kind == libtmux::NotificationKind::window_add) {
       window = std::string{event.window};
@@ -1335,7 +1362,8 @@ TEST(ControlModeConnection, EventsRangeYieldsWhatTheHandLoopWould) {
   EXPECT_GE(std::chrono::steady_clock::now() - started, 300ms)
       << "the range ended before its deadline with nothing to report";
 
-  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+  EXPECT_TRUE(
+      connection.shutdown(std::chrono::steady_clock::now() + kHangGuard).has_value());
 }
 
 TEST(ControlModeConnection, NotificationShapedCommandOutputRemainsBlockBody) {
@@ -1350,11 +1378,12 @@ TEST(ControlModeConnection, NotificationShapedCommandOutputRemainsBlockBody) {
   auto connection = std::move(*connected);
 
   const auto result = connection.execute(group({{"display-message", "direct-body"}}),
-                                         std::chrono::steady_clock::now() + 2s);
+                                         std::chrono::steady_clock::now() + kHangGuard);
   expect_exact_end(result, "%message direct-body\n");
   const auto notifications = connection.take_notifications();
   EXPECT_FALSE(has_notification(notifications, "%message direct-body"));
-  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+  EXPECT_TRUE(
+      connection.shutdown(std::chrono::steady_clock::now() + kHangGuard).has_value());
 }
 
 TEST(ControlModeConnection, WaitCapableCommandsFinishAfterTheirGuardedBlocks) {
@@ -1367,20 +1396,20 @@ TEST(ControlModeConnection, WaitCapableCommandsFinishAfterTheirGuardedBlocks) {
   static_cast<void>(connection.take_notifications());
 
   const auto shell = connection.execute(group({{"run-shell", "exit 17"}}),
-                                        std::chrono::steady_clock::now() + 2s);
+                                        std::chrono::steady_clock::now() + kHangGuard);
   expect_exact_end(shell, "");
 
   const std::string missing = (server->tmux_tmpdir() / "missing-buffer").string();
   const auto load =
       connection.execute(group({{"load-buffer", "-b", "missing", "--", missing}}),
-                         std::chrono::steady_clock::now() + 2s);
+                         std::chrono::steady_clock::now() + kHangGuard);
   expect_exact_end(load, "");
 
   // This block cannot arrive until the two waiting commands continue. The
   // reader therefore observed all delayed lines before returning the marker.
   const auto marker =
       connection.execute(group({{"display-message", "-p", "after-delayed-work"}}),
-                         std::chrono::steady_clock::now() + 2s);
+                         std::chrono::steady_clock::now() + kHangGuard);
   expect_exact_end(marker, "after-delayed-work\n");
   const auto outside_blocks = connection.take_notifications();
   const auto contains = [&outside_blocks](std::string_view wanted) {
@@ -1400,7 +1429,8 @@ TEST(ControlModeConnection, WaitCapableCommandsFinishAfterTheirGuardedBlocks) {
     EXPECT_TRUE(contains("returned 17"));
   }
   EXPECT_TRUE(contains(missing));
-  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+  EXPECT_TRUE(
+      connection.shutdown(std::chrono::steady_clock::now() + kHangGuard).has_value());
 }
 
 TEST(ControlModeConnection, EncodesArgumentsWithoutCreatingAnotherCommand) {
@@ -1428,11 +1458,12 @@ TEST(ControlModeConnection, EncodesArgumentsWithoutCreatingAnotherCommand) {
     ControlRequest request;
     request.group.push_back(
         ControlCommand{.argv = {"display-message", "-p", "--", payload}});
-    const auto result =
-        connection.execute(std::move(request), std::chrono::steady_clock::now() + 2s);
+    const auto result = connection.execute(
+        std::move(request), std::chrono::steady_clock::now() + kHangGuard);
     expect_exact_end(result, payload + "\n");
   }
-  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+  EXPECT_TRUE(
+      connection.shutdown(std::chrono::steady_clock::now() + kHangGuard).has_value());
 }
 
 TEST(ControlModeConnection, ShutdownIsBoundedAndLeavesFixtureAlive) {
@@ -1445,7 +1476,7 @@ TEST(ControlModeConnection, ShutdownIsBoundedAndLeavesFixtureAlive) {
   const auto child_pid = connection.native_child_pid();
   ASSERT_GT(child_pid, 0);
 
-  const auto deadline = std::chrono::steady_clock::now() + 2s;
+  const auto deadline = std::chrono::steady_clock::now() + kHangGuard;
   EXPECT_TRUE(connection.shutdown(deadline).has_value());
   EXPECT_LT(std::chrono::steady_clock::now(), deadline);
   EXPECT_TRUE(server->is_alive());
@@ -1453,7 +1484,8 @@ TEST(ControlModeConnection, ShutdownIsBoundedAndLeavesFixtureAlive) {
   errno = 0;
   EXPECT_EQ(::waitpid(static_cast<pid_t>(child_pid), &status, WNOHANG), -1);
   EXPECT_EQ(errno, ECHILD);
-  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+  EXPECT_TRUE(
+      connection.shutdown(std::chrono::steady_clock::now() + kHangGuard).has_value());
 }
 
 TEST(ControlModeConnection, ExecuteVsShutdownCompletesOnceWithOnlyReceivedBlocks) {
@@ -1479,7 +1511,7 @@ TEST(ControlModeConnection, ExecuteVsShutdownCompletesOnceWithOnlyReceivedBlocks
   }};
 
   std::vector<Notification> notifications;
-  const auto marker_deadline = std::chrono::steady_clock::now() + 2s;
+  const auto marker_deadline = std::chrono::steady_clock::now() + kHangGuard;
   while ((!std::filesystem::exists(marker) ||
           !has_notification(notifications, "%window-add ")) &&
          std::chrono::steady_clock::now() < marker_deadline) {
@@ -1491,7 +1523,8 @@ TEST(ControlModeConnection, ExecuteVsShutdownCompletesOnceWithOnlyReceivedBlocks
   }
   const auto marker_seen = std::filesystem::exists(marker);
   const auto notification_seen = has_notification(notifications, "%window-add ");
-  const auto shutdown = connection.shutdown(std::chrono::steady_clock::now() + 2s);
+  const auto shutdown =
+      connection.shutdown(std::chrono::steady_clock::now() + kHangGuard);
   request_thread.join();
 
   ASSERT_TRUE(marker_seen);
@@ -1872,7 +1905,7 @@ TEST(ControlModeConnection, ExternallyTerminatedClientIsReapedWhileOwned) {
   EXPECT_TRUE(completed.connection_error.has_value());
 
   bool reaped = false;
-  const auto reap_deadline = std::chrono::steady_clock::now() + 2s;
+  const auto reap_deadline = std::chrono::steady_clock::now() + kHangGuard;
   while (!reaped && std::chrono::steady_clock::now() < reap_deadline) {
     siginfo_t child{};
     errno = 0;
@@ -1889,7 +1922,7 @@ TEST(ControlModeConnection, ExternallyTerminatedClientIsReapedWhileOwned) {
                          std::chrono::steady_clock::now() + 2s);
   EXPECT_TRUE(later.blocks.empty());
   EXPECT_TRUE(later.connection_error.has_value());
-  static_cast<void>(connection.shutdown(std::chrono::steady_clock::now() + 2s));
+  static_cast<void>(connection.shutdown(std::chrono::steady_clock::now() + kHangGuard));
   EXPECT_TRUE(server->is_alive());
 }
 
@@ -1916,7 +1949,7 @@ TEST(ControlModeConnection, DeadlineReturnsOnlyReceivedBlocksAndPoisonsTheConnec
   EXPECT_TRUE(later.blocks.empty());
   ASSERT_TRUE(later.connection_error.has_value());
   EXPECT_EQ(later.connection_error->delivery, DeliveryStatus::not_started);
-  static_cast<void>(connection.shutdown(std::chrono::steady_clock::now() + 2s));
+  static_cast<void>(connection.shutdown(std::chrono::steady_clock::now() + kHangGuard));
 }
 
 TEST(ControlModeConnection, ExpiredDeadlineDoesNotStartTheRequest) {
@@ -1934,7 +1967,8 @@ TEST(ControlModeConnection, ExpiredDeadlineDoesNotStartTheRequest) {
   EXPECT_TRUE(expired.blocks.empty());
   ASSERT_TRUE(expired.connection_error.has_value());
   EXPECT_EQ(expired.connection_error->delivery, DeliveryStatus::not_started);
-  EXPECT_TRUE(connection.shutdown(std::chrono::steady_clock::now() + 2s).has_value());
+  EXPECT_TRUE(
+      connection.shutdown(std::chrono::steady_clock::now() + kHangGuard).has_value());
   EXPECT_TRUE(server->is_alive());
 }
 

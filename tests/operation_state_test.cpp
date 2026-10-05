@@ -16,6 +16,7 @@
 #include <gtest/gtest.h>
 
 #include "completion_queue.hpp"
+#include "libtmux/testing/scoped_server.hpp"
 #include "move_only_function.hpp"
 #include "operation_state.hpp"
 
@@ -211,7 +212,7 @@ TEST(CompletionQueue, FinishWakesARunOneWaiterWithNoReadyRecord) {
   CompletionQueue queue;
   auto waiting = std::async(std::launch::async, [&] { return queue.run_one(); });
   queue.finish();
-  ASSERT_EQ(waiting.wait_for(std::chrono::seconds{1}), std::future_status::ready);
+  ASSERT_EQ(waiting.wait_for(libtmux::test::kHangGuard), std::future_status::ready);
   EXPECT_FALSE(waiting.get());
 }
 

@@ -18,12 +18,16 @@ import tempfile
 import time
 from contextlib import suppress
 
+# Seconds a step that must happen may take before the script calls it hung. A
+# step returns when its event does, so the value costs time only on a hang.
+HANG_GUARD = 20
+
 
 def run(command, env, cwd):
     """Run one checked command and measure wall time in milliseconds."""
     started = time.perf_counter_ns()
     result = subprocess.run(
-        command, env=env, cwd=cwd, capture_output=True, timeout=5, check=False
+        command, env=env, cwd=cwd, capture_output=True, timeout=HANG_GUARD, check=False
     )
     elapsed = (time.perf_counter_ns() - started) / 1_000_000
     if result.returncode:
@@ -151,7 +155,7 @@ def before_scripts(binary, root, env, prefix, append_env):
     results = {}
 
     def wait_for(predicate):
-        deadline = time.monotonic() + 2
+        deadline = time.monotonic() + HANG_GUARD
         while not predicate():
             assert time.monotonic() < deadline, "script did not reach its checkpoint"
             time.sleep(0.005)
@@ -253,7 +257,7 @@ def before_scripts(binary, root, env, prefix, append_env):
                     process.stdout.close()
                     process.stdout = None
                     release.touch()
-            output, error = process.communicate(timeout=2)
+            output, error = process.communicate(timeout=HANG_GUARD)
             observed.extend(output or b"")
             for pid in owned:
                 state = subprocess.run(
@@ -328,7 +332,7 @@ def before_scripts(binary, root, env, prefix, append_env):
         finally:
             if process.poll() is None:
                 process.kill()
-                process.wait(timeout=2)
+                process.wait(timeout=HANG_GUARD)
             if not owned and marker.exists():
                 owned = [int(value) for value in marker.read_text().split(":") if value]
             for pid in owned:
@@ -510,7 +514,7 @@ def main():
                 raise RuntimeError(message)
             first = json.loads(process.stdout.readline())
             assert first["event"] == "started" and process.poll() is None
-            stdout, stderr = process.communicate(timeout=5)
+            stdout, stderr = process.communicate(timeout=HANG_GUARD)
             assert process.returncode == 0, stderr
             events = [first, *[json.loads(line) for line in stdout.splitlines()]]
             assert [record["sequence"] for record in events] == list(
@@ -545,7 +549,7 @@ def main():
                 env=env,
                 capture_output=True,
                 check=False,
-                timeout=5,
+                timeout=HANG_GUARD,
                 preexec_fn=_limit_output_file,
             )
             assert failed.returncode == 1 and not failed.stdout
@@ -562,7 +566,7 @@ def main():
                     env=env,
                     cwd=root,
                     capture_output=True,
-                    timeout=5,
+                    timeout=HANG_GUARD,
                     check=False,
                 )
     for groups in report["timings"].values():

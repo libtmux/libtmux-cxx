@@ -1,0 +1,96 @@
+name: macos-stress
+
+# Repeats the real-tmux suites on macos-latest and reports how often each test
+# fails. One macOS job loops rather than fanning out: the organisation shares a
+# small pool of macOS runners. The ubuntu-latest job is the control; a test that
+# fails on both is not a macOS problem.
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      repeat:
+        description: Times to run the suite
+        default: '10'
+        type: string
+      budget:
+        description: Stop repeating after this many minutes
+        default: '150'
+        type: string
+      filter:
+        description: ctest -R regex; empty runs the full suite
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  stress:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    env:
+      # macOS runners are shared: a dispatch can narrow the run
+      # with `filter` and `budget`; the schedule runs the full suite.
+      REPEAT: ${{ inputs.repeat || '10' }}
+      FILTER: ${{ inputs.filter }}
+      BUDGET_MINUTES: ${{ inputs.budget || '150' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: hendrikmuhs/ccache-action@f09c25b45002a07be2955cbe52e8cee55643f89d # v1.2.24
+        with:
+          key: stress-${{ matrix.os }}
+          max-size: 400M
+
+      - name: Install tmux and Ninja
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then
+            brew install tmux ninja
+          else
+            sudo apt-get update
+            sudo apt-get install -y tmux ninja-build
+          fi
+          tmux -V
+
+      - name: Build
+        run: |
+          cmake -S . -B build/stress -G Ninja -DCMAKE_CXX_STANDARD=23 \
+            -DLIBTMUX_FETCH_DEPS=ON -DLIBTMUX_BUILD_WORKSPACE_CLI=ON
+          cmake --build build/stress
+
+      - name: Repeat the suite
+        run: |
+          mkdir -p results
+          stop=$((SECONDS + BUDGET_MINUTES * 60))
+          for run in $(seq 1 "$REPEAT"); do
+            # Failures are the measurement, not a reason to stop.
+            ctest --test-dir build/stress --no-tests=error -j 3 \
+              ${FILTER:+-R "$FILTER"} \
+              --timeout 300 --output-junit "$PWD/results/run-$run.xml" || true
+            [ "$SECONDS" -lt "$stop" ] || break
+          done
+
+      - name: Count failures per test
+        run: python3 .github/workflows/scripts/stress_summary.py results "$RUNNER_OS" "$REPEAT"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: stress-${{ runner.os }}
+          path: |
+            results/*.csv
+            results/*.xml

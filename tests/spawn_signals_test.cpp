@@ -8,6 +8,7 @@
 #include <chrono>
 #include <csignal>
 #include <string>
+#include <utility>
 #include <variant>
 
 #include <pthread.h>
@@ -58,20 +59,28 @@ TEST(SpawnSignals, ChildDoesNotInheritAnIgnoredDisposition) {
 
 // The grace between SIGTERM and SIGKILL is for descendants that outlived the
 // leader. A child leaving none must not pay it, and the leader's own status
-// cannot say so: it is held unreaped until the group is killed.
-TEST(SpawnSignals, TerminatingDescendantsWaitsOutNoGraceWithoutOne) {
+// cannot say so: it is held unreaped until the group is killed. Speed is the
+// claim, so it is timed, against a child that leaves a descendant ignoring
+// SIGTERM: both runs start a shell, and what differs is the grace.
+std::chrono::steady_clock::duration quickest_run(std::string script) {
   ProcessRequest request;
   request.executable = "/bin/sh";
-  request.arguments = {Argument{"-c"}, Argument{"exit 0"}};
+  request.arguments = {Argument{"-c"}, Argument{std::move(script)}};
   request.timeout = std::chrono::seconds{10};
   auto quickest = std::chrono::steady_clock::duration::max();
   for (int attempt = 0; attempt < 5; ++attempt) {
     const auto started = std::chrono::steady_clock::now();
     auto reply = run_process(request, {}, libtmux::detail::DescendantPolicy::terminate);
     quickest = std::min(quickest, std::chrono::steady_clock::now() - started);
-    ASSERT_TRUE(reply.has_value()) << reply.error().diagnostic;
+    EXPECT_TRUE(reply.has_value()) << reply.error().diagnostic;
   }
-  EXPECT_LT(quickest, std::chrono::milliseconds{100});
+  return quickest;
+}
+
+TEST(SpawnSignals, TerminatingDescendantsWaitsOutNoGraceWithoutOne) {
+  const auto without = quickest_run("exit 0");
+  const auto with = quickest_run("(trap '' TERM; sleep 30) & exit 0");
+  EXPECT_LT(without + std::chrono::milliseconds{50}, with);
 }
 
 } // namespace

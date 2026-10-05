@@ -65,7 +65,7 @@ int main() {
   request.group.push_back({{"new-window", "-d", "-n", "watched"}});
   request.group.push_back({{"send-keys", "-t", pane, "echo hello-from-tmux", "Enter"}});
   const auto ran =
-      connection.execute(std::move(request), std::chrono::steady_clock::now() + 5s);
+      connection.execute(std::move(request), std::chrono::steady_clock::now() + 20s);
   if (ran.connection_error.has_value()) {
     std::fprintf(stderr, "%s\n", ran.connection_error->message.c_str());
     return 1;
@@ -115,7 +115,7 @@ int main() {
   libtmux::ControlRequest second;
   second.group.push_back({{"new-window", "-d", "-n", "polled"}});
   if (const auto again =
-          connection.execute(std::move(second), std::chrono::steady_clock::now() + 5s);
+          connection.execute(std::move(second), std::chrono::steady_clock::now() + 20s);
       again.connection_error.has_value()) {
     std::fprintf(stderr, "%s\n", again.connection_error->message.c_str());
     return 1;
@@ -139,7 +139,7 @@ int main() {
     }
   }
 
-  if (const auto closed = connection.shutdown(std::chrono::steady_clock::now() + 5s);
+  if (const auto closed = connection.shutdown(std::chrono::steady_clock::now() + 20s);
       !closed.has_value()) {
     std::fprintf(stderr, "%s\n", closed.error().message.c_str());
     return 1;

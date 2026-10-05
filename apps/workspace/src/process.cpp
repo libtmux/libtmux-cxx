@@ -134,7 +134,9 @@ public:
     if (!foreground(child_))
       return "terminal foreground handoff failed";
     // A reader may have stopped with SIGTTIN before the handoff completed.
-    if (::kill(-child_, SIGCONT) != 0 && errno != ESRCH)
+    // Darwin answers EPERM, not ESRCH, for a group whose members have all
+    // exited but are not yet reaped. Nothing is left to resume either way.
+    if (::kill(-child_, SIGCONT) != 0 && errno != ESRCH && errno != EPERM)
       return "terminal child could not resume";
     return std::nullopt;
   }

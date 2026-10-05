@@ -1,4 +1,5 @@
 #include "command_engine.hpp"
+#include "libtmux/testing/scoped_server.hpp"
 
 #include <gtest/gtest.h>
 
@@ -57,10 +58,10 @@ public:
   }
 
   [[nodiscard]] bool wait_for_first_dequeue() {
-    return first_dequeued_.try_acquire_for(2s);
+    return first_dequeued_.try_acquire_for(libtmux::test::kHangGuard);
   }
   [[nodiscard]] bool wait_for_second_dequeue() {
-    return second_dequeued_.try_acquire_for(2s);
+    return second_dequeued_.try_acquire_for(libtmux::test::kHangGuard);
   }
   [[nodiscard]] bool second_entered_while_first_paused() {
     if (!second_entered_.try_acquire_for(100ms)) {
@@ -71,10 +72,10 @@ public:
   }
   void release_first_dequeue() { release_first_dequeue_.release(); }
   [[nodiscard]] bool wait_for_first_entry() {
-    return first_entered_.try_acquire_for(2s);
+    return first_entered_.try_acquire_for(libtmux::test::kHangGuard);
   }
   [[nodiscard]] bool wait_for_second_entry() {
-    return second_entered_.try_acquire_for(2s);
+    return second_entered_.try_acquire_for(libtmux::test::kHangGuard);
   }
   [[nodiscard]] bool first_finished() { return first_finished_.try_acquire(); }
   void finish_first() { finish_first_.release(); }
@@ -231,7 +232,7 @@ TEST(CommandEngineOrder, SkipsCancelledAndExpiredWorkBeforeEntry) {
   ASSERT_TRUE(engine.has_value()) << engine.error().diagnostic;
 
   auto cancelled = (*engine)->submit({}, {"cancel"}, std::nullopt, std::nullopt);
-  ASSERT_TRUE(first_dequeued.try_acquire_for(2s));
+  ASSERT_TRUE(first_dequeued.try_acquire_for(libtmux::test::kHangGuard));
   auto expired = (*engine)->submit({}, {"expire"}, 0ms, std::nullopt);
   auto next = (*engine)->submit({}, {"next"}, std::nullopt, std::nullopt);
   ASSERT_TRUE(cancelled.request_cancel());
@@ -296,7 +297,7 @@ void expect_pre_entry_turn_before_retirement(PreEntryOutcome outcome) {
     retirement_started.release();
     finish_retirement.acquire();
   });
-  if (!first_dequeued.try_acquire_for(2s)) {
+  if (!first_dequeued.try_acquire_for(libtmux::test::kHangGuard)) {
     release_first.release();
     finish_retirement.release();
     (*engine)->close();
@@ -307,9 +308,10 @@ void expect_pre_entry_turn_before_retirement(PreEntryOutcome outcome) {
     EXPECT_TRUE(first.request_cancel());
   }
   release_first.release();
-  const bool retirement_blocked = retirement_started.try_acquire_for(2s);
+  const bool retirement_blocked =
+      retirement_started.try_acquire_for(libtmux::test::kHangGuard);
   const bool entered_before_retirement =
-      retirement_blocked && next_entered.try_acquire_for(2s);
+      retirement_blocked && next_entered.try_acquire_for(libtmux::test::kHangGuard);
   finish_retirement.release();
 
   auto first_answer = sync_wait(std::move(first));
@@ -366,9 +368,9 @@ TEST(CommandEngineOrder, StopWakesAWorkerWaitingForItsTurn) {
   });
   ASSERT_TRUE(engine.has_value()) << engine.error().diagnostic;
   auto first = (*engine)->submit({}, {"1"}, std::nullopt, std::nullopt);
-  ASSERT_TRUE(first_dequeued.try_acquire_for(2s));
+  ASSERT_TRUE(first_dequeued.try_acquire_for(libtmux::test::kHangGuard));
   auto second = (*engine)->submit({}, {"2"}, std::nullopt, std::nullopt);
-  ASSERT_TRUE(second_dequeued.try_acquire_for(2s));
+  ASSERT_TRUE(second_dequeued.try_acquire_for(libtmux::test::kHangGuard));
 
   auto closing =
       std::async(std::launch::async, [engine = *engine] { engine->close(); });
@@ -382,7 +384,7 @@ TEST(CommandEngineOrder, StopWakesAWorkerWaitingForItsTurn) {
   ASSERT_FALSE(first_answer.has_value());
   EXPECT_EQ(first_answer.error().kind, FailureKind::cancelled);
   EXPECT_EQ(first_answer.error().delivery, DeliveryStatus::not_started);
-  EXPECT_EQ(closing.wait_for(2s), std::future_status::ready);
+  EXPECT_EQ(closing.wait_for(libtmux::test::kHangGuard), std::future_status::ready);
 }
 
 } // namespace

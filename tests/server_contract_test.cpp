@@ -34,6 +34,7 @@ namespace {
 
 using libtmux::DeliveryStatus;
 using libtmux::Server;
+using libtmux::test::kHangGuard;
 
 libtmux::CommandRuntime start_runtime(libtmux::CommandRuntimeConfig config = {}) {
   auto runtime = libtmux::CommandRuntime::start(config);
@@ -44,7 +45,7 @@ libtmux::CommandRuntime start_runtime(libtmux::CommandRuntimeConfig config = {})
 }
 
 bool wait_until(const std::function<bool()>& predicate,
-                std::chrono::milliseconds timeout = std::chrono::seconds{3}) {
+                std::chrono::milliseconds timeout = kHangGuard) {
   const auto deadline = std::chrono::steady_clock::now() + timeout;
   while (!predicate() && std::chrono::steady_clock::now() < deadline) {
     std::this_thread::sleep_for(std::chrono::milliseconds{5});
@@ -175,7 +176,7 @@ TEST(ServerContract, TimedWaitKeepsTheOperationAndItsAdmissionSlot) {
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
   auto runtime = start_runtime({.capacity = 1U});
-  auto operation = server.try_submit(runtime, {"wait-for", "timed-wait"}, 5s);
+  auto operation = server.try_submit(runtime, {"wait-for", "timed-wait"}, kHangGuard);
   ASSERT_TRUE(operation.has_value());
 
   const auto waiting = operation->wait_for(10ms);
@@ -187,7 +188,8 @@ TEST(ServerContract, TimedWaitKeepsTheOperationAndItsAdmissionSlot) {
   EXPECT_EQ(refused.error().kind, libtmux::FailureKind::overloaded);
 
   ASSERT_TRUE(server.run({"wait-for", "-S", "timed-wait"}).has_value());
-  const auto ready = operation->wait_until(std::chrono::steady_clock::now() + 5s);
+  const auto ready =
+      operation->wait_until(std::chrono::steady_clock::now() + kHangGuard);
   ASSERT_TRUE(ready.has_value());
   ASSERT_TRUE(*ready);
   EXPECT_EQ(runtime.snapshot().pending_results, 1U);
@@ -226,7 +228,7 @@ TEST(ServerContract, RuntimeReadinessWaitNeverDispatchesAnObserver) {
       [&](const libtmux::CommandReport&) { observed = std::this_thread::get_id(); });
   ASSERT_TRUE(server.has_value());
   auto runtime = start_runtime();
-  auto operation = server->try_submit(runtime, {"wait-for", "readiness"}, 5s);
+  auto operation = server->try_submit(runtime, {"wait-for", "readiness"}, kHangGuard);
   ASSERT_TRUE(operation.has_value());
   EXPECT_EQ(runtime.wait_ready_for(10ms), libtmux::ReadyStatus::timeout);
 
@@ -274,7 +276,7 @@ TEST(ServerContract, AThrowingCloseStillWakesABlockedWaiter) {
       libtmux::detail::RuntimeFailurePoint::close);
   EXPECT_THROW(static_cast<void>(runtime.close()),
                libtmux::detail::RuntimeFailurePoint);
-  ASSERT_EQ(waiting.wait_for(std::chrono::seconds{1}), std::future_status::ready);
+  ASSERT_EQ(waiting.wait_for(kHangGuard), std::future_status::ready);
   EXPECT_EQ(waiting.get(), libtmux::ReadyStatus::closed);
 #endif
 }
@@ -287,16 +289,16 @@ TEST(ServerContract, RuntimeReadinessWakesEveryWaitingCaller) {
                                        [](const libtmux::CommandReport&) {});
   ASSERT_TRUE(server.has_value());
   auto runtime = start_runtime();
-  auto operation = server->try_submit(runtime, {"wait-for", "all-waiters"}, 5s);
+  auto operation = server->try_submit(runtime, {"wait-for", "all-waiters"}, kHangGuard);
   ASSERT_TRUE(operation.has_value());
-  auto waiting = [&] { return runtime.wait_ready_for(5s); };
+  auto waiting = [&] { return runtime.wait_ready_for(kHangGuard); };
   auto first = std::async(std::launch::async, waiting);
   auto second = std::async(std::launch::async, waiting);
   EXPECT_EQ(first.wait_for(20ms), std::future_status::timeout);
   EXPECT_EQ(second.wait_for(20ms), std::future_status::timeout);
   ASSERT_TRUE(connect(*fixture).run({"wait-for", "-S", "all-waiters"}).has_value());
-  EXPECT_EQ(first.wait_for(1s), std::future_status::ready);
-  EXPECT_EQ(second.wait_for(1s), std::future_status::ready);
+  EXPECT_EQ(first.wait_for(kHangGuard), std::future_status::ready);
+  EXPECT_EQ(second.wait_for(kHangGuard), std::future_status::ready);
   EXPECT_TRUE(runtime.close().transports_stopped);
   EXPECT_EQ(first.get(), libtmux::ReadyStatus::ready);
   EXPECT_EQ(second.get(), libtmux::ReadyStatus::ready);
@@ -333,10 +335,11 @@ TEST(ServerContract, ReadyDescriptorTracksWhatWaitReadyWouldAnswer) {
 
   EXPECT_FALSE(readable()) << "nothing has been submitted, so nothing is ready";
 
-  auto operation = server->try_submit(runtime, {"display-message", "-p", "ok"}, 5s);
+  auto operation =
+      server->try_submit(runtime, {"display-message", "-p", "ok"}, kHangGuard);
   ASSERT_TRUE(operation.has_value());
   EXPECT_TRUE(std::move(*operation).wait().has_value());
-  ASSERT_TRUE(wait_until(readable, 5s))
+  ASSERT_TRUE(wait_until(readable, kHangGuard))
       << "a completed command leaves a ready observer, so the descriptor wakes "
          "a poller that never called wait_ready";
   EXPECT_EQ(runtime.wait_ready_for(0ms), libtmux::ReadyStatus::ready)
@@ -416,7 +419,7 @@ TEST(ServerContract, StopTokenCancelsThroughAMovedOperationWithoutDispatch) {
                                        });
   ASSERT_TRUE(server.has_value());
   auto runtime = start_runtime();
-  auto operation = server->try_submit(runtime, {"wait-for", "stop-token"}, 5s);
+  auto operation = server->try_submit(runtime, {"wait-for", "stop-token"}, kHangGuard);
   ASSERT_TRUE(operation.has_value());
   std::stop_source stop;
   auto waiting = std::async(std::launch::async, [held = std::move(*operation),
@@ -428,7 +431,7 @@ TEST(ServerContract, StopTokenCancelsThroughAMovedOperationWithoutDispatch) {
   ASSERT_FALSE(answer.has_value());
   EXPECT_EQ(answer.error().kind, libtmux::FailureKind::cancelled);
   EXPECT_FALSE(observed.has_value());
-  EXPECT_EQ(runtime.wait_ready_for(5s), libtmux::ReadyStatus::ready);
+  EXPECT_EQ(runtime.wait_ready_for(kHangGuard), libtmux::ReadyStatus::ready);
   EXPECT_EQ(runtime.dispatch_ready(), 1U);
   ASSERT_TRUE(observed.has_value());
   EXPECT_EQ(observed->kind, answer.error().kind);
@@ -441,11 +444,11 @@ TEST(ServerContract, TimedWaitCanRequestCancellationWithoutConsumingTheResult) {
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
   auto runtime = start_runtime();
-  auto operation = server.try_submit(runtime, {"wait-for", "timed-stop"}, 5s);
+  auto operation = server.try_submit(runtime, {"wait-for", "timed-stop"}, kHangGuard);
   ASSERT_TRUE(operation.has_value());
   std::stop_source stop;
   stop.request_stop();
-  const auto ready = operation->wait_for(5s, stop.get_token());
+  const auto ready = operation->wait_for(kHangGuard, stop.get_token());
   ASSERT_TRUE(ready.has_value());
   ASSERT_TRUE(*ready);
   EXPECT_EQ(runtime.snapshot().pending_results, 1U);
@@ -460,7 +463,7 @@ TEST(ServerContract, StopRegistrationEndsWhenATimedWaitReturns) {
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
   auto runtime = start_runtime();
-  auto operation = server.try_submit(runtime, {"wait-for", "expired-stop"}, 5s);
+  auto operation = server.try_submit(runtime, {"wait-for", "expired-stop"}, kHangGuard);
   ASSERT_TRUE(operation.has_value());
   std::stop_source stop;
   const auto timed = operation->wait_for(0ms, stop.get_token());
@@ -468,7 +471,8 @@ TEST(ServerContract, StopRegistrationEndsWhenATimedWaitReturns) {
   EXPECT_FALSE(*timed);
   stop.request_stop();
   ASSERT_TRUE(server.run({"wait-for", "-S", "expired-stop"}).has_value());
-  const auto ready = operation->wait_until(std::chrono::steady_clock::now() + 5s);
+  const auto ready =
+      operation->wait_until(std::chrono::steady_clock::now() + kHangGuard);
   ASSERT_TRUE(ready.has_value());
   ASSERT_TRUE(*ready);
   // A stop requested after publication must not replace the completed answer.
@@ -1045,10 +1049,9 @@ TEST(ServerContract, CompletedMeansResultAndObservationAreReady) {
         return std::move(operation).wait();
       });
 
-  const bool reached = completion_reached.try_acquire_for(std::chrono::seconds{3});
+  const bool reached = completion_reached.try_acquire_for(kHangGuard);
   const auto completed = runtime.snapshot();
-  const bool result_ready =
-      waiter.wait_for(std::chrono::seconds{1}) == std::future_status::ready;
+  const bool result_ready = waiter.wait_for(kHangGuard) == std::future_status::ready;
   const auto dispatched = runtime.dispatch_ready();
   completion_gate.release();
 
@@ -1104,7 +1107,7 @@ TEST(ServerContract, ADeadPinnedServerNeverFollowsItsReplacement) {
   auto stale = Server::at_socket_path(socket.string());
   ASSERT_TRUE(stale.has_value()) << stale.error().diagnostic;
   ASSERT_TRUE(stale->kill().has_value());
-  const auto stopped_by = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+  const auto stopped_by = std::chrono::steady_clock::now() + kHangGuard;
   while (original->is_alive() && std::chrono::steady_clock::now() < stopped_by) {
     std::this_thread::sleep_for(std::chrono::milliseconds{1});
   }
@@ -1248,7 +1251,7 @@ TEST(ServerContract, CloseIsNotSafeToUnloadWhileAnObserverCallbackRuns) {
 
   auto dispatcher =
       std::async(std::launch::async, [&runtime] { return runtime.dispatch_ready(); });
-  const bool started = callback_started.try_acquire_for(std::chrono::seconds{3});
+  const bool started = callback_started.try_acquire_for(kHangGuard);
   if (!started) {
     release_callback.release();
     EXPECT_TRUE(started);
@@ -1291,7 +1294,7 @@ TEST(ServerContract, CloseIsNotSafeToUnloadWhileDiscardDestroysObserver) {
   teardown->armed.store(true);
   discarder =
       std::async(std::launch::async, [&runtime] { return runtime.discard_ready(); });
-  const bool started = teardown->started.try_acquire_for(std::chrono::seconds{3});
+  const bool started = teardown->started.try_acquire_for(kHangGuard);
   const auto disposing = runtime.snapshot();
   std::optional<libtmux::CommandRuntimeShutdown> closed;
   if (started && disposing.pending_observers == 0U) {

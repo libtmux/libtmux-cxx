@@ -112,6 +112,12 @@ void rebind_path_metadata(const Selector& selector,
   }
   std::ofstream output{socket_metadata_path(*selector.path), std::ios::trunc};
   output << std::stol(*replacement) << '\n' << socket.string() << '\n';
+  output.close();
+  // Stay alive past the server's next metadata write, so the fixture's next
+  // query runs after it rather than racing it.
+  const auto gap_ms = std::atoi(
+      environment_value("LIBTMUX_FAKE_METADATA_GAP_MS").value_or("0").c_str());
+  std::this_thread::sleep_for(std::chrono::milliseconds{gap_ms * 2});
 }
 
 Selector parse_selector(const std::vector<std::string>& arguments) {
@@ -141,7 +147,7 @@ read_metadata(const Selector& selector) {
   // surfaced as a server that "failed to create a session" on one lane out of
   // twenty, with exit status 1 and nothing else to go on. A real tmux client
   // finding no server is a different case and still fails, just a moment later.
-  const auto give_up = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+  const auto give_up = std::chrono::steady_clock::now() + std::chrono::seconds{20};
   for (;;) {
     std::ifstream input{metadata};
     long raw_pid = 0;
@@ -237,7 +243,7 @@ int run_process_probe(const std::vector<std::string>& arguments) {
   if (arguments[1] == "escaped-holder") {
     const auto child = ::fork();
     if (child == 0) {
-      std::this_thread::sleep_for(std::chrono::milliseconds{800});
+      std::this_thread::sleep_for(std::chrono::seconds{5});
       std::_Exit(0);
     }
     return child < 0 ? 3 : 0;
@@ -328,8 +334,26 @@ int run_server(const std::vector<std::string>& arguments, const Selector& select
   }
   const auto metadata = socket_metadata_path(socket);
   const auto reported_metadata = socket_metadata_path(reported_socket);
+  // Each file once. In name mode with no mismatch, `metadata` and
+  // `reported_metadata` are the same path, and writing it a second time puts
+  // back what a client did to it in between: `startup-rebind` rewrites this
+  // file as it answers a pid query, and a server descheduled between its two
+  // writes restored the real pid over the rebind.
+  std::vector<std::filesystem::path> destinations;
   for (const auto& destination : {selector_metadata, metadata, reported_metadata}) {
-    std::ofstream output{destination};
+    if (std::ranges::find(destinations, destination) == destinations.end()) {
+      destinations.push_back(destination);
+    }
+  }
+  // Lets a test hold the server between two of those writes, the window a
+  // loaded machine opens by chance.
+  const auto gap_ms = std::atoi(
+      environment_value("LIBTMUX_FAKE_METADATA_GAP_MS").value_or("0").c_str());
+  for (std::size_t index = 0; index < destinations.size(); ++index) {
+    if (index != 0U && gap_ms > 0) {
+      std::this_thread::sleep_for(std::chrono::milliseconds{gap_ms});
+    }
+    std::ofstream output{destinations[index]};
     output << ::getpid() << '\n' << reported_socket.string() << '\n';
   }
 

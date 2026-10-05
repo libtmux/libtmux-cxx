@@ -1,5 +1,6 @@
 // The POSIX child owner, against real processes. Ownership is only proven by
 // actual pipe, signal and reap facts, so nothing here is scripted.
+#include "libtmux/testing/scoped_server.hpp"
 #include "posix_child.hpp"
 #include "spawn_descriptors.hpp"
 
@@ -223,7 +224,7 @@ TEST(PosixChild, WaitsOnExitWherePlatformAllows) {
 TEST(PosixChild, SignalsAnExitedGroupBeforeReapingItsLeader) {
   auto launched = PosixChild::launch(shell("exit 0"));
   ASSERT_TRUE(launched.has_value()) << launched.error().diagnostic;
-  const auto deadline = ChildClock::now() + std::chrono::seconds{5};
+  const auto deadline = ChildClock::now() + libtmux::test::kHangGuard;
   bool exited{};
   while (ChildClock::now() < deadline) {
     const auto observed =
@@ -253,7 +254,8 @@ TEST(PosixChild, APortableDrainTurnReadsAReadyChunkPastItsBoundary) {
   pollfd watched{.fd = launched->descriptor(ChildStream::stdout_stream),
                  .events = POLLIN,
                  .revents = 0};
-  ASSERT_EQ(::poll(&watched, 1U, 1000), 1);
+  ASSERT_EQ(::poll(&watched, 1U, static_cast<int>(libtmux::test::kHangGuard.count())),
+            1);
   ASSERT_NE(watched.revents & POLLIN, 0);
 
   static_cast<void>(launched->drain_once(

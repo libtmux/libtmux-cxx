@@ -57,6 +57,7 @@ A private tmux server, torn down with the scope that started it.  Exported as `l
   - [`ScopedTmuxServer::is_alive`](#libtmux-testing-scoped-server-hpp-scopedtmuxserver-is-alive)
   - [`ScopedTmuxServer::child_environment`](#libtmux-testing-scoped-server-hpp-scopedtmuxserver-child-environment)
 - [`Free symbols`](#libtmux-testing-scoped-server-hpp-free-symbols)
+  - [`kHangGuard`](#libtmux-testing-scoped-server-hpp-free-symbols-khangguard)
   - [`current_environment`](#libtmux-testing-scoped-server-hpp-free-symbols-current-environment)
   - [`set_environment`](#libtmux-testing-scoped-server-hpp-free-symbols-set-environment)
   - [`erase_environment`](#libtmux-testing-scoped-server-hpp-free-symbols-erase-environment)
@@ -151,14 +152,14 @@ SocketMode mode{SocketMode::Path};
 #### `ScopedTmuxServerOptions::startup_timeout`
 
 ```cpp
-std::chrono::milliseconds startup_timeout{5000};
+std::chrono::milliseconds startup_timeout{kHangGuard};
 ```
 
 <a id="libtmux-testing-scoped-server-hpp-scopedtmuxserveroptions-teardown-timeout"></a>
 #### `ScopedTmuxServerOptions::teardown_timeout`
 
 ```cpp
-std::chrono::milliseconds teardown_timeout{2000};
+std::chrono::milliseconds teardown_timeout{kHangGuard};
 ```
 
 <a id="libtmux-testing-scoped-server-hpp-scopedtmuxserveroptions-session-name"></a>
@@ -307,6 +308,14 @@ ScopedTmuxServer& operator=(const ScopedTmuxServer&) = delete;
 
 <a id="libtmux-testing-scoped-server-hpp-free-symbols"></a>
 ### `Free symbols`
+
+<a id="libtmux-testing-scoped-server-hpp-free-symbols-khangguard"></a>
+#### `kHangGuard`
+
+```cpp
+inline constexpr std::chrono::milliseconds kHangGuard{20000};
+```
+How long a test step that must happen may take before the test calls it hung.  A step returns when its event does, so the value costs time only when a test hangs. Use it for starting a server or a control client, a command round trip, and a process exiting after a signal; keep a shorter bound only where the test is asserting the bound itself.
 
 <a id="libtmux-testing-scoped-server-hpp-free-symbols-current-environment"></a>
 #### `current_environment`

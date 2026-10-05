@@ -18,6 +18,10 @@ import termios
 import time
 from contextlib import suppress
 
+# Seconds a step that must happen may take before the script calls it hung. A
+# step returns when its event does, so the value costs time only on a hang.
+HANG_GUARD = 20
+
 # `sockaddr_un.sun_path` holds 104 bytes on macOS, where `$TMPDIR` alone spends
 # around sixty of them before this script adds anything.
 SUN_PATH = 104
@@ -104,7 +108,7 @@ def terminal_edit(binary, root, env, *, cancelled=False):
     sent = False
     status = None
     reaped = False
-    boundary = time.monotonic() + 3
+    boundary = time.monotonic() + HANG_GUARD
     try:
         while time.monotonic() < boundary:
             for fd in select.select([terminal, output_read], [], [], 0.02)[0]:
@@ -171,7 +175,7 @@ def cancellation(binary, root, env):
     )
     owned = []
     try:
-        boundary = time.monotonic() + 1
+        boundary = time.monotonic() + HANG_GUARD
         while not (root / "cancel.pids").exists():
             assert time.monotonic() < boundary, "editor did not start"
             time.sleep(0.005)
@@ -180,7 +184,7 @@ def cancellation(binary, root, env):
             for value in (root / "cancel.pids").read_text().strip().split(":")
         ]
         process.send_signal(signal.SIGTERM)
-        output, error = process.communicate(timeout=1)
+        output, error = process.communicate(timeout=HANG_GUARD)
         assert process.returncode == 143, (output, error)
         assert json.loads(output)["exit_code"] == 143
         assert not error
@@ -190,7 +194,7 @@ def cancellation(binary, root, env):
                 capture_output=True,
                 text=True,
                 check=False,
-                timeout=1,
+                timeout=HANG_GUARD,
             ).stdout.strip()
             assert not state or state.startswith("Z"), (child, state)
         return {"status": "PASS", "exit_code": process.returncode}
@@ -200,7 +204,7 @@ def cancellation(binary, root, env):
                 os.kill(child, signal.SIGKILL)
         if process.poll() is None:
             process.kill()
-            process.wait(timeout=1)
+            process.wait(timeout=HANG_GUARD)
 
 
 def output_limit(binary, root, env):
@@ -216,7 +220,7 @@ def output_limit(binary, root, env):
         stderr=subprocess.PIPE,
     )
     try:
-        output, error = process.communicate(timeout=1)
+        output, error = process.communicate(timeout=HANG_GUARD)
         assert process.returncode == 1 and not output, (output, error)
         assert json.loads(error)["code"] == "output_limit", error
         return {"status": "PASS", "exit_code": process.returncode}
@@ -227,7 +231,7 @@ def output_limit(binary, root, env):
                 os.killpg(int(owned.read_text()), signal.SIGKILL)
         if process.poll() is None:
             process.kill()
-            process.wait(timeout=1)
+            process.wait(timeout=HANG_GUARD)
 
 
 def terminal_load(binary, root, env, mode="detach", *, logging=False):
@@ -240,7 +244,7 @@ def terminal_load(binary, root, env, mode="detach", *, logging=False):
         [*command, "-f", "/dev/null", "new-session", "-d", "-s", "keeper"],
         env=env,
         check=True,
-        timeout=2,
+        timeout=HANG_GUARD,
     )
     (root / "load.yaml").write_text("session_name: loaded\nwindows: [{}]\n")
     arguments = [binary, "load", "-S", socket, str(root / "load.yaml")]
@@ -287,7 +291,7 @@ def terminal_load(binary, root, env, mode="detach", *, logging=False):
     attached = False
     reaped = False
     try:
-        boundary = time.monotonic() + 3
+        boundary = time.monotonic() + HANG_GUARD
         while time.monotonic() < boundary:
             for fd in select.select([terminal, output_read], [], [], 0.01)[0]:
                 with suppress(OSError):
@@ -308,7 +312,7 @@ def terminal_load(binary, root, env, mode="detach", *, logging=False):
                         capture_output=True,
                         env=env,
                         check=True,
-                        timeout=1,
+                        timeout=HANG_GUARD,
                     )
                     .stdout.decode()
                     .splitlines()
@@ -332,7 +336,7 @@ def terminal_load(binary, root, env, mode="detach", *, logging=False):
                             ],
                             env=env,
                             check=True,
-                            timeout=1,
+                            timeout=HANG_GUARD,
                         )
             ended, status = os.waitpid(pid, os.WNOHANG)
             if ended:
@@ -362,7 +366,7 @@ def terminal_load(binary, root, env, mode="detach", *, logging=False):
             env=env,
             capture_output=True,
             check=False,
-            timeout=1,
+            timeout=HANG_GUARD,
         )
         assert retained.returncode == (1 if mode == "unavailable" else 0)
         if mode == "closed":
@@ -395,7 +399,7 @@ def terminal_load(binary, root, env, mode="detach", *, logging=False):
             env=env,
             check=False,
             capture_output=True,
-            timeout=1,
+            timeout=HANG_GUARD,
         )
 
 
@@ -412,7 +416,7 @@ def terminal_switch(binary, root, env, mode):
             capture_output=True,
             text=True,
             check=True,
-            timeout=1,
+            timeout=HANG_GUARD,
         ).stdout.strip()
 
     independent = mode in {
@@ -481,7 +485,7 @@ def terminal_switch(binary, root, env, mode):
         ],
         env=env,
         check=True,
-        timeout=2,
+        timeout=HANG_GUARD,
     )
     attached = []
     control = None
@@ -491,13 +495,13 @@ def terminal_switch(binary, root, env, mode):
                 [*foreign, "-f", "/dev/null", "new-session", "-d", "-s", "foreign"],
                 env=env,
                 check=True,
-                timeout=2,
+                timeout=HANG_GUARD,
             )
         subprocess.run(
             [*command, "new-session", "-d", "-s", "destination"],
             env=env,
             check=True,
-            timeout=1,
+            timeout=HANG_GUARD,
         )
         if focus_case:
             flagged = has_active_pane_flag(query)
@@ -556,7 +560,7 @@ def terminal_switch(binary, root, env, mode):
                         os._exit(replacement.wait())
                     os.execvpe("tmux", attach, env)
                 attached.append((child, descriptor))
-        boundary = time.monotonic() + 3
+        boundary = time.monotonic() + HANG_GUARD
         while True:
             clients = (
                 subprocess.run(
@@ -564,7 +568,7 @@ def terminal_switch(binary, root, env, mode):
                     env=env,
                     capture_output=True,
                     check=True,
-                    timeout=1,
+                    timeout=HANG_GUARD,
                 )
                 .stdout.decode()
                 .splitlines()
@@ -579,7 +583,7 @@ def terminal_switch(binary, root, env, mode):
                 env=env,
                 capture_output=True,
                 check=True,
-                timeout=1,
+                timeout=HANG_GUARD,
             )
             .stdout.decode()
             .strip()
@@ -649,7 +653,7 @@ def terminal_switch(binary, root, env, mode):
                         env=env,
                         capture_output=True,
                         check=True,
-                        timeout=1,
+                        timeout=HANG_GUARD,
                     )
                     .stdout.decode()
                     .strip()
@@ -746,7 +750,7 @@ def terminal_switch(binary, root, env, mode):
                 env=env,
                 capture_output=True,
                 check=True,
-                timeout=1,
+                timeout=HANG_GUARD,
             )
             .stdout.decode()
             .splitlines()
@@ -763,7 +767,7 @@ def terminal_switch(binary, root, env, mode):
                     env=env,
                     capture_output=True,
                     check=True,
-                    timeout=1,
+                    timeout=HANG_GUARD,
                 )
                 .stdout.decode()
                 .splitlines()
@@ -783,7 +787,7 @@ def terminal_switch(binary, root, env, mode):
                     env=env,
                     capture_output=True,
                     check=True,
-                    timeout=1,
+                    timeout=HANG_GUARD,
                 )
                 .stdout.decode()
                 .splitlines()
@@ -796,17 +800,17 @@ def terminal_switch(binary, root, env, mode):
             env=env,
             capture_output=True,
             check=False,
-            timeout=1,
+            timeout=HANG_GUARD,
         )
         if control is not None:
-            control.communicate(timeout=1)
+            control.communicate(timeout=HANG_GUARD)
         if mode == "foreign":
             subprocess.run(
                 [*foreign, "kill-server"],
                 env=env,
                 capture_output=True,
                 check=False,
-                timeout=1,
+                timeout=HANG_GUARD,
             )
         for child, descriptor in attached:
             with suppress(ProcessLookupError):
@@ -839,7 +843,7 @@ def failed_log_file(binary, root, env, mode):
         [*command, "-f", "/dev/null", "new-session", "-d", "-s", "keeper"],
         env=env,
         check=True,
-        timeout=2,
+        timeout=HANG_GUARD,
     )
     borrowed = mode == "borrowed"
     failed = mode in {"failed", "failed-stderr", "failed-stdout", "borrowed", "cancel"}
@@ -875,7 +879,7 @@ def failed_log_file(binary, root, env, mode):
                 capture_output=True,
                 text=True,
                 check=True,
-                timeout=1,
+                timeout=HANG_GUARD,
             )
             .stdout.strip()
             .split(",")
@@ -915,7 +919,7 @@ def failed_log_file(binary, root, env, mode):
             # The owned script has to be running as well as the log full: how
             # much a record costs depends on the path lengths in it, so the
             # limit can otherwise be reached before the script starts.
-            deadline = time.monotonic() + 2
+            deadline = time.monotonic() + HANG_GUARD
             log = root / "operation.log"
             while not (root / "script.pid").exists() or not (
                 log.exists() and log.stat().st_size >= 2048
@@ -923,7 +927,7 @@ def failed_log_file(binary, root, env, mode):
                 assert time.monotonic() < deadline, "script and log write did not start"
                 time.sleep(0.005)
             process.send_signal(signal.SIGTERM)
-        output, diagnostic = process.communicate(timeout=3)
+        output, diagnostic = process.communicate(timeout=HANG_GUARD)
         expected = 143 if failed else 1 if mode == "stdout" else 0
         assert process.returncode == expected, (process.returncode, output, diagnostic)
         if mode != "cancel":
@@ -942,7 +946,7 @@ def failed_log_file(binary, root, env, mode):
             capture_output=True,
             text=True,
             check=True,
-            timeout=1,
+            timeout=HANG_GUARD,
         ).stdout.splitlines()
         assert set(sessions) == (
             {"keeper"}
@@ -957,7 +961,7 @@ def failed_log_file(binary, root, env, mode):
             capture_output=True,
             text=True,
             check=True,
-            timeout=1,
+            timeout=HANG_GUARD,
         ).stdout.splitlines()
         assert len(windows) == (2 if borrowed or failed else 3), windows
         if output:
@@ -1006,13 +1010,13 @@ def failed_log_file(binary, root, env, mode):
                     os.killpg(int(marker.read_text()), signal.SIGKILL)
             with suppress(ProcessLookupError):
                 os.killpg(process.pid, signal.SIGKILL)
-            process.communicate(timeout=1)
+            process.communicate(timeout=HANG_GUARD)
         subprocess.run(
             [*command, "kill-server"],
             env=env,
             capture_output=True,
             check=False,
-            timeout=1,
+            timeout=HANG_GUARD,
         )
 
 

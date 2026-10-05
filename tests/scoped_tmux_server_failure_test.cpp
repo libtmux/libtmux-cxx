@@ -141,7 +141,7 @@ bool trace_gains_line(const std::filesystem::path& trace, std::string_view needl
 // happened". Every caller wants the pid once it is known, and a busy runner is
 // the case that finds this.
 pid_t traced_pid(const std::filesystem::path& trace, std::string_view role,
-                 std::chrono::milliseconds patience = std::chrono::seconds{5}) {
+                 std::chrono::milliseconds patience = libtmux::test::kHangGuard) {
   const auto prefix = std::string{role} + "\t";
   const auto deadline = std::chrono::steady_clock::now() + patience;
   for (;;) {
@@ -339,6 +339,9 @@ TEST(ScopedTmuxServerFailure, ReboundAfterPidQueryCannotCreateSession) {
   const auto marker = root / "mutation";
   ScopedEnvironment mode_environment{"LIBTMUX_FAKE_MODE", "startup-rebind"};
   ScopedEnvironment marker_environment{"LIBTMUX_FAKE_MUTATION_MARKER", marker.string()};
+  // Hold the fake server between its metadata writes, the gap a loaded runner
+  // opens by chance, so the rebind lands inside it every run.
+  ScopedEnvironment gap_environment{"LIBTMUX_FAKE_METADATA_GAP_MS", "150"};
 
   const auto unrelated = ::fork();
   ASSERT_GE(unrelated, 0);
@@ -364,8 +367,8 @@ TEST(ScopedTmuxServerFailure, ReboundAfterPidQueryCannotCreateSession) {
   }
 
   EXPECT_FALSE(startup_succeeded);
-  EXPECT_NE(startup_error.find("session creation ownership changed"),
-            std::string::npos);
+  EXPECT_NE(startup_error.find("session creation ownership changed"), std::string::npos)
+      << "startup error: " << startup_error;
   EXPECT_FALSE(std::filesystem::exists(marker));
 
   static_cast<void>(::kill(unrelated, SIGKILL));
@@ -593,7 +596,7 @@ TEST(ScopedTmuxServerFailure, ReboundSocketCannotKillUnrelatedProcess) {
       "\tif-shell\t-F\t#{==:#{pid}," + std::to_string(owned_pid) + "}\tkill-server\t";
   EXPECT_TRUE(
       trace_gains_line(trace, expected_condition,
-                       std::chrono::steady_clock::now() + std::chrono::seconds{5}));
+                       std::chrono::steady_clock::now() + libtmux::test::kHangGuard));
   if (!unrelated_was_killed) {
     static_cast<void>(::kill(unrelated, SIGKILL));
     while (::waitpid(unrelated, nullptr, 0) < 0 && errno == EINTR) {
@@ -644,7 +647,7 @@ TEST(ScopedTmuxServerFailure, EscapedPipeHolderIsNeitherWaitedForNorSignalled) {
   // deliberately let escape.
   static_cast<void>(::kill(descendant_pid, SIGKILL));
   const auto descendant_deadline =
-      std::chrono::steady_clock::now() + std::chrono::seconds{2};
+      std::chrono::steady_clock::now() + libtmux::test::kHangGuard;
   while (::kill(descendant_pid, 0) == 0 &&
          std::chrono::steady_clock::now() < descendant_deadline) {
     std::this_thread::sleep_for(std::chrono::milliseconds{10});

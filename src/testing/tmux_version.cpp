@@ -1,5 +1,6 @@
 #include "libtmux/testing/tmux_version.hpp"
 
+#include "libtmux/testing/scoped_server.hpp"
 #include "process.hpp"
 
 #include <chrono>
@@ -34,7 +35,7 @@ Resolved ask(const std::filesystem::path& tmux_binary) {
   if (!child.has_value()) {
     return {Version{.unbounded = true}, "unknown"};
   }
-  const auto deadline = detail::ProcessClock::now() + std::chrono::milliseconds{5000};
+  const auto deadline = detail::ProcessClock::now() + kHangGuard;
   child->drain_until(deadline);
   static_cast<void>(child->wait_until(deadline));
   child->drain_until(deadline);

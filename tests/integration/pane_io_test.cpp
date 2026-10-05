@@ -71,7 +71,7 @@ TEST(PaneIo, JoinedCaptureHonorsTrailingSpaceOptions) {
                               std::string{channel} + "; exec tail -f /dev/null")
                   .has_value());
   ASSERT_TRUE(pane->send_key("Enter").has_value());
-  const auto ready = server.wait_for(channel, std::chrono::seconds{5});
+  const auto ready = server.wait_for(channel, libtmux::test::kHangGuard);
   ASSERT_TRUE(ready.has_value()) << ready.error().diagnostic;
 
   const auto trimmed = pane->capture({.join_wrapped = true});
@@ -143,7 +143,7 @@ TEST(PaneIo, WaitForTextSeesOutputThatArrivesAfterTheWaitBegins) {
   ASSERT_TRUE(pane->send_line(command).has_value());
 
   libtmux::WaitOptions options;
-  options.timeout = std::chrono::seconds{5};
+  options.timeout = libtmux::test::kHangGuard;
   options.sent = [&command](std::string_view) {
     return std::vector<std::string>{command};
   };
@@ -165,14 +165,14 @@ TEST(PaneIo, WaitForTextCreditsTextAlreadyOnScreenAtEntry) {
   const std::string command = "echo settled-marker";
   ASSERT_TRUE(pane->send_line(command).has_value());
   libtmux::WaitOptions settle;
-  settle.timeout = std::chrono::seconds{5};
+  settle.timeout = libtmux::test::kHangGuard;
   settle.sent = [&command](std::string_view) {
     return std::vector<std::string>{command};
   };
   ASSERT_TRUE(pane->wait_for_text("settled-marker", settle).has_value());
 
   libtmux::WaitOptions options;
-  options.timeout = std::chrono::seconds{5};
+  options.timeout = libtmux::test::kHangGuard;
   options.sent = [&command](std::string_view) {
     return std::vector<std::string>{command};
   };
@@ -273,7 +273,7 @@ TEST(PaneIo, WaitForTextRejoinsALineTmuxOnlyWrappedForDisplay) {
   ASSERT_TRUE(pane->send_line(command).has_value());
 
   libtmux::WaitOptions options;
-  options.timeout = std::chrono::seconds{5};
+  options.timeout = libtmux::test::kHangGuard;
   options.sent = [&command](std::string_view) {
     return std::vector<std::string>{command};
   };
