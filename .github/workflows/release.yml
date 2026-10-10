@@ -153,7 +153,7 @@ jobs:
           test -f /tmp/relprefix/lib/cmake/libtmux/libtmuxConfig.cmake
           test -f /tmp/relprefix/share/licenses/libtmux/LICENSE
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: source
           path: libtmux-cxx-*.tar.gz
@@ -235,7 +235,7 @@ jobs:
           cp build/rel/apps/mcp/libtmux-mcp-server "$out"
           sha256sum "$out" > "$out.sha256" 2>/dev/null || shasum -a 256 "$out" > "$out.sha256"
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: server-${{ matrix.name }}
           path: |
@@ -511,7 +511,7 @@ jobs:
           "validated_tree=$validatedTree" | Out-File `
             -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: validated-windows-port
           path: build/validated-port.patch
@@ -526,7 +526,7 @@ jobs:
           $hash = (Get-FileHash -Algorithm SHA256 $output).Hash.ToLowerInvariant()
           "$hash  $output" | Out-File -FilePath "$output.sha256" -Encoding ascii
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: server-windows-x86_64
           path: |
