@@ -41,6 +41,9 @@
 LIBTMUX_NAMESPACE_BEGIN
 
 class Server;
+namespace detail {
+struct LifecycleAccess;
+}
 
 namespace detail {
 /// Declared so the private constructor has exactly one way in. Defined in a
@@ -75,7 +78,8 @@ struct ExecutorOptions {
 /// startable handle may create an absent daemon; ordinary handles never do.
 class Server {
 public:
-  /// `-S path`: the socket file, used verbatim.
+  /// `-S path`: an absolute socket path, used verbatim. Parent directories
+  /// must exist. Explicit factories ignore ambient endpoint selectors.
   ///
   /// These report `CommandFailure`, the same type every other call reports,
   /// rather than the `SocketError` the argument builders use: a factory that
@@ -103,7 +107,9 @@ public:
         std::string_view{reinterpret_cast<const char*>(text.data()), text.size()},
         std::move(observer), policy);
   }
-  /// `-L name`: resolved under tmux's socket directory, as the tmux flag does.
+  /// A leaf name under the captured nonempty `TMUX_TMPDIR`, or `/tmp`, and
+  /// `tmux-<uid>`. POSIX factories require an existing absolute root and retain
+  /// its resolved path. Empty names, separators, NUL, dot and dot-dot are errors.
   [[nodiscard]] static expected<Server, CommandFailure>
   at_socket_name(std::string_view name, CommandObserver observer = {},
                  ExecutionPolicy policy = {});
@@ -113,7 +119,11 @@ public:
   /// is passed to tmux as `-f`; absent
   /// preserves tmux's user configuration. Every other call remains no-start
   /// while the socket is absent. The selector and configuration are frozen in
-  /// the handle, and concurrent first-session calls are serialized.
+  /// the handle, and concurrent first-session calls are serialized. Named
+  /// sockets create only the per-UID directory, with mode 0700. Existing
+  /// directories must be real directories owned by this UID, without
+  /// other-user permissions; group permissions are allowed. Removing the root
+  /// before startup causes a failure without fallback to another endpoint.
   [[nodiscard]] static expected<Server, CommandFailure>
   startable_at_socket_path(std::string_view path,
                            std::optional<std::filesystem::path> configuration,
@@ -139,16 +149,21 @@ public:
 
   /// The server this process is running inside.
   ///
-  /// tmux exports `TMUX` to everything it starts, as
-  /// `<socket path>,<server pid>,<session id>`. Only the socket path is read:
-  /// the session id is stale the moment a pane moves, and a `#()` job carries
-  /// no session at all — so a caller who wants the session asks tmux, rather
-  /// than trusting what it inherited.
+  /// Parses the captured `TMUX` from its last two commas. The path must be
+  /// absolute; the PID is positive ASCII decimal; the session is nonnegative
+  /// ASCII decimal, optionally prefixed by `$`, or `-1` for a job. Invalid or
+  /// absent context returns `FailureKind::validation`. PID and session fields
+  /// validate the context; the socket inode binds the handle to its daemon.
   [[nodiscard]] static expected<Server, CommandFailure>
   from_env(CommandObserver observer = {}, ExecutionPolicy policy = {});
 
-  /// The server tmux would talk to with no `-L` or `-S` at all, which is the
-  /// one a person means when they say "my tmux".
+  /// Selects the first nonempty `LIBTMUX_SOCKET_PATH`, `LIBTMUX_SOCKET_NAME`,
+  /// or `TMUX`, then tmux's named default socket. Invalid selected input
+  /// returns a validation failure; lower-precedence inputs are ignored.
+  /// Values retain whitespace. The factory captures the endpoint and child
+  /// environment once, so later host edits cannot redirect commands or cleanup.
+  /// This borrowed handle does not create an absent server or kill one at scope
+  /// exit. Use `startable_at_default` to permit first-session startup.
   [[nodiscard]] static expected<Server, CommandFailure>
   at_default(CommandObserver observer = {}, ExecutionPolicy policy = {});
 
@@ -489,6 +504,7 @@ public:
   set_global_hook(std::string_view name, std::string_view command) const;
 
 private:
+  friend struct detail::LifecycleAccess;
   explicit Server(std::shared_ptr<const detail::Backend> backend)
       : backend_{std::move(backend)} {}
 

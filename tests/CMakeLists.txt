@@ -217,6 +217,13 @@ gtest_discover_tests(
   TEST_PREFIX libtmux.server.identity.
   PROPERTIES LABELS real-tmux TIMEOUT 60)
 
+add_executable(libtmux_lifecycle_test integration/lifecycle_test.cpp)
+target_link_libraries(libtmux_lifecycle_test PRIVATE GTest::gtest_main
+  libtmux_build_options libtmux::libtmux libtmux_test_support)
+target_compile_options(libtmux_lifecycle_test PRIVATE -fno-sanitize-recover=undefined)
+gtest_discover_tests(libtmux_lifecycle_test TEST_PREFIX libtmux.lifecycle.
+  PROPERTIES LABELS real-tmux TIMEOUT 60)
+
 add_executable(libtmux_pane_topology_test integration/pane_topology_test.cpp)
 target_link_libraries(
   libtmux_pane_topology_test
@@ -705,6 +712,10 @@ gtest_discover_tests(
 # evidence and wrong here: the library supports a range, so this resolves tmux,
 # records which binary ran, and checks the version is one the library claims.
 find_program(LIBTMUX_TEST_TMUX NAMES tmux REQUIRED NO_CACHE)
+target_compile_definitions(libtmux_lifecycle_test PRIVATE
+  LIBTMUX_TEST_TMUX_PATH="${LIBTMUX_TEST_TMUX}")
+target_compile_definitions(libtmux_server_identity_test PRIVATE
+  LIBTMUX_TEST_TMUX_PATH="${LIBTMUX_TEST_TMUX}")
 file(SHA256 "${LIBTMUX_TEST_TMUX}" LIBTMUX_TEST_TMUX_SHA256)
 execute_process(
   COMMAND "${LIBTMUX_TEST_TMUX}" -V

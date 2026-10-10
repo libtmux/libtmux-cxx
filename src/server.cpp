@@ -22,16 +22,20 @@ LIBTMUX_NAMESPACE_BEGIN
 
 namespace {
 
-[[nodiscard]] ConnectionOptions
-routed_control_options(ConnectionOptions options, std::string socket_path,
-                       std::string session, const std::filesystem::path& tmux_binary) {
+[[nodiscard]] ConnectionOptions routed_control_options(ConnectionOptions options,
+                                                       std::string socket_path,
+                                                       std::string session,
+                                                       const ExecutionPolicy& policy) {
   options.socket_path = std::move(socket_path);
   options.session_name = std::move(session);
   // The Server's executable, unless this caller named one here — `tmux`
   // included — so a Server pinned to a particular tmux does not open a
   // connection to whatever `PATH` finds.
   if (!options.tmux_binary.has_value()) {
-    options.tmux_binary = tmux_binary;
+    options.tmux_binary = policy.tmux_binary;
+  }
+  if (!options.child_environment.has_value()) {
+    options.child_environment = policy.child_environment;
   }
   return options;
 }
@@ -466,55 +470,139 @@ Server::startable_at_socket_path(std::string_view path,
                                      std::move(observer), policy);
 }
 
-expected<Server, CommandFailure> Server::from_env(CommandObserver observer,
-                                                  ExecutionPolicy policy) {
-  const auto inherited = libtmux_env::value("TMUX");
-  if (!inherited.has_value()) {
-    return unexpected(CommandFailure{
-        .kind = FailureKind::validation,
-        .delivery = DeliveryStatus::not_started,
-        .exit_code = 0,
-        .diagnostic = "TMUX is not set: this process is not running inside tmux"});
+namespace {
+
+CommandFailure invalid_default(std::string diagnostic) {
+  return {.kind = FailureKind::validation,
+          .delivery = DeliveryStatus::not_started,
+          .exit_code = 0,
+          .diagnostic = std::move(diagnostic)};
+}
+
+void capture_environment(ExecutionPolicy& policy) {
+  if (!policy.child_environment.has_value()) {
+    policy.child_environment = libtmux_env::snapshot();
   }
-  // `<socket path>,<server pid>,<session id>`. Only the first field is
-  // trustworthy, and a socket path may itself contain a comma, so the split is
-  // at the last one that could begin the pid.
-  const std::string_view value{*inherited};
-  const auto pid_start = value.find_last_of(',', value.find_last_of(',') - 1U);
-  const std::string_view socket =
-      pid_start == std::string_view::npos ? value : value.substr(0, pid_start);
-  if (socket.empty()) {
-    return unexpected(CommandFailure{.kind = FailureKind::validation,
-                                     .delivery = DeliveryStatus::not_started,
-                                     .exit_code = 0,
-                                     .diagnostic = "TMUX names no socket path"});
+}
+
+expected<std::vector<std::string>, CommandFailure>
+context_arguments(const std::vector<std::string>& environment) {
+  const auto inherited = libtmux_env::value(environment, "TMUX");
+  if (!inherited.has_value()) {
+    return unexpected(
+        invalid_default("TMUX is not set: this process is not running inside tmux"));
+  }
+  const std::string_view context{*inherited};
+  const auto last = context.rfind(',');
+  const auto previous = last == std::string_view::npos || last == 0U
+                            ? std::string_view::npos
+                            : context.rfind(',', last - 1U);
+  if (previous == std::string_view::npos) {
+    return unexpected(
+        invalid_default("TMUX must contain a socket path, pid and session id"));
+  }
+  const auto digits = [](std::string_view text) {
+    return !text.empty() && std::all_of(text.begin(), text.end(), [](char digit) {
+      return digit >= '0' && digit <= '9';
+    });
+  };
+  const auto pid = context.substr(previous + 1U, last - previous - 1U);
+  auto session = context.substr(last + 1U);
+  const bool job = session == "-1";
+  if (session.starts_with('$')) {
+    session.remove_prefix(1U);
+  }
+  if (!digits(pid) || pid.find_first_not_of('0') == std::string_view::npos ||
+      (!job && !digits(session))) {
+    return unexpected(invalid_default("TMUX has an invalid pid or session id"));
+  }
+  const auto path = context.substr(0U, previous);
+  if (path.empty()) {
+    return unexpected(invalid_default("TMUX names no socket path"));
   }
 #if defined(_WIN32)
-  if (libtmux_env::value("PSMUX_SESSION").has_value()) {
-    const auto separator = socket.find_last_of("/\\");
+  if (libtmux_env::value(environment, "PSMUX_SESSION").has_value()) {
+    const auto separator = path.find_last_of("/\\");
     const auto name =
-        separator == std::string_view::npos ? socket : socket.substr(separator + 1U);
-    if (name == "default") {
-      return at_default(std::move(observer), policy);
+        separator == std::string_view::npos ? path : path.substr(separator + 1U);
+    if (auto invalid = libtmux_psmux::invalid_socket_name(name); invalid.has_value()) {
+      return unexpected(invalid_default(std::move(*invalid)));
     }
-    return at_socket_name(name, std::move(observer), policy);
+    auto arguments = socket_name_arguments(name);
+    if (!arguments) {
+      return unexpected(rejected_selector(name, arguments.error()));
+    }
+    return *std::move(arguments);
   }
 #endif
-  return at_socket_path(socket, std::move(observer), policy);
+  auto arguments = socket_path_arguments(path);
+  if (!arguments) {
+    return unexpected(rejected_selector(path, arguments.error()));
+  }
+  return *std::move(arguments);
+}
+
+expected<std::vector<std::string>, CommandFailure>
+default_arguments(ExecutionPolicy& policy) {
+  capture_environment(policy);
+  const auto& environment = *policy.child_environment;
+  if (auto path = libtmux_env::value(environment, "LIBTMUX_SOCKET_PATH");
+      path.has_value()) {
+    auto arguments = socket_path_arguments(*path);
+    if (!arguments) {
+      return unexpected(rejected_selector(*path, arguments.error()));
+    }
+    return *std::move(arguments);
+  }
+  if (auto name = libtmux_env::value(environment, "LIBTMUX_SOCKET_NAME");
+      name.has_value()) {
+    if (auto invalid = libtmux_psmux::invalid_socket_name(*name); invalid.has_value()) {
+      return unexpected(invalid_default(std::move(*invalid)));
+    }
+    auto arguments = socket_name_arguments(*name);
+    if (!arguments) {
+      return unexpected(rejected_selector(*name, arguments.error()));
+    }
+    return *std::move(arguments);
+  }
+  if (libtmux_env::value(environment, "TMUX").has_value()) {
+    return context_arguments(environment);
+  }
+  return std::vector<std::string>{};
+}
+
+} // namespace
+
+expected<Server, CommandFailure> Server::from_env(CommandObserver observer,
+                                                  ExecutionPolicy policy) {
+  capture_environment(policy);
+  auto arguments = context_arguments(*policy.child_environment);
+  if (!arguments) {
+    return unexpected(std::move(arguments.error()));
+  }
+  return subprocess_server(*std::move(arguments), std::move(observer),
+                           std::move(policy));
 }
 
 expected<Server, CommandFailure> Server::at_default(CommandObserver observer,
                                                     ExecutionPolicy policy) {
-  // No selector at all, which is what tmux itself does: the default socket
-  // under the directory it chooses, honouring TMUX_TMPDIR as tmux does.
-  return subprocess_server({}, std::move(observer), policy);
+  auto arguments = default_arguments(policy);
+  if (!arguments) {
+    return unexpected(std::move(arguments.error()));
+  }
+  return subprocess_server(*std::move(arguments), std::move(observer),
+                           std::move(policy));
 }
 
 expected<Server, CommandFailure>
 Server::startable_at_default(std::optional<std::filesystem::path> configuration,
                              CommandObserver observer, ExecutionPolicy policy) {
-  return startable_subprocess_server({}, std::move(configuration), std::move(observer),
-                                     policy);
+  auto arguments = default_arguments(policy);
+  if (!arguments) {
+    return unexpected(std::move(arguments.error()));
+  }
+  return startable_subprocess_server(*std::move(arguments), std::move(configuration),
+                                     std::move(observer), std::move(policy));
 }
 
 expected<Server, CommandFailure> Server::at_socket_name(std::string_view name,
@@ -636,7 +724,7 @@ Server::control_with_options(std::string_view session,
   }
   return Connection::connect(
       routed_control_options(std::move(options), std::string{socket_path},
-                             std::move(target), backend_->policy().tmux_binary));
+                             std::move(target), backend_->policy()));
 }
 
 expected<Server, ProtocolError> Server::over_control(std::string_view session,

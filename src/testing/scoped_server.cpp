@@ -254,6 +254,7 @@ struct ScopedTmuxServer::State {
     const auto first_stage = started + options.teardown_timeout / 2;
     const auto second_stage = started + (options.teardown_timeout * 3) / 4;
 
+    bool exit_observed = !server;
     if (server) {
       if (server->is_running() && !socket_path.empty()) {
         try {
@@ -283,9 +284,15 @@ struct ScopedTmuxServer::State {
         append_report("server did not reap before teardown deadline");
       }
       server->terminate_and_reap(deadline);
+      exit_observed = server->wait_status().has_value();
       server.reset();
     }
 
+    if (!exit_observed) {
+      append_report("server exit unverified; retained fixture tree: ",
+                    private_tree.string());
+      return;
+    }
     if (!private_tree.empty()) {
       try {
         std::error_code error;
@@ -383,7 +390,7 @@ ScopedTmuxServer::start(ScopedTmuxServerOptions options) {
   auto server = ChildProcess::spawn({.executable = state->options.tmux_binary,
                                      .arguments = std::move(server_arguments),
                                      .environment = state->environment});
-  if (!server.has_value()) {
+  if (!server) {
     return libtmux::unexpected(server.error());
   }
   state->server = std::make_unique<ChildProcess>(std::move(*server));

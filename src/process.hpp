@@ -28,6 +28,7 @@ struct ProcessRequest {
   std::filesystem::path executable;
   std::vector<Argument> arguments;
   std::vector<std::pair<std::string, std::optional<std::string>>> environment;
+  std::optional<std::vector<std::string>> base_environment{};
   std::optional<std::chrono::milliseconds> timeout;
   std::size_t capture_limit{default_capture_limit};
   StdioPolicy stdio{StdioPolicy::capture};
@@ -93,6 +94,20 @@ struct ProcessTransportEntry final {
   for (const auto& argument : request.arguments) {
     if (contains_nul(argument.value)) {
       return false;
+    }
+  }
+  if (request.base_environment.has_value()) {
+    for (const auto& entry : *request.base_environment) {
+      const auto separator = entry.find('=',
+#if defined(_WIN32)
+                                        entry.starts_with('=') ? 1U : 0U
+#else
+                                        0U
+#endif
+      );
+      if (separator == std::string::npos || separator == 0U || contains_nul(entry)) {
+        return false;
+      }
     }
   }
   for (const auto& [name, value] : request.environment) {

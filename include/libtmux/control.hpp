@@ -172,6 +172,10 @@ struct ConnectionOptions {
   /// pane. A caller that sets this and ignores notifications has chosen to
   /// lose output silently.
   std::optional<std::chrono::seconds> pause_after{};
+  /// Complete child environment as `NAME=value` entries. Absent captures the
+  /// host environment at connect, or uses the Server's snapshot through
+  /// `Server::control`. Launches remove `TMUX` and `TMUX_PANE`.
+  std::optional<std::vector<std::string>> child_environment{};
 };
 
 class Connection;

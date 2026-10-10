@@ -30,6 +30,16 @@ static_assert(static_cast<int>(libtmux::SocketError::path_too_long) == 2);
 static_assert(static_cast<int>(libtmux::SocketError::path_unsupported) == 3);
 static_assert(libtmux::Window::kFields.size() == 13U);
 static_assert(libtmux::Pane::kFields.size() == 22U);
+static_assert(std::is_aggregate_v<libtmux::LifecycleFailure>);
+
+void lifecycle_failure_accepts_existing_aggregate_initializers() {
+  const libtmux::LifecycleFailure positional{
+      libtmux::CommandFailure{}, {}, {}, false, {}, {}};
+  const libtmux::LifecycleFailure designated{.primary = libtmux::CommandFailure{},
+                                             .cleanup = std::nullopt};
+  (void)positional;
+  (void)designated;
+}
 
 std::vector<libtmux::Window> listed();
 

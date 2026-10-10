@@ -1,4 +1,5 @@
 #include "socket_identity.hpp"
+#include "environment.hpp"
 
 #include "libtmux/socket.hpp"
 
@@ -13,6 +14,7 @@
 #include <utility>
 
 #if !defined(_WIN32)
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -39,7 +41,9 @@ SocketAlias::~SocketAlias() noexcept {
 #if defined(_WIN32)
 
 std::optional<std::string>
-resolved_socket_path(const std::vector<std::string>& selector) {
+resolved_socket_path(const std::vector<std::string>& selector,
+                     const std::vector<std::string>& environment) {
+  static_cast<void>(environment);
   if (selector.empty()) {
     return std::string{"psmux:default"};
   }
@@ -63,24 +67,20 @@ bind_socket_endpoint(const std::vector<std::string>& selector) {
 
 namespace {
 
-// tmux compiles `TMUX_SOCK` as `"$TMUX_TMPDIR:" _PATH_TMP` and takes the first
-// entry that resolves. An unset, empty or unresolvable `TMUX_TMPDIR` therefore
-// falls through to `/tmp` rather than failing, which is why this asks the
-// filesystem instead of trusting the variable.
-std::optional<std::filesystem::path> socket_directory() {
-  std::error_code failed;
-  if (const char* const configured = std::getenv("TMUX_TMPDIR");
-      configured != nullptr && *configured != '\0') {
-    auto resolved = std::filesystem::canonical(configured, failed);
-    if (!failed) {
-      return resolved;
-    }
-  }
-  auto fallback = std::filesystem::canonical("/tmp", failed);
-  if (failed) {
+std::optional<std::filesystem::path>
+socket_directory(const std::vector<std::string>& environment) {
+  const auto configured =
+      libtmux_env::value(environment, "TMUX_TMPDIR").value_or("/tmp");
+  if (!std::filesystem::path{configured}.is_absolute() ||
+      configured.find('\0') != std::string::npos) {
     return std::nullopt;
   }
-  return fallback;
+  std::error_code failed;
+  auto resolved = std::filesystem::canonical(configured, failed);
+  if (failed || !std::filesystem::is_directory(resolved, failed)) {
+    return std::nullopt;
+  }
+  return resolved;
 }
 
 enum class PinStatus { pinned, missing, retry_elsewhere, failed };
@@ -138,7 +138,8 @@ PinAttempt pin_under(const std::filesystem::path& root,
   directory.release();
   const std::filesystem::path alias{lifetime->path()};
 
-  if (::link(socket.c_str(), alias.c_str()) != 0) {
+  if (::linkat(AT_FDCWD, socket.c_str(), AT_FDCWD, alias.c_str(), AT_SYMLINK_FOLLOW) !=
+      0) {
     const int failed = errno;
     if (failed == ENOENT || failed == ENOTDIR) {
       return PinAttempt{PinStatus::missing, std::move(lifetime)};
@@ -172,19 +173,11 @@ std::string inode_identity(const struct stat& metadata) {
 } // namespace
 
 std::optional<std::string>
-resolved_socket_path(const std::vector<std::string>& selector) {
+resolved_socket_path(const std::vector<std::string>& selector,
+                     const std::vector<std::string>& environment) {
   const bool pair = selector.size() == 2U;
   if (pair && selector.front() == "-S") {
-    // tmux uses a `-S` path verbatim, so the only question here is whether two
-    // spellings name one socket — and they do when they resolve alike, because
-    // the kernel resolves the address too. Weakly, because the socket need not
-    // exist yet: a server is often addressed before it is started.
-    std::error_code failed;
-    auto resolved = std::filesystem::weakly_canonical(selector.back(), failed);
-    if (failed) {
-      return selector.back();
-    }
-    return resolved.string();
+    return selector.back();
   }
 
   std::string label{"default"};
@@ -194,11 +187,33 @@ resolved_socket_path(const std::vector<std::string>& selector) {
     return std::nullopt;
   }
 
-  const auto directory = socket_directory();
+  const auto directory = socket_directory(environment);
   if (!directory.has_value()) {
     return std::nullopt;
   }
   return (*directory / ("tmux-" + std::to_string(::getuid())) / label).string();
+}
+
+expected<void, std::string> prepare_socket_directory(const std::string& directory,
+                                                     bool create) {
+  if (create && ::mkdir(directory.c_str(), 0700) != 0 && errno != EEXIST) {
+    return unexpected("could not create the tmux socket directory: " +
+                      std::string{std::strerror(errno)});
+  }
+  struct stat metadata {};
+  if (::lstat(directory.c_str(), &metadata) != 0) {
+    if (!create && errno == ENOENT) {
+      return {};
+    }
+    return unexpected("could not inspect the tmux socket directory: " +
+                      std::string{std::strerror(errno)});
+  }
+  if (!S_ISDIR(metadata.st_mode) || metadata.st_uid != ::getuid() ||
+      (metadata.st_mode & 0007) != 0) {
+    return unexpected(std::string{"the tmux socket directory must be a real directory "
+                                  "owned by this uid without other-user permissions"});
+  }
+  return {};
 }
 
 expected<SocketEndpoint, std::string>
