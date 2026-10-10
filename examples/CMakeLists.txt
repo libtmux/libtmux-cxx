@@ -48,6 +48,19 @@ foreach(example 01-tour 02-workspace 03-filter 04-errors 05-readme 06-streaming)
     example.${example} PROPERTIES LABELS "example;real-tmux" TIMEOUT 60)
 endforeach()
 
+add_executable(libtmux_example_07_default 07-default.cpp)
+target_link_libraries(libtmux_example_07_default PRIVATE libtmux::libtmux)
+if(TARGET libtmux_build_options)
+  target_link_libraries(libtmux_example_07_default PRIVATE libtmux_build_options)
+endif()
+# The harness supplies this ordinary program's private endpoint.
+
+add_executable(libtmux_example_08_lifecycle 08-lifecycle.cpp)
+target_link_libraries(libtmux_example_08_lifecycle PRIVATE libtmux::libtmux)
+if(TARGET libtmux_build_options)
+  target_link_libraries(libtmux_example_08_lifecycle PRIVATE libtmux_build_options)
+endif()
+
 add_subdirectory(api)
 
 # A separate project; see `tests/README.md`.

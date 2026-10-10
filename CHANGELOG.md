@@ -9,6 +9,42 @@ was recorded as it landed.
 
 ## Unreleased
 
+### Breaking
+
+- `Server::at_default()` and `startable_at_default()` now select nonempty
+  `LIBTMUX_SOCKET_PATH`, `LIBTMUX_SOCKET_NAME`, then `TMUX` before the named
+  default socket. Behavioural change: use `Server::at_socket_name("default")`
+  to bypass ambient selectors. Factories reject relative paths, invalid leaf
+  names and malformed selected `TMUX` contexts.
+- `ExecutionPolicy` and `ConnectionOptions` gain `child_environment`, an
+  optional complete `NAME=value` vector. ABI change: rebuild consumers.
+  Omitting it captures the host environment at construction; later host edits
+  do not change a Server's child environment or binary search path.
+
+### Server
+
+- Named POSIX startup uses the retained absolute socket path and creates only
+  its per-UID directory with mode 0700. Invalid or removed roots fail without
+  tmux's fallback to `/tmp`. Existing directories must belong to the current
+  UID, have no other-user permissions, and not be symlinks.
+- Subprocess and control launches erase `TMUX` and `TMUX_PANE` from the child
+  environment. Explicit endpoint selection and cleanup retain the existing
+  hard-link binding to a daemon.
+
+### Ownership and discovery
+
+- `Owned<T>`, `adopt`, and `own_server/session/window/pane` add move-only POSIX ownership. Checked cleanup retains its result across scope exit, supports retry after failure, and guards the accepted daemon generation and object ID. Borrowed handles keep their existing lifetime behaviour.
+- `with_owned` retains both a body error or exception and a cleanup failure. Owned creation captures receipts before interpreting refusal, timeout or cancellation, then rolls back known resources against the creating daemon. Missing receipts report an uncertain dispatch.
+- `find_or_create_server/session/window/pane` distinguish created owners from borrowed reuse, reject ambiguous names or pane keys, and serialize competing calls within the process. Other tmux clients remain outside that coordination.
+- `discover_servers` scans bounded directory roots, reports failed probes and truncation, and deduplicates socket inodes without starting servers.
+- `ScopedTmuxServer` retains its fixture tree if teardown cannot observe the owned process exit before handing reaping to a background thread.
+
+### Examples
+
+- `07-default.cpp` demonstrates ordinary defaults and session cleanup with a
+  public `Owned<Session>` scope. The external harness supplies a private endpoint and checks
+  cleanup after successful commands, a body failure and a cleanup failure.
+
 ## 0.1.0-alpha.11 (2026-09-26)
 
 This alpha adds `tmux-workspace`, an optional POSIX executable for workspace

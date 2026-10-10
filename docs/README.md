@@ -5,6 +5,10 @@ required reading to use the library — [the README](../README.md) is — but th
 is where the reasoning lives when you want to know why something is the way it
 is.
 
+## Ownership and examples
+
+[`lifecycle.md`](lifecycle.md) covers borrowed handles, explicit ownership, checked cleanup, discovery, find-or-create and the external example harness.
+
 ## Reference
 
 **[`api.md`](api.md)** — every public type and call, with the prose from its

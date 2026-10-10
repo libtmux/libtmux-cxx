@@ -10,6 +10,7 @@
 
 #include "process.hpp"
 
+#include "environment.hpp"
 #include "libtmux/expected.hpp"
 #include "path.hpp"
 #include "process_validation.hpp"
@@ -412,9 +413,15 @@ validate_request(const ProcessRequest& request) {
 }
 
 [[nodiscard]] expected<std::wstring, DWORD>
-resolve_executable(const std::wstring& executable) {
-  // Executable lookup uses the caller's PATH, as posix_spawnp does; the overlay
-  // is installed only in the child process.
+resolve_executable(const std::wstring& executable,
+                   const std::optional<std::vector<std::string>>& environment) {
+  if (environment.has_value()) {
+    const auto path = widen_utf8(libtmux_env::value(*environment, "PATH").value_or(""));
+    if (!path) {
+      return unexpected(path.error());
+    }
+    return search_path(executable, L".exe", path->c_str());
+  }
   auto caller_path = caller_search_path();
   if (!caller_path) {
     return unexpected(caller_path.error());
@@ -446,20 +453,31 @@ void append_quoted_argument(std::wstring& command_line, std::wstring_view argume
 }
 
 [[nodiscard]] expected<std::vector<wchar_t>, DWORD> build_environment(
-    const std::vector<std::pair<std::wstring, std::optional<std::wstring>>>& overlay) {
+    const std::vector<std::pair<std::wstring, std::optional<std::wstring>>>& overlay,
+    const std::optional<std::vector<std::string>>& base) {
   EnvironmentStrings inherited;
   if (inherited.get() == nullptr) {
     return unexpected(::GetLastError());
   }
 
   std::map<std::wstring, std::wstring, CaseInsensitiveLess> values;
-  for (const wchar_t* entry = inherited.get(); *entry != L'\0';
+  for (const wchar_t* entry = inherited.get(); !base.has_value() && *entry != L'\0';
        entry += std::wcslen(entry) + 1U) {
     const std::wstring_view current{entry};
     const auto separator = current.find(L'=', current.front() == L'=' ? 1U : 0U);
     if (separator != std::wstring_view::npos) {
       values.insert_or_assign(std::wstring{current.substr(0, separator)},
                               std::wstring{current.substr(separator + 1U)});
+    }
+  }
+  if (base.has_value()) {
+    for (const auto& entry : *base) {
+      const auto wide = widen_utf8(entry);
+      if (!wide) {
+        return unexpected(wide.error());
+      }
+      const auto separator = wide->find(L'=', wide->starts_with(L'=') ? 1U : 0U);
+      values.insert_or_assign(wide->substr(0, separator), wide->substr(separator + 1U));
     }
   }
   for (const auto& [name, value] : overlay) {
@@ -491,7 +509,7 @@ prepare_request(const ProcessRequest& request) {
                                  DeliveryStatus::not_started, "UTF-8 conversion",
                                  request, windows_error(executable.error())));
   }
-  auto resolved_executable = resolve_executable(*executable);
+  auto resolved_executable = resolve_executable(*executable, request.base_environment);
   if (!resolved_executable) {
     const auto kind = spawn_error_kind(resolved_executable.error());
     return unexpected(make_error(kind, DeliveryStatus::not_started,
@@ -534,7 +552,7 @@ prepare_request(const ProcessRequest& request) {
     overlay.emplace_back(std::move(*wide_name), std::move(wide_value));
   }
 
-  auto environment = build_environment(overlay);
+  auto environment = build_environment(overlay, request.base_environment);
   if (!environment) {
     return unexpected(make_error(ProcessError::Kind::pre_exec,
                                  DeliveryStatus::not_started, "environment", request,

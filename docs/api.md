@@ -11,6 +11,7 @@ is the prose there. Run it with `--check` to prove this page is current.
 
 - [`libtmux/libtmux.hpp`](#libtmux-libtmux-hpp)
 - [`libtmux/server.hpp`](#libtmux-server-hpp)
+- [`libtmux/lifecycle.hpp`](#libtmux-lifecycle-hpp)
 - [`libtmux/layout.hpp`](#libtmux-layout-hpp)
 - [`libtmux/async.hpp`](#libtmux-async-hpp)
 - [`libtmux/capabilities.hpp`](#libtmux-capabilities-hpp)
@@ -165,7 +166,7 @@ class Server;
 ```cpp
 [[nodiscard]] static expected<Server, CommandFailure> at_socket_path(std::string_view path, CommandObserver observer = {}, ExecutionPolicy policy = {});
 ```
-`-S path`: the socket file, used verbatim.  These report `CommandFailure`, the same type every other call reports, rather than the `SocketError` the argument builders use: a factory that failed differently is a factory nothing can be chained onto. The reason a selector was rejected is in the diagnostic, and `socket_path_arguments` still returns the enum for a caller that wants to branch on it.  An observer, if given, is told about every command this server runs. It is fixed at construction because the connection is immutable afterwards, and that is what makes a Server safe to copy between threads. The policy is fixed for the same reason, and says what a call gets when it names no timeout or limit of its own.
+`-S path`: an absolute socket path, used verbatim. Parent directories must exist. Explicit factories ignore ambient endpoint selectors.  These report `CommandFailure`, the same type every other call reports, rather than the `SocketError` the argument builders use: a factory that failed differently is a factory nothing can be chained onto. The reason a selector was rejected is in the diagnostic, and `socket_path_arguments` still returns the enum for a caller that wants to branch on it.  An observer, if given, is told about every command this server runs. It is fixed at construction because the connection is immutable afterwards, and that is what makes a Server safe to copy between threads. The policy is fixed for the same reason, and says what a call gets when it names no timeout or limit of its own.
 
 <a id="libtmux-server-hpp-server-at-socket-path-2"></a>
 #### `Server::at_socket_path`
@@ -181,7 +182,7 @@ Uses native path bytes on POSIX and UTF-8 on Windows. The exact path constraint 
 ```cpp
 [[nodiscard]] static expected<Server, CommandFailure> at_socket_name(std::string_view name, CommandObserver observer = {}, ExecutionPolicy policy = {});
 ```
-`-L name`: resolved under tmux's socket directory, as the tmux flag does.
+A leaf name under the captured nonempty `TMUX_TMPDIR`, or `/tmp`, and `tmux-<uid>`. POSIX factories require an existing absolute root and retain its resolved path. Empty names, separators, NUL, dot and dot-dot are errors.
 
 <a id="libtmux-server-hpp-server-startable-at-socket-path"></a>
 #### `Server::startable_at_socket_path`
@@ -189,7 +190,7 @@ Uses native path bytes on POSIX and UTF-8 on Windows. The exact path constraint 
 ```cpp
 [[nodiscard]] static expected<Server, CommandFailure> startable_at_socket_path(std::string_view path, std::optional<std::filesystem::path> configuration, CommandObserver observer = {}, ExecutionPolicy policy = {});
 ```
-A socket handle that may create an absent server on its first `new_session` call or an explicit `run({"start-server"})`. `configuration` is passed to tmux as `-f`; absent preserves tmux's user configuration. Every other call remains no-start while the socket is absent. The selector and configuration are frozen in the handle, and concurrent first-session calls are serialized.
+A socket handle that may create an absent server on its first `new_session` call or an explicit `run({"start-server"})`. `configuration` is passed to tmux as `-f`; absent preserves tmux's user configuration. Every other call remains no-start while the socket is absent. The selector and configuration are frozen in the handle, and concurrent first-session calls are serialized. Named sockets create only the per-UID directory, with mode 0700. Existing directories must be real directories owned by this UID, without other-user permissions; group permissions are allowed. Removing the root before startup causes a failure without fallback to another endpoint.
 
 <a id="libtmux-server-hpp-server-startable-at-socket-path-2"></a>
 #### `Server::startable_at_socket_path`
@@ -218,7 +219,7 @@ template <typename Path> requires std::same_as<std::remove_cvref_t<Path>, std::f
 ```cpp
 [[nodiscard]] static expected<Server, CommandFailure> from_env(CommandObserver observer = {}, ExecutionPolicy policy = {});
 ```
-The server this process is running inside.  tmux exports `TMUX` to everything it starts, as `<socket path>,<server pid>,<session id>`. Only the socket path is read: the session id is stale the moment a pane moves, and a `#()` job carries no session at all — so a caller who wants the session asks tmux, rather than trusting what it inherited.
+The server this process is running inside.  Parses the captured `TMUX` from its last two commas. The path must be absolute; the PID is positive ASCII decimal; the session is nonnegative ASCII decimal, optionally prefixed by `$`, or `-1` for a job. Invalid or absent context returns `FailureKind::validation`. PID and session fields validate the context; the socket inode binds the handle to its daemon.
 
 <a id="libtmux-server-hpp-server-at-default"></a>
 #### `Server::at_default`
@@ -226,7 +227,7 @@ The server this process is running inside.  tmux exports `TMUX` to everything it
 ```cpp
 [[nodiscard]] static expected<Server, CommandFailure> at_default(CommandObserver observer = {}, ExecutionPolicy policy = {});
 ```
-The server tmux would talk to with no `-L` or `-S` at all, which is the one a person means when they say "my tmux".
+Selects the first nonempty `LIBTMUX_SOCKET_PATH`, `LIBTMUX_SOCKET_NAME`, or `TMUX`, then tmux's named default socket. Invalid selected input returns a validation failure; lower-precedence inputs are ignored. Values retain whitespace. The factory captures the endpoint and child environment once, so later host edits cannot redirect commands or cleanup. This borrowed handle does not create an absent server or kill one at scope exit. Use `startable_at_default` to permit first-session startup.
 
 <a id="libtmux-server-hpp-server-over"></a>
 #### `Server::over`
@@ -624,6 +625,735 @@ A hook set globally is not reported by the unscoped listing, so reading it back 
 ```cpp
 [[nodiscard]] expected<void, CommandFailure> set_global_hook(std::string_view name, std::string_view command) const;
 ```
+
+<a id="libtmux-lifecycle-hpp"></a>
+## `libtmux/lifecycle.hpp`
+
+The daemon and exact object accepted by an owner. A server has an empty id. The reserved server option `@libtmux_owner_generation` contains 32 ASCII hex characters. Adoption initializes an absent option, retains a valid one and refuses an empty or malformed value. Do not shadow or change this option.
+
+**Symbols:**
+
+- [`OwnershipReceipt`](#libtmux-lifecycle-hpp-ownershipreceipt)
+  - [`OwnershipReceipt::pid`](#libtmux-lifecycle-hpp-ownershipreceipt-pid)
+  - [`OwnershipReceipt::start_time`](#libtmux-lifecycle-hpp-ownershipreceipt-start-time)
+  - [`OwnershipReceipt::generation`](#libtmux-lifecycle-hpp-ownershipreceipt-generation)
+  - [`OwnershipReceipt::id`](#libtmux-lifecycle-hpp-ownershipreceipt-id)
+  - [`OwnershipReceipt::startup_nonce`](#libtmux-lifecycle-hpp-ownershipreceipt-startup-nonce)
+- [`LifecycleOptions`](#libtmux-lifecycle-hpp-lifecycleoptions)
+  - [`LifecycleOptions::timeout`](#libtmux-lifecycle-hpp-lifecycleoptions-timeout)
+  - [`LifecycleOptions::cleanup_timeout`](#libtmux-lifecycle-hpp-lifecycleoptions-cleanup-timeout)
+  - [`LifecycleOptions::bool`](#libtmux-lifecycle-hpp-lifecycleoptions-bool)
+- [`CleanupReport`](#libtmux-lifecycle-hpp-cleanupreport)
+  - [`CleanupReport::complete`](#libtmux-lifecycle-hpp-cleanupreport-complete)
+  - [`CleanupReport::in_progress`](#libtmux-lifecycle-hpp-cleanupreport-in-progress)
+  - [`CleanupReport::attempts`](#libtmux-lifecycle-hpp-cleanupreport-attempts)
+  - [`CleanupReport::failure`](#libtmux-lifecycle-hpp-cleanupreport-failure)
+  - [`CleanupReport::exception`](#libtmux-lifecycle-hpp-cleanupreport-exception)
+- [`CleanupHandle`](#libtmux-lifecycle-hpp-cleanuphandle)
+  - [`CleanupHandle::close`](#libtmux-lifecycle-hpp-cleanuphandle-close)
+  - [`CleanupHandle::report`](#libtmux-lifecycle-hpp-cleanuphandle-report)
+  - [`CleanupHandle::receipt`](#libtmux-lifecycle-hpp-cleanuphandle-receipt)
+- [`LifecycleFailure`](#libtmux-lifecycle-hpp-lifecyclefailure)
+  - [`LifecycleFailure::primary`](#libtmux-lifecycle-hpp-lifecyclefailure-primary)
+  - [`LifecycleFailure::rollback`](#libtmux-lifecycle-hpp-lifecyclefailure-rollback)
+  - [`LifecycleFailure::receipt`](#libtmux-lifecycle-hpp-lifecyclefailure-receipt)
+  - [`LifecycleFailure::uncertain`](#libtmux-lifecycle-hpp-lifecyclefailure-uncertain)
+  - [`LifecycleFailure::exception`](#libtmux-lifecycle-hpp-lifecyclefailure-exception)
+  - [`LifecycleFailure::cleanup`](#libtmux-lifecycle-hpp-lifecyclefailure-cleanup)
+  - [`LifecycleFailure::command_failure`](#libtmux-lifecycle-hpp-lifecyclefailure-command-failure)
+- [`Owned`](#libtmux-lifecycle-hpp-owned)
+  - [`Owned::Owned`](#libtmux-lifecycle-hpp-owned-owned)
+  - [`Owned::operator=`](#libtmux-lifecycle-hpp-owned-operator)
+  - [`Owned::Owned`](#libtmux-lifecycle-hpp-owned-owned-2)
+  - [`Owned::operator=`](#libtmux-lifecycle-hpp-owned-operator-2)
+  - [`Owned::~Owned`](#libtmux-lifecycle-hpp-owned-owned-3)
+  - [`Owned::get`](#libtmux-lifecycle-hpp-owned-get)
+  - [`Owned::operator->`](#libtmux-lifecycle-hpp-owned-operator-3)
+  - [`Owned::cleanup`](#libtmux-lifecycle-hpp-owned-cleanup)
+  - [`Owned::close`](#libtmux-lifecycle-hpp-owned-close)
+- [`OwnedScopeResult`](#libtmux-lifecycle-hpp-ownedscoperesult)
+  - [`OwnedScopeResult::body_failure`](#libtmux-lifecycle-hpp-ownedscoperesult-body-failure)
+  - [`OwnedScopeResult::body_exception`](#libtmux-lifecycle-hpp-ownedscoperesult-body-exception)
+  - [`OwnedScopeResult::cleanup`](#libtmux-lifecycle-hpp-ownedscoperesult-cleanup)
+  - [`OwnedScopeResult::ok`](#libtmux-lifecycle-hpp-ownedscoperesult-ok)
+- [`FoundOrCreated`](#libtmux-lifecycle-hpp-foundorcreated)
+  - [`FoundOrCreated::value`](#libtmux-lifecycle-hpp-foundorcreated-value)
+  - [`FoundOrCreated::owner`](#libtmux-lifecycle-hpp-foundorcreated-owner)
+  - [`FoundOrCreated::created`](#libtmux-lifecycle-hpp-foundorcreated-created)
+- [`DiscoveryOptions`](#libtmux-lifecycle-hpp-discoveryoptions)
+  - [`DiscoveryOptions::roots`](#libtmux-lifecycle-hpp-discoveryoptions-roots)
+  - [`DiscoveryOptions::configured_roots`](#libtmux-lifecycle-hpp-discoveryoptions-configured-roots)
+  - [`DiscoveryOptions::max_roots`](#libtmux-lifecycle-hpp-discoveryoptions-max-roots)
+  - [`DiscoveryOptions::max_entries`](#libtmux-lifecycle-hpp-discoveryoptions-max-entries)
+  - [`DiscoveryOptions::max_probes`](#libtmux-lifecycle-hpp-discoveryoptions-max-probes)
+  - [`DiscoveryOptions::timeout`](#libtmux-lifecycle-hpp-discoveryoptions-timeout)
+  - [`DiscoveryOptions::probe_timeout`](#libtmux-lifecycle-hpp-discoveryoptions-probe-timeout)
+  - [`DiscoveryOptions::policy`](#libtmux-lifecycle-hpp-discoveryoptions-policy)
+  - [`DiscoveryOptions::bool`](#libtmux-lifecycle-hpp-discoveryoptions-bool)
+- [`DiscoveredServer`](#libtmux-lifecycle-hpp-discoveredserver)
+  - [`DiscoveredServer::socket`](#libtmux-lifecycle-hpp-discoveredserver-socket)
+  - [`DiscoveredServer::pid`](#libtmux-lifecycle-hpp-discoveredserver-pid)
+  - [`DiscoveredServer::start_time`](#libtmux-lifecycle-hpp-discoveredserver-start-time)
+- [`DiscoveryDiagnostic`](#libtmux-lifecycle-hpp-discoverydiagnostic)
+  - [`DiscoveryDiagnostic::path`](#libtmux-lifecycle-hpp-discoverydiagnostic-path)
+  - [`DiscoveryDiagnostic::outcome`](#libtmux-lifecycle-hpp-discoverydiagnostic-outcome)
+  - [`DiscoveryDiagnostic::failure`](#libtmux-lifecycle-hpp-discoverydiagnostic-failure)
+- [`DiscoveryResult`](#libtmux-lifecycle-hpp-discoveryresult)
+  - [`DiscoveryResult::servers`](#libtmux-lifecycle-hpp-discoveryresult-servers)
+  - [`DiscoveryResult::diagnostics`](#libtmux-lifecycle-hpp-discoveryresult-diagnostics)
+  - [`DiscoveryResult::truncated`](#libtmux-lifecycle-hpp-discoveryresult-truncated)
+  - [`DiscoveryResult::roots_examined`](#libtmux-lifecycle-hpp-discoveryresult-roots-examined)
+  - [`DiscoveryResult::entries_examined`](#libtmux-lifecycle-hpp-discoveryresult-entries-examined)
+  - [`DiscoveryResult::probes`](#libtmux-lifecycle-hpp-discoveryresult-probes)
+- [`Free symbols`](#libtmux-lifecycle-hpp-free-symbols)
+  - [`with_owned`](#libtmux-lifecycle-hpp-free-symbols-with-owned)
+  - [`adopt`](#libtmux-lifecycle-hpp-free-symbols-adopt)
+  - [`adopt`](#libtmux-lifecycle-hpp-free-symbols-adopt-2)
+  - [`adopt`](#libtmux-lifecycle-hpp-free-symbols-adopt-3)
+  - [`adopt`](#libtmux-lifecycle-hpp-free-symbols-adopt-4)
+  - [`own_session`](#libtmux-lifecycle-hpp-free-symbols-own-session)
+  - [`own_window`](#libtmux-lifecycle-hpp-free-symbols-own-window)
+  - [`own_pane`](#libtmux-lifecycle-hpp-free-symbols-own-pane)
+  - [`own_server`](#libtmux-lifecycle-hpp-free-symbols-own-server)
+  - [`find_or_create_server`](#libtmux-lifecycle-hpp-free-symbols-find-or-create-server)
+  - [`find_or_create_session`](#libtmux-lifecycle-hpp-free-symbols-find-or-create-session)
+  - [`find_or_create_window`](#libtmux-lifecycle-hpp-free-symbols-find-or-create-window)
+  - [`find_or_create_pane`](#libtmux-lifecycle-hpp-free-symbols-find-or-create-pane)
+  - [`discover_servers`](#libtmux-lifecycle-hpp-free-symbols-discover-servers)
+
+<a id="libtmux-lifecycle-hpp-ownershipreceipt"></a>
+### `OwnershipReceipt`
+
+The daemon and exact object accepted by an owner. A server has an empty id. The reserved server option `@libtmux_owner_generation` contains 32 ASCII hex characters. Adoption initializes an absent option, retains a valid one and refuses an empty or malformed value. Do not shadow or change this option.
+
+```cpp
+struct OwnershipReceipt;
+```
+
+<a id="libtmux-lifecycle-hpp-ownershipreceipt-pid"></a>
+#### `OwnershipReceipt::pid`
+
+```cpp
+std::string pid;
+```
+
+<a id="libtmux-lifecycle-hpp-ownershipreceipt-start-time"></a>
+#### `OwnershipReceipt::start_time`
+
+```cpp
+std::string start_time;
+```
+
+<a id="libtmux-lifecycle-hpp-ownershipreceipt-generation"></a>
+#### `OwnershipReceipt::generation`
+
+```cpp
+std::string generation;
+```
+
+<a id="libtmux-lifecycle-hpp-ownershipreceipt-id"></a>
+#### `OwnershipReceipt::id`
+
+```cpp
+std::string id;
+```
+
+<a id="libtmux-lifecycle-hpp-ownershipreceipt-startup-nonce"></a>
+#### `OwnershipReceipt::startup_nonce`
+
+```cpp
+std::string startup_nonce{};
+```
+A newly started daemon can be rolled back before its option is installed. This nonce comes from its inherited `LIBTMUX_OWNER_STARTUP_NONCE`.
+
+<a id="libtmux-lifecycle-hpp-lifecycleoptions"></a>
+### `LifecycleOptions`
+
+Timeout and cancellation apply to acquisition, including waiting for the find-or-create lock. Cleanup ignores the cancellation predicate and uses its own timeout. It runs synchronously on the thread leaving the scope.
+
+```cpp
+struct LifecycleOptions;
+```
+
+<a id="libtmux-lifecycle-hpp-lifecycleoptions-timeout"></a>
+#### `LifecycleOptions::timeout`
+
+```cpp
+std::chrono::milliseconds timeout{30000};
+```
+
+<a id="libtmux-lifecycle-hpp-lifecycleoptions-cleanup-timeout"></a>
+#### `LifecycleOptions::cleanup_timeout`
+
+```cpp
+std::chrono::milliseconds cleanup_timeout{5000};
+```
+
+<a id="libtmux-lifecycle-hpp-lifecycleoptions-bool"></a>
+#### `LifecycleOptions::bool`
+
+```cpp
+std::function<bool()> cancelled;
+```
+Nonthrowing, thread-safe predicate, polled during subprocess execution. Bind an atomic flag or a stop_token where the standard library supplies it.
+
+<a id="libtmux-lifecycle-hpp-cleanupreport"></a>
+### `CleanupReport`
+
+The latest cleanup attempt. A failed attempt leaves `complete` false.
+
+```cpp
+struct CleanupReport;
+```
+
+<a id="libtmux-lifecycle-hpp-cleanupreport-complete"></a>
+#### `CleanupReport::complete`
+
+```cpp
+bool complete{false};
+```
+
+<a id="libtmux-lifecycle-hpp-cleanupreport-in-progress"></a>
+#### `CleanupReport::in_progress`
+
+```cpp
+bool in_progress{false};
+```
+
+<a id="libtmux-lifecycle-hpp-cleanupreport-attempts"></a>
+#### `CleanupReport::attempts`
+
+```cpp
+std::size_t attempts{};
+```
+
+<a id="libtmux-lifecycle-hpp-cleanupreport-failure"></a>
+#### `CleanupReport::failure`
+
+```cpp
+std::optional<CommandFailure> failure{};
+```
+
+<a id="libtmux-lifecycle-hpp-cleanupreport-exception"></a>
+#### `CleanupReport::exception`
+
+```cpp
+std::exception_ptr exception{};
+```
+
+<a id="libtmux-lifecycle-hpp-cleanuphandle"></a>
+### `CleanupHandle`
+
+Retains cleanup responsibility and its result beyond an Owned scope. Copies share one result. `close` is serialized and retryable after failure; success is idempotent. Observers may inspect report(); recursive close from the active observer returns overloaded. Destroying this handle alone performs no cleanup.
+
+```cpp
+class CleanupHandle final;
+```
+
+<a id="libtmux-lifecycle-hpp-cleanuphandle-close"></a>
+#### `CleanupHandle::close`
+
+```cpp
+[[nodiscard]] expected<void, CommandFailure> close() const;
+```
+
+<a id="libtmux-lifecycle-hpp-cleanuphandle-report"></a>
+#### `CleanupHandle::report`
+
+```cpp
+[[nodiscard]] CleanupReport report() const;
+```
+
+<a id="libtmux-lifecycle-hpp-cleanuphandle-receipt"></a>
+#### `CleanupHandle::receipt`
+
+```cpp
+[[nodiscard]] OwnershipReceipt receipt() const;
+```
+
+<a id="libtmux-lifecycle-hpp-lifecyclefailure"></a>
+### `LifecycleFailure`
+
+Creation can fail after tmux has created an object. `receipt` identifies that object; `rollback` describes failed cleanup. Retain `cleanup` to inspect or retry the rollback through the original daemon-bound transport. With `uncertain` and no receipt, no object was guessed or destroyed.
+
+```cpp
+struct LifecycleFailure;
+```
+
+<a id="libtmux-lifecycle-hpp-lifecyclefailure-primary"></a>
+#### `LifecycleFailure::primary`
+
+```cpp
+CommandFailure primary;
+```
+
+<a id="libtmux-lifecycle-hpp-lifecyclefailure-rollback"></a>
+#### `LifecycleFailure::rollback`
+
+```cpp
+std::optional<CommandFailure> rollback{};
+```
+
+<a id="libtmux-lifecycle-hpp-lifecyclefailure-receipt"></a>
+#### `LifecycleFailure::receipt`
+
+```cpp
+std::optional<OwnershipReceipt> receipt{};
+```
+
+<a id="libtmux-lifecycle-hpp-lifecyclefailure-uncertain"></a>
+#### `LifecycleFailure::uncertain`
+
+```cpp
+bool uncertain{false};
+```
+
+<a id="libtmux-lifecycle-hpp-lifecyclefailure-exception"></a>
+#### `LifecycleFailure::exception`
+
+```cpp
+std::exception_ptr exception{};
+```
+
+<a id="libtmux-lifecycle-hpp-lifecyclefailure-cleanup"></a>
+#### `LifecycleFailure::cleanup`
+
+```cpp
+std::optional<CleanupHandle> cleanup{};
+```
+
+<a id="libtmux-lifecycle-hpp-lifecyclefailure-command-failure"></a>
+#### `LifecycleFailure::command_failure`
+
+```cpp
+std::optional<CommandFailure> command_failure{};
+```
+The captured command failure when `primary` reports a separate receipt identity or server ownership refusal. Retains the command's original kind, delivery, exit code and diagnostic; `exception` retains its observer error.
+
+<a id="libtmux-lifecycle-hpp-owned"></a>
+### `Owned`
+
+A move-only RAII owner. Lookup values remain borrowed. Destruction attempts remote cleanup without throwing; retain `cleanup()` or call `close()` to inspect the result. A window owner kills the window, all links and panes. A pane may move and a session may be renamed without redirecting cleanup. Use one Owned value from one thread; its CleanupHandle supports concurrent close/report calls. Allocation and caller callbacks may still throw.
+
+```cpp
+template <typename T> class Owned final;
+```
+
+<a id="libtmux-lifecycle-hpp-owned-owned"></a>
+#### `Owned::Owned`
+
+```cpp
+Owned(Owned&&) noexcept = default;
+```
+
+<a id="libtmux-lifecycle-hpp-owned-operator"></a>
+#### `Owned::operator=`
+
+```cpp
+Owned& operator=(Owned&&) = delete;
+```
+
+<a id="libtmux-lifecycle-hpp-owned-owned-2"></a>
+#### `Owned::Owned`
+
+```cpp
+Owned(const Owned&) = delete;
+```
+
+<a id="libtmux-lifecycle-hpp-owned-operator-2"></a>
+#### `Owned::operator=`
+
+```cpp
+Owned& operator=(const Owned&) = delete;
+```
+
+<a id="libtmux-lifecycle-hpp-owned-owned-3"></a>
+#### `Owned::~Owned`
+
+```cpp
+~Owned() noexcept;
+```
+
+<a id="libtmux-lifecycle-hpp-owned-get"></a>
+#### `Owned::get`
+
+```cpp
+[[nodiscard]] const T& get() const noexcept;
+```
+
+<a id="libtmux-lifecycle-hpp-owned-operator-3"></a>
+#### `Owned::operator->`
+
+```cpp
+[[nodiscard]] const T* operator->() const noexcept;
+```
+
+<a id="libtmux-lifecycle-hpp-owned-cleanup"></a>
+#### `Owned::cleanup`
+
+```cpp
+[[nodiscard]] CleanupHandle cleanup() const;
+```
+
+<a id="libtmux-lifecycle-hpp-owned-close"></a>
+#### `Owned::close`
+
+```cpp
+[[nodiscard]] expected<void, CommandFailure> close() const;
+```
+
+<a id="libtmux-lifecycle-hpp-ownedscoperesult"></a>
+### `OwnedScopeResult`
+
+Both errors remain accessible when a body and cleanup fail. Exception bodies appear in `body_exception`; expected-style bodies in `body_failure`.
+
+```cpp
+struct OwnedScopeResult;
+```
+
+<a id="libtmux-lifecycle-hpp-ownedscoperesult-body-failure"></a>
+#### `OwnedScopeResult::body_failure`
+
+```cpp
+std::optional<CommandFailure> body_failure{};
+```
+
+<a id="libtmux-lifecycle-hpp-ownedscoperesult-body-exception"></a>
+#### `OwnedScopeResult::body_exception`
+
+```cpp
+std::exception_ptr body_exception{};
+```
+
+<a id="libtmux-lifecycle-hpp-ownedscoperesult-cleanup"></a>
+#### `OwnedScopeResult::cleanup`
+
+```cpp
+CleanupReport cleanup;
+```
+
+<a id="libtmux-lifecycle-hpp-ownedscoperesult-ok"></a>
+#### `OwnedScopeResult::ok`
+
+```cpp
+[[nodiscard]] bool ok() const noexcept;
+```
+
+<a id="libtmux-lifecycle-hpp-foundorcreated"></a>
+### `FoundOrCreated`
+
+A reused value is borrowed and has no owner. A created value carries its owner; retain this result while using it or move the owner into your scope.
+
+```cpp
+template <typename T> struct FoundOrCreated;
+```
+
+<a id="libtmux-lifecycle-hpp-foundorcreated-value"></a>
+#### `FoundOrCreated::value`
+
+```cpp
+T value;
+```
+
+<a id="libtmux-lifecycle-hpp-foundorcreated-owner"></a>
+#### `FoundOrCreated::owner`
+
+```cpp
+std::optional<Owned<T>> owner;
+```
+
+<a id="libtmux-lifecycle-hpp-foundorcreated-created"></a>
+#### `FoundOrCreated::created`
+
+```cpp
+[[nodiscard]] bool created() const noexcept;
+```
+
+<a id="libtmux-lifecycle-hpp-discoveryoptions"></a>
+### `DiscoveryOptions`
+
+Roots are directories containing sockets, scanned without recursion. The configured roots add `$TMUX_TMPDIR/tmux-<uid>` and `/tmp/tmux-<uid>`. Symlinks to sockets and roots are followed through the filesystem, never lexically normalized. Duplicate roots consume the root bound; duplicate socket inodes consume the entry bound but are probed only once.
+
+```cpp
+struct DiscoveryOptions;
+```
+
+<a id="libtmux-lifecycle-hpp-discoveryoptions-roots"></a>
+#### `DiscoveryOptions::roots`
+
+```cpp
+std::vector<std::filesystem::path> roots{};
+```
+
+<a id="libtmux-lifecycle-hpp-discoveryoptions-configured-roots"></a>
+#### `DiscoveryOptions::configured_roots`
+
+```cpp
+bool configured_roots{true};
+```
+
+<a id="libtmux-lifecycle-hpp-discoveryoptions-max-roots"></a>
+#### `DiscoveryOptions::max_roots`
+
+```cpp
+std::size_t max_roots{16};
+```
+
+<a id="libtmux-lifecycle-hpp-discoveryoptions-max-entries"></a>
+#### `DiscoveryOptions::max_entries`
+
+```cpp
+std::size_t max_entries{256};
+```
+
+<a id="libtmux-lifecycle-hpp-discoveryoptions-max-probes"></a>
+#### `DiscoveryOptions::max_probes`
+
+```cpp
+std::size_t max_probes{64};
+```
+
+<a id="libtmux-lifecycle-hpp-discoveryoptions-timeout"></a>
+#### `DiscoveryOptions::timeout`
+
+```cpp
+std::chrono::milliseconds timeout{2000};
+```
+
+<a id="libtmux-lifecycle-hpp-discoveryoptions-probe-timeout"></a>
+#### `DiscoveryOptions::probe_timeout`
+
+```cpp
+std::chrono::milliseconds probe_timeout{100};
+```
+
+<a id="libtmux-lifecycle-hpp-discoveryoptions-policy"></a>
+#### `DiscoveryOptions::policy`
+
+```cpp
+ExecutionPolicy policy{};
+```
+
+<a id="libtmux-lifecycle-hpp-discoveryoptions-bool"></a>
+#### `DiscoveryOptions::bool`
+
+```cpp
+std::function<bool()> cancelled;
+```
+
+<a id="libtmux-lifecycle-hpp-discoveredserver"></a>
+### `DiscoveredServer`
+
+```cpp
+struct DiscoveredServer;
+```
+
+<a id="libtmux-lifecycle-hpp-discoveredserver-socket"></a>
+#### `DiscoveredServer::socket`
+
+```cpp
+std::filesystem::path socket;
+```
+
+<a id="libtmux-lifecycle-hpp-discoveredserver-pid"></a>
+#### `DiscoveredServer::pid`
+
+```cpp
+std::string pid;
+```
+
+<a id="libtmux-lifecycle-hpp-discoveredserver-start-time"></a>
+#### `DiscoveredServer::start_time`
+
+```cpp
+std::string start_time;
+```
+
+<a id="libtmux-lifecycle-hpp-discoverydiagnostic"></a>
+### `DiscoveryDiagnostic`
+
+Includes successful probes, duplicates, non-sockets and failed roots.
+
+```cpp
+struct DiscoveryDiagnostic;
+```
+
+<a id="libtmux-lifecycle-hpp-discoverydiagnostic-path"></a>
+#### `DiscoveryDiagnostic::path`
+
+```cpp
+std::filesystem::path path;
+```
+
+<a id="libtmux-lifecycle-hpp-discoverydiagnostic-outcome"></a>
+#### `DiscoveryDiagnostic::outcome`
+
+```cpp
+std::string outcome;
+```
+
+<a id="libtmux-lifecycle-hpp-discoverydiagnostic-failure"></a>
+#### `DiscoveryDiagnostic::failure`
+
+```cpp
+std::optional<CommandFailure> failure{};
+```
+
+<a id="libtmux-lifecycle-hpp-discoveryresult"></a>
+### `DiscoveryResult`
+
+```cpp
+struct DiscoveryResult;
+```
+
+<a id="libtmux-lifecycle-hpp-discoveryresult-servers"></a>
+#### `DiscoveryResult::servers`
+
+```cpp
+std::vector<DiscoveredServer> servers;
+```
+
+<a id="libtmux-lifecycle-hpp-discoveryresult-diagnostics"></a>
+#### `DiscoveryResult::diagnostics`
+
+```cpp
+std::vector<DiscoveryDiagnostic> diagnostics;
+```
+
+<a id="libtmux-lifecycle-hpp-discoveryresult-truncated"></a>
+#### `DiscoveryResult::truncated`
+
+```cpp
+bool truncated{false};
+```
+
+<a id="libtmux-lifecycle-hpp-discoveryresult-roots-examined"></a>
+#### `DiscoveryResult::roots_examined`
+
+```cpp
+std::size_t roots_examined{};
+```
+
+<a id="libtmux-lifecycle-hpp-discoveryresult-entries-examined"></a>
+#### `DiscoveryResult::entries_examined`
+
+```cpp
+std::size_t entries_examined{};
+```
+
+<a id="libtmux-lifecycle-hpp-discoveryresult-probes"></a>
+#### `DiscoveryResult::probes`
+
+```cpp
+std::size_t probes{};
+```
+
+<a id="libtmux-lifecycle-hpp-free-symbols"></a>
+### `Free symbols`
+
+<a id="libtmux-lifecycle-hpp-free-symbols-with-owned"></a>
+#### `with_owned`
+
+```cpp
+template <typename T, typename Body> [[nodiscard]] OwnedScopeResult with_owned(Owned<T>& owner, Body&& body);
+```
+Run a body returning expected<void, CommandFailure>, then checked cleanup. Inspect this result without losing the body error to a cleanup error.
+
+<a id="libtmux-lifecycle-hpp-free-symbols-adopt"></a>
+#### `adopt`
+
+```cpp
+[[nodiscard]] expected<Owned<Server>, LifecycleFailure> adopt(const Server& server, LifecycleOptions options = {});
+```
+Explicitly accept destruction responsibility for an existing object. POSIX subprocess tmux only; unsupported transports fail before dispatch.
+
+<a id="libtmux-lifecycle-hpp-free-symbols-adopt-2"></a>
+#### `adopt`
+
+```cpp
+[[nodiscard]] expected<Owned<Session>, LifecycleFailure> adopt(const Session& session, LifecycleOptions options = {});
+```
+
+<a id="libtmux-lifecycle-hpp-free-symbols-adopt-3"></a>
+#### `adopt`
+
+```cpp
+[[nodiscard]] expected<Owned<Window>, LifecycleFailure> adopt(const Window& window, LifecycleOptions options = {});
+```
+
+<a id="libtmux-lifecycle-hpp-free-symbols-adopt-4"></a>
+#### `adopt`
+
+```cpp
+[[nodiscard]] expected<Owned<Pane>, LifecycleFailure> adopt(const Pane& pane, LifecycleOptions options = {});
+```
+
+<a id="libtmux-lifecycle-hpp-free-symbols-own-session"></a>
+#### `own_session`
+
+```cpp
+[[nodiscard]] expected<Owned<Session>, LifecycleFailure> own_session(const Server& server, NewSessionOptions creation, LifecycleOptions options = {});
+```
+Create an owned object. A valid receipt survives command failure, timeout and cancellation so rollback can target the creating daemon and exact id.
+
+<a id="libtmux-lifecycle-hpp-free-symbols-own-window"></a>
+#### `own_window`
+
+```cpp
+[[nodiscard]] expected<Owned<Window>, LifecycleFailure> own_window(const Session& session, NewWindowOptions creation, LifecycleOptions options = {});
+```
+
+<a id="libtmux-lifecycle-hpp-free-symbols-own-pane"></a>
+#### `own_pane`
+
+```cpp
+[[nodiscard]] expected<Owned<Pane>, LifecycleFailure> own_pane(const Pane& target, SplitOptions creation = {}, LifecycleOptions options = {});
+```
+
+<a id="libtmux-lifecycle-hpp-free-symbols-own-server"></a>
+#### `own_server`
+
+```cpp
+[[nodiscard]] expected<Owned<Server>, LifecycleFailure> own_server(const Server& startable, NewSessionOptions first_session, LifecycleOptions options = {});
+```
+Start through a startable Server handle, creating the named first session. Refuses an existing daemon. A random inherited startup nonce proves this call started the daemon; the generation option alone cannot prove that.
+
+<a id="libtmux-lifecycle-hpp-free-symbols-find-or-create-server"></a>
+#### `find_or_create_server`
+
+```cpp
+[[nodiscard]] expected<FoundOrCreated<Server>, LifecycleFailure> find_or_create_server(const Server& startable, NewSessionOptions first_session, LifecycleOptions options = {});
+```
+These calls serialize lookup and creation within this process, including calls made through separate handles. Other tmux clients can still change objects. Reentry from a command observer returns overloaded; it cannot wait for its own active acquisition. Sessions match an exact name; windows match a name in one session; panes match `@libtmux_pane_key` in one window. Multiple matches fail rather than selecting an arbitrary object. The supplied pane key must be nonempty.
+
+<a id="libtmux-lifecycle-hpp-free-symbols-find-or-create-session"></a>
+#### `find_or_create_session`
+
+```cpp
+[[nodiscard]] expected<FoundOrCreated<Session>, LifecycleFailure> find_or_create_session(const Server& server, NewSessionOptions creation, LifecycleOptions options = {});
+```
+
+<a id="libtmux-lifecycle-hpp-free-symbols-find-or-create-window"></a>
+#### `find_or_create_window`
+
+```cpp
+[[nodiscard]] expected<FoundOrCreated<Window>, LifecycleFailure> find_or_create_window(const Session& session, NewWindowOptions creation, LifecycleOptions options = {});
+```
+
+<a id="libtmux-lifecycle-hpp-free-symbols-find-or-create-pane"></a>
+#### `find_or_create_pane`
+
+```cpp
+[[nodiscard]] expected<FoundOrCreated<Pane>, LifecycleFailure> find_or_create_pane(const Window& window, std::string_view key, SplitOptions creation = {}, LifecycleOptions options = {});
+```
+
+<a id="libtmux-lifecycle-hpp-free-symbols-discover-servers"></a>
+#### `discover_servers`
+
+```cpp
+[[nodiscard]] expected<DiscoveryResult, CommandFailure> discover_servers(DiscoveryOptions options = {});
+```
+No-start, bounded discovery; it cannot inventory arbitrary system paths. Metadata inspection is synchronous, so a blocked filesystem call can exceed the elapsed-time bound. No probe initializes ownership metadata.
 
 <a id="libtmux-layout-hpp"></a>
 ## `libtmux/layout.hpp`
@@ -5553,6 +6283,7 @@ Why a tmux command produced no answer.  `refused` means tmux ran and said no; `m
   - [`ExecutionPolicy::timeout`](#libtmux-command-hpp-executionpolicy-timeout)
   - [`ExecutionPolicy::output_limit`](#libtmux-command-hpp-executionpolicy-output-limit)
   - [`ExecutionPolicy::tmux_binary`](#libtmux-command-hpp-executionpolicy-tmux-binary)
+  - [`ExecutionPolicy::child_environment`](#libtmux-command-hpp-executionpolicy-child-environment)
 - [`CommandExecutor`](#libtmux-command-hpp-commandexecutor)
   - [`CommandExecutor::CommandExecutor`](#libtmux-command-hpp-commandexecutor-commandexecutor)
   - [`CommandExecutor::CommandExecutor`](#libtmux-command-hpp-commandexecutor-commandexecutor-2)
@@ -5904,6 +6635,14 @@ std::filesystem::path tmux_binary{"tmux"};
 ```
 Which tmux to run. A bare name is resolved through `PATH`, as tmux's own documentation assumes; a path containing a separator is used as given.  Naming it is how a caller stops `PATH` deciding: a hermetic build, a pinned version under test, or a wrapper that reaches tmux on another machine. It rides the policy rather than the call because a Server's connection is immutable, and because a handle that changed which tmux it meant between two calls would make its own entities disagree.  `Server::control` passes this to the connection it opens, so both transports run the same executable unless the caller overrides it in `ConnectionOptions`.
 
+<a id="libtmux-command-hpp-executionpolicy-child-environment"></a>
+#### `ExecutionPolicy::child_environment`
+
+```cpp
+std::optional<std::vector<std::string>> child_environment{};
+```
+Complete child environment as `NAME=value` entries. Absent captures the host environment when the Server is constructed. An empty vector means an empty environment. Endpoint defaults and binary lookup use this same snapshot; launches remove `TMUX` and `TMUX_PANE`. Host values are unchanged. This does not change an existing tmux server's or session's environment.
+
 <a id="libtmux-command-hpp-commandexecutor"></a>
 ### `CommandExecutor`
 
@@ -6157,6 +6896,7 @@ Decode tmux's control protocol.  A control-mode stream interleaves command reply
   - [`ConnectionOptions::line_bytes`](#libtmux-control-hpp-connectionoptions-line-bytes)
   - [`ConnectionOptions::pane_output`](#libtmux-control-hpp-connectionoptions-pane-output)
   - [`ConnectionOptions::pause_after`](#libtmux-control-hpp-connectionoptions-pause-after)
+  - [`ConnectionOptions::child_environment`](#libtmux-control-hpp-connectionoptions-child-environment)
 - [`NotificationRange`](#libtmux-control-hpp-notificationrange)
   - [`NotificationRange::NotificationRange`](#libtmux-control-hpp-notificationrange-notificationrange)
   - [`NotificationRange::begin`](#libtmux-control-hpp-notificationrange-begin)
@@ -6468,6 +7208,14 @@ Deliver `%output` for every pane, as notifications.  Off, so tmux is not asked t
 std::optional<std::chrono::seconds> pause_after{};
 ```
 Discard a pane's queued output once it is this far behind, and say so with `%pause`.  A data-loss policy rather than backpressure, and unset is a policy too: tmux then buffers until a queued block is five minutes old and closes the connection with `too far behind`. Set this and a slow reader survives having lost output; leave it and a slow enough reader loses the connection. Only meaningful with `pane_output`.  `%pause` is the sole report that anything was dropped, and it names the pane. A caller that sets this and ignores notifications has chosen to lose output silently.
+
+<a id="libtmux-control-hpp-connectionoptions-child-environment"></a>
+#### `ConnectionOptions::child_environment`
+
+```cpp
+std::optional<std::vector<std::string>> child_environment{};
+```
+Complete child environment as `NAME=value` entries. Absent captures the host environment at connect, or uses the Server's snapshot through `Server::control`. Launches remove `TMUX` and `TMUX_PANE`.
 
 <a id="libtmux-control-hpp-notificationrange"></a>
 ### `NotificationRange`
@@ -7703,6 +8451,9 @@ Build the connection arguments that select a tmux-compatible server.  tmux selec
   - [`SocketError::name_has_separator`](#libtmux-socket-hpp-socketerror-name-has-separator)
   - [`SocketError::path_too_long`](#libtmux-socket-hpp-socketerror-path-too-long)
   - [`SocketError::path_unsupported`](#libtmux-socket-hpp-socketerror-path-unsupported)
+  - [`SocketError::name_is_dot`](#libtmux-socket-hpp-socketerror-name-is-dot)
+  - [`SocketError::contains_nul`](#libtmux-socket-hpp-socketerror-contains-nul)
+  - [`SocketError::path_not_absolute`](#libtmux-socket-hpp-socketerror-path-not-absolute)
 - [`Free symbols`](#libtmux-socket-hpp-free-symbols)
   - [`kSocketPathLimit`](#libtmux-socket-hpp-free-symbols-ksocketpathlimit)
   - [`kSocketPathLimit`](#libtmux-socket-hpp-free-symbols-ksocketpathlimit-2)
@@ -7730,6 +8481,15 @@ enum class SocketError;
 
 <a id="libtmux-socket-hpp-socketerror-path-unsupported"></a>
 #### `SocketError::path_unsupported` — `path_unsupported,`
+
+<a id="libtmux-socket-hpp-socketerror-name-is-dot"></a>
+#### `SocketError::name_is_dot` — `name_is_dot,`
+
+<a id="libtmux-socket-hpp-socketerror-contains-nul"></a>
+#### `SocketError::contains_nul` — `contains_nul,`
+
+<a id="libtmux-socket-hpp-socketerror-path-not-absolute"></a>
+#### `SocketError::path_not_absolute` — `path_not_absolute,`
 
 <a id="libtmux-socket-hpp-free-symbols"></a>
 ### `Free symbols`

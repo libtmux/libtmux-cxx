@@ -41,6 +41,17 @@ target_compile_definitions(
   PRIVATE
     "LIBTMUX_EXAMPLE_BINARY_DIR=\"$<TARGET_FILE_DIR:libtmux_example_01_tour>\"")
 
+find_program(LIBTMUX_EXAMPLE_TEST_TMUX NAMES tmux REQUIRED)
+target_compile_definitions(libtmux_example_test PRIVATE
+  LIBTMUX_TEST_TMUX_PATH="${LIBTMUX_EXAMPLE_TEST_TMUX}")
+
+add_dependencies(libtmux_example_test libtmux_example_07_default libtmux_example_08_lifecycle)
+add_test(NAME example.07-default COMMAND libtmux_example_test --gtest_filter=OrdinaryExample.*)
+set_tests_properties(example.07-default PROPERTIES LABELS "example;real-tmux" TIMEOUT 60)
+
 add_test(NAME examples.suite COMMAND libtmux_example_test)
 set_tests_properties(
   examples.suite PROPERTIES LABELS "example;consumer;real-tmux" TIMEOUT 300)
+
+add_test(NAME example.08-lifecycle COMMAND libtmux_example_test --gtest_filter=LifecycleExample.*)
+set_tests_properties(example.08-lifecycle PROPERTIES LABELS "example;real-tmux" TIMEOUT 60)

@@ -1,5 +1,6 @@
 #include "libtmux/control.hpp"
 
+#include "environment.hpp"
 #include "libtmux/expected.hpp"
 #include "notification_stream.hpp"
 #include "spawn_descriptors.hpp"
@@ -223,15 +224,11 @@ expected<std::string, ProtocolError> render_request(ControlRequest&& request) {
   return line;
 }
 
-std::vector<std::string> sanitized_environment() {
-  std::vector<std::string> values;
-  for (auto** entry = environ; entry != nullptr && *entry != nullptr; ++entry) {
-    const std::string_view value{*entry};
-    if (value.starts_with("TMUX=") || value.starts_with("TMUX_PANE=")) {
-      continue;
-    }
-    values.emplace_back(value);
-  }
+std::vector<std::string> sanitized_environment(const ConnectionOptions& options) {
+  auto values = options.child_environment.has_value() ? *options.child_environment
+                                                      : libtmux_env::snapshot();
+  libtmux_env::erase(values, "TMUX");
+  libtmux_env::erase(values, "TMUX_PANE");
   return values;
 }
 
@@ -253,6 +250,12 @@ struct SpawnedClient {
 };
 
 expected<SpawnedClient, ProtocolError> spawn_client(const ConnectionOptions& options) {
+  auto environment = sanitized_environment(options);
+  if (!libtmux_env::valid(environment)) {
+    return unexpected(ProtocolError{
+        .message = "the child environment must contain NAME=value entries without NUL",
+        .delivery = DeliveryStatus::not_started});
+  }
   auto input_pipe = make_pipe();
   if (!input_pipe) {
     return unexpected(input_pipe.error());
@@ -363,11 +366,13 @@ expected<SpawnedClient, ProtocolError> spawn_client(const ConnectionOptions& opt
   }
   arguments.insert(arguments.end(), {"-t", "=" + options.session_name});
   auto argument_pointers = writable_pointers(arguments);
-  auto environment = sanitized_environment();
   auto environment_pointers = writable_pointers(environment);
   pid_t pid = -1;
-  result = ::posix_spawnp(&pid, arguments.front().c_str(), &actions, &attributes,
-                          argument_pointers.data(), environment_pointers.data());
+  const auto executable = libtmux_env::executable(arguments.front(), environment);
+  result = executable.has_value()
+               ? ::posix_spawnp(&pid, executable->c_str(), &actions, &attributes,
+                                argument_pointers.data(), environment_pointers.data())
+               : ENOENT;
   const auto destroy_attributes = ::posix_spawnattr_destroy(&attributes);
   const auto destroy_actions = ::posix_spawn_file_actions_destroy(&actions);
   if (result != 0) {
