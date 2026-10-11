@@ -19,15 +19,16 @@ int main() {
     return 1;
   }
 
-  // Copying the handle keeps the same connection; it does not start another server.
+  // Copying the handle keeps the same connection; it does not start another
+  // server.
   const libtmux::Server copy = *server;
   const auto sessions = copy.sessions();
   if (!sessions.has_value()) {
     std::fprintf(stderr, "%s\n", sessions.error().diagnostic.c_str());
     return 1;
   }
-  if (copy.socket_path() != fixture->socket_path().string() || sessions->size() != 1 ||
-      sessions->front().name() != "api") {
+  if (copy.socket_path() != fixture->socket_path().string() ||
+      sessions->size() != 1 || sessions->front().name() != "api") {
     std::fputs("unexpected server or session\n", stderr);
     return 1;
   }

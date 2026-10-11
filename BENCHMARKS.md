@@ -6,7 +6,8 @@ building them at all):
 
 ```console
 $ cmake --preset cxx-dev -DLIBTMUX_BUILD_BENCHMARKS=ON
-$ cmake --build --preset cxx-dev --target libtmux_matrix libtmux_operations_bench
+$ cmake --build --preset cxx-dev \
+    --target libtmux_matrix libtmux_operations_bench
 ```
 
 ## [`apps/matrix/`](apps/matrix/README.md) - command dispatch

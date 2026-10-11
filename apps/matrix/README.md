@@ -28,7 +28,7 @@ The compilers are named because the toolchain adds `-stdlib=libc++`, which
 GCC rejects: left to itself CMake can pick the system `c++` and stop at its
 compiler check.
 
-```
+```text
 
 building a 6-pane window, tmux 3.7d
 libtmux at 38a9fbb

@@ -82,7 +82,12 @@ eight.
 Run the suite under a temporary directory as long as the one macOS gives:
 
 ```console
-$ BASE=/tmp/$(printf 'm%.0s' $(seq 1 52)) && mkdir -p "$BASE" && TMPDIR="$BASE" ctest --preset cxx-dev --no-tests=error; rmdir "$BASE"
+$ BASE=/tmp/$(printf 'm%.0s' $(seq 1 52)) && \
+    mkdir -p "$BASE" && \
+    TMPDIR="$BASE" ctest \
+      --preset cxx-dev \
+      --no-tests=error; \
+  rmdir "$BASE"
 ```
 
 ## Checks that must pass
@@ -116,7 +121,10 @@ builds the library a consumer links, and a test there asserts the archive
 exports no seam at all. Tests that need one skip by name when it is absent.
 
 ```console
-$ python3 -m tools.parity verify --manifest tools/parity/data/manifest.json --mode structural --allow-pending
+$ python3 -m tools.parity verify \
+    --manifest tools/parity/data/manifest.json \
+    --mode structural \
+    --allow-pending
 ```
 
 ```console
@@ -185,6 +193,14 @@ line as `// Given: <type> <name>` (repeated for more than one, separated by
 
 ```console
 $ python3 -m tools.docs.check_example_isolation
+```
+
+Examples stay within 80 columns. The scope and any listed exceptions are in
+[`example-width.toml`](example-width.toml); this fails on a wider line, and
+`--self-test` proves it can:
+
+```console
+$ python3 tools/docs/check_example_width.py
 ```
 
 This repository is also a vcpkg registry, and the versions database can drift

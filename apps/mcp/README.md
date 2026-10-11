@@ -414,7 +414,7 @@ psmux; it creates a high-entropy selector, an empty configuration file, and a
 state file used by the commands below:
 
 ```console
-$ & {
+PS> & {
     $ErrorActionPreference = "Stop"
     function Remove-ExactArtifact {
         param([string] $Path)
@@ -565,7 +565,13 @@ uses the documented [Codex stdio environment
 configuration](https://developers.openai.com/codex/mcp/):
 
 ```console
-$ $state = Get-Content "$env:LOCALAPPDATA\libtmux-cxx-mcp\psmux-state.json" | ConvertFrom-Json; codex mcp add tmux-windows --env "PSMUX_CONFIG_FILE=$($state.config_path)" --env PSMUX_NO_WARM=1 -- "C:\path\to\prefix\bin\libtmux-mcp-server.exe" --socket-name $state.socket_name
+PS> $state = Get-Content `
+    "$env:LOCALAPPDATA\libtmux-cxx-mcp\psmux-state.json" | ConvertFrom-Json
+PS> codex mcp add tmux-windows `
+    --env "PSMUX_CONFIG_FILE=$($state.config_path)" `
+    --env PSMUX_NO_WARM=1 `
+    -- "C:\path\to\prefix\bin\libtmux-mcp-server.exe" `
+    --socket-name $state.socket_name
 ```
 
 Claude Code uses the same state and explicit selector. `--transport stdio`
@@ -574,7 +580,16 @@ required by the [Claude Code MCP
 syntax](https://code.claude.com/docs/en/mcp#option-3-add-a-local-stdio-server):
 
 ```console
-$ $state = Get-Content "$env:LOCALAPPDATA\libtmux-cxx-mcp\psmux-state.json" | ConvertFrom-Json; claude mcp add --env "PSMUX_CONFIG_FILE=$($state.config_path)" --env PSMUX_NO_WARM=1 --transport stdio --scope local tmux-windows -- "C:\path\to\prefix\bin\libtmux-mcp-server.exe" --socket-name $state.socket_name
+PS> $state = Get-Content `
+    "$env:LOCALAPPDATA\libtmux-cxx-mcp\psmux-state.json" | ConvertFrom-Json
+PS> claude mcp add `
+    --env "PSMUX_CONFIG_FILE=$($state.config_path)" `
+    --env PSMUX_NO_WARM=1 `
+    --transport stdio `
+    --scope local `
+    tmux-windows `
+    -- "C:\path\to\prefix\bin\libtmux-mcp-server.exe" `
+    --socket-name $state.socket_name
 ```
 
 Supplying the same empty `PSMUX_CONFIG_FILE` at creation and MCP launch avoids
@@ -590,7 +605,7 @@ issues `kill-server`. It isolates routing variables during cleanup and restores
 their original values before removing the task artifacts:
 
 ```console
-$ & {
+PS> & {
     $ErrorActionPreference = "Stop"
     function Get-PsmuxRegistryItems {
         param([string] $Root, [string] $Filter)

@@ -47,7 +47,10 @@ Python surface is answered, and how much of that is recorded with evidence.
 Two halves, and only one can run in this repository:
 
 ```console
-$ python3 -m tools.parity verify --manifest tools/parity/data/manifest.json --mode structural --allow-pending
+$ python3 -m tools.parity verify \
+    --manifest tools/parity/data/manifest.json \
+    --mode structural \
+    --allow-pending
 ```
 
 `verify`, `gaps`, `coverage` and `record-evidence` read the recorded artifacts
