@@ -515,8 +515,9 @@ PS> & {
                 }
             }
             catch {
+                $artifactFailure = $_.Exception.Message
                 $setupFailure += "; prelaunch artifact cleanup failed: " +
-                    "$($_.Exception.Message); config=$configPath state=$statePath"
+                    "$artifactFailure; config=$configPath state=$statePath"
             }
         }
     }
@@ -689,7 +690,8 @@ PS> & {
     if ($sessionName -cne "agent-$suffix") {
         throw "refusing an invalid recorded psmux session name"
     }
-    $expectedConfig = [IO.Path]::GetFullPath((Join-Path $root "$socketName.conf"))
+    $expectedPath = Join-Path $root "$socketName.conf"
+    $expectedConfig = [IO.Path]::GetFullPath($expectedPath)
     $recordedConfig = [IO.Path]::GetFullPath([string]$state.config_path)
     $sameConfig = [string]::Equals(
         $expectedConfig,
@@ -755,7 +757,8 @@ PS> & {
             Start-Sleep -Milliseconds 100
         } while ([DateTime]::UtcNow -lt $deadline)
         if ($live.Count -ne 0) {
-            throw "psmux left exact live registry files: $($live.FullName -join ', ')"
+            $names = $live.FullName -join ', '
+            throw "psmux left exact live registry files: $names"
         }
         $unknown = @(
             $residue | Where-Object {
@@ -764,7 +767,8 @@ PS> & {
             }
         )
         if ($unknown.Count -ne 0) {
-            throw "psmux left unknown exact registry items: $($unknown.FullName -join ', ')"
+            $names = $unknown.FullName -join ', '
+            throw "psmux left unknown exact registry items: $names"
         }
         foreach ($file in @(
             $residue | Where-Object {
