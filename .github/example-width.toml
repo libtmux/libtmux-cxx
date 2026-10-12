@@ -1,0 +1,60 @@
+width = 80
+shared_digest = "28b74bae1f7a06731fea5a150cbde4430179b7788b7564ea1644c3951df8531b"
+checker_digest = "eb87afceb3fc8f11ef5a478cd38f901ef3950e89ff94fbe0ca281c0cfc1a0e2e"
+markdown = ["**/*.md", "**/*.rst"]
+allow_ceiling = 3
+sources = [
+  "examples/**/*.cpp",
+  "examples/**/*.hpp",
+  "examples/**/CMakeLists.txt",
+  "examples/**/*.ps1",
+  "examples/.clang-format",
+]
+doc_comments = ["include/**/*.hpp"]
+
+[[exclude]]
+glob = "tools/docs/fixtures/api_index.expected.md"
+reason = "A fixture the api_index test compares byte for byte against the generator's output"
+
+[[exclude]]
+glob = "examples/api/api-examples.json"
+reason = "The manifest tools/docs/check_api_examples.py reads; its description strings are JSON values that cannot break"
+
+[[exclude]]
+glob = "docs/api.md"
+reason = "Generated from the headers by tools/docs/api_index.py; signatures follow the headers' clang-format limit"
+
+[[exclude]]
+glob = "docs/api-testing.md"
+reason = "Generated from the headers by tools/docs/api_index.py; signatures follow the headers' clang-format limit"
+
+[[exclude]]
+glob = "docs/plans/**"
+reason = "Internal implementation plans written for agents, not reader-facing pages"
+
+[[exclude]]
+glob = "docs/bakeoffs/**"
+reason = "Dated bake-off records that quote measured output verbatim"
+
+[[exclude]]
+glob = "docs/evidence/**"
+reason = "Dated audit and review records that quote evidence verbatim"
+
+[[exclude]]
+glob = "docs/decisions/**"
+reason = "Dated decision records; rewriting them would falsify what was decided"
+
+[[allow]]
+path = "examples/windows/README.md"
+line = '      "command": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",'
+reason = "A JSON string cannot break, and the guide says to resolve this path in full"
+
+[[allow]]
+path = "examples/windows/README.md"
+line = '        "C:\\src\\libtmux-cxx\\build\\windows-psmux\\apps\\mcp\\Debug\\libtmux-mcp-server.exe"'
+reason = "A JSON string cannot break, and the guide says to resolve this path in full"
+
+[[allow]]
+path = ".github/WRITING.md"
+line = '$ python3 -m tools.parity verify --manifest tools/parity/data/manifest.json --mode structural --allow-pending'
+reason = "the Bad example in the port block; it shows the width problem the Good example fixes"

@@ -20,12 +20,14 @@ if(LIBTMUX_BUILD_TESTS AND NOT WIN32)
   # `libtmux::testing` directly, not this repository's internal alias. This
   # builder exists to put weight on the public surface, which includes how a
   # consumer reaches the fixture.
-  add_executable(workspace_builder_test tests/workspace_test.cpp tests/tmuxp_test.cpp)
+  add_executable(
+    workspace_builder_test tests/workspace_test.cpp tests/tmuxp_test.cpp)
   target_link_libraries(
     workspace_builder_test
     PRIVATE GTest::gtest_main libtmux_build_options workspace_builder
             libtmux::testing)
-  target_compile_options(workspace_builder_test PRIVATE -fno-sanitize-recover=undefined)
+  target_compile_options(
+    workspace_builder_test PRIVATE -fno-sanitize-recover=undefined)
 
   add_test(NAME consumer.workspace COMMAND workspace_builder_test)
   set_tests_properties(

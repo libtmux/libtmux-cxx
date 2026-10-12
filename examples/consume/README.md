@@ -18,15 +18,20 @@ Install the library somewhere, then build this against it:
 ### POSIX
 
 ```console
-$ cmake -S ../.. -B /tmp/libtmux-build -DLIBTMUX_BUILD_TESTS=OFF -DLIBTMUX_BUILD_EXAMPLES=OFF
+$ cmake -S ../.. -B /tmp/libtmux-build \
+    -DLIBTMUX_BUILD_TESTS=OFF \
+    -DLIBTMUX_BUILD_EXAMPLES=OFF
 ```
 
 ```console
-$ cmake --build /tmp/libtmux-build && cmake --install /tmp/libtmux-build --prefix /tmp/libtmux-prefix
+$ cmake --build /tmp/libtmux-build \
+    && cmake --install /tmp/libtmux-build --prefix /tmp/libtmux-prefix
 ```
 
 ```console
-$ cmake -S . -B /tmp/consume-build -DCMAKE_PREFIX_PATH=/tmp/libtmux-prefix && cmake --build /tmp/consume-build
+$ cmake -S . -B /tmp/consume-build \
+    -DCMAKE_PREFIX_PATH=/tmp/libtmux-prefix \
+    && cmake --build /tmp/consume-build
 ```
 
 ```console
@@ -42,27 +47,36 @@ install the library without its psmux-dependent smoke, then consume only the
 installed package:
 
 ```console
-$ cmake -S ../.. -B build/libtmux -G "Visual Studio 17 2022" -A x64 -DLIBTMUX_BUILD_TESTS=OFF -DLIBTMUX_BUILD_EXAMPLES=OFF
+PS> cmake -S ../.. -B build/libtmux `
+    -G "Visual Studio 17 2022" `
+    -A x64 `
+    -DLIBTMUX_BUILD_TESTS=OFF `
+    -DLIBTMUX_BUILD_EXAMPLES=OFF
 ```
 
 ```console
-$ cmake --build build/libtmux --config Release
+PS> cmake --build build/libtmux --config Release
 ```
 
 ```console
-$ cmake --install build/libtmux --config Release --prefix "$PWD/build/libtmux-prefix"
+PS> cmake --install build/libtmux `
+    --config Release `
+    --prefix "$PWD/build/libtmux-prefix"
 ```
 
 ```console
-$ cmake -S . -B build/consume -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH="$PWD/build/libtmux-prefix"
+PS> cmake -S . -B build/consume `
+    -G "Visual Studio 17 2022" `
+    -A x64 `
+    -DCMAKE_PREFIX_PATH="$PWD/build/libtmux-prefix"
 ```
 
 ```console
-$ cmake --build build/consume --config Release
+PS> cmake --build build/consume --config Release
 ```
 
 ```console
-$ .\build\consume\Release\consume.exe
+PS> .\build\consume\Release\consume.exe
 ```
 
 This consumer never contacts psmux. The repository's native Windows smoke is

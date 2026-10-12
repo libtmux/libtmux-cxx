@@ -121,7 +121,8 @@ $ source <(tmux-workspace --generate-completion bash)
 For Zsh, initialise its completion system before sourcing the script:
 
 ```console
-$ autoload -Uz compinit && compinit && source <(tmux-workspace --generate-completion zsh)
+$ autoload -Uz compinit && compinit \
+    && source <(tmux-workspace --generate-completion zsh)
 ```
 
 For Fish:

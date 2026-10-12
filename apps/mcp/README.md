@@ -414,7 +414,7 @@ psmux; it creates a high-entropy selector, an empty configuration file, and a
 state file used by the commands below:
 
 ```console
-$ & {
+PS> & {
     $ErrorActionPreference = "Stop"
     function Remove-ExactArtifact {
         param([string] $Path)
@@ -515,8 +515,9 @@ $ & {
                 }
             }
             catch {
+                $artifactFailure = $_.Exception.Message
                 $setupFailure += "; prelaunch artifact cleanup failed: " +
-                    "$($_.Exception.Message); config=$configPath state=$statePath"
+                    "$artifactFailure; config=$configPath state=$statePath"
             }
         }
     }
@@ -565,7 +566,15 @@ uses the documented [Codex stdio environment
 configuration](https://developers.openai.com/codex/mcp/):
 
 ```console
-$ $state = Get-Content "$env:LOCALAPPDATA\libtmux-cxx-mcp\psmux-state.json" | ConvertFrom-Json; codex mcp add tmux-windows --env "PSMUX_CONFIG_FILE=$($state.config_path)" --env PSMUX_NO_WARM=1 -- "C:\path\to\prefix\bin\libtmux-mcp-server.exe" --socket-name $state.socket_name
+PS> & {
+    $state = Get-Content `
+        "$env:LOCALAPPDATA\libtmux-cxx-mcp\psmux-state.json" | ConvertFrom-Json
+    codex mcp add tmux-windows `
+        --env "PSMUX_CONFIG_FILE=$($state.config_path)" `
+        --env PSMUX_NO_WARM=1 `
+        -- "C:\path\to\prefix\bin\libtmux-mcp-server.exe" `
+        --socket-name $state.socket_name
+}
 ```
 
 Claude Code uses the same state and explicit selector. `--transport stdio`
@@ -574,7 +583,18 @@ required by the [Claude Code MCP
 syntax](https://code.claude.com/docs/en/mcp#option-3-add-a-local-stdio-server):
 
 ```console
-$ $state = Get-Content "$env:LOCALAPPDATA\libtmux-cxx-mcp\psmux-state.json" | ConvertFrom-Json; claude mcp add --env "PSMUX_CONFIG_FILE=$($state.config_path)" --env PSMUX_NO_WARM=1 --transport stdio --scope local tmux-windows -- "C:\path\to\prefix\bin\libtmux-mcp-server.exe" --socket-name $state.socket_name
+PS> & {
+    $state = Get-Content `
+        "$env:LOCALAPPDATA\libtmux-cxx-mcp\psmux-state.json" | ConvertFrom-Json
+    claude mcp add `
+        --env "PSMUX_CONFIG_FILE=$($state.config_path)" `
+        --env PSMUX_NO_WARM=1 `
+        --transport stdio `
+        --scope local `
+        tmux-windows `
+        -- "C:\path\to\prefix\bin\libtmux-mcp-server.exe" `
+        --socket-name $state.socket_name
+}
 ```
 
 Supplying the same empty `PSMUX_CONFIG_FILE` at creation and MCP launch avoids
@@ -590,7 +610,7 @@ issues `kill-server`. It isolates routing variables during cleanup and restores
 their original values before removing the task artifacts:
 
 ```console
-$ & {
+PS> & {
     $ErrorActionPreference = "Stop"
     function Get-PsmuxRegistryItems {
         param([string] $Root, [string] $Filter)
@@ -670,7 +690,8 @@ $ & {
     if ($sessionName -cne "agent-$suffix") {
         throw "refusing an invalid recorded psmux session name"
     }
-    $expectedConfig = [IO.Path]::GetFullPath((Join-Path $root "$socketName.conf"))
+    $expectedPath = Join-Path $root "$socketName.conf"
+    $expectedConfig = [IO.Path]::GetFullPath($expectedPath)
     $recordedConfig = [IO.Path]::GetFullPath([string]$state.config_path)
     $sameConfig = [string]::Equals(
         $expectedConfig,
@@ -736,7 +757,8 @@ $ & {
             Start-Sleep -Milliseconds 100
         } while ([DateTime]::UtcNow -lt $deadline)
         if ($live.Count -ne 0) {
-            throw "psmux left exact live registry files: $($live.FullName -join ', ')"
+            $names = $live.FullName -join ', '
+            throw "psmux left exact live registry files: $names"
         }
         $unknown = @(
             $residue | Where-Object {
@@ -745,7 +767,8 @@ $ & {
             }
         )
         if ($unknown.Count -ne 0) {
-            throw "psmux left unknown exact registry items: $($unknown.FullName -join ', ')"
+            $names = $unknown.FullName -join ', '
+            throw "psmux left unknown exact registry items: $names"
         }
         foreach ($file in @(
             $residue | Where-Object {

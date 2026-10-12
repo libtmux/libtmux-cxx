@@ -103,6 +103,7 @@ int main() {
     return 3;
   }
 
-  std::printf("libtmux %s consumed\n", std::string{libtmux::library_version()}.c_str());
+  std::printf("libtmux %s consumed\n",
+              std::string{libtmux::library_version()}.c_str());
   return 0;
 }

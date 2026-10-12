@@ -38,8 +38,8 @@ int main() {
     std::fprintf(stderr, "%s\n", sessions.error().diagnostic.c_str());
     return 1;
   }
-  if (made->name() != "work" || sessions->size() != 2 || window->name() != "main" ||
-      window->session_id() != made->id()) {
+  if (made->name() != "work" || sessions->size() != 2 ||
+      window->name() != "main" || window->session_id() != made->id()) {
     std::fputs("created session or first window does not match\n", stderr);
     return 1;
   }

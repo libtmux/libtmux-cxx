@@ -47,7 +47,8 @@ inline std::vector<char*> writable(std::vector<std::string>& entries) {
 // stdout and stderr are merged: a failing example's diagnostic and the output
 // leading up to it belong in one stream, in order, in the failure message.
 inline libtmux::expected<ProgramResult, std::string>
-run_program(const std::filesystem::path& program, std::vector<std::string> environment,
+run_program(const std::filesystem::path& program,
+            std::vector<std::string> environment,
             std::chrono::seconds timeout) {
   std::array<int, 2> pipe_ends{};
   if (::pipe(pipe_ends.data()) != 0) {
@@ -56,7 +57,8 @@ run_program(const std::filesystem::path& program, std::vector<std::string> envir
 
   posix_spawn_file_actions_t actions;
   ::posix_spawn_file_actions_init(&actions);
-  ::posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+  ::posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null",
+                                     O_RDONLY, 0);
   ::posix_spawn_file_actions_adddup2(&actions, pipe_ends[1], STDOUT_FILENO);
   ::posix_spawn_file_actions_adddup2(&actions, pipe_ends[1], STDERR_FILENO);
   ::posix_spawn_file_actions_addclose(&actions, pipe_ends[0]);
@@ -74,14 +76,16 @@ run_program(const std::filesystem::path& program, std::vector<std::string> envir
   ::close(pipe_ends[1]);
   if (spawned != 0) {
     ::close(pipe_ends[0]);
-    return libtmux::unexpected(program.string() + ": " + std::strerror(spawned));
+    return libtmux::unexpected(program.string() + ": " +
+                               std::strerror(spawned));
   }
 
   const auto deadline = std::chrono::steady_clock::now() + timeout;
   std::string output;
   while (true) {
-    const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
-        deadline - std::chrono::steady_clock::now());
+    const auto remaining =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - std::chrono::steady_clock::now());
     if (remaining.count() <= 0) {
       ::kill(child, SIGKILL);
       ::waitpid(child, nullptr, 0);
@@ -107,7 +111,8 @@ run_program(const std::filesystem::path& program, std::vector<std::string> envir
   }
   if (WIFSIGNALED(status)) {
     return libtmux::unexpected(program.string() + " was killed by signal " +
-                               std::to_string(WTERMSIG(status)) + '\n' + output);
+                               std::to_string(WTERMSIG(status)) + '\n' +
+                               output);
   }
   return ProgramResult{WEXITSTATUS(status), std::move(output)};
 }

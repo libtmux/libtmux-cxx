@@ -143,7 +143,8 @@ struct BuildStop {
 
 // Runs after session selection and before settings or windows. A returned stop
 // uses the builder's owned-session rollback and borrowed-session preservation.
-using BeforeBuild = std::function<std::optional<BuildStop>(const libtmux::Session&)>;
+using BeforeBuild =
+    std::function<std::optional<BuildStop>(const libtmux::Session&)>;
 
 enum class BuildPhase {
   session_started,
@@ -163,11 +164,13 @@ struct BuildEvent {
   std::string pane_id{};
 };
 // A refusal uses owned-session rollback or reports retained borrowed windows.
-using BuildObserver = std::function<std::optional<BuildStop>(const BuildEvent&)>;
+using BuildObserver =
+    std::function<std::optional<BuildStop>(const BuildEvent&)>;
 
-// Check all layouts before sessions, settings, or before-build callbacks change.
-inline std::optional<BuildError> validate_layouts(const Server& server,
-                                                  const Workspace& description) {
+// Check all layouts before sessions, settings, or before-build callbacks
+// change.
+inline std::optional<BuildError>
+validate_layouts(const Server& server, const Workspace& description) {
   std::vector<LayoutRequest> layouts;
   std::vector<std::size_t> indexes;
   layouts.reserve(description.windows.size());
@@ -190,8 +193,9 @@ namespace detail {
 // Drops the " (running: ...)" command-line suffix a diagnostic carries.
 inline std::string sentence(std::string_view diagnostic) {
   const auto marker = diagnostic.rfind(" (running: ");
-  return std::string{marker == std::string_view::npos ? diagnostic
-                                                      : diagnostic.substr(0, marker)};
+  return std::string{marker == std::string_view::npos
+                         ? diagnostic
+                         : diagnostic.substr(0, marker)};
 }
 [[nodiscard]] inline libtmux::expected<libtmux::Session, BuildError>
 build_windows(const Server& server, const Workspace& description,
@@ -200,21 +204,25 @@ build_windows(const Server& server, const Workspace& description,
               std::optional<int> width = std::nullopt,
               std::optional<int> height = std::nullopt) {
   if (description.session_name.empty() || description.windows.empty()) {
-    return libtmux::unexpected(BuildError{0, "workspace names no session or window"});
+    return libtmux::unexpected(
+        BuildError{0, "workspace names no session or window"});
   }
   const auto session = session_target(description.session_name);
   if (!session.has_value()) {
-    return libtmux::unexpected(BuildError{0, "session name cannot address itself"});
+    return libtmux::unexpected(
+        BuildError{0, "session name cannot address itself"});
   }
 
   for (std::size_t index = 0; index < description.windows.size(); ++index) {
     if (description.windows[index].panes.empty()) {
-      return libtmux::unexpected(BuildError{index, "a window needs at least one pane"});
+      return libtmux::unexpected(
+          BuildError{index, "a window needs at least one pane"});
     }
   }
   if (auto error = validate_layouts(server, description))
     return libtmux::unexpected(std::move(*error));
-  const auto directory = [&description](const Window& window, const Pane& pane) {
+  const auto directory = [&description](const Window& window,
+                                        const Pane& pane) {
     if (!pane.start_directory.empty()) {
       return pane.start_directory;
     }
@@ -222,8 +230,9 @@ build_windows(const Server& server, const Workspace& description,
                                           : window.start_directory;
   };
   const auto environment = [](const Window& window, const Pane& pane) {
-    return pane.environment_overrides || !pane.environment.empty() ? pane.environment
-                                                                   : window.environment;
+    return pane.environment_overrides || !pane.environment.empty()
+               ? pane.environment
+               : window.environment;
   };
   const auto shell = [](const Window& window, const Pane& pane) {
     return pane.shell.empty() ? window.shell : pane.shell;
@@ -235,32 +244,36 @@ build_windows(const Server& server, const Workspace& description,
   // attaches, so every window laid out before then — not only the one a
   // client happens to focus first — is built at the real terminal size
   // instead of tmux's `default-size` (80x24 unless the user changed it).
-  auto built = borrowed
-                   ? libtmux::expected<libtmux::Session, CommandFailure>{*borrowed}
-                   : server.new_session({.name = description.session_name,
-                                         .start_directory = description.start_directory,
-                                         .width = width,
-                                         .height = height,
-                                         .environment = initial_environment});
+  auto built =
+      borrowed
+          ? libtmux::expected<libtmux::Session, CommandFailure>{*borrowed}
+          : server.new_session({.name = description.session_name,
+                                .start_directory = description.start_directory,
+                                .width = width,
+                                .height = height,
+                                .environment = initial_environment});
   if (!built.has_value()) {
     return libtmux::unexpected(BuildError{0, built.error().diagnostic});
   }
   std::vector<std::string> created_windows;
-  const auto fail = [&built, &borrowed, &created_windows](
-                        std::size_t index, std::string reason,
-                        bool retain =
-                            false) -> libtmux::expected<libtmux::Session, BuildError> {
+  const auto fail = [&built, &borrowed, &created_windows](std::size_t index,
+                                                          std::string reason,
+                                                          bool retain = false)
+      -> libtmux::expected<libtmux::Session, BuildError> {
     reason = sentence(reason);
     if (borrowed || retain)
-      return libtmux::unexpected(BuildError{index, std::move(reason), created_windows});
+      return libtmux::unexpected(
+          BuildError{index, std::move(reason), created_windows});
     if (const auto killed = built->kill(); !killed.has_value()) {
-      reason += "; session cleanup failed: " + sentence(killed.error().diagnostic);
+      reason +=
+          "; session cleanup failed: " + sentence(killed.error().diagnostic);
     }
     return libtmux::unexpected(BuildError{index, std::move(reason)});
   };
-  const auto notify = [&](BuildPhase phase, std::size_t window, std::size_t pane,
-                          std::string session_id = {}, std::string window_id = {},
-                          std::string pane_id = {}) -> std::optional<BuildError> {
+  const auto notify =
+      [&](BuildPhase phase, std::size_t window, std::size_t pane,
+          std::string session_id = {}, std::string window_id = {},
+          std::string pane_id = {}) -> std::optional<BuildError> {
     if (!observer)
       return std::nullopt;
     try {
@@ -284,8 +297,9 @@ build_windows(const Server& server, const Workspace& description,
     do {
       if (auto error = notify(BuildPhase::waiting, window, pane))
         return error;
-      std::this_thread::sleep_until(std::min(until, std::chrono::steady_clock::now() +
-                                                        std::chrono::milliseconds{20}));
+      std::this_thread::sleep_until(
+          std::min(until, std::chrono::steady_clock::now() +
+                              std::chrono::milliseconds{20}));
     } while (std::chrono::steady_clock::now() < until);
     return notify(BuildPhase::waiting, window, pane);
   };
@@ -298,8 +312,9 @@ build_windows(const Server& server, const Workspace& description,
   // answers with its own redraw looks identical to the initial draw, so the
   // position also has to hold steady for a few polls before it counts as
   // settled. Give up and send anyway past the deadline, as tmuxp does.
-  const auto ready = [&](std::size_t window, std::size_t pane,
-                         const libtmux::Pane& target) -> std::optional<BuildError> {
+  const auto ready =
+      [&](std::size_t window, std::size_t pane,
+          const libtmux::Pane& target) -> std::optional<BuildError> {
     const auto until =
         std::chrono::steady_clock::now() + std::chrono::milliseconds{2000};
     std::string settled;
@@ -331,8 +346,8 @@ build_windows(const Server& server, const Workspace& description,
   // Reported as soon as the session exists -- before before_script, before
   // any window -- so a caller that only needs the new session's id is not
   // left waiting for the whole build.
-  if (auto error =
-          notify(BuildPhase::session_started, 0, 0, std::string{built->id().value()}))
+  if (auto error = notify(BuildPhase::session_started, 0, 0,
+                          std::string{built->id().value()}))
     return libtmux::unexpected(std::move(*error));
   if (auto error = notify(BuildPhase::waiting, 0, 0))
     return libtmux::unexpected(std::move(*error));
@@ -357,9 +372,11 @@ build_windows(const Server& server, const Workspace& description,
       if (auto error = notify(BuildPhase::waiting, 0, 0))
         return libtmux::unexpected(std::move(*error));
       if (name.empty() || name.find('=') != std::string::npos)
-        return fail(0, "an environment name must be non-empty and contain no '='");
-      const auto set = server.run(
-          {"set-environment", "-t", std::string{built->id().value()}, name, value});
+        return fail(0,
+                    "an environment name must be non-empty and contain no '='");
+      const auto set =
+          server.run({"set-environment", "-t", std::string{built->id().value()},
+                      name, value});
       if (!set)
         return fail(0, set.error().diagnostic);
     }
@@ -367,7 +384,8 @@ build_windows(const Server& server, const Workspace& description,
   for (const auto& [option, value] : description.global_options) {
     if (auto error = notify(BuildPhase::waiting, 0, 0))
       return libtmux::unexpected(std::move(*error));
-    if (const auto set = server.set_global_option(option, value); !set.has_value()) {
+    if (const auto set = server.set_global_option(option, value);
+        !set.has_value()) {
       return fail(0, set.error().diagnostic);
     }
   }
@@ -424,7 +442,8 @@ build_windows(const Server& server, const Workspace& description,
       if (auto error = notify(BuildPhase::waiting, index, 0))
         return libtmux::unexpected(std::move(*error));
       if (name.empty() || name.find('=') != std::string::npos) {
-        return fail(index, "an environment name must be non-empty and contain no '='");
+        return fail(index,
+                    "an environment name must be non-empty and contain no '='");
       }
       command.insert(command.end(), {"-e", name + "=" + value});
     }
@@ -435,7 +454,8 @@ build_windows(const Server& server, const Workspace& description,
     if (!created.has_value()) {
       return fail(index, created.error().diagnostic);
     }
-    while (!created->empty() && (created->back() == '\n' || created->back() == '\r')) {
+    while (!created->empty() &&
+           (created->back() == '\n' || created->back() == '\r')) {
       created->pop_back();
     }
     created_windows.push_back(*created);
@@ -483,14 +503,16 @@ build_windows(const Server& server, const Workspace& description,
         continue;
       if (auto error = notify(BuildPhase::waiting, index, 0))
         return libtmux::unexpected(std::move(*error));
-      if (const auto set = target->set_option(option, value); !set.has_value()) {
+      if (const auto set = target->set_option(option, value);
+          !set.has_value()) {
         return fail(index, set.error().diagnostic);
       }
     }
     for (const auto& [option, value] : window.options) {
       if (auto error = notify(BuildPhase::waiting, index, 0))
         return libtmux::unexpected(std::move(*error));
-      if (const auto set = target->set_option(option, value); !set.has_value()) {
+      if (const auto set = target->set_option(option, value);
+          !set.has_value()) {
         return fail(index, set.error().diagnostic);
       }
     }
@@ -513,7 +535,8 @@ build_windows(const Server& server, const Workspace& description,
         return fail(index, split.error().diagnostic);
       }
       panes.push_back(*split);
-      if (const auto arranged = target->select_layout("tiled"); !arranged.has_value()) {
+      if (const auto arranged = target->select_layout("tiled");
+          !arranged.has_value()) {
         return fail(index, arranged.error().diagnostic);
       }
     }
@@ -565,7 +588,8 @@ build_windows(const Server& server, const Workspace& description,
         if (!command.text.empty()) {
           const std::string typed_text =
               command.suppress_history ? " " + command.text : command.text;
-          if (const auto typed = target.send_text(typed_text); !typed.has_value()) {
+          if (const auto typed = target.send_text(typed_text);
+              !typed.has_value()) {
             return fail(index, typed.error().diagnostic);
           }
         }
@@ -576,7 +600,8 @@ build_windows(const Server& server, const Workspace& description,
           }
           continue;
         }
-        if (const auto entered = target.send_key("Enter"); !entered.has_value()) {
+        if (const auto entered = target.send_key("Enter");
+            !entered.has_value()) {
           return fail(index, entered.error().diagnostic);
         }
         if (command.pause_after.count() != 0) {
@@ -607,13 +632,15 @@ build_windows(const Server& server, const Workspace& description,
     for (const auto& [option, value] : described.options_after) {
       if (auto error = notify(BuildPhase::waiting, index, 0))
         return libtmux::unexpected(std::move(*error));
-      if (const auto set = windows[index].set_option(option, value); !set.has_value()) {
+      if (const auto set = windows[index].set_option(option, value);
+          !set.has_value()) {
         return fail(index, set.error().diagnostic);
       }
     }
-    if (auto error = notify(
-            BuildPhase::window_completed, index, described.panes.size() - 1,
-            std::string{built->id().value()}, std::string{windows[index].id().value()}))
+    if (auto error =
+            notify(BuildPhase::window_completed, index,
+                   described.panes.size() - 1, std::string{built->id().value()},
+                   std::string{windows[index].id().value()}))
       return libtmux::unexpected(std::move(*error));
   }
 
@@ -629,7 +656,8 @@ build_windows(const Server& server, const Workspace& description,
       return fail(index, selected.error().diagnostic);
     }
   }
-  if (auto error = notify(BuildPhase::waiting, description.windows.size() - 1, 0))
+  if (auto error =
+          notify(BuildPhase::waiting, description.windows.size() - 1, 0))
     return libtmux::unexpected(std::move(*error));
   return *built;
 }
@@ -645,8 +673,8 @@ build(const Server& server, const Workspace& description,
       const BeforeBuild& before = {}, const BuildObserver& observer = {},
       std::optional<int> width = std::nullopt,
       std::optional<int> height = std::nullopt) {
-  return detail::build_windows(server, description, std::nullopt, before, observer,
-                               width, height);
+  return detail::build_windows(server, description, std::nullopt, before,
+                               observer, width, height);
 }
 
 // Add windows to a borrowed session. Failure retains that session, applied
