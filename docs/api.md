@@ -4481,6 +4481,7 @@ Value-semantic filter expressions over explicit snapshots.  An expression owns e
   - [`FilterExpr::Group::operands`](#libtmux-filter-expr-hpp-filterexpr-group-operands)
 - [`FilterExpr::Negation`](#libtmux-filter-expr-hpp-filterexpr-negation)
   - [`FilterExpr::Negation::operand`](#libtmux-filter-expr-hpp-filterexpr-negation-operand)
+  - [`FilterExpr::Negation::operand`](#libtmux-filter-expr-hpp-filterexpr-negation-operand-2)
 - [`FilterExpr::RelationTest`](#libtmux-filter-expr-hpp-filterexpr-relationtest)
   - [`FilterExpr::RelationTest::relation`](#libtmux-filter-expr-hpp-filterexpr-relationtest-relation)
   - [`FilterExpr::RelationTest::quantifier`](#libtmux-filter-expr-hpp-filterexpr-relationtest-quantifier)
@@ -4683,14 +4684,14 @@ explicit FilterExpr(Node node);
 #### `FilterExpr::FilterExpr`
 
 ```cpp
-FilterExpr(const FilterExpr& other);
+FilterExpr(const FilterExpr&) = default;
 ```
 
 <a id="libtmux-filter-expr-hpp-filterexpr-operator"></a>
 #### `FilterExpr::operator=`
 
 ```cpp
-FilterExpr& operator=(const FilterExpr& other);
+FilterExpr& operator=(const FilterExpr&) = default;
 ```
 
 <a id="libtmux-filter-expr-hpp-filterexpr-filterexpr-3"></a>
@@ -4837,7 +4838,7 @@ std::vector<FilterExpr> operands;
 <a id="libtmux-filter-expr-hpp-filterexpr-negation"></a>
 ### `FilterExpr::Negation`
 
-One expression inverted. Held indirectly because a node cannot contain itself by value.
+One expression inverted. Held indirectly because a node cannot contain itself by value. Copying owns an independent operand; const access propagates to it. After a move, assign before evaluating the expression.
 
 ```cpp
 struct Negation;
@@ -4847,8 +4848,17 @@ struct Negation;
 #### `FilterExpr::Negation::operand`
 
 ```cpp
-std::unique_ptr<FilterExpr> operand;
+std::indirect<FilterExpr> operand;
 ```
+Available when `defined(__cpp_lib_indirect) && __cpp_lib_indirect >= 202502L`.
+
+<a id="libtmux-filter-expr-hpp-filterexpr-negation-operand-2"></a>
+#### `FilterExpr::Negation::operand`
+
+```cpp
+xyz::indirect<FilterExpr> operand;
+```
+Available when `!(defined(__cpp_lib_indirect) && __cpp_lib_indirect >= 202502L)`.
 
 <a id="libtmux-filter-expr-hpp-filterexpr-relationtest"></a>
 ### `FilterExpr::RelationTest`

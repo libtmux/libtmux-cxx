@@ -14,6 +14,10 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <version>
+#if !defined(__cpp_lib_indirect) || __cpp_lib_indirect < 202502L
+#include <value_types/indirect.h>
+#endif
 #include <ranges>
 #include <string>
 #include <string_view>
@@ -105,9 +109,14 @@ public:
   };
 
   /// One expression inverted. Held indirectly because a node cannot contain
-  /// itself by value.
+  /// itself by value. Copying owns an independent operand; const access
+  /// propagates to it. After a move, assign before evaluating the expression.
   struct Negation {
-    std::unique_ptr<FilterExpr> operand;
+#if defined(__cpp_lib_indirect) && __cpp_lib_indirect >= 202502L
+    std::indirect<FilterExpr> operand;
+#else
+    xyz::indirect<FilterExpr> operand;
+#endif
   };
 
   /// A relation crosses to another entity type, so its child expression cannot
@@ -127,13 +136,8 @@ public:
 
   explicit FilterExpr(Node node) : node_{std::move(node)} {}
 
-  FilterExpr(const FilterExpr& other) : node_{clone(other.node_)} {}
-  FilterExpr& operator=(const FilterExpr& other) {
-    if (this != &other) {
-      node_ = clone(other.node_);
-    }
-    return *this;
-  }
+  FilterExpr(const FilterExpr&) = default;
+  FilterExpr& operator=(const FilterExpr&) = default;
   FilterExpr(FilterExpr&&) noexcept = default;
   FilterExpr& operator=(FilterExpr&&) noexcept = default;
   ~FilterExpr() = default;
@@ -146,19 +150,6 @@ public:
   [[nodiscard]] const Node& node() const noexcept { return node_; }
 
 private:
-  static Node clone(const Node& node) {
-    return std::visit(
-        [](const auto& alternative) -> Node {
-          using Alternative = std::decay_t<decltype(alternative)>;
-          if constexpr (std::is_same_v<Alternative, Negation>) {
-            return Negation{std::make_unique<FilterExpr>(*alternative.operand)};
-          } else {
-            return alternative;
-          }
-        },
-        node);
-  }
-
   static bool evaluate(const StringTest& test, const Entity& entity) {
     const std::string_view value = test.field.read(entity);
     const std::string_view operand = test.operand;
@@ -342,7 +333,12 @@ template <typename Entity>
 template <typename Entity>
 [[nodiscard]] FilterExpr<Entity> operator!(FilterExpr<Entity> operand) {
   return FilterExpr<Entity>{typename FilterExpr<Entity>::Negation{
-      std::make_unique<FilterExpr<Entity>>(std::move(operand))}};
+#if defined(__cpp_lib_indirect) && __cpp_lib_indirect >= 202502L
+      std::indirect<FilterExpr<Entity>>{std::in_place, std::move(operand)}
+#else
+      xyz::indirect<FilterExpr<Entity>>{std::in_place, std::move(operand)}
+#endif
+  }};
 }
 
 template <typename Entity>

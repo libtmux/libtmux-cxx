@@ -56,7 +56,21 @@ TEST(Lowering, EmitsPrefixOrderWithBracketedGroups) {
 }
 
 TEST(Lowering, BracketsNegationSoASinkNeverCountsOperands) {
+  using Expr = libtmux::FilterExpr<Pane>;
   const auto expr = !pane::active;
+  auto copied = expr;
+  const auto& original = std::get<Expr::Negation>(expr.node());
+  const auto& duplicate = std::get<Expr::Negation>(copied.node());
+  static_assert(std::is_same_v<decltype(*original.operand), const Expr&>);
+  EXPECT_NE(std::addressof(*original.operand), std::addressof(*duplicate.operand));
+  auto moved = std::move(copied);
+  copied = expr;
+  TextSink copy_sink;
+  lower(copied, copy_sink);
+  EXPECT_EQ(copy_sink.out, "(not pane_active:true ) ");
+  TextSink move_sink;
+  lower(moved, move_sink);
+  EXPECT_EQ(move_sink.out, copy_sink.out);
   TextSink sink;
   lower(expr, sink);
   EXPECT_EQ(sink.out, "(not pane_active:true ) ");
