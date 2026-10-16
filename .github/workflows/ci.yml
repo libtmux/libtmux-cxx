@@ -816,9 +816,12 @@ jobs:
 
       - name: Check formatting
         run: |
-          find include src tests apps examples benchmarks tools/mcp \
+          find include src tests apps examples benchmarks tools/mcp tools/schema \
             \( -name '*.hpp' -o -name '*.cpp' \) \
             -exec clang-format --dry-run --Werror --style=file {} +
+
+      - name: Check generated MCP entity records
+        run: python3 tools/schema/generate_records.py --check
 
       - name: Check the API reference is current
         run: |
