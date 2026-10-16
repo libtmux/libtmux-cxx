@@ -16,6 +16,7 @@ Focused declarations that protect the API-reference parser's scope rules.
   - [`Options::count`](#fixture-api-index-hpp-options-count)
 - [`Waiter`](#fixture-api-index-hpp-waiter)
   - [`Waiter::wait_ready`](#fixture-api-index-hpp-waiter-wait-ready)
+  - [`Waiter::borrow`](#fixture-api-index-hpp-waiter-borrow)
 - [`Box`](#fixture-api-index-hpp-box)
   - [`Box::Box`](#fixture-api-index-hpp-box-box)
   - [`Box::get`](#fixture-api-index-hpp-box-get)
@@ -109,6 +110,15 @@ struct Waiter;
 ```cpp
 void wait_ready(std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::time_point::max());
 ```
+
+<a id="fixture-api-index-hpp-waiter-borrow"></a>
+#### `Waiter::borrow`
+
+```cpp
+void borrow(int&&) = delete("keep the input alive");
+```
+Available when `defined(__cpp_deleted_function)`.
+The input must outlive the borrowed view.
 
 <a id="fixture-api-index-hpp-box"></a>
 ### `Box`

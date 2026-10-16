@@ -46,9 +46,16 @@ template <typename Parent, typename Child>
 
 /// The rows are borrowed, so a listing that dies at the semicolon is refused
 /// here rather than dangling inside the predicate later.
+#if defined(__cpp_deleted_function) && __cpp_deleted_function >= 202403L
+template <typename Parent, typename Child>
+auto children_of(const std::vector<Child>&&, StringFieldHandle<Child>,
+                 StringFieldHandle<Parent>) =
+    delete ("children_of borrows its rows; keep the listing alive");
+#else
 template <typename Parent, typename Child>
 auto children_of(const std::vector<Child>&&, StringFieldHandle<Child>,
                  StringFieldHandle<Parent>) = delete;
+#endif
 
 /// The same join read the other way: the one row a child points at, or none.
 template <typename Child, typename Parent>
@@ -137,8 +144,15 @@ template <typename Entity>
       collector.take()}};
 }
 
+#if defined(__cpp_deleted_function) && __cpp_deleted_function >= 202403L
+template <typename Child, typename Parent>
+auto parent_of(const std::vector<Parent>&&, StringFieldHandle<Child>,
+               StringFieldHandle<Parent>) =
+    delete ("parent_of borrows its rows; keep the listing alive");
+#else
 template <typename Child, typename Parent>
 auto parent_of(const std::vector<Parent>&&, StringFieldHandle<Child>,
                StringFieldHandle<Parent>) = delete;
+#endif
 
 LIBTMUX_NAMESPACE_END
