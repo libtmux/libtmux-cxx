@@ -17,7 +17,8 @@ messages, API documentation, and source comments — is set out separately in
 
 **Requirements:** a C++23 toolchain (clang 17+, GCC 13+, or Visual Studio 2022
 17.3+), CMake 3.25, and tmux on `$PATH`. Nothing else — the library itself has
-no dependencies. On Windows that tmux is
+no linked dependencies. Compatibility headers come from an installed copy or
+the pinned fallback. On Windows that tmux is
 [psmux](../README.md#windows-through-psmux), and the preview it backs is
 narrower than the POSIX surface.
 

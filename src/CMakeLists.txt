@@ -76,6 +76,18 @@ if(LIBTMUX_CXX_STANDARD STREQUAL "20")
             DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
   endif()
 endif()
+include("${PROJECT_SOURCE_DIR}/cmake/TlOptional.cmake")
+libtmux_resolve_tl_optional(_tl_optional_include _tl_optional_source)
+if(_tl_optional_include)
+  target_include_directories(libtmux SYSTEM PUBLIC
+    $<BUILD_INTERFACE:${_tl_optional_include}>)
+endif()
+if(LIBTMUX_INSTALL AND _tl_optional_source)
+  install(FILES "${_tl_optional_source}/include/tl/optional.hpp"
+    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/tl")
+  install(FILES "${_tl_optional_source}/COPYING"
+    DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/licenses/libtmux/tl_optional")
+endif()
 # The full version, prerelease tag and all — `PROJECT_VERSION` has had the tag
 # stripped so CMake would accept it, and a library that reports "0.1.0" while
 # it is an alpha is telling the truth to nobody.

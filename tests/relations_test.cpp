@@ -77,13 +77,13 @@ TEST(Relations, ASessionIsSelectedByTheWindowsItHolds) {
       matching(any_of<Session>("windows", windows_of, window::name == "editor"));
   const auto found = first(editing);
   ASSERT_TRUE(found.has_value());
-  EXPECT_EQ(found->get().window_count(), 3);
+  EXPECT_EQ(found->window_count(), 3);
 
   auto quiet = listings.sessions | matching(none_of<Session>("windows", windows_of,
                                                              window::name == "editor"));
   const auto other = first(quiet);
   ASSERT_TRUE(other.has_value());
-  EXPECT_EQ(other->get().name(), "quiet");
+  EXPECT_EQ(other->name(), "quiet");
 }
 
 TEST(Relations, AWindowIsSelectedByTheSessionHoldingIt) {

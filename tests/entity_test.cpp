@@ -345,7 +345,7 @@ TEST(Entity, ListedEntitiesFilterWithoutReachingTmuxAgain) {
   auto editors = *windows | matching(window::name == "editor");
   const auto found = first(editors);
   ASSERT_TRUE(found.has_value());
-  EXPECT_EQ(found->get().name(), "editor");
+  EXPECT_EQ(found->name(), "editor");
 }
 
 TEST(Entity, PanesAreArrangedByLayoutAndSize) {
@@ -854,7 +854,7 @@ TEST(Entity, NumericFieldsCompareAsNumbersNotAsText) {
   auto later = windows | matching(window::index > 5);
   const auto found = first(later);
   ASSERT_TRUE(found.has_value());
-  EXPECT_EQ(found->get().name(), "large");
+  EXPECT_EQ(found->name(), "large");
 
   auto wide = windows | matching(window::width >= 200 && window::pane_count != 1);
   EXPECT_EQ(std::ranges::distance(wide), 1);
@@ -1130,9 +1130,9 @@ TEST(Entity, CommandsAndBuffersFilterLikeEveryOtherListing) {
   auto listing = *commands | matching(libtmux::command::name == "list-panes");
   const auto listed = libtmux::first(listing);
   ASSERT_TRUE(listed.has_value()) << "every supported tmux has list-panes";
-  EXPECT_EQ(listed->get().name(), "list-panes");
+  EXPECT_EQ(listed->name(), "list-panes");
   // `lsp` is its alias on every version in the supported range.
-  EXPECT_EQ(listed->get().alias(), "lsp");
+  EXPECT_EQ(listed->alias(), "lsp");
 
   ASSERT_TRUE(server.set_buffer("greeting", "hello").has_value());
   ASSERT_TRUE(server.set_buffer("other", "xy").has_value());
@@ -1143,7 +1143,7 @@ TEST(Entity, CommandsAndBuffersFilterLikeEveryOtherListing) {
   auto named = *buffers | matching(libtmux::buffer::name == "greeting");
   const auto greeting = libtmux::first(named);
   ASSERT_TRUE(greeting.has_value());
-  EXPECT_EQ(greeting->get().size(), 5);
+  EXPECT_EQ(greeting->size(), 5);
 
   // A number compares as a number, which is the point of the typed handle.
   auto larger = *buffers | matching(libtmux::buffer::size > 2);

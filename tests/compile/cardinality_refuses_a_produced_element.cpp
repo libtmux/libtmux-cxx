@@ -12,5 +12,5 @@ auto rejected() {
   static std::vector<libtmux::Pane> panes = listed();
   auto copies =
       panes | std::views::transform([](const libtmux::Pane& pane) { return pane; });
-  return libtmux::exactly_one(copies);
+  return libtmux::first(copies);
 }
