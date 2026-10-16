@@ -420,6 +420,16 @@ gtest_discover_tests(
 # fault-injection executable overrides those operators, so its proofs run in
 # every other lane while the queue's concurrency tests remain instrumented.
 if(NOT LIBTMUX_ENABLE_THREAD_SANITIZER)
+  add_executable(libtmux_control_allocation_test control_allocation_test.cpp)
+  target_link_libraries(
+    libtmux_control_allocation_test PRIVATE libtmux_build_options libtmux::libtmux)
+  add_test(
+    NAME libtmux.control.NotificationParseDoesNotAllocate
+    COMMAND libtmux_control_allocation_test)
+  set_tests_properties(
+    libtmux.control.NotificationParseDoesNotAllocate
+    PROPERTIES LABELS libtmux TIMEOUT 5)
+
   add_executable(libtmux_completion_queue_fault_test completion_queue_fault_test.cpp)
   target_include_directories(
     libtmux_completion_queue_fault_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
