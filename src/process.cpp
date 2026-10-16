@@ -8,6 +8,7 @@
 #include <chrono>
 #include <csignal>
 #include <limits>
+#include <numeric>
 #include <optional>
 #include <utility>
 
@@ -22,19 +23,6 @@ using Clock = ChildClock;
 constexpr auto poll_quantum = std::chrono::milliseconds{10};
 constexpr auto terminate_grace = std::chrono::milliseconds{100};
 constexpr auto post_exit_drain = std::chrono::milliseconds{100};
-
-[[nodiscard]] int poll_timeout(Clock::time_point boundary) {
-  const auto now = Clock::now();
-  if (now >= boundary) {
-    return 0;
-  }
-  const auto remaining = std::chrono::ceil<std::chrono::milliseconds>(boundary - now);
-  // Explicit, because milliseconds::rep is long on one standard library and
-  // long long on another, and deduction picks neither.
-  const auto bounded = std::min<std::chrono::milliseconds::rep>(
-      remaining.count(), std::numeric_limits<int>::max());
-  return static_cast<int>(bounded);
-}
 
 // Waits for either stream, then reads whichever are ready. Everything it can
 // fail at belongs to the child; only the waiting is this runner's.
@@ -52,7 +40,8 @@ poll_and_drain(PosixChild& child, Clock::time_point boundary, DeliveryStatus del
     if (Clock::now() >= boundary) {
       return std::nullopt;
     }
-    if (::poll(descriptors.data(), descriptors.size(), poll_timeout(boundary)) >= 0) {
+    if (::poll(descriptors.data(), descriptors.size(),
+               poll_timeout(boundary, Clock::now())) >= 0) {
       break;
     }
     if (errno != EINTR) {
@@ -168,6 +157,24 @@ cleanup_group(PosixChild& child, bool allow_term, DescendantPolicy descendants) 
 }
 
 } // namespace
+
+[[nodiscard]] int poll_timeout(Clock::time_point boundary, Clock::time_point now) {
+  if (now >= boundary) {
+    return 0;
+  }
+  const auto remaining = std::chrono::ceil<std::chrono::milliseconds>(boundary - now);
+#if defined(__cpp_lib_saturation_arithmetic) &&                                        \
+    __cpp_lib_saturation_arithmetic >= 202603L
+  return std::saturating_cast<int>(remaining.count());
+#elif defined(__cpp_lib_saturation_arithmetic) &&                                      \
+    __cpp_lib_saturation_arithmetic >= 202311L
+  return std::saturate_cast<int>(remaining.count());
+#else
+  const auto bounded = std::min<std::chrono::milliseconds::rep>(
+      remaining.count(), std::numeric_limits<int>::max());
+  return static_cast<int>(bounded);
+#endif
+}
 
 expected<ProcessReply, ProcessError> run_process(const ProcessRequest& request) {
   return run_process(request, {});
