@@ -2,6 +2,10 @@
 
 #include <chrono>
 #include <functional>
+#include <version>
+#if !defined(__cpp_lib_function_ref) || __cpp_lib_function_ref < 202306L
+#include <tl/function_ref.hpp>
+#endif
 #include <iosfwd>
 #include <map>
 #include <optional>
@@ -88,7 +92,13 @@ ChildOutput run_child(const std::vector<std::string>& arguments,
 void require_terminal();
 Execution execute(const Request& request, const EventSink& event,
                   const PromptSink& prompt = {});
-Execution with_interrupts(const std::function<Execution()>& operation);
+#if defined(__cpp_lib_function_ref) && __cpp_lib_function_ref >= 202306L
+using ImmediateOperation = std::function_ref<Execution()>;
+#else
+using ImmediateOperation = tl::function_ref<Execution()>;
+#endif
+/// Invokes once before returning; the callback is never retained.
+Execution with_interrupts(ImmediateOperation operation);
 void check_interruption();
 std::string encoded(const Json& value, int indent = -1);
 std::string human_result(const Request& request, const Json& result, bool colour);

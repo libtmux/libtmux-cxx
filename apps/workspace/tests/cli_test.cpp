@@ -13,6 +13,7 @@
 #include <functional>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <optional>
 #include <poll.h>
 #include <sstream>
@@ -41,6 +42,58 @@ Result invoke(std::vector<std::string> args) {
   std::ostringstream out, err;
   const int code = libtmux::workspace::cli::run(std::move(args), input, out, err);
   return {code, out.str(), err.str()};
+}
+
+TEST(WorkspaceCli, ImmediateCallbacksBorrowMoveOnlyState) {
+  using namespace libtmux::workspace::cli;
+  auto operation = [state = std::make_unique<int>(37)] {
+    Execution result;
+    result.exit_code = *state;
+    return result;
+  };
+  EXPECT_EQ(with_interrupts(operation).exit_code, 37);
+}
+
+TEST(WorkspaceCli, ImmediateCallbacksRestoreSignalHandlersAfterUnwinding) {
+  using namespace libtmux::workspace::cli;
+  struct RestoreHandlers {
+    struct sigaction interrupt{}, terminate{};
+    ~RestoreHandlers() {
+      sigaction(SIGINT, &interrupt, nullptr);
+      sigaction(SIGTERM, &terminate, nullptr);
+    }
+  } restore;
+  struct sigaction installed{};
+  installed.sa_handler = +[](int) {};
+  sigemptyset(&installed.sa_mask);
+  ASSERT_EQ(sigaction(SIGINT, &installed, &restore.interrupt), 0);
+  ASSERT_EQ(sigaction(SIGTERM, &installed, &restore.terminate), 0);
+  const auto restored = [&] {
+    for (const int signal : {SIGINT, SIGTERM}) {
+      struct sigaction current{};
+      EXPECT_EQ(sigaction(signal, nullptr, &current), 0);
+      EXPECT_EQ(current.sa_handler, installed.sa_handler);
+    }
+  };
+  EXPECT_EQ(with_interrupts([] { return Execution{}; }).exit_code, 0);
+  restored();
+  EXPECT_THROW((void)with_interrupts(
+                   []() -> Execution { throw std::runtime_error{"callback"}; }),
+               std::runtime_error);
+  restored();
+  for (const int signal : {SIGINT, SIGTERM}) {
+    try {
+      (void)with_interrupts([&]() -> Execution {
+        std::raise(signal);
+        check_interruption();
+        return {};
+      });
+      FAIL() << "interruption was ignored";
+    } catch (const Failure& failure) {
+      EXPECT_EQ(failure.exit_code, 128 + signal);
+    }
+    restored();
+  }
 }
 
 TEST(WorkspaceCli, CompletionUsesCommandAndValueContextWithoutBackend) {
