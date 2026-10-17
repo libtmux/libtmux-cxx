@@ -293,6 +293,14 @@ public:
   }
 
   [[nodiscard]] expected<Version, CommandFailure> version() const override {
+    {
+      // The release admitted earlier stands until a fence or a declared
+      // version says otherwise, so asking is not another probe.
+      const std::lock_guard guard{admission_mutex_};
+      if (admitted_) {
+        return admitted_version_;
+      }
+    }
     auto endpoint = endpoint_version(policy().timeout);
     if (!endpoint.has_value()) {
       return unexpected(std::move(endpoint.error()));
@@ -356,6 +364,7 @@ private:
       return unexpected(std::move(supported.error()));
     }
     admitted_ = true;
+    admitted_version_ = endpoint->version;
     // Only a release the executor reported can be named in a fence; a declared
     // one has no exact spelling to compare with.
     fence_token_ = options_.version.has_value() ? std::string{} : endpoint->token;
@@ -363,6 +372,7 @@ private:
   }
   mutable std::mutex admission_mutex_;
   mutable bool admitted_{false};
+  mutable Version admitted_version_{};
   mutable std::string fence_token_;
   const std::string fence_marker_{version_marker()};
 
