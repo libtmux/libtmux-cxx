@@ -15,6 +15,7 @@
 
 #include "backend.hpp"
 #include "libtmux/server.hpp"
+#include "libtmux/testing/capabilities.hpp"
 #include "libtmux/testing/scoped_server.hpp"
 #include "libtmux_consumers/mcp.hpp"
 #include "schema.hpp"

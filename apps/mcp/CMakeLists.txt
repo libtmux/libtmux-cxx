@@ -15,7 +15,8 @@ if(LIBTMUX_BUILD_TESTS AND NOT WIN32)
   # `libtmux::testing` directly, not this repository's internal alias: the MCP
   # tool surface is here to be a consumer, and a consumer reaches the fixture
   # through the exported target.
-  add_executable(mcp_tools_test tests/mcp_test.cpp tests/pane_echo_test.cpp)
+  add_executable(mcp_tools_test tests/mcp_test.cpp tests/pane_echo_test.cpp
+                                tests/wait_contracts_test.cpp)
   target_include_directories(
     mcp_tools_test PRIVATE "${PROJECT_SOURCE_DIR}/src" "${PROJECT_SOURCE_DIR}/tests"
                            "${CMAKE_CURRENT_SOURCE_DIR}/src")

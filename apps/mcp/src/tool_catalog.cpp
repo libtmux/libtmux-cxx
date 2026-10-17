@@ -3058,6 +3058,17 @@ resolve_session(const Server& server, std::string_view target) {
           return detail::output(
               {{"pane_id", pane->id().value()}, {"changed", StructuredValue{false}}});
         }
+        // The private buffer is removed by name, which before tmux 3.4 can
+        // remove an unrelated buffer, so staging is refused before it exists.
+        const auto running = server.tmux_version();
+        if (!running.has_value()) {
+          return libtmux::unexpected(detail::tmux_error(running.error()));
+        }
+        if (*running < libtmux::Version{.major = 3, .minor = 4}) {
+          return libtmux::unexpected(ToolError{
+              false, "paste_text stages a private buffer and removes it by name, which "
+                     "needs tmux 3.4 or newer"});
+        }
         const auto name = private_paste_buffer_name(server);
         if (!name.has_value()) {
           return libtmux::unexpected(name.error());

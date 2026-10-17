@@ -192,6 +192,15 @@ ToolResult wait_for_text(const Server& server, const Arguments& arguments,
     }
     return libtmux::unexpected(tmux_error(waited.error()));
   }
+  // The pane, or its server, went away mid-wait. That is a failed wait with
+  // what was on screen, and nothing to start again on.
+  if (waited->pane_died) {
+    std::string message = waited->reason;
+    if (!waited->text.empty()) {
+      message += "; the output so far was:\n" + waited->text;
+    }
+    return libtmux::unexpected(ToolError{false, std::move(message)});
+  }
   const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - started);
   return wait_output(*waited, wire_mode(*waited), elapsed.count(), waited->pane_id);

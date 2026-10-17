@@ -7411,6 +7411,8 @@ Wait for a pane to say something.  This is the first thing a supervising program
   - [`WaitResult::elapsed`](#libtmux-wait-hpp-waitresult-elapsed)
   - [`WaitResult::path`](#libtmux-wait-hpp-waitresult-path)
   - [`WaitResult::pane_id`](#libtmux-wait-hpp-waitresult-pane-id)
+  - [`WaitResult::pane_died`](#libtmux-wait-hpp-waitresult-pane-died)
+  - [`WaitResult::reason`](#libtmux-wait-hpp-waitresult-reason)
   - [`WaitResult::text`](#libtmux-wait-hpp-waitresult-text)
 - [`WaitOptions`](#libtmux-wait-hpp-waitoptions)
   - [`WaitOptions::timeout`](#libtmux-wait-hpp-waitoptions-timeout)
@@ -7459,7 +7461,7 @@ A `%output` notification for this pane prompted the capture that matched.
 <a id="libtmux-wait-hpp-waitpath-capture-polling"></a>
 #### `WaitPath::capture_polling` — `capture_polling,`
 
-No connection could be opened, so the screen was re-read on a timer.
+No connection could be opened, or the one that was open stopped delivering while the pane lived, so the screen was re-read on a timer. A wait that lost its stream keeps waiting here rather than ending.
 
 <a id="libtmux-wait-hpp-waitresult"></a>
 ### `WaitResult`
@@ -7520,6 +7522,22 @@ WaitPath path{};
 std::string pane_id{};
 ```
 The pane that was waited on. Empty only when the target never resolved, which the schema of a caller reporting this must allow for.
+
+<a id="libtmux-wait-hpp-waitresult-pane-died"></a>
+#### `WaitResult::pane_died`
+
+```cpp
+bool pane_died{};
+```
+The pane, or the server it lived on, went away while the wait ran. The wait failed, and `text` is the last capture taken before that. Reported the same way on every path and for a killed server as for a killed pane: a wait whose pane is gone has nothing to start again on.
+
+<a id="libtmux-wait-hpp-waitresult-reason"></a>
+#### `WaitResult::reason`
+
+```cpp
+std::string reason{};
+```
+Why the pane could not be read, in tmux's own words. Empty unless `pane_died`.
 
 <a id="libtmux-wait-hpp-waitresult-text"></a>
 #### `WaitResult::text`

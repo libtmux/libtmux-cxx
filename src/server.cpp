@@ -1348,6 +1348,12 @@ expected<Session, CommandFailure> Server::new_session(NewSessionOptions options)
                                      .exit_code = 0,
                                      .diagnostic = std::move(*invalid)});
   }
+  for (const auto* name : {&options.name, &options.first_window_name}) {
+    if (auto invalid = detail::refuse_name_on_exact_37(
+            *backend_, *name, name == &options.name ? "session" : "window")) {
+      return unexpected(std::move(*invalid));
+    }
+  }
   if (refuses(ServerFeature::session_creation)) {
     return unexpected(CommandFailure{
         .kind = FailureKind::unsupported,

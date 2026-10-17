@@ -217,6 +217,32 @@ gtest_discover_tests(
   TEST_PREFIX libtmux.support_versions.
   PROPERTIES LABELS real-tmux TIMEOUT 60)
 
+add_executable(libtmux_wait_contracts_test integration/wait_contracts_test.cpp)
+target_link_libraries(
+  libtmux_wait_contracts_test
+  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+          libtmux_test_support)
+target_compile_options(
+  libtmux_wait_contracts_test PRIVATE -fno-sanitize-recover=undefined)
+
+gtest_discover_tests(
+  libtmux_wait_contracts_test
+  TEST_PREFIX libtmux.wait.contracts.
+  PROPERTIES LABELS real-tmux TIMEOUT 60)
+
+add_executable(libtmux_optional_features_test integration/optional_features_test.cpp)
+target_link_libraries(
+  libtmux_optional_features_test
+  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+          libtmux_test_support)
+target_compile_options(
+  libtmux_optional_features_test PRIVATE -fno-sanitize-recover=undefined)
+
+gtest_discover_tests(
+  libtmux_optional_features_test
+  TEST_PREFIX libtmux.optional.
+  PROPERTIES LABELS real-tmux TIMEOUT 60)
+
 add_executable(libtmux_server_identity_test integration/server_identity_test.cpp)
 target_link_libraries(
   libtmux_server_identity_test
