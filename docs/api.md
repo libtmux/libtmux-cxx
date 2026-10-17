@@ -7840,7 +7840,7 @@ Wrap a variable name as a substitution. The name is not escaped: a name is chose
 <a id="libtmux-version-hpp"></a>
 ## `libtmux/version.hpp`
 
-Parse and order tmux version strings.  Suffixes follow bare releases; `next-` precedes its release, a release candidate sits between the two, and `master` follows all. Psmux 3.3.7 occupies `revision=7`, equal to tmux 3.3g.
+Parse and order tmux version strings.  Suffixes follow bare releases; `next-` precedes its release, a release candidate sits between the two. Psmux 3.3.7 occupies `revision=7`, equal to tmux 3.3g.
 
 **Symbols:**
 
@@ -7919,7 +7919,7 @@ std::uint32_t revision{};
 ```cpp
 bool prerelease{false};
 ```
-A `next-` build precedes the release it leads to; `master` follows every numbered release.
+A `next-` build precedes the release it leads to.
 
 <a id="libtmux-version-hpp-version-unbounded"></a>
 #### `Version::unbounded`
@@ -7927,6 +7927,7 @@ A `next-` build precedes the release it leads to; `master` follows every numbere
 ```cpp
 bool unbounded{false};
 ```
+Never set by `parse_version`. A harness that cannot read tmux's version sets it to mean "newest", so version-gated tests run rather than skip.
 
 <a id="libtmux-version-hpp-version-candidate"></a>
 #### `Version::candidate`
