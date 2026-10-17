@@ -67,8 +67,8 @@ TEST(AdmissionVersions, TheFloorIsTheCompleteReleaseIncludingItsLetter) {
 }
 
 TEST(AdmissionVersions, DevelopmentBuildsOrderBelowTheReleaseTheyLeadTo) {
-  EXPECT_LT(parsed("next-3.3a"), parsed("3.3a"));
-  EXPECT_FALSE(libtmux::is_supported(parsed("next-3.3a")));
+  EXPECT_LT(parsed("next-3.3"), parsed("3.3a"));
+  EXPECT_FALSE(libtmux::is_supported(parsed("next-3.3")));
   EXPECT_TRUE(libtmux::is_supported(parsed("next-3.4")));
   EXPECT_LT(parsed("next-3.9"), parsed("3.9"));
   EXPECT_LT(parsed("3.8-rc"), parsed("3.8"));
@@ -106,15 +106,18 @@ TEST(AdmissionVersions, TheCanonicalOrderingHoldsFromDevelopmentBuildToPatchLett
   EXPECT_NE(parsed("3.7a"), control);
 }
 
-TEST(AdmissionVersions, UnreadableReportsAreErrorsAndMasterIsUnbounded) {
+TEST(AdmissionVersions, FormsTmuxNeverReportsAreErrorsNotVersions) {
+  // Neither parse_version nor is_supported may turn these into a release:
+  // `master` and the `-master` and `-dev` spellings come from wrappers, and a
+  // `next-` build has no patch letter.
   for (const auto* text :
-       {"3.4garbage", "9.9alpha", "3.8-rc0", "3.8-rcx", "", "3.", ".3", "three"}) {
+       {"3.4garbage", "9.9alpha", "3.8-rc0", "3.8-rcx", "", "3.", ".3", "three",
+        "master", "3.3a-master", "3.3a-dev", "next-3.3a", "next-3.4a",
+        "next-3.9-master", "next-3.9-rc2", "openbsd-7.6", "3.3a garbage"}) {
     EXPECT_FALSE(libtmux::parse_version(std::string{"tmux "} + text).has_value())
         << text;
   }
-  const auto master = libtmux::parse_version("tmux master");
-  ASSERT_TRUE(master.has_value());
-  EXPECT_TRUE(master->unbounded);
+  EXPECT_TRUE(libtmux::parse_version("tmux next-3.4").has_value());
 }
 
 // A tmux executable on PATH, resolved the way the library resolves it.
@@ -239,9 +242,13 @@ class RejectedDaemon : public testing::Test {
 protected:
   void SetUp() override {
     const auto binary = rejected_tmux();
-    if (!binary.has_value() &&
-        std::getenv("LIBTMUX_REQUIRE_REJECTED_TMUX") != nullptr) {
-      FAIL() << "the rejection lane must name the tmux it rejects";
+    // The rejection lane sets the second variable: there a missing or
+    // unusable rejected tmux is a failure, because a skipped refusal test
+    // qualifies nothing.
+    if (std::getenv("LIBTMUX_REQUIRE_REJECTED_TMUX") != nullptr &&
+        (!binary.has_value() || ::access(binary->c_str(), X_OK) != 0)) {
+      FAIL() << "the rejection lane must name an executable tmux to reject in "
+                "LIBTMUX_TEST_REJECTED_TMUX";
     }
     if (!binary.has_value()) {
       GTEST_SKIP() << "LIBTMUX_TEST_REJECTED_TMUX names the tmux older than 3.3a "
@@ -681,6 +688,28 @@ TEST(AdmissionExecutor, AReplacedDaemonIsNotAdmittedByTheExecutorsEarlierAnswer)
   EXPECT_EQ(executor->probes, 2) << "the next command asks the new daemon again";
 }
 
+TEST(AdmissionExecutor, TheVersionOfAnAdmittedDaemonIsNotProbedAgain) {
+  auto executor = std::make_shared<CountingExecutor>("3.4");
+  auto server =
+      Server::over(executor, {.implementation = libtmux::ServerImplementation::tmux});
+  ASSERT_TRUE(server.has_value());
+  ASSERT_TRUE(server->run({"list-sessions"}).has_value());
+  for (int call = 0; call < 3; ++call) {
+    const auto version = server->tmux_version();
+    ASSERT_TRUE(version.has_value());
+    EXPECT_EQ(*version, (Version{.major = 3, .minor = 4}));
+  }
+  EXPECT_TRUE(server->run({"list-windows"}).has_value());
+  EXPECT_EQ(executor->probes, 1) << "one probe for the endpoint, however many calls";
+
+  // A replaced daemon invalidates it, and the next read asks again.
+  executor->replaced = true;
+  EXPECT_FALSE(server->run({"list-sessions"}).has_value());
+  executor->replaced = false;
+  ASSERT_TRUE(server->tmux_version().has_value());
+  EXPECT_EQ(executor->probes, 2);
+}
+
 TEST(AdmissionExecutor, RawClientFlagsAreNotDispatchedThroughAnExecutor) {
   auto executor = std::make_shared<CountingExecutor>("3.4");
   auto server =
@@ -722,7 +751,8 @@ TEST(AdmissionExecutor, ReleasesAndDevelopmentBuildsAreAdmittedOrRefusedByRank) 
                                                           {"3.3a garbage", false},
                                                           {"3.3a-master", false},
                                                           {"3.3a-dev", false},
-                                                          {"next-3.9-master", false}};
+                                                          {"next-3.9-master", false},
+                                                          {"next-3.4a", false}};
   for (const auto& [report, admitted] : reports) {
     SCOPED_TRACE(report);
     auto executor = std::make_shared<CountingExecutor>(report);

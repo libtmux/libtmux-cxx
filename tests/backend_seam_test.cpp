@@ -306,8 +306,8 @@ constexpr std::string_view json_pane =
     R"({"V":2,"L":{"t":"p","w":80,"h":24,"x":0,"y":0,"i":0}})";
 
 TEST(BackendSeam, JsonLayoutsKeepTheirPayloadAndUseTheSelectedDaemonVersion) {
-  for (const auto* version : {"3.7c", "next-3.8", "3.8-rc", "3.8-rc2", "3.8",
-                              "next-3.9", "3.9", "3.7-master"}) {
+  for (const auto* version :
+       {"3.7c", "next-3.8", "3.8-rc", "3.8-rc2", "3.8", "next-3.9", "3.9"}) {
     SCOPED_TRACE(version);
     auto backend = std::make_shared<ScriptedBackend>(
         std::vector<std::string>{window_row("@3", "work", "$2"), ""},

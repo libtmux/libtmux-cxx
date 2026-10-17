@@ -3,7 +3,7 @@
 // Parse and order tmux version strings.
 //
 // Suffixes follow bare releases; `next-` precedes its release, a release
-// candidate sits between the two, and `master` follows all. Psmux 3.3.7
+// candidate sits between the two. Psmux 3.3.7
 // occupies `revision=7`, equal to tmux 3.3g.
 
 #include "libtmux/abi.hpp"
@@ -40,9 +40,10 @@ struct Version {
   /// 0 for a bare release, 1 for `a`, 2 for `b`, and so on. Psmux's numeric
   /// third component occupies this existing slot as the corresponding number.
   std::uint32_t revision{};
-  /// A `next-` build precedes the release it leads to; `master` follows every
-  /// numbered release.
+  /// A `next-` build precedes the release it leads to.
   bool prerelease{false};
+  /// Never set by `parse_version`. A harness that cannot read tmux's version
+  /// sets it to mean "newest", so version-gated tests run rather than skip.
   bool unbounded{false};
   /// 0 for a release, 1 for `-rc` and N for `-rcN`: a candidate orders after a
   /// `next-` build and before its release.
@@ -87,11 +88,10 @@ parse_version(std::string_view output) {
   }
   output.remove_prefix(prefix.size());
 
+  // `master`, `X.Y-master` and `X.Y-dev` are not forms tmux reports, and a
+  // build that cannot say which release it leads to cannot be ordered, so they
+  // are errors rather than versions that follow every release.
   Version version;
-  if (output == "master" || output.ends_with("-master")) {
-    version.unbounded = true;
-    return version;
-  }
   if (output.starts_with("next-")) {
     version.prerelease = true;
     output.remove_prefix(5);
@@ -132,6 +132,11 @@ parse_version(std::string_view output) {
   const std::string_view suffix = rest.substr(end);
   if (suffix.empty()) {
     return version;
+  }
+  // A `next-` build leads to a release and carries no patch letter or
+  // candidate of its own.
+  if (version.prerelease) {
+    return unexpected(VersionError::malformed);
   }
   // A release candidate ranks below the release it names: `-rc`, or `-rc2`
   // for a later candidate of the same release.
