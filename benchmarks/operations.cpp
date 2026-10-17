@@ -145,6 +145,14 @@ bool bench_control_throughput(const libtmux::test::ScopedTmuxServer& fixture,
                               const libtmux::Server& server) {
   std::puts("\ncontrol-mode notification throughput");
 
+  // Control mode is refused before a client attaches on a daemon older than
+  // 3.7, so there is nothing to measure there and the section says why.
+  if (const auto version = server.tmux_version();
+      version.has_value() && *version < libtmux::Version{.major = 3, .minor = 7}) {
+    std::puts("unsupported: library-managed control mode needs tmux 3.7 or newer");
+    return true;
+  }
+
   // The client this connection opens attaches to one session, and tmux scopes
   // pane-output delivery to what that client can see: a pane picked from
   // `server.panes()` server-wide could belong to a different session and
