@@ -13,4 +13,3 @@ if(EXISTS "${SOURCE_PATH}/cmake/BemanOptional.cmake")
   list(APPEND LIBTMUX_COMPAT_LICENCES
     "${SOURCE_PATH}/cmake/licenses/beman-optional-BOOST-LICENSE")
 endif()
-
