@@ -1342,7 +1342,7 @@ Whether this implementation is known to get the feature wrong, which is the oppo
 <a id="libtmux-entities-hpp"></a>
 ## `libtmux/entities.hpp`
 
-The tmux object hierarchy.  A Session, Window, Pane or Client is one row of a snapshot: a shared pointer to the listing it came from plus the index of its row. That representation is what lets an entity be copied, stored in a container and returned from a function with nothing to keep alive alongside it, while still costing no per-row allocation and no tmux call to read.  The other side of that: keeping one entity keeps its whole listing. A pane held from a thousand-pane server retains all thousand rows and the bytes tmux sent for them, and ten panes from one listing retain it once, not ten times. For the sizes tmux serves this is the cheaper trade — but a program that holds handles across large servers for a long time should hold the id it needs and look the entity up again, rather than hold the entity.  Reading a field is local and cannot fail. Every method returning `expected` runs tmux, and a returned entity describes the moment that command ran: entities do not update themselves, `refresh` takes a new snapshot.  Psmux numbers windows and panes per session, so Windows snapshots retain their owning session identity alongside tmux's `$0`, `@0`, and `%0` IDs.  Every field below is a format token tmux 3.2a already registers, which is the oldest version this library supports. That is a hard constraint rather than a preference: tmux expands a token it does not know to the empty string, so requesting a newer one would read as a present-but-empty value on an older server instead of failing.
+The tmux object hierarchy.  A Session, Window, Pane or Client is one row of a snapshot: a shared pointer to the listing it came from plus the index of its row. That representation is what lets an entity be copied, stored in a container and returned from a function with nothing to keep alive alongside it, while still costing no per-row allocation and no tmux call to read.  The other side of that: keeping one entity keeps its whole listing. A pane held from a thousand-pane server retains all thousand rows and the bytes tmux sent for them, and ten panes from one listing retain it once, not ten times. For the sizes tmux serves this is the cheaper trade — but a program that holds handles across large servers for a long time should hold the id it needs and look the entity up again, rather than hold the entity.  Reading a field is local and cannot fail. Every method returning `expected` runs tmux, and a returned entity describes the moment that command ran: entities do not update themselves, `refresh` takes a new snapshot.  Psmux numbers windows and panes per session, so Windows snapshots retain their owning session identity alongside tmux's `$0`, `@0`, and `%0` IDs.  Every field below is a format token tmux 3.3a already registers, which is the oldest version this library supports. That is a hard constraint rather than a preference: tmux expands a token it does not know to the empty string, so requesting a newer one would read as a present-but-empty value on an older server instead of failing.
 
 **Symbols:**
 
@@ -7840,7 +7840,7 @@ Wrap a variable name as a substitution. The name is not escaped: a name is chose
 <a id="libtmux-version-hpp"></a>
 ## `libtmux/version.hpp`
 
-Parse and order tmux version strings.  Suffixes follow bare releases; `next-` precedes its release and `master` follows all. Psmux 3.3.7 occupies `revision=7`, equal to tmux 3.3g.
+Parse and order tmux version strings.  Suffixes follow bare releases; `next-` precedes its release, a release candidate sits between the two, and `master` follows all. Psmux 3.3.7 occupies `revision=7`, equal to tmux 3.3g.
 
 **Symbols:**
 
@@ -7853,6 +7853,7 @@ Parse and order tmux version strings.  Suffixes follow bare releases; `next-` pr
   - [`Version::revision`](#libtmux-version-hpp-version-revision)
   - [`Version::prerelease`](#libtmux-version-hpp-version-prerelease)
   - [`Version::unbounded`](#libtmux-version-hpp-version-unbounded)
+  - [`Version::candidate`](#libtmux-version-hpp-version-candidate)
   - [`Version::operator<=>`](#libtmux-version-hpp-version-operator)
   - [`Version::operator==`](#libtmux-version-hpp-version-operator-2)
 - [`Free symbols`](#libtmux-version-hpp-free-symbols)
@@ -7884,7 +7885,7 @@ enum class VersionError;
 <a id="libtmux-version-hpp-version"></a>
 ### `Version`
 
-A tmux version, ordered so a feature gate can compare against a literal.  tmux marks a development build with a suffix, which orders after the release it follows rather than before it.
+A tmux version, ordered so a feature gate can compare against a literal.  A `next-` build and a release candidate order before the release they lead to, so a gate written against `3.8` does not admit `3.8-rc2`; write `{.major = 3, .minor = 8, .candidate = 1}` to include the candidates.
 
 ```cpp
 struct Version;
@@ -7927,6 +7928,14 @@ A `next-` build precedes the release it leads to; `master` follows every numbere
 bool unbounded{false};
 ```
 
+<a id="libtmux-version-hpp-version-candidate"></a>
+#### `Version::candidate`
+
+```cpp
+std::uint16_t candidate{0};
+```
+0 for a release, 1 for `-rc` and N for `-rcN`: a candidate orders after a `next-` build and before its release.
+
 <a id="libtmux-version-hpp-version-operator"></a>
 #### `Version::operator<=>`
 
@@ -7963,9 +7972,9 @@ Parse the first line of `tmux -V`, with or without its trailing newline.
 #### `kMinimumSupported`
 
 ```cpp
-inline constexpr Version kMinimumSupported{.major = 3, .minor = 2, .revision = 1};
+inline constexpr Version kMinimumSupported{.major = 3, .minor = 3, .revision = 1};
 ```
-The oldest release this library supports, matching the Python package.
+The oldest release this library supports: 3.3a. Patch letters count, so 3.3 is below it, and `next-3.3a` and `3.3a-rc` order before it.
 
 <a id="libtmux-version-hpp-free-symbols-is-supported"></a>
 #### `is_supported`
