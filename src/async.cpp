@@ -511,10 +511,34 @@ struct CommandRuntime::State final {
     completion_thread_ = std::thread{[this] { completion_loop(); }};
   }
 
+  using Admission =
+      std::optional<expected<std::optional<detail::EndpointVersion>, CommandFailure>>;
+
   [[nodiscard]] expected<CommandOperation, CommandFailure>
   submit(std::shared_ptr<const detail::Backend> backend, CommandRequest command,
          std::optional<std::chrono::milliseconds> timeout,
          std::optional<std::size_t> output_limit) {
+    Admission admission;
+#if !defined(_WIN32)
+    // Asking the daemon for its release can launch a probe and wait for it, so
+    // it is asked before the submission lock is taken, bounded by this
+    // command's own deadline: a daemon that does not answer holds up the
+    // caller that asked about it and nobody else.
+    if (const auto subprocess =
+            std::dynamic_pointer_cast<const detail::SubprocessBackend>(backend);
+        subprocess && !command.empty()) {
+      admission = subprocess->admit_command(
+          command, timeout.has_value() ? timeout : subprocess->policy().timeout);
+    }
+#endif
+    return submit_admitted(std::move(backend), std::move(command), timeout,
+                           output_limit, std::move(admission));
+  }
+
+  [[nodiscard]] expected<CommandOperation, CommandFailure> submit_admitted(
+      std::shared_ptr<const detail::Backend> backend, CommandRequest command,
+      std::optional<std::chrono::milliseconds> timeout,
+      std::optional<std::size_t> output_limit, [[maybe_unused]] Admission admission) {
     // The submission lock makes preflight, admission, engine submission, and task
     // registration one transaction. Refusals before lease admission own no runtime
     // slot. Once the engine accepts a command, later setup failures complete the
@@ -555,7 +579,21 @@ struct CommandRuntime::State final {
     detail::ProcessRequest request;
     detail::ProcessValidationResult validation;
     try {
+#if defined(_WIN32)
       request = subprocess->build_request(command, std::nullopt, deadline, allowed);
+#else
+      if (!admission.has_value()) {
+        return refuse(immediate_failure(
+            FailureKind::unsupported, "the daemon was not admitted for this command"));
+      }
+      if (!admission->has_value()) {
+        return refuse(std::move(admission->error()));
+      }
+      auto prepared = subprocess->assemble_request(command, std::nullopt, deadline,
+                                                   allowed, **admission,
+                                                   /*allow_noop=*/false);
+      request = std::move(prepared.request);
+#endif
 #if defined(_WIN32)
       constexpr auto validation_mode = detail::ProcessValidationMode::windows;
 #else
