@@ -24,10 +24,13 @@ else()
   set(LIBTMUX_PORT_BUILD_TESTING_LIBRARY ON)
 endif()
 
+include("${CMAKE_CURRENT_LIST_DIR}/compat.cmake")
+
 vcpkg_cmake_configure(
   SOURCE_PATH "${SOURCE_PATH}"
   OPTIONS
     ${FEATURE_OPTIONS}
+    ${LIBTMUX_COMPAT_OPTIONS}
     # This project's own tests need GoogleTest and a real tmux, and its
     # examples need a tmux to run against. Neither belongs in a consumer's
     # dependency graph.
@@ -73,4 +76,4 @@ if("mcp" IN_LIST FEATURES)
   file(APPEND "${CURRENT_PACKAGES_DIR}/share/${PORT}/usage" "${LIBTMUX_USAGE_MCP}")
 endif()
 
-vcpkg_install_copyright(FILE_LIST "${SOURCE_PATH}/LICENSE")
+vcpkg_install_copyright(FILE_LIST "${SOURCE_PATH}/LICENSE" ${LIBTMUX_COMPAT_LICENCES})
