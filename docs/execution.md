@@ -25,7 +25,7 @@ adds no worker threads of its own.
 The pinned test dependency is stdexec commit
 [`34fa94719f97f49a553811423fa1200172f22a0e`](https://github.com/NVIDIA/stdexec/tree/34fa94719f97f49a553811423fa1200172f22a0e).
 Tests cover lazy admission, composed replies, a wait/signal pair, failure
-delivery and explicit cancellation before and after starting an operation.
+delivery and explicit cancellation before and after transport admission.
 
 Configure the optional suite:
 

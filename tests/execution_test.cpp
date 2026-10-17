@@ -136,7 +136,7 @@ private:
   }
 };
 
-TEST_F(Execution, ExplicitStopBeforeAndAfterStartKeepsCancellationInformation) {
+TEST_F(Execution, ExplicitStopBeforeAndAfterAdmissionKeepsCancellationInformation) {
   exec::static_thread_pool pool{1};
   for (const bool before_start : {true, false}) {
     stdexec::inplace_stop_source stop;
@@ -146,20 +146,36 @@ TEST_F(Execution, ExplicitStopBeforeAndAfterStartKeepsCancellationInformation) {
     }
     auto operation = stdexec::connect(
         libtmux::command_sender(pool.get_scheduler(), *server, *runtime,
-                                {"wait-for", "execution-cancel"}, stop.get_token()),
+                                {"wait-for", "-S", "execution-admitted", ";",
+                                 "wait-for", "execution-cancel"},
+                                stop.get_token()),
         Receiver{&completion});
     stdexec::start(operation);
     if (!before_start) {
+      EXPECT_TRUE(
+          server->wait_for("execution-admitted", std::chrono::milliseconds{200}));
+      EXPECT_EQ(runtime->snapshot().accepted, 1U);
       stop.request_stop();
     }
     std::unique_lock lock{completion.mutex};
-    ASSERT_TRUE(completion.changed.wait_for(lock, std::chrono::milliseconds{200},
-                                            [&] { return completion.done; }));
+    const bool completed = completion.changed.wait_for(
+        lock, std::chrono::milliseconds{200}, [&] { return completion.done; });
+    if (!completed) {
+      lock.unlock();
+      EXPECT_TRUE(server->signal("execution-cancel"));
+      lock.lock();
+      EXPECT_TRUE(completion.changed.wait_for(lock, std::chrono::milliseconds{200},
+                                              [&] { return completion.done; }));
+    }
+    EXPECT_TRUE(completed);
+    ASSERT_TRUE(completion.done);
     ASSERT_FALSE(completion.unexpected);
     ASSERT_TRUE(completion.failure);
     EXPECT_EQ(completion.failure->kind, libtmux::FailureKind::cancelled);
     if (before_start) {
       EXPECT_EQ(completion.failure->delivery, libtmux::DeliveryStatus::not_started);
+    } else {
+      EXPECT_EQ(completion.failure->delivery, libtmux::DeliveryStatus::indeterminate);
     }
   }
 }
