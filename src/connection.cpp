@@ -1045,6 +1045,15 @@ expected<Connection, ProtocolError> Connection::connect(ConnectionOptions option
   if (auto supported = detail::require_supported(*endpoint); !supported.has_value()) {
     return unexpected(not_started_error(supported.error().diagnostic));
   }
+  // Control mode crashes servers before 3.7 when a client attaches and
+  // detaches early, and a fallback after the attach cannot undo that, so the
+  // release decides here, before any client exists. A daemon that is absent
+  // has nothing to crash and is left to the attach to report.
+  if (endpoint->live && endpoint->version < Version{.major = 3, .minor = 7}) {
+    return unexpected(not_started_error(
+        "library-managed control mode needs tmux 3.7 or newer; the daemon reports " +
+        endpoint->token));
+  }
   const std::string fence_marker = detail::version_marker();
 
   auto seed = make_boundary_seed();

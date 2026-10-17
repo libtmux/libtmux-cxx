@@ -395,5 +395,49 @@ describe(const std::shared_ptr<const Backend>& backend, std::string_view target,
                             std::move(call_policy));
 }
 
+// An operation that one release range cannot do safely is refused before it
+// has an effect, naming the release it needs. The daemon is asked, so a client
+// newer than the daemon does not qualify it.
+[[nodiscard]] inline std::optional<CommandFailure>
+refuse_before(const Backend& backend, const Version& needed, std::string_view operation,
+              std::string_view needed_text) {
+  const auto running = backend.version();
+  if (!running.has_value()) {
+    return running.error();
+  }
+  if (*running >= needed) {
+    return std::nullopt;
+  }
+  return CommandFailure{.kind = FailureKind::unsupported,
+                        .delivery = DeliveryStatus::not_started,
+                        .exit_code = 0,
+                        .diagnostic = std::string{operation} + " needs tmux " +
+                                      std::string{needed_text} +
+                                      " or newer; the daemon is older"};
+}
+
+// tmux 3.7, and only 3.7, refuses a session or window name holding `:` or `.`.
+// The refusal is checked here so it is a typed one before dispatch rather than
+// an error from the middle of a command list.
+[[nodiscard]] inline std::optional<CommandFailure>
+refuse_name_on_exact_37(const Backend& backend, std::string_view name,
+                        std::string_view what) {
+  if (name.find_first_of(".:") == std::string_view::npos) {
+    return std::nullopt;
+  }
+  const auto running = backend.version();
+  if (!running.has_value()) {
+    return running.error();
+  }
+  if (*running != Version{.major = 3, .minor = 7}) {
+    return std::nullopt;
+  }
+  return CommandFailure{.kind = FailureKind::validation,
+                        .delivery = DeliveryStatus::not_started,
+                        .exit_code = 0,
+                        .diagnostic = "tmux 3.7 refuses a " + std::string{what} +
+                                      " name containing ':' or '.'"};
+}
+
 } // namespace detail
 LIBTMUX_NAMESPACE_END
