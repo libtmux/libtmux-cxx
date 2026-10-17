@@ -683,7 +683,20 @@ struct Bootstrap {
       (void)session->kill();
   }
 };
+// The one tmux this tool launches itself rather than through a Server: the
+// bootstrap has to start a server that does not exist yet. The release that
+// would answer is checked first, as a Server checks it before any command.
+void require_supported_tmux(const Request& request) {
+  const auto reported = endpoint(request).tmux_version();
+  if (!reported)
+    throw Failure{1, "tmux_unavailable", reported.error().diagnostic};
+  if (reported->unbounded || !libtmux::is_supported(*reported))
+    throw Failure{1, "tmux_unavailable",
+                  "libtmux requires tmux 3.3a or newer; this selector reaches an "
+                  "older or unreadable release"};
+}
 Server start_endpoint(const Request& request, Bootstrap& bootstrap) {
+  require_supported_tmux(request);
   std::vector<std::string> command{"tmux", "-u"};
   if (!request.value("S").empty())
     command.insert(command.end(), {"-S", expand(request.value("S"))});
@@ -1707,8 +1720,13 @@ static Execution execute_impl(const Request& request, const EventSink& event,
                 "selected server differs from the current pane's server; use -d"};
           switch_without_client = true;
         }
-      } else if (!server.is_alive())
+      } else if (const auto alive = server.check_alive(); !alive) {
+        // A daemon libtmux refuses is running, so starting a server on its
+        // socket would reach it through a command that is not admitted.
+        if (alive.error().kind == libtmux::FailureKind::unsupported)
+          throw Failure{1, "tmux_unavailable", alive.error().diagnostic};
         server = start_endpoint(request, bootstrap);
+      }
       stage = "load";
       const auto [session_width, session_height] =
           session_dimensions(request.stdout_terminal);
