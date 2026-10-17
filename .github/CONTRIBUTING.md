@@ -306,11 +306,13 @@ with a command the notes give them.
 
 ## Compatibility
 
-tmux 3.2a and newer, through `master`, matching the Python package. CI builds
-and tests pinned compatibility cells from 3.2a through 3.7c, plus `master`, on
-every pull request and every change to master; the handful of capabilities that
-need a later tmux are covered by tests that skip below the release providing
-them — [the README](../README.md#compatibility) lists them.
+tmux 3.3a and newer, through `master`. CI builds and tests pinned
+compatibility cells from 3.3a through 3.7c, plus `master`, on every pull request
+and every change to master. It also runs tmux 3.0a, 3.1c, 3.2a and 3.3 as
+refusal cells, each a daemon of that release behind a 3.3a client. The
+handful of capabilities that need a later tmux are covered by tests that skip
+below the release providing them — [the README](../README.md#compatibility)
+lists them.
 
 Linux and macOS are the supported platforms. Windows is an experimental x64
 desktop preview built with Visual Studio 2022 against a pinned

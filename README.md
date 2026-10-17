@@ -13,7 +13,7 @@
   <p>
     <a href="https://github.com/libtmux/libtmux-cxx/actions/workflows/ci.yml"><img src="https://github.com/libtmux/libtmux-cxx/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
     <a href="#requirements--support"><img src="https://img.shields.io/badge/C%2B%2B-23%20%7C%2020-blue.svg" alt="C++23 or C++20"></a>
-    <a href="#compatibility"><img src="https://img.shields.io/badge/tmux-3.2a%20%E2%80%93%20master-1BB91F.svg" alt="tmux 3.2a and newer"></a>
+    <a href="#compatibility"><img src="https://img.shields.io/badge/tmux-3.3a%20%E2%80%93%20master-1BB91F.svg" alt="tmux 3.3a and newer"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT licence"></a>
   </p>
 </div>
@@ -90,7 +90,7 @@ failure by throwing.)
 
 | | |
 |---|---|
-| **tmux** | 3.2a or newer, through `master` — [with these exceptions](#compatibility) |
+| **tmux** | 3.3a or newer, through `master` — [with these exceptions](#compatibility) |
 | **C++** | C++23 (clang 17+, GCC 13+, Visual Studio 2022 17.3+), or C++20 with `LIBTMUX_CXX_STANDARD=20` |
 | **CMake** | 3.25 |
 | **Platforms** | Linux, macOS; experimental x64 desktop Windows support with Visual Studio 2022 through [psmux] |
@@ -889,10 +889,32 @@ It links no test framework, so GoogleTest, Catch2 and doctest all work.
 
 ## Compatibility
 
-tmux 3.2a and newer, matching the Python package. `Version` orders releases
-correctly: `3.7 < 3.7a < 3.7b`, `next-3.8` precedes `3.8`, and `master` sorts
-above every numbered release. CI builds and tests pinned compatibility cells
-from 3.2a through 3.7c, plus `master`, on every pull request and master change.
+tmux 3.3a and newer. The floor is the complete release: tmux 3.3 is below it.
+`Version` orders releases correctly: `3.7 < 3.7a < 3.7b`, and `next-3.8` and
+`3.8-rc2` precede `3.8`. CI builds and tests pinned compatibility cells from
+3.3a through 3.7c, plus `master`, on every pull request and master change.
+
+The daemon a command reaches decides, not the executable that launches it. The
+first command to a server asks the daemon for its version without running a
+hook, and a release below the floor, an unreadable version, `next-3.3a` and an
+undated `master` are refused with `FailureKind::unsupported` before the command
+has any effect. A tmux older than 3.2 cannot run that probe: a 3.0a daemon
+answers "server version is too old for client", a 3.1c daemon prints the
+`run-shell` usage, and a 3.1c or older client rejects `-N`. All three are
+refused the same way, promptly, though those daemons keep the client's stdout
+open after it exits. The message says to upgrade tmux and restart the server,
+or stay on the previous libtmux release. Every later command to that daemon
+carries a check that fails the whole command list if another daemon has taken
+its place. `-V` and `-h` stay available below the floor as diagnostics and
+authorize nothing, and `tmux_version()` reports a daemon from 3.2 up that is
+below it. Cleanup of an endpoint that is already gone, `kill-server` included,
+is a no-op. A program that launches tmux itself asks `Server::check_release()`
+first, which refuses a release below the floor as the first command would and
+sends nothing.
+
+This assumes tmux's built-in commands keep their meaning: a `command-alias`
+that redefines one of the commands the library uses to ask is outside what is
+qualified.
 
 Across that range tmux does not answer identically, and where it cannot the
 library cannot either. These are the exceptions, each covered by a test that
@@ -900,11 +922,10 @@ skips below the release that provides it and runs everywhere above:
 
 | Needs | Capability |
 |---|---|
-| tmux 3.3 | `display-message -c` addressed at a control client |
-| tmux 3.3 | `-x` and `-y` honoured on a detached `new-session` |
 | tmux 3.4 | `%message` delivered to an attached control client |
 | tmux 3.4 | notification-shaped command output kept in the block body |
 | tmux 3.6 | The created-window report when breaking a window's only pane |
+| tmux 3.8-rc2 | JSON saved layouts, `{"V":2,...`; `3.8-rc` is below the gate |
 
 Two are defects rather than missing features — tmux answered wrongly and a
 later release fixed it, so the affected window is closed at both ends:
@@ -1157,8 +1178,9 @@ Pull requests and master changes run against real tmux under clang with
 libc++, GCC with libstdc++, the C++20 build over `tl::expected`, address and
 undefined-behaviour sanitizers, the thread sanitizer, a locale that is not
 UTF-8, and macOS with Apple Clang. The tmux matrix spans pinned compatibility
-cells from 3.2a through 3.7c, plus `master`. The examples run as tests, and so
-do the programs that must fail to compile.
+cells from 3.3a through 3.7c, plus `master`, and refusal cells for 3.0a, 3.1c,
+3.2a and tmux 3.3, which assert that nothing they are sent has an effect. The
+examples run as tests, and so do the programs that must fail to compile.
 
 The four core parsers for tmux-controlled text — rows, options, version output,
 and control-mode frames — each have a fuzz harness and checked-in corpus. The
