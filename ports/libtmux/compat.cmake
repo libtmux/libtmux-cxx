@@ -16,4 +16,3 @@ if(EXISTS "${SOURCE_PATH}/cmake/Indirect.cmake")
   list(APPEND LIBTMUX_COMPAT_LICENCES
     "${SOURCE_PATH}/cmake/licenses/value-types-LICENSE.txt")
 endif()
-
