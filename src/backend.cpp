@@ -255,6 +255,9 @@ Backend::prepare_attach(std::string_view target) const {
   std::vector<std::string> command{policy().tmux_binary.string()};
   const auto& selector = connection();
   command.insert(command.end(), selector.begin(), selector.end());
+  // The server this was prepared for may be gone by the time a terminal runs
+  // it, and attach-session would otherwise start another in its place.
+  command.emplace_back("-N");
   command.emplace_back("attach-session");
   command.emplace_back("-t");
   command.emplace_back(target);

@@ -199,6 +199,8 @@ TEST(Client, AttachingIsACommandLineRatherThanACall) {
   constexpr auto exposed =
       std::filesystem::perms::group_all | std::filesystem::perms::others_all;
   EXPECT_EQ(permissions & exposed, std::filesystem::perms::none);
+  EXPECT_EQ(command[command.size() - 4], "-N")
+      << "a handoff must not start a server in place of the one it was prepared for";
   EXPECT_EQ(command[command.size() - 3], "attach-session");
   EXPECT_EQ(command[command.size() - 2], "-t");
   EXPECT_EQ(command.back(), sessions->front().id().value());
