@@ -143,16 +143,6 @@ public:
   // rather than refused; every command is what refuses it.
   [[nodiscard]] virtual expected<Version, CommandFailure> version() const = 0;
 
-  // Whether this backend's own client binary is a trustworthy stand-in for
-  // the daemon's version while the socket is cold -- true only when this
-  // backend would itself start that daemon from the same binary it would
-  // query, so the two are guaranteed to match. A backend fronting a
-  // connection to somebody else's already-chosen daemon cannot promise that
-  // and answers false.
-  [[nodiscard]] virtual bool allows_cold_socket_version_fallback() const noexcept {
-    return false;
-  }
-
   // What a call that names no timeout of its own gets. Applied where a caller
   // reaches the library, not here: this layer keeps taking `nullopt` to mean
   // no deadline, which is what `wait_for` needs to be able to ask for.
@@ -205,8 +195,7 @@ private:
 };
 
 [[nodiscard]] expected<void, LayoutFailure>
-validate_layouts(const Backend& backend, std::span<const LayoutRequest> layouts,
-                 bool allow_cold);
+validate_layouts(const Backend& backend, std::span<const LayoutRequest> layouts);
 
 // Do two backends talk to one tmux?
 //
@@ -391,10 +380,6 @@ public:
   // The daemon's version, read fresh; the executable's `-V` while no daemon
   // answers, so this works against a socket with no server on it.
   [[nodiscard]] expected<Version, CommandFailure> version() const override;
-
-  [[nodiscard]] bool allows_cold_socket_version_fallback() const noexcept override {
-    return socket_missing_.load(std::memory_order_acquire);
-  }
 
   [[nodiscard]] expected<PreparedAttach, CommandFailure>
   prepare_attach(std::string_view target) const override;

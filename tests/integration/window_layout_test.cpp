@@ -198,8 +198,8 @@ TEST(WindowLayout, JsonSavedLayoutsRefuseOlderDaemonsBeforeMutation) {
   ASSERT_FALSE(selected.has_value());
   EXPECT_EQ(selected.error().delivery, libtmux::DeliveryStatus::not_started);
   EXPECT_NE(selected.error().diagnostic.find("3.8"), std::string::npos);
-  ASSERT_EQ(issued.size(), 1U);
-  EXPECT_NE(issued.front().find("display-message"), std::string::npos);
+  // The version is read without a command a user's hooks could see.
+  EXPECT_TRUE(issued.empty());
   const auto after = window->refresh();
   ASSERT_TRUE(after.has_value());
   EXPECT_EQ(after->layout(), window->layout());

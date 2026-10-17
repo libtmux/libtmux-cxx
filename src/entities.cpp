@@ -693,7 +693,7 @@ expected<void, CommandFailure> Window::select_layout(std::string_view layout) co
   if (!backend())
     return unexpected(detail::disconnected());
   const std::array requests{LayoutRequest{layout}};
-  if (auto checked = detail::validate_layouts(*backend(), requests, false); !checked)
+  if (auto checked = detail::validate_layouts(*backend(), requests); !checked)
     return unexpected(std::move(checked.error().cause));
   return effect(run({"select-layout", "-t", window_command_target(*this), "--",
                      std::string{layout}}));

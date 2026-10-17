@@ -822,10 +822,9 @@ CATALOGUE: t.Final = (
         mutation_id="select-layout-rejects-unrecognised-value",
         path="src/entities.cpp",
         find="  if (auto checked = detail::validate_layouts(*backend(), "
-        "requests, false); !checked)\n"
+        "requests); !checked)\n"
         "    return unexpected(std::move(checked.error().cause));",
-        replace="  static_cast<void>("
-        "detail::validate_layouts(*backend(), requests, false));",
+        replace="  static_cast<void>(detail::validate_layouts(*backend(), requests));",
         target="libtmux_entity_test",
         test_regex=(
             r"^libtmux[.]entity[.]Entity[.]"

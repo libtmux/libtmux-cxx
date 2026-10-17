@@ -344,14 +344,15 @@ public:
   [[nodiscard]] expected<Server, ProtocolError>
   over_control(std::string_view session, std::size_t connections = 1) const;
 
-  /// Ask the selected subprocess executable with `tmux -V` without touching a
-  /// server. The call uses this Server's execution policy.
+  /// The release behind this handle: the daemon's when one answers, and
+  /// otherwise the executable that would start one, read with `tmux -V`. A
+  /// release below the floor is reported here, not refused; the commands are
+  /// what refuse it. The call uses this Server's execution policy.
   [[nodiscard]] expected<Version, CommandFailure> tmux_version() const;
 
-  /// Validate the complete batch's syntax before any I/O, then query its daemon
-  /// once for version-dependent names or v2 JSON layouts. No layout is applied.
-  /// Only an unbound native subprocess handle may use the client version for an
-  /// absent socket; failures from previously bound endpoints remain failures.
+  /// Validate the complete batch's syntax before any I/O, then ask for the
+  /// release once for version-dependent names or v2 JSON layouts: the daemon's
+  /// when one answers, otherwise the executable's. No layout is applied.
   [[nodiscard]] expected<void, LayoutFailure>
   validate_layouts(std::span<const LayoutRequest> layouts) const;
 

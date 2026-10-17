@@ -824,7 +824,7 @@ expected<Version, CommandFailure> Server::tmux_version() const {
 
 expected<void, LayoutFailure>
 Server::validate_layouts(std::span<const LayoutRequest> layouts) const {
-  return detail::validate_layouts(*backend_, layouts, true);
+  return detail::validate_layouts(*backend_, layouts);
 }
 
 bool Server::is_alive(std::chrono::milliseconds timeout) const {
