@@ -1697,6 +1697,29 @@ TEST(McpToolsTmux, CreatesAWindowAndTypesIntoItsPane) {
   }));
 }
 
+TEST(McpToolsTmux, PasteTextIsRefusedBefore34WithoutStagingABuffer) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const auto version = server.tmux_version();
+  ASSERT_TRUE(version.has_value());
+  if (*version >= libtmux::Version{.major = 3, .minor = 4}) {
+    GTEST_SKIP() << "paste_text stages a buffer from 3.4; this lane has no refusal";
+  }
+  const auto panes = server.panes();
+  ASSERT_TRUE(panes.has_value() && !panes->empty());
+
+  const auto typed =
+      all_tools().call(server, "paste_text",
+                       Arguments{{"paneId", std::string{panes->front().id().value()}},
+                                 {"text", "marker"}});
+  ASSERT_FALSE(typed.has_value());
+  EXPECT_NE(typed.error().message.find("3.4"), std::string::npos);
+  const auto buffers = server.buffers();
+  ASSERT_TRUE(buffers.has_value());
+  EXPECT_TRUE(buffers->empty()) << "nothing may be staged when cleanup cannot be exact";
+}
+
 TEST(McpToolsTmux, SelectLayoutRefusesALeadingDashInsteadOfRunningItAsAFlag) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
