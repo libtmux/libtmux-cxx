@@ -953,6 +953,18 @@ SubprocessBackend::prepare_request(const CommandRequest& command,
                           allow_noop);
 }
 
+expected<void, CommandFailure> SubprocessBackend::check_release() const {
+#if defined(_WIN32)
+  return {};
+#else
+  auto checked = check_version(policy().timeout.value_or(std::chrono::seconds{30}));
+  if (!checked.has_value()) {
+    return unexpected(std::move(checked.error()));
+  }
+  return {};
+#endif
+}
+
 expected<Version, CommandFailure> SubprocessBackend::version() const {
 #if !defined(_WIN32)
   // A daemon checked earlier is remembered until a fence finds it replaced or

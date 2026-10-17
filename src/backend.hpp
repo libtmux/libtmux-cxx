@@ -143,6 +143,12 @@ public:
   // rather than refused; every command is what refuses it.
   [[nodiscard]] virtual expected<Version, CommandFailure> version() const = 0;
 
+  // Refuse a release below the floor the way the first command would, sending
+  // nothing. A backend with no release to check accepts.
+  [[nodiscard]] virtual expected<void, CommandFailure> check_release() const {
+    return {};
+  }
+
   // What a call that names no timeout of its own gets. Applied where a caller
   // reaches the library, not here: this layer keeps taking `nullopt` to mean
   // no deadline, which is what `wait_for` needs to be able to ask for.
@@ -380,6 +386,8 @@ public:
   // The daemon's version, read fresh; the executable's `-V` while no daemon
   // answers, so this works against a socket with no server on it.
   [[nodiscard]] expected<Version, CommandFailure> version() const override;
+
+  [[nodiscard]] expected<void, CommandFailure> check_release() const override;
 
   [[nodiscard]] expected<PreparedAttach, CommandFailure>
   prepare_attach(std::string_view target) const override;

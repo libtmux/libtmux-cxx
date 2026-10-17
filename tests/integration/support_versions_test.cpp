@@ -297,6 +297,14 @@ TEST_F(RejectedDaemon, EveryEntryPointIsRefusedWithNoEffect) {
   EXPECT_TRUE(daemon_->is_alive());
 }
 
+TEST_F(RejectedDaemon, CheckingTheReleaseRefusesAndSendsNothing) {
+  auto server = server_for(*daemon_);
+  const auto checked = server.check_release();
+  ASSERT_FALSE(checked.has_value());
+  expect_refused(checked.error());
+  expect_untouched();
+}
+
 TEST_F(RejectedDaemon, AnOlderClientIsRefusedToo) {
   ExecutionPolicy policy;
   policy.tmux_binary = *rejected_tmux();
@@ -504,6 +512,17 @@ TEST_F(SupportedDaemon, TheCommandsRefusedBelowTheFloorRunAtOrAboveIt) {
   EXPECT_NE(sessions_held_by(*fixture_).find("extra"), std::string::npos);
   EXPECT_TRUE(server.sessions().has_value());
   EXPECT_TRUE(server.check_alive().has_value());
+}
+
+TEST_F(SupportedDaemon, CheckingTheReleaseAcceptsALiveDaemonAndAnAbsentEndpoint) {
+  EXPECT_TRUE(server_for(*fixture_).check_release().has_value());
+  // No daemon answers, so the executable that would start one is the one asked.
+  PrivateDirectory directory;
+  const auto absent = directory.path() / "absent.sock";
+  auto cold = Server::at_socket_path(absent.string());
+  ASSERT_TRUE(cold.has_value());
+  EXPECT_TRUE(cold->check_release().has_value());
+  EXPECT_FALSE(std::filesystem::exists(absent));
 }
 
 TEST_F(SupportedDaemon, RawClientFlagsAndEmptyCommandsAreNotDispatched) {

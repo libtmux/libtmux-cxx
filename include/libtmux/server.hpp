@@ -350,6 +350,13 @@ public:
   /// what refuse it. The call uses this Server's execution policy.
   [[nodiscard]] expected<Version, CommandFailure> tmux_version() const;
 
+  /// Refuse a tmux below the floor exactly as the first command to this
+  /// endpoint would, and send nothing. The daemon is asked when one answers,
+  /// and otherwise the executable that would start one. For a caller that
+  /// launches tmux itself, which this library cannot check. A refusal is
+  /// `FailureKind::unsupported` with `DeliveryStatus::not_started`.
+  [[nodiscard]] expected<void, CommandFailure> check_release() const;
+
   /// Validate the complete batch's syntax before any I/O, then ask for the
   /// release once for version-dependent names or v2 JSON layouts: the daemon's
   /// when one answers, otherwise the executable's. No layout is applied.

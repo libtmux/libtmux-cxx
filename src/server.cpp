@@ -309,6 +309,10 @@ public:
     return endpoint->version;
   }
 
+  [[nodiscard]] expected<void, CommandFailure> check_release() const override {
+    return check_version(policy().timeout);
+  }
+
 private:
   // What the executor reaches: the version its options declare, otherwise what
   // the daemon behind it reports to the hook-free probe. The library cannot
@@ -820,6 +824,10 @@ expected<Server, ProtocolError> Server::over_control(std::string_view session,
 
 expected<Version, CommandFailure> Server::tmux_version() const {
   return backend_->version();
+}
+
+expected<void, CommandFailure> Server::check_release() const {
+  return backend_->check_release();
 }
 
 expected<void, LayoutFailure>
