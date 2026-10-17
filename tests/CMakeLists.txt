@@ -108,8 +108,8 @@ add_executable(libtmux_compatibility_test compatibility_test.cpp)
 target_compile_definitions(
   libtmux_compatibility_test
   PRIVATE
-    LIBTMUX_FORMAT_TOKENS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/data/format-tokens-3.2a.txt"
-    LIBTMUX_KEY_NAMES_PATH="${CMAKE_CURRENT_SOURCE_DIR}/data/key-names-3.2a.txt")
+    LIBTMUX_FORMAT_TOKENS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/data/format-tokens-3.3a.txt"
+    LIBTMUX_KEY_NAMES_PATH="${CMAKE_CURRENT_SOURCE_DIR}/data/key-names-3.3a.txt")
 target_link_libraries(
   libtmux_compatibility_test
   PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
@@ -202,6 +202,19 @@ target_compile_options(
 gtest_discover_tests(
   libtmux_snapshot_framing_test
   TEST_PREFIX libtmux.snapshot.framing.
+  PROPERTIES LABELS real-tmux TIMEOUT 60)
+
+add_executable(libtmux_admission_test integration/admission_test.cpp)
+target_link_libraries(
+  libtmux_admission_test
+  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+          libtmux_test_support)
+target_compile_options(
+  libtmux_admission_test PRIVATE -fno-sanitize-recover=undefined)
+
+gtest_discover_tests(
+  libtmux_admission_test
+  TEST_PREFIX libtmux.admission.
   PROPERTIES LABELS real-tmux TIMEOUT 60)
 
 add_executable(libtmux_server_identity_test integration/server_identity_test.cpp)
@@ -719,10 +732,10 @@ endif()
 # them that way. A guard that only understands numbered releases turns the
 # newest tmux there is into "too old to test".
 if(NOT LIBTMUX_TEST_TMUX_VERSION MATCHES
-   "^tmux (master|next-|3\\.[2-9]|3\\.[1-9][0-9]|[4-9]\\.)")
+   "^tmux (master|next-|3\\.[3-9]|3\\.[1-9][0-9]|[4-9]\\.)")
   message(
     FATAL_ERROR
-      "control-mode tests need tmux 3.2 or newer, found ${LIBTMUX_TEST_TMUX_VERSION}")
+      "control-mode tests need tmux 3.3a or newer, found ${LIBTMUX_TEST_TMUX_VERSION}")
 endif()
 
 # The version is no longer stamped into the support library from here.

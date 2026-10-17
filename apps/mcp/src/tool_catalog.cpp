@@ -1761,7 +1761,13 @@ resolve_session(const Server& server, std::string_view target) {
   inspect_metadata(
       "get_server_info", "Get tmux server information", {}, OutputShape::object,
       [](const Server& server, const Arguments&, const CallContext&) -> ToolResult {
-        const bool running = server.is_alive();
+        const auto alive = server.check_alive();
+        // A daemon libtmux refuses is not a stopped one, and reporting it as
+        // stopped would invite starting a server on top of it.
+        if (!alive.has_value() && alive.error().kind == FailureKind::unsupported) {
+          return libtmux::unexpected(detail::tmux_error(alive.error()));
+        }
+        const bool running = alive.has_value();
         StructuredValue::Object result{{"running", running}};
         // tmux's own `-V` spelling, not a reconstruction from the parsed
         // Version: the parsed form cannot round-trip a letter revision

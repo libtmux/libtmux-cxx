@@ -659,7 +659,7 @@ TEST(WorkspaceBuilder, ObserverRefusalStopsCreationAndFinalFocusWithOwnedRollbac
   }
 }
 
-TEST(WorkspaceBuilder, LayoutVersionProbePreservesPermissionFailure) {
+TEST(WorkspaceBuilder, LayoutVersionIsRememberedOncePermissionIsLost) {
   if (::geteuid() == 0) {
     GTEST_SKIP() << "root bypasses directory search permissions";
   }
@@ -698,8 +698,15 @@ TEST(WorkspaceBuilder, LayoutVersionProbePreservesPermissionFailure) {
   const auto invalid = workspace::validate_layouts(*server, description);
   std::filesystem::permissions(permissions.path, permissions.previous);
   ASSERT_TRUE(invalid.has_value());
-  EXPECT_EQ(invalid->reason, refused.error().diagnostic);
-  EXPECT_EQ(commands, (std::vector<std::string>{"display-message -p #{version}"}));
+  // The keeper lookup admitted this daemon, so its release is remembered and
+  // the layouts are judged against it: nothing is asked of a socket that now
+  // refuses, and the verdict is about the layout, not the permission.
+  EXPECT_NE(invalid->reason.find("more than one layout preset"), std::string::npos)
+      << invalid->reason;
+  // tmux's own reason for a command that does reach the socket.
+  EXPECT_NE(refused.error().diagnostic.find("Permission denied"), std::string::npos);
+  // The version is read without a command a user's hooks could see.
+  EXPECT_TRUE(commands.empty());
   EXPECT_TRUE(connect(*fixture).session(fixture->session_name()));
 }
 
@@ -729,12 +736,12 @@ TEST(WorkspaceBuilder, LayoutVersionProbePreservesLiveDaemonTimeout) {
   const auto invalid = workspace::validate_layouts(*server, description);
   ASSERT_EQ(::kill(resume.process, SIGCONT), 0);
   ASSERT_TRUE(invalid.has_value());
-  EXPECT_EQ(invalid->reason, timed_out.error().diagnostic);
-  EXPECT_EQ(commands, (std::vector<std::string>{"display-message -p #{version}"}));
+  EXPECT_NE(invalid->reason.find("timeout"), std::string::npos) << invalid->reason;
+  EXPECT_TRUE(commands.empty());
   EXPECT_TRUE(connect(*fixture).session(fixture->session_name()));
 }
 
-TEST(WorkspaceBuilder, LayoutVersionProbeUsesClientOnlyForUnboundMissingEndpoint) {
+TEST(WorkspaceBuilder, LayoutVersionProbeJudgesTheExecutableOnlyWhenNoDaemonAnswers) {
   auto fixture = libtmux::test::ScopedTmuxServer::start(
       {.socket_namespace = libtmux::test::SocketNamespace::consumer("layout")});
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
@@ -753,8 +760,7 @@ TEST(WorkspaceBuilder, LayoutVersionProbeUsesClientOnlyForUnboundMissingEndpoint
   const auto cold = Server::startable_at_socket_path(selected.string(), {}, observe);
   ASSERT_TRUE(cold.has_value());
   EXPECT_FALSE(workspace::validate_layouts(*cold, description));
-  EXPECT_EQ(commands,
-            (std::vector<std::string>{"display-message -p #{version}", "-V"}));
+  EXPECT_TRUE(commands.empty());
   EXPECT_FALSE(std::filesystem::exists(selected));
   EXPECT_TRUE(connect(*fixture).session(fixture->session_name()));
 
@@ -762,8 +768,7 @@ TEST(WorkspaceBuilder, LayoutVersionProbeUsesClientOnlyForUnboundMissingEndpoint
   ASSERT_TRUE(ordinary.has_value());
   commands.clear();
   EXPECT_FALSE(workspace::validate_layouts(*ordinary, description));
-  EXPECT_EQ(commands,
-            (std::vector<std::string>{"display-message -p #{version}", "-V"}));
+  EXPECT_TRUE(commands.empty());
   EXPECT_FALSE(std::filesystem::exists(selected));
   EXPECT_FALSE(ordinary->new_session("must-not-start").has_value());
   EXPECT_FALSE(std::filesystem::exists(selected));
@@ -783,11 +788,10 @@ TEST(WorkspaceBuilder, LayoutVersionProbeUsesClientOnlyForUnboundMissingEndpoint
   ASSERT_TRUE(refused.error().diagnostic.starts_with("no server running on "))
       << refused.error().diagnostic;
   commands.clear();
+  // No daemon answers, so the executable that would start one is judged.
   const auto checked = workspace::validate_layouts(*exited, description);
-  ASSERT_TRUE(checked.has_value());
-  EXPECT_EQ(checked->window_index, 0U);
-  EXPECT_EQ(checked->reason, refused.error().diagnostic);
-  EXPECT_EQ(commands, (std::vector<std::string>{"display-message -p #{version}"}));
+  EXPECT_FALSE(checked.has_value());
+  EXPECT_TRUE(commands.empty());
 }
 
 TEST(WorkspaceBuilder, LayoutVersionProbeKeepsAnEmptyDaemonsVersion) {
@@ -815,7 +819,7 @@ TEST(WorkspaceBuilder, LayoutVersionProbeKeepsAnEmptyDaemonsVersion) {
   const workspace::Workspace description{
       .session_name = "guarded", .windows = {{.layout = layout}, {.layout = layout}}};
   EXPECT_FALSE(workspace::validate_layouts(*server, description));
-  EXPECT_EQ(commands, (std::vector<std::string>{"display-message -p #{version}"}));
+  EXPECT_TRUE(commands.empty());
   const auto sessions = server->sessions();
   ASSERT_TRUE(sessions.has_value());
   EXPECT_TRUE(sessions->empty());

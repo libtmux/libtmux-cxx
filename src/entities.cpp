@@ -693,7 +693,7 @@ expected<void, CommandFailure> Window::select_layout(std::string_view layout) co
   if (!backend())
     return unexpected(detail::disconnected());
   const std::array requests{LayoutRequest{layout}};
-  if (auto checked = detail::validate_layouts(*backend(), requests, false); !checked)
+  if (auto checked = detail::validate_layouts(*backend(), requests); !checked)
     return unexpected(std::move(checked.error().cause));
   return effect(run({"select-layout", "-t", window_command_target(*this), "--",
                      std::string{layout}}));
@@ -1190,7 +1190,7 @@ expected<std::string, CommandFailure> Pane::capture(CaptureOptions options) cons
   if (!captured.has_value() || !options.join_wrapped || options.keep_trailing_spaces) {
     return captured;
   }
-  // tmux 3.2 and 3.3 make -J retain cell padding even without -N.
+  // tmux 3.3a still makes -J retain cell padding even without -N.
   return trim_line_end_spaces(*captured);
 }
 

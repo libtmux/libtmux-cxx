@@ -186,7 +186,7 @@ Every member has an initializer: without one here, a designated initializer that
 <a id="libtmux-testing-scoped-server-hpp-scopedtmuxserver"></a>
 ### `ScopedTmuxServer`
 
-A tmux server that exists for the lifetime of this value.  Owns a private socket and directory and kills the server on destruction, so suites running at once cannot see each other's sessions. Teardown reports rather than throws — a destructor that throws during a failing test hides the failure.
+A tmux server that exists for the lifetime of this value.  It starts whatever `tmux_binary` names without asking its release: the fixture owns the server, so there is no user hook to protect, and a suite that checks how the library refuses an older daemon needs one to exist. The library's own floor applies to a `Server` opened on this socket, not here.  Owns a private socket and directory and kills the server on destruction, so suites running at once cannot see each other's sessions. Teardown reports rather than throws — a destructor that throws during a failing test hides the failure.
 
 ```cpp
 class ScopedTmuxServer final;
@@ -358,7 +358,7 @@ GoogleTest skips for behaviour that belongs to tmux rather than to this library,
 ```cpp
 #define LIBTMUX_REQUIRES_TMUX(major_version, minor_version, capability) /* implementation omitted */
 ```
-Skip unless tmux is at least `major.minor`, naming what is missing below it.
+Skip unless tmux is at least `major.minor`, naming what is missing below it. A release candidate or `next-` build of `major.minor` ranks below it and does not count as having it.
 
 <a id="libtmux-testing-capabilities-hpp-free-symbols-libtmux-skip-tmux-defect"></a>
 #### `LIBTMUX_SKIP_TMUX_DEFECT`

@@ -523,7 +523,7 @@ TEST(McpToolsTmux, ReportsTheExactSocketPathBytesTmuxCannotSpell) {
   // Deliberately not compared against `#{socket_path}`: tmux 3.7 hands the raw
   // byte back while 3.4 spells it `\376`, so the discrepancy is only visible on
   // part of the supported range. The invariant below holds on all of it, and
-  // the compatibility lanes at 3.2a through 3.5 are where it bites.
+  // the compatibility lanes at 3.3a through 3.5 are where it bites.
   const auto reported = all_tools().call(*opened, "get_server_info", Arguments{});
   ASSERT_TRUE(reported.has_value()) << reported.error().message;
   ASSERT_TRUE(reported->structured.contains("socket_path"));

@@ -36,7 +36,7 @@ const std::string& string_field(const ToolOutput& output, std::string_view name)
 
 bool has_output_line(const ToolOutput& output, std::string_view expected) {
   for (std::string_view line : libtmux::capture_lines(string_field(output, "text"))) {
-    // tmux 3.2a retains trailing grid padding in joined captures.
+    // Trailing grid padding is not part of what was echoed.
     while (line.ends_with(' ')) {
       line.remove_suffix(1);
     }

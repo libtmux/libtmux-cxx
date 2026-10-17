@@ -106,6 +106,8 @@ public:
     version_timeouts.push_back(policy().timeout);
     version_output_limits.push_back(policy().output_limit);
     std::this_thread::sleep_for(delay);
+    if (version_failure)
+      return unexpected(*version_failure);
     return version_;
   }
 
@@ -115,6 +117,7 @@ public:
   mutable std::vector<std::optional<std::size_t>> command_output_limits;
   mutable std::vector<std::optional<std::chrono::milliseconds>> version_timeouts;
   mutable std::vector<std::optional<std::size_t>> version_output_limits;
+  std::optional<CommandFailure> version_failure;
   mutable std::size_t version_queries{};
   std::chrono::milliseconds delay{};
   std::optional<CommandFailure> refused_reply;
@@ -226,26 +229,30 @@ TEST(BackendSeam, InvalidWindowLayoutsNeverReachTheExecutor) {
   }
 }
 
+libtmux::Version version_of(std::string_view text) {
+  const auto parsed = libtmux::parse_version("tmux " + std::string{text});
+  return parsed.value_or(libtmux::Version{});
+}
+
 TEST(BackendSeam, WindowLayoutNamesUseTheSelectedDaemonVersion) {
-  for (const auto* version : {"3.2a", "3.7c"}) {
+  for (const auto* version : {"3.3a", "3.7c"}) {
     auto backend = std::make_shared<ScriptedBackend>(
-        std::vector<std::string>{window_row("@3", "work", "$2"), version, ""});
+        std::vector<std::string>{window_row("@3", "work", "$2"), ""},
+        version_of(version));
     const auto windows = libtmux::detail::server_over(backend).windows();
     ASSERT_TRUE(windows.has_value()) << windows.error().diagnostic;
     ASSERT_EQ(windows->size(), 1U);
     backend->issued.clear();
     const auto selected = windows->front().select_layout("main-h");
-    EXPECT_EQ(selected.has_value(), std::string_view{version} == "3.2a");
-    ASSERT_FALSE(backend->issued.empty());
-    EXPECT_EQ(backend->issued[0],
-              (std::vector<std::string>{"display-message", "-p", "#{version}"}));
-    EXPECT_EQ(backend->issued.size(), std::string_view{version} == "3.2a" ? 2U : 1U);
-    EXPECT_EQ(backend->version_queries, 0U);
+    EXPECT_EQ(selected.has_value(), std::string_view{version} == "3.3a");
+    // Only a daemon that accepts the name is sent the command.
+    EXPECT_EQ(backend->issued.size(), std::string_view{version} == "3.3a" ? 1U : 0U);
+    EXPECT_EQ(backend->version_queries, 1U);
   }
 }
 
 TEST(BackendSeam, LayoutBatchChecksEveryInputBeforeQuerying) {
-  auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{"3.2a"});
+  auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{});
   const auto server = libtmux::detail::server_over(backend);
   const std::array requests{libtmux::LayoutRequest{"main-h"},
                             libtmux::LayoutRequest{"tiled"},
@@ -259,26 +266,26 @@ TEST(BackendSeam, LayoutBatchChecksEveryInputBeforeQuerying) {
 }
 
 TEST(BackendSeam, LayoutBatchQueriesOnceAndKeepsTheInvalidIndex) {
-  for (const auto* version : {"3.2a", "3.7c"}) {
+  for (const auto* version : {"3.3a", "3.7c"}) {
     const libtmux::ExecutionPolicy policy{.timeout = std::chrono::milliseconds{73},
                                           .output_limit = 8096};
-    auto backend = std::make_shared<ScriptedBackend>(
-        std::vector<std::string>{version}, libtmux::Version{.major = 9}, policy);
+    auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{},
+                                                     version_of(version), policy);
     const std::array requests{libtmux::LayoutRequest{"tiled"},
                               libtmux::LayoutRequest{"main-h"},
                               libtmux::LayoutRequest{"main-v"}};
     const auto checked =
         libtmux::detail::server_over(backend).validate_layouts(requests);
-    EXPECT_EQ(checked.has_value(), std::string_view{version} == "3.2a");
+    EXPECT_EQ(checked.has_value(), std::string_view{version} == "3.3a");
     if (!checked) {
       EXPECT_EQ(checked.error().index, 1U);
       EXPECT_EQ(checked.error().cause.kind, FailureKind::validation);
     }
-    ASSERT_EQ(backend->issued.size(), 1U);
-    EXPECT_EQ(backend->issued.front().front(), "display-message");
-    EXPECT_EQ(backend->command_timeouts.front(), policy.timeout);
-    EXPECT_EQ(backend->command_output_limits.front(), policy.output_limit);
-    EXPECT_EQ(backend->version_queries, 0U);
+    // The daemon is asked for its version, and that is all it is asked.
+    EXPECT_TRUE(backend->issued.empty());
+    ASSERT_EQ(backend->version_queries, 1U);
+    EXPECT_EQ(backend->version_timeouts.front(), policy.timeout);
+    EXPECT_EQ(backend->version_output_limits.front(), policy.output_limit);
   }
 }
 
@@ -299,11 +306,12 @@ constexpr std::string_view json_pane =
     R"({"V":2,"L":{"t":"p","w":80,"h":24,"x":0,"y":0,"i":0}})";
 
 TEST(BackendSeam, JsonLayoutsKeepTheirPayloadAndUseTheSelectedDaemonVersion) {
-  for (const auto* version : {"3.7c", "next-3.8", "3.8-rc", "3.8-rc2", "3.8",
-                              "next-3.9", "3.9", "3.7-master"}) {
+  for (const auto* version :
+       {"3.7c", "next-3.8", "3.8-rc", "3.8-rc2", "3.8", "next-3.9", "3.9"}) {
     SCOPED_TRACE(version);
     auto backend = std::make_shared<ScriptedBackend>(
-        std::vector<std::string>{window_row("@3", "work", "$2"), version, ""});
+        std::vector<std::string>{window_row("@3", "work", "$2"), ""},
+        version_of(version));
     const auto windows = libtmux::detail::server_over(backend).windows();
     ASSERT_TRUE(windows.has_value());
     backend->issued.clear();
@@ -311,10 +319,10 @@ TEST(BackendSeam, JsonLayoutsKeepTheirPayloadAndUseTheSelectedDaemonVersion) {
     const bool supported =
         std::string_view{version} != "3.7c" && std::string_view{version} != "next-3.8";
     ASSERT_EQ(selected.has_value(), supported);
-    ASSERT_EQ(backend->issued.size(), supported ? 2U : 1U);
-    EXPECT_EQ(backend->issued.front(),
-              (std::vector<std::string>{"display-message", "-p", "#{version}"}));
-    EXPECT_EQ(backend->version_queries, 0U);
+    // The daemon is asked for its version, never with a command that fires a
+    // user's hooks.
+    EXPECT_EQ(backend->version_queries, 1U);
+    ASSERT_EQ(backend->issued.size(), supported ? 1U : 0U);
     if (supported)
       EXPECT_EQ(backend->issued.back().back(), json_pane);
     else
@@ -339,10 +347,11 @@ TEST(BackendSeam, JsonLayoutBatchKeepsTheIndexAndTransportFailure) {
   const std::array requests{libtmux::LayoutRequest{"tiled"},
                             libtmux::LayoutRequest{json_pane},
                             libtmux::LayoutRequest{"even-h"}};
-  for (const auto* version : {"3.7c", "next-3.8", "3.8-rc", "3.8-rc2", "3.8-rcx", "3.8",
-                              "next-3.9", "invalid"}) {
+  for (const auto* version :
+       {"3.7c", "next-3.8", "3.8-rc", "3.8-rc2", "3.8", "next-3.9"}) {
     SCOPED_TRACE(version);
-    auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{version});
+    auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{},
+                                                     version_of(version));
     const auto checked =
         libtmux::detail::server_over(backend).validate_layouts(requests);
     const bool supported = std::string_view{version} == "3.8-rc" ||
@@ -353,13 +362,13 @@ TEST(BackendSeam, JsonLayoutBatchKeepsTheIndexAndTransportFailure) {
     if (!checked) {
       EXPECT_EQ(checked.error().index, 1U);
     }
-    EXPECT_EQ(backend->issued.size(), 1U);
-    EXPECT_EQ(backend->version_queries, 0U);
+    EXPECT_TRUE(backend->issued.empty());
+    EXPECT_EQ(backend->version_queries, 1U);
   }
   for (const auto kind : {FailureKind::missing, FailureKind::timeout, FailureKind::pipe,
-                          FailureKind::refused}) {
+                          FailureKind::refused, FailureKind::unsupported}) {
     auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{});
-    backend->refused_reply =
+    backend->version_failure =
         CommandFailure{.kind = kind,
                        .delivery = libtmux::DeliveryStatus::not_started,
                        .exit_code = 19,
@@ -371,8 +380,8 @@ TEST(BackendSeam, JsonLayoutBatchKeepsTheIndexAndTransportFailure) {
     EXPECT_EQ(checked.error().cause.kind, kind);
     EXPECT_EQ(checked.error().cause.exit_code, 19);
     EXPECT_EQ(checked.error().cause.diagnostic, "original failure");
-    EXPECT_EQ(backend->issued.size(), 1U);
-    EXPECT_EQ(backend->version_queries, 0U);
+    EXPECT_TRUE(backend->issued.empty());
+    EXPECT_EQ(backend->version_queries, 1U);
   }
 }
 
@@ -459,11 +468,11 @@ TEST(BackendSeam, JsonLayoutSyntaxChecksMetadataWithoutArrangingGeometry) {
   }
 }
 
-TEST(BackendSeam, LayoutBatchPreservesTransportFailuresWithoutClientFallback) {
+TEST(BackendSeam, LayoutBatchPreservesTransportFailuresWithoutAnotherQuery) {
   for (const auto kind : {FailureKind::missing, FailureKind::timeout, FailureKind::pipe,
                           FailureKind::refused}) {
     auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{});
-    backend->refused_reply =
+    backend->version_failure =
         CommandFailure{.kind = kind,
                        .delivery = libtmux::DeliveryStatus::not_started,
                        .exit_code = 19,
@@ -479,8 +488,8 @@ TEST(BackendSeam, LayoutBatchPreservesTransportFailuresWithoutClientFallback) {
     EXPECT_EQ(cause.delivery, libtmux::DeliveryStatus::not_started);
     EXPECT_EQ(cause.exit_code, 19);
     EXPECT_EQ(cause.diagnostic, "original failure");
-    EXPECT_EQ(backend->issued.size(), 1U);
-    EXPECT_EQ(backend->version_queries, 0U);
+    EXPECT_TRUE(backend->issued.empty());
+    EXPECT_EQ(backend->version_queries, 1U);
   }
 }
 

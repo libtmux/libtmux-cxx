@@ -373,8 +373,8 @@ expected<void, CommandFailure> validate_layout(std::string_view layout,
 }
 
 expected<void, LayoutFailure>
-detail::validate_layouts(const Backend& backend, std::span<const LayoutRequest> layouts,
-                         bool allow_cold) {
+detail::validate_layouts(const Backend& backend,
+                         std::span<const LayoutRequest> layouts) {
   std::optional<std::size_t> sensitive;
   for (std::size_t index = 0; index < layouts.size(); ++index) {
     const auto& request = layouts[index];
@@ -386,32 +386,18 @@ detail::validate_layouts(const Backend& backend, std::span<const LayoutRequest> 
   if (!sensitive)
     return {};
 
-  const auto& policy = backend.policy();
-  const auto running = backend.run({"display-message", "-p", "#{version}"},
-                                   policy.timeout, policy.output_limit);
-  Version version;
-  if (running) {
-    const auto parsed = parse_version("tmux " + *running);
-    if (!parsed)
-      return unexpected(LayoutFailure{
-          *sensitive,
-          invalid_layout("cannot determine tmux daemon version for layout")});
-    version = *parsed;
-  } else {
-    const auto& failure = running.error();
-    if (!allow_cold || !backend.allows_cold_socket_version_fallback() ||
-        failure.kind != FailureKind::missing ||
-        failure.delivery != DeliveryStatus::not_started)
-      return unexpected(LayoutFailure{*sensitive, failure});
-    const auto client = backend.version();
-    if (!client)
-      return unexpected(LayoutFailure{*sensitive, client.error()});
-    version = *client;
+  // The daemon's version when one answers; the executable's while none does,
+  // which is what a plan made before its server exists has to go on.
+  const auto running = backend.version();
+  if (!running) {
+    return unexpected(LayoutFailure{*sensitive, running.error()});
   }
+  const Version version = *running;
   const bool mirrored = version >= Version{.major = 3, .minor = 5};
   for (std::size_t index = 0; index < layouts.size(); ++index) {
     const auto& request = layouts[index];
-    if (json_layout(request.layout) && version < Version{.major = 3, .minor = 8})
+    if (json_layout(request.layout) &&
+        version < Version{.major = 3, .minor = 8, .candidate = 1})
       return unexpected(LayoutFailure{
           index, invalid_layout("JSON saved layouts require tmux 3.8 or newer")});
     if (layout_needs_version(request.layout))

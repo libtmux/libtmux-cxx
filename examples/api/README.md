@@ -5,7 +5,7 @@ checked errors, and cleanup. They use the public `libtmux::testing` fixture to
 own a private tmux server. Application code uses `libtmux::Server` to address
 its server; the fixture only supplies the isolated daemon for these examples.
 
-Use Clang 18 with libc++ 18, CMake 3.25 or newer, Ninja, and tmux 3.2a or newer.
+Use Clang 18 with libc++ 18, CMake 3.25 or newer, Ninja, and tmux 3.3a or newer.
 The fixture requires POSIX; these programs do not describe the Windows psmux
 preview.
 

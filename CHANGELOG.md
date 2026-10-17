@@ -9,6 +9,22 @@ was recorded as it landed.
 
 ## Unreleased
 
+### Breaking
+
+- tmux 3.3a is the oldest supported release. The daemon a command reaches
+  decides: a daemon older than 3.3a, including 3.3 itself, `next-3.3a` and
+  an undated `master`, is refused with `FailureKind::unsupported` before the
+  command has any effect, whatever the client executable reports. Release
+  candidates order below their release (`Version::candidate`), so version
+  gates that include them say `.candidate = 1`. `parse_version` no longer
+  reads `master`, `X.Y-master`, `X.Y-dev` or a `next-` build with a patch
+  letter as a version; tmux reports none of them.
+- Every command to a live daemon now carries a check that fails the list
+  unrun if another daemon has replaced it, and is sent with `-N`, so a
+  vanished server is not restarted by the client binary. `kill-server` on a
+  server that is already gone succeeds. Raw tmux client flags such as `-c`
+  are no longer dispatched.
+
 ## 0.1.0-alpha.11 (2026-09-26)
 
 This alpha adds `tmux-workspace`, an optional POSIX executable for workspace

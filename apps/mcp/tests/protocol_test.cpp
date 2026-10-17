@@ -798,7 +798,7 @@ TEST_F(McpProtocol, JsonLayoutSelectionPreservesFloatingPanesAndKeeperState) {
   const auto server = connect_server();
   const auto version = server.tmux_version();
   ASSERT_TRUE(version.has_value());
-  if (*version < libtmux::Version{.major = 3, .minor = 8})
+  if (*version < libtmux::Version{.major = 3, .minor = 8, .candidate = 1})
     GTEST_SKIP() << "v2 layouts and floating panes require tmux 3.8";
   const auto session = server.session("mcp");
   ASSERT_TRUE(session.has_value());

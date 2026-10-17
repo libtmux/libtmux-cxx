@@ -1,5 +1,6 @@
 #include "libtmux/control.hpp"
 
+#include "admission.hpp"
 #include "libtmux/expected.hpp"
 #include "notification_stream.hpp"
 #include "spawn_descriptors.hpp"
@@ -1033,6 +1034,19 @@ expected<Connection, ProtocolError> Connection::connect(ConnectionOptions option
                           " bytes so private request boundaries remain readable"));
   }
 
+  // The daemon is asked before a client attaches to it. An attach is a
+  // dispatch like any other, and an older daemon is refused without one.
+  const auto endpoint =
+      detail::query_endpoint(*options.tmux_binary, {"-S", options.socket_path.string()},
+                             options.startup_timeout);
+  if (!endpoint.has_value()) {
+    return unexpected(not_started_error(endpoint.error().diagnostic));
+  }
+  if (auto supported = detail::require_supported(*endpoint); !supported.has_value()) {
+    return unexpected(not_started_error(supported.error().diagnostic));
+  }
+  const std::string fence_marker = detail::version_marker();
+
   auto seed = make_boundary_seed();
   if (!seed) {
     ProtocolError failure = seed.error();
@@ -1079,11 +1093,33 @@ expected<Connection, ProtocolError> Connection::connect(ConnectionOptions option
 
   if (ready) {
     Connection connection{std::move(state)};
+    if (endpoint->live) {
+      // The probe and the attach are two connections, so a daemon replaced
+      // between them is caught by the first command this one sends.
+      ControlRequest fence;
+      std::vector<std::string> command{"if-shell", "-F",
+                                       "#{==:#{version}," + endpoint->token + "}", "",
+                                       fence_marker};
+      fence.group.push_back(ControlCommand{std::move(command)});
+      const auto fence_result = connection.execute(
+          std::move(fence), Clock::now() + connection.state_->options.startup_timeout);
+      const bool fence_refused =
+          !fence_result.blocks.empty() &&
+          fence_result.blocks.front().terminal == ControlTerminal::error;
+      if (fence_result.connection_error.has_value() || fence_refused) {
+        ProtocolError failure = fence_result.connection_error.value_or(
+            ProtocolError{.message = detail::replaced_daemon().diagnostic,
+                          .delivery = DeliveryStatus::replied});
+        static_cast<void>(connection.shutdown(
+            Clock::now() + connection.state_->options.shutdown_timeout));
+        return unexpected(std::move(failure));
+      }
+    }
     // JSON layouts, not the classic form that renumbers a pane by index
     // whenever another pane in the window disappears. tmux 3.7c and earlier
     // silently ignore an unrecognised client flag; 3.8+ starts sending JSON
     // for `window_layout` and `%layout-change` from this point on. Verified
-    // against raw tmux on 3.2a, 3.7c and next-3.9.
+    // against raw tmux on 3.3a, 3.7c and next-3.9.
     ControlRequest layout_request;
     layout_request.group.push_back(
         ControlCommand{{"refresh-client", "-f", "new-layouts"}});

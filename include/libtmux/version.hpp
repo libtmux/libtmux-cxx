@@ -2,8 +2,9 @@
 
 // Parse and order tmux version strings.
 //
-// Suffixes follow bare releases; `next-` precedes its release and `master`
-// follows all. Psmux 3.3.7 occupies `revision=7`, equal to tmux 3.3g.
+// Suffixes follow bare releases; `next-` precedes its release, a release
+// candidate sits between the two. Psmux 3.3.7
+// occupies `revision=7`, equal to tmux 3.3g.
 
 #include "libtmux/abi.hpp"
 #include "libtmux/expected.hpp"
@@ -30,18 +31,23 @@ enum class VersionError { missing_prefix, malformed };
 
 /// A tmux version, ordered so a feature gate can compare against a literal.
 ///
-/// tmux marks a development build with a suffix, which orders after the
-/// release it follows rather than before it.
+/// A `next-` build and a release candidate order before the release they lead
+/// to, so a gate written against `3.8` does not admit `3.8-rc2`; write
+/// `{.major = 3, .minor = 8, .candidate = 1}` to include the candidates.
 struct Version {
   std::uint32_t major{};
   std::uint32_t minor{};
   /// 0 for a bare release, 1 for `a`, 2 for `b`, and so on. Psmux's numeric
   /// third component occupies this existing slot as the corresponding number.
   std::uint32_t revision{};
-  /// A `next-` build precedes the release it leads to; `master` follows every
-  /// numbered release.
+  /// A `next-` build precedes the release it leads to.
   bool prerelease{false};
+  /// Never set by `parse_version`. A harness that cannot read tmux's version
+  /// sets it to mean "newest", so version-gated tests run rather than skip.
   bool unbounded{false};
+  /// 0 for a release, 1 for `-rc` and N for `-rcN`: a candidate orders after a
+  /// `next-` build and before its release.
+  std::uint16_t candidate{0};
 
   [[nodiscard]] constexpr std::strong_ordering
   operator<=>(const Version& other) const noexcept {
@@ -60,7 +66,11 @@ struct Version {
     if (prerelease != other.prerelease) {
       return prerelease ? std::strong_ordering::less : std::strong_ordering::greater;
     }
-    return std::strong_ordering::equal;
+    // A release is the greatest of its candidates.
+    const auto rank = [](std::uint16_t value) noexcept {
+      return value == 0U ? std::numeric_limits<std::uint16_t>::max() : value;
+    };
+    return rank(candidate) <=> rank(other.candidate);
   }
   [[nodiscard]] constexpr bool operator==(const Version&) const noexcept = default;
 };
@@ -78,11 +88,10 @@ parse_version(std::string_view output) {
   }
   output.remove_prefix(prefix.size());
 
+  // `master`, `X.Y-master` and `X.Y-dev` are not forms tmux reports, and a
+  // build that cannot say which release it leads to cannot be ordered, so they
+  // are errors rather than versions that follow every release.
   Version version;
-  if (output == "master" || output.ends_with("-master")) {
-    version.unbounded = true;
-    return version;
-  }
   if (output.starts_with("next-")) {
     version.prerelease = true;
     output.remove_prefix(5);
@@ -124,11 +133,18 @@ parse_version(std::string_view output) {
   if (suffix.empty()) {
     return version;
   }
-  // A release candidate ranks as the release it names: `-rc`, or `-rc2` for
-  // a later candidate of the same release.
+  // A `next-` build leads to a release and carries no patch letter or
+  // candidate of its own.
+  if (version.prerelease) {
+    return unexpected(VersionError::malformed);
+  }
+  // A release candidate ranks below the release it names: `-rc`, or `-rc2`
+  // for a later candidate of the same release.
   if (suffix.starts_with("-rc")) {
-    std::uint32_t candidate = 0;
-    if (suffix.size() == 3 || digits(suffix.substr(3), candidate)) {
+    std::uint32_t candidate = 1;
+    if (suffix.size() == 3 || (digits(suffix.substr(3), candidate) && candidate != 0U &&
+                               candidate < std::numeric_limits<std::uint16_t>::max())) {
+      version.candidate = static_cast<std::uint16_t>(candidate);
       return version;
     }
     return unexpected(VersionError::malformed);
@@ -146,8 +162,9 @@ parse_version(std::string_view output) {
   return version;
 }
 
-/// The oldest release this library supports, matching the Python package.
-inline constexpr Version kMinimumSupported{.major = 3, .minor = 2, .revision = 1};
+/// The oldest release this library supports: 3.3a. Patch letters count, so
+/// 3.3 is below it, and `next-3.3a` and `3.3a-rc` order before it.
+inline constexpr Version kMinimumSupported{.major = 3, .minor = 3, .revision = 1};
 
 [[nodiscard]] constexpr bool is_supported(const Version& version) noexcept {
   return version >= kMinimumSupported;
