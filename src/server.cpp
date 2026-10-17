@@ -7,6 +7,7 @@
 #include <chrono>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <utility>
@@ -17,6 +18,7 @@
 #include "environment.hpp"
 #include "path.hpp"
 #include "psmux.hpp"
+#include "support_versions.hpp"
 
 LIBTMUX_NAMESPACE_BEGIN
 
@@ -185,6 +187,13 @@ startable_subprocess_server(std::vector<std::string> connection,
 
 namespace {
 
+using support::versions::EndpointVersion;
+using support::versions::probe_report;
+using support::versions::read_report;
+using support::versions::require_supported;
+using support::versions::version_check_failure;
+using support::versions::version_marker;
+
 // Adapts a caller-supplied executor to the private backend interface.
 //
 // Every virtual the executor does not answer keeps its `Backend` default,
@@ -202,8 +211,61 @@ public:
   [[nodiscard]] expected<std::string, CommandFailure>
   run(const CommandRequest& command, std::optional<std::chrono::milliseconds> timeout,
       std::optional<std::size_t> output_limit) const override {
+    if (options_.implementation != ServerImplementation::psmux) {
+      if (command.empty()) {
+        return report_failure(
+            command,
+            version_check_failure(FailureKind::validation,
+                                  "a tmux command needs at least a command name"));
+      }
+      const std::string& name = command.arguments().front().value();
+      const bool diagnostic = command.size() == 1U && (name == "-V" || name == "-h");
+      if (!diagnostic && name.starts_with('-')) {
+        return report_failure(
+            command, version_check_failure(FailureKind::validation,
+                                           "'" + name +
+                                               "' is a tmux client flag; commands are "
+                                               "dispatched by name"));
+      }
+      if (!diagnostic) {
+        if (auto checked = check_version(timeout); !checked.has_value()) {
+          return report_failure(command, std::move(checked.error()));
+        }
+      }
+    }
+    // A daemon read from the executable's executor, rather than declared for it,
+    // is held to by the same fence a launched command carries, so a daemon
+    // replaced behind the executor fails the command list unrun instead of
+    // inheriting this version check.
+    std::string fenced_token;
+    {
+      const std::lock_guard guard{version_cache_mutex_};
+      fenced_token = fence_token_;
+    }
+    const CommandRequest* sent = &command;
+    CommandRequest fenced;
+    if (!fenced_token.empty()) {
+      for (const detail::Argument& argument :
+           support::versions::version_fence(fenced_token, fence_marker_)) {
+        fenced.push_back(argument.value);
+      }
+      for (const CommandArgument& argument : command.arguments()) {
+        fenced.push_back(argument);
+      }
+      sent = &fenced;
+    }
     const auto started = std::chrono::steady_clock::now();
-    auto answer = executor_->run(command, timeout, output_limit);
+    auto answer = executor_->run(*sent, timeout, output_limit);
+    if (!answer.has_value() && !fenced_token.empty() &&
+        answer.error().diagnostic.find("unknown command: " + fence_marker_) !=
+            std::string::npos) {
+      {
+        const std::lock_guard guard{version_cache_mutex_};
+        checked_ = false;
+        fence_token_.clear();
+      }
+      return report_failure(command, support::versions::replaced_daemon());
+    }
     const auto elapsed = std::chrono::steady_clock::now() - started;
     if (const auto observer = command_observer(); observer.has_value()) {
       const std::string rendered = detail::rendered_command(command);
@@ -232,27 +294,105 @@ public:
   }
 
   [[nodiscard]] expected<Version, CommandFailure> version() const override {
-    if (options_.version.has_value()) {
-      return *options_.version;
+    {
+      // The release checked earlier stands until a fence or a declared
+      // version says otherwise, so asking is not another probe.
+      const std::lock_guard guard{version_cache_mutex_};
+      if (checked_) {
+        return checked_version_;
+      }
     }
-    auto printed =
-        executor_->run(CommandRequest{{"-V"}}, policy().timeout, policy().output_limit);
-    if (!printed.has_value()) {
-      return unexpected(printed.error());
+    auto endpoint = endpoint_version(policy().timeout);
+    if (!endpoint.has_value()) {
+      return unexpected(std::move(endpoint.error()));
     }
-    auto parsed = parse_version(*printed);
-    if (!parsed.has_value()) {
-      return unexpected(CommandFailure{
-          .kind = FailureKind::refused,
-          .delivery = DeliveryStatus::replied,
-          .exit_code = 0,
-          .diagnostic = "the executor answered -V with " + *printed +
-                        "; name the version in ExecutorOptions if it cannot"});
-    }
-    return *parsed;
+    return endpoint->version;
   }
 
 private:
+  // What the executor reaches: the version its options declare, otherwise what
+  // the daemon behind it reports to the hook-free probe. The library cannot
+  // fence a command it does not launch, so an executor that can be repointed
+  // at another daemon owns that check.
+  [[nodiscard]] expected<EndpointVersion, CommandFailure>
+  endpoint_version(std::optional<std::chrono::milliseconds> timeout) const {
+    if (options_.version.has_value()) {
+      return EndpointVersion{.live = true,
+                             .version = *options_.version,
+                             .token = describe(*options_.version)};
+    }
+    const std::string marker = version_marker() + "-";
+    auto probed =
+        executor_->run(CommandRequest{{"run-shell", "-C", marker + "#{version}"}},
+                       timeout, policy().output_limit);
+    if (!probed.has_value()) {
+      if (auto report = probe_report(probed.error().diagnostic, marker);
+          report.has_value()) {
+        return read_report(*report, true);
+      }
+      if (probed.error().exit_code == 1 &&
+          support::versions::answers_like_before_three_two(probed.error().diagnostic)) {
+        return unexpected(support::versions::before_three_two_failure());
+      }
+      return unexpected(std::move(probed.error()));
+    }
+    return unexpected(version_check_failure(
+        FailureKind::unsupported,
+        "the executor did not report a daemon version; name it in ExecutorOptions"));
+  }
+
+  // The spelling tmux prints for a declared version, so a refusal names the
+  // build that was declared: `next-3.9` and `3.8-rc2` keep what makes them
+  // development builds.
+  [[nodiscard]] static std::string describe(const Version& version) {
+    if (version.unbounded) {
+      return "master";
+    }
+    std::string text = version.prerelease ? "next-" : "";
+    text += std::to_string(version.major) + "." + std::to_string(version.minor);
+    if (version.revision > 0U && version.revision <= 26U) {
+      text.push_back(static_cast<char>('a' + (version.revision - 1U)));
+    }
+    if (version.candidate > 0U) {
+      text += "-rc";
+      if (version.candidate > 1U) {
+        text += std::to_string(version.candidate);
+      }
+    }
+    return text;
+  }
+
+  // Refuses a daemon below the floor before the executor is asked for anything
+  // else. A psmux executor has its own versioning and is not checked here.
+  [[nodiscard]] expected<void, CommandFailure>
+  check_version(std::optional<std::chrono::milliseconds> timeout) const {
+    if (options_.implementation == ServerImplementation::psmux) {
+      return {};
+    }
+    const std::lock_guard guard{version_cache_mutex_};
+    if (checked_) {
+      return {};
+    }
+    auto endpoint = endpoint_version(timeout);
+    if (!endpoint.has_value()) {
+      return unexpected(std::move(endpoint.error()));
+    }
+    if (auto supported = require_supported(*endpoint); !supported.has_value()) {
+      return unexpected(std::move(supported.error()));
+    }
+    checked_ = true;
+    checked_version_ = endpoint->version;
+    // Only a release the executor reported can be named in a fence; a declared
+    // one has no exact spelling to compare with.
+    fence_token_ = options_.version.has_value() ? std::string{} : endpoint->token;
+    return {};
+  }
+  mutable std::mutex version_cache_mutex_;
+  mutable bool checked_{false};
+  mutable Version checked_version_{};
+  mutable std::string fence_token_;
+  const std::string fence_marker_{version_marker()};
+
   std::shared_ptr<const CommandExecutor> executor_;
   ExecutorOptions options_;
   BackendKind kind_;

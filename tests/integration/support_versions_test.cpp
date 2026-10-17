@@ -333,6 +333,20 @@ TEST_F(RejectedDaemon, TheVersionStaysReadableForADiagnostic) {
   expect_untouched();
 }
 
+TEST_F(RejectedDaemon, ADaemonBelowTheFloorIsNeverAttachedToByControlMode) {
+  auto server = server_for(*daemon_);
+  libtmux::ConnectionOptions options;
+  options.socket_path = daemon_->socket_path();
+  options.session_name = "sentinel";
+  const auto connection = libtmux::Connection::connect(std::move(options));
+  ASSERT_FALSE(connection.has_value());
+  EXPECT_NE(connection.error().message.find("3.3a"), std::string::npos)
+      << connection.error().message;
+  EXPECT_EQ(connection.error().delivery, DeliveryStatus::not_started);
+
+  EXPECT_EQ(daemon_->clients(), "");
+}
+
 TEST_F(RejectedDaemon, ARefusalReturnsLongBeforeTheCommandTimeout) {
   // A daemon older than 3.2 keeps the client's stdout open after the client
   // has exited, so a transport that reads to the end waits out its timeout.
@@ -427,6 +441,38 @@ TEST(PreThreeTwoAnswers, TheSameWordsFromASuccessfulRunAreNotAVersionRefusal) {
     EXPECT_NE(failed.error().diagnostic.find(stderr_text.substr(0, 12)),
               std::string::npos);
     EXPECT_EQ(failed.error().diagnostic.find("older than 3.2"), std::string::npos);
+  }
+}
+
+TEST(PreThreeTwoAnswers, AnExecutorsFailureWithTheSameWordsIsTheVersionRefusal) {
+  for (const auto& [name, stderr_text] : stand_ins()) {
+    SCOPED_TRACE(name);
+    class Pre32Executor final : public libtmux::CommandExecutor {
+    public:
+      explicit Pre32Executor(std::string text) : text_{std::move(text)} {}
+      libtmux::expected<std::string, CommandFailure>
+      run(const libtmux::CommandRequest&, std::optional<std::chrono::milliseconds>,
+          std::optional<std::size_t>) const override {
+        ++calls;
+        return libtmux::unexpected(CommandFailure{.kind = FailureKind::refused,
+                                                  .delivery = DeliveryStatus::replied,
+                                                  .exit_code = 1,
+                                                  .diagnostic = text_});
+      }
+      mutable int calls{};
+
+    private:
+      std::string text_;
+    };
+    auto executor = std::make_shared<Pre32Executor>(stderr_text);
+    auto server =
+        Server::over(executor, {.implementation = libtmux::ServerImplementation::tmux});
+    ASSERT_TRUE(server.has_value());
+    const auto refused = server->run({"new-session", "-d"});
+    ASSERT_FALSE(refused.has_value());
+    EXPECT_EQ(refused.error().kind, FailureKind::unsupported);
+    EXPECT_EQ(refused.error().delivery, DeliveryStatus::not_started);
+    EXPECT_EQ(executor->calls, 1) << "only the probe reached the executor";
   }
 }
 
@@ -661,6 +707,235 @@ TEST_F(WrappedTmux, ANamedExecutableIsAcceptedByTheNameItPrints) {
   const auto started = server->run({"new-session", "-d", "-s", "fresh"});
   EXPECT_TRUE(started.has_value()) << (started ? "" : started.error().diagnostic);
   EXPECT_TRUE(server->kill().has_value());
+}
+
+// ---------------------------------------------------------------------------
+// A caller's executor.
+// ---------------------------------------------------------------------------
+
+class CountingExecutor final : public libtmux::CommandExecutor {
+public:
+  explicit CountingExecutor(std::string daemon_version)
+      : daemon_version_{std::move(daemon_version)} {}
+
+  libtmux::expected<std::string, CommandFailure>
+  run(const libtmux::CommandRequest& command, std::optional<std::chrono::milliseconds>,
+      std::optional<std::size_t>) const override {
+    const auto argv = command.argv();
+    if (argv.size() == 3U && argv[0] == "run-shell" && argv[1] == "-C") {
+      ++probes;
+      return libtmux::unexpected(CommandFailure{
+          .kind = FailureKind::refused,
+          .delivery = DeliveryStatus::replied,
+          .exit_code = 1,
+          .diagnostic = "unknown command: " + argv[2].substr(0U, argv[2].find('#')) +
+                        daemon_version_});
+    }
+    if (replaced && argv.size() > 4U && argv[0] == "if-shell") {
+      // The daemon behind the executor is no longer the one that was asked:
+      // its fence stops the command list at the marker.
+      return libtmux::unexpected(
+          CommandFailure{.kind = FailureKind::refused,
+                         .delivery = DeliveryStatus::replied,
+                         .exit_code = 1,
+                         .diagnostic = "unknown command: " + argv[4]});
+    }
+    ++commands;
+    return std::string{"ran\n"};
+  }
+
+  mutable int probes{};
+  mutable int commands{};
+  mutable bool replaced{false};
+
+private:
+  std::string daemon_version_;
+};
+
+TEST(VersionCheckExecutor, ADeclaredVersionBelowTheFloorIsRefusedWithoutCallingIt) {
+  auto executor = std::make_shared<CountingExecutor>("3.4");
+  auto server =
+      Server::over(executor, {.implementation = libtmux::ServerImplementation::tmux,
+                              .version = parsed("3.2a")});
+  ASSERT_TRUE(server.has_value());
+  const auto refused = server->run({"new-session", "-d"});
+  ASSERT_FALSE(refused.has_value());
+  EXPECT_EQ(refused.error().kind, FailureKind::unsupported);
+  EXPECT_EQ(executor->commands, 0);
+  EXPECT_EQ(executor->probes, 0);
+}
+
+TEST(VersionCheckExecutor, AnUndeclaredVersionIsAskedOfTheDaemonBehindIt) {
+  {
+    auto executor = std::make_shared<CountingExecutor>("3.3");
+    auto server =
+        Server::over(executor, {.implementation = libtmux::ServerImplementation::tmux});
+    ASSERT_TRUE(server.has_value());
+    EXPECT_FALSE(server->run({"new-session", "-d"}).has_value());
+    EXPECT_EQ(executor->probes, 1);
+    EXPECT_EQ(executor->commands, 0);
+  }
+  {
+    auto executor = std::make_shared<CountingExecutor>("3.3a");
+    auto server =
+        Server::over(executor, {.implementation = libtmux::ServerImplementation::tmux});
+    ASSERT_TRUE(server.has_value());
+    EXPECT_TRUE(server->run({"new-session", "-d"}).has_value());
+    EXPECT_TRUE(server->run({"list-sessions"}).has_value());
+    EXPECT_EQ(executor->probes, 1) << "a qualified daemon is asked once";
+    EXPECT_EQ(executor->commands, 2);
+  }
+}
+
+TEST(VersionCheckExecutor, AReplacedDaemonIsNotAcceptedByTheExecutorsEarlierAnswer) {
+  auto executor = std::make_shared<CountingExecutor>("3.4");
+  auto server =
+      Server::over(executor, {.implementation = libtmux::ServerImplementation::tmux});
+  ASSERT_TRUE(server.has_value());
+  ASSERT_TRUE(server->run({"list-sessions"}).has_value());
+  ASSERT_EQ(executor->probes, 1);
+
+  executor->replaced = true;
+  const auto refused = server->run({"new-session", "-d"});
+  ASSERT_FALSE(refused.has_value());
+  EXPECT_EQ(refused.error().kind, FailureKind::unsupported);
+  EXPECT_EQ(refused.error().delivery, DeliveryStatus::not_started);
+  EXPECT_NE(refused.error().diagnostic.find("changed"), std::string::npos);
+  EXPECT_EQ(executor->commands, 1) << "the replaced daemon ran nothing";
+
+  executor->replaced = false;
+  EXPECT_TRUE(server->run({"list-sessions"}).has_value());
+  EXPECT_EQ(executor->probes, 2) << "the next command asks the new daemon again";
+}
+
+TEST(VersionCheckExecutor, TheVersionOfACheckedDaemonIsNotProbedAgain) {
+  auto executor = std::make_shared<CountingExecutor>("3.4");
+  auto server =
+      Server::over(executor, {.implementation = libtmux::ServerImplementation::tmux});
+  ASSERT_TRUE(server.has_value());
+  ASSERT_TRUE(server->run({"list-sessions"}).has_value());
+  for (int call = 0; call < 3; ++call) {
+    const auto version = server->tmux_version();
+    ASSERT_TRUE(version.has_value());
+    EXPECT_EQ(*version, (Version{.major = 3, .minor = 4}));
+  }
+  EXPECT_TRUE(server->run({"list-windows"}).has_value());
+  EXPECT_EQ(executor->probes, 1) << "one probe for the endpoint, however many calls";
+
+  // A replaced daemon invalidates it, and the next read asks again.
+  executor->replaced = true;
+  EXPECT_FALSE(server->run({"list-sessions"}).has_value());
+  executor->replaced = false;
+  ASSERT_TRUE(server->tmux_version().has_value());
+  EXPECT_EQ(executor->probes, 2);
+}
+
+TEST(VersionCheckExecutor, RawClientFlagsAreNotDispatchedThroughAnExecutor) {
+  auto executor = std::make_shared<CountingExecutor>("3.4");
+  auto server =
+      Server::over(executor, {.implementation = libtmux::ServerImplementation::tmux});
+  ASSERT_TRUE(server.has_value());
+  const auto shell = server->run({"-c", "touch nope"});
+  ASSERT_FALSE(shell.has_value());
+  EXPECT_EQ(shell.error().kind, FailureKind::validation);
+  EXPECT_FALSE(server->run(libtmux::CommandRequest{}).has_value());
+  EXPECT_EQ(executor->commands, 0);
+  EXPECT_EQ(executor->probes, 0);
+}
+
+enum class Reading {
+  accepted,
+  // A version libtmux reads and ranks below the floor.
+  below_floor,
+  // A report that names no release it can order.
+  unreadable,
+};
+
+TEST(VersionCheckExecutor, EveryReportIsAcceptedOrRefusedForItsOwnReason) {
+  // The canonical grammar: every form tmux has reported, and the forms only
+  // wrappers invented. A report that cannot be read is never compared with the
+  // floor: "needs 3.3a; this server is master" would name a release that
+  // `master` does not establish.
+  const std::vector<std::pair<std::string, Reading>> reports{
+      {"3.3a", Reading::accepted},
+      {"3.4", Reading::accepted},
+      {"3.7d", Reading::accepted},
+      {"3.8", Reading::accepted},
+      {"3.10", Reading::accepted},
+      {"4.0", Reading::accepted},
+      {"3.4-rc", Reading::accepted},
+      {"3.8-rc", Reading::accepted},
+      {"3.8-rc2", Reading::accepted},
+      {"next-3.4", Reading::accepted},
+      {"next-3.9", Reading::accepted},
+      {"3.3", Reading::below_floor},
+      {"3.2a", Reading::below_floor},
+      {"3.3-rc", Reading::below_floor},
+      {"3.2-rc5", Reading::below_floor},
+      {"next-3.3", Reading::below_floor},
+      {"master", Reading::unreadable},
+      {"openbsd-7.6", Reading::unreadable},
+      {"", Reading::unreadable},
+      {"3", Reading::unreadable},
+      {"garbage", Reading::unreadable},
+      {"3.3a garbage", Reading::unreadable},
+      {"3.3a-master", Reading::unreadable},
+      {"3.3a-dev", Reading::unreadable},
+      {"next-3.3a", Reading::unreadable},
+      {"next-3.9-master", Reading::unreadable},
+      {"next-3.4a", Reading::unreadable}};
+  for (const auto& [report, reading] : reports) {
+    SCOPED_TRACE(report);
+    auto executor = std::make_shared<CountingExecutor>(report);
+    auto server =
+        Server::over(executor, {.implementation = libtmux::ServerImplementation::tmux});
+    ASSERT_TRUE(server.has_value());
+    const auto answer = server->run({"list-sessions"});
+    EXPECT_EQ(executor->commands, reading == Reading::accepted ? 1 : 0);
+    if (reading == Reading::accepted) {
+      EXPECT_TRUE(answer.has_value());
+      continue;
+    }
+    ASSERT_FALSE(answer.has_value());
+    EXPECT_EQ(answer.error().kind, FailureKind::unsupported);
+    EXPECT_EQ(answer.error().delivery, DeliveryStatus::not_started);
+    libtmux::test::rejected::expect_floor_and_remedy(answer.error().diagnostic);
+    const std::string& message = answer.error().diagnostic;
+    const bool compared = message.find("reports '" + report + "'") != std::string::npos;
+    const bool unread = message.find("cannot read the tmux version '" + report + "'") !=
+                        std::string::npos;
+    EXPECT_EQ(compared, reading == Reading::below_floor) << message;
+    EXPECT_EQ(unread, reading == Reading::unreadable) << message;
+  }
+}
+
+TEST(VersionCheckExecutor, ADeclaredVersionIsNamedAsTmuxSpellsIt) {
+  // A refusal names the build that was declared, so `next-3.3` and `3.3-rc2`
+  // are not reported as the `3.3` that ranks differently.
+  struct Declared {
+    Version version;
+    std::string spelling;
+  };
+  const std::vector<Declared> declared{
+      {Version{.major = 3, .minor = 3, .prerelease = true}, "next-3.3"},
+      {Version{.major = 3, .minor = 3, .candidate = 2}, "3.3-rc2"},
+      {Version{.major = 3, .minor = 3, .candidate = 1}, "3.3-rc"},
+      {Version{.major = 3, .minor = 2, .revision = 1}, "3.2a"},
+      {Version{.major = 3, .minor = 3}, "3.3"}};
+  for (const auto& [version, spelling] : declared) {
+    SCOPED_TRACE(spelling);
+    auto executor = std::make_shared<CountingExecutor>("3.4");
+    auto server =
+        Server::over(executor, {.implementation = libtmux::ServerImplementation::tmux,
+                                .version = version});
+    ASSERT_TRUE(server.has_value());
+    const auto refused = server->run({"list-sessions"});
+    ASSERT_FALSE(refused.has_value());
+    EXPECT_NE(refused.error().diagnostic.find("reports '" + spelling + "'"),
+              std::string::npos)
+        << refused.error().diagnostic;
+    EXPECT_EQ(executor->commands, 0);
+  }
 }
 
 // ---------------------------------------------------------------------------
