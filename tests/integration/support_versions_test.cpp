@@ -663,4 +663,82 @@ TEST_F(WrappedTmux, ANamedExecutableIsAcceptedByTheNameItPrints) {
   EXPECT_TRUE(server->kill().has_value());
 }
 
+// ---------------------------------------------------------------------------
+// The asynchronous runtime.
+// ---------------------------------------------------------------------------
+
+class Resume final {
+public:
+  explicit Resume(pid_t process) : process_{process} {}
+  ~Resume() { static_cast<void>(::kill(process_, SIGCONT)); }
+  Resume(const Resume&) = delete;
+  Resume& operator=(const Resume&) = delete;
+
+private:
+  pid_t process_;
+};
+
+TEST_F(SupportedDaemon, AHungDaemonDoesNotStallOtherSubmitters) {
+  using namespace std::chrono_literals;
+  auto hung_fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(hung_fixture.has_value()) << hung_fixture.error();
+  const Server hung = server_for(*hung_fixture);
+  const Server healthy = server_for(*fixture_);
+  ASSERT_TRUE(healthy.run({"list-sessions"}).has_value());
+
+  auto runtime = libtmux::CommandRuntime::start();
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().diagnostic;
+  const Resume resume{hung_fixture->server_pid()};
+  ASSERT_EQ(::kill(hung_fixture->server_pid(), SIGSTOP), 0);
+
+  // The first submission to a daemon that never answers waits for it, for as
+  // long as its own deadline allows and no longer.
+  std::optional<libtmux::expected<libtmux::CommandOperation, CommandFailure>> blocked;
+  std::thread submitter{
+      [&] { blocked.emplace(hung.try_submit(*runtime, {"list-sessions"}, 1500ms)); }};
+  std::this_thread::sleep_for(300ms);
+
+  const auto started = std::chrono::steady_clock::now();
+  auto operation = healthy.try_submit(*runtime, {"list-sessions"}, 5s);
+  const auto took = std::chrono::steady_clock::now() - started;
+  ASSERT_TRUE(operation.has_value()) << operation.error().diagnostic;
+  EXPECT_LT(took, 500ms) << "another submitter waited for the hung daemon's probe";
+  EXPECT_TRUE(std::move(*operation).wait().has_value());
+
+  submitter.join();
+  ASSERT_TRUE(blocked.has_value());
+  ASSERT_FALSE(blocked->has_value());
+  EXPECT_EQ(blocked->error().kind, FailureKind::timeout);
+  EXPECT_EQ(blocked->error().delivery, DeliveryStatus::not_started);
+}
+
+TEST_F(SupportedDaemon, AnEmptyCommandIsAValidationErrorBeforeAdmission) {
+  const Server server = server_for(*fixture_);
+  auto runtime = libtmux::CommandRuntime::start();
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().diagnostic;
+  const auto operation = server.try_submit(*runtime, libtmux::CommandRequest{});
+  ASSERT_FALSE(operation.has_value());
+  EXPECT_EQ(operation.error().kind, FailureKind::validation)
+      << operation.error().diagnostic;
+  EXPECT_EQ(operation.error().delivery, DeliveryStatus::not_started);
+}
+
+TEST_F(SupportedDaemon, AnAsynchronousKillOfAVanishedDaemonIsANoOp) {
+  using namespace std::chrono_literals;
+  const Server server = server_for(*fixture_);
+  ASSERT_TRUE(server.run({"list-sessions"}).has_value());
+  ASSERT_TRUE(server.kill().has_value());
+  for (int attempt = 0; attempt < 100 && fixture_->is_alive(); ++attempt) {
+    std::this_thread::sleep_for(20ms);
+  }
+  ASSERT_FALSE(fixture_->is_alive());
+
+  auto runtime = libtmux::CommandRuntime::start();
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().diagnostic;
+  auto operation = server.try_submit(*runtime, {"kill-server"}, 5s);
+  ASSERT_TRUE(operation.has_value()) << operation.error().diagnostic;
+  const auto answer = std::move(*operation).wait();
+  EXPECT_TRUE(answer.has_value()) << (answer ? "" : answer.error().diagnostic);
+}
+
 } // namespace

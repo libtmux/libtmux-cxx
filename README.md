@@ -630,12 +630,19 @@ transport threads and fixes their admission capacity; zero or a startup
 failure returns `unexpected` with `delivery == not_started`. A full runtime
 refuses rather than waiting for a slot.
 
+`Server::try_submit` asks the daemon for its release before admission, so a
+submission to an endpoint whose daemon has not answered yet can block the
+calling thread for as long as that probe takes, up to the command's timeout. A
+live daemon's answer is remembered; an absent endpoint is asked again on every
+submission. Admission itself never waits for a slot.
+
 `Server::try_submit` also returns an outer `unexpected` before admission for a
-moved-from or stopped runtime, an invalid command, an unsupported custom
-backend, a `Server` opened before its socket existed, a full capacity, or a
-failure to register its observer. These create no operation or observer record;
-refusals against a live runtime increment `refused`, while a moved-from runtime
-has no counters. They are safe to retry when their cause is fixed. Once it
+moved-from or stopped runtime, an invalid or empty command, a daemon below the
+floor, an unsupported custom backend, a `Server` opened before its socket
+existed, a full capacity, or a failure to register its observer. These create
+no operation or observer record; refusals against a live runtime increment
+`refused`, while a moved-from runtime has no counters. They are safe to retry
+when their cause is fixed. Once it
 returns a `CommandOperation`, every tmux, transport, cancellation, or runtime
 publication failure is that operation's eventual result. A server that dies
 after its handle captured the socket can therefore be admitted and fail through

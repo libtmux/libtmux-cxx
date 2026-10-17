@@ -280,6 +280,11 @@ public:
   /// Admit one command to an explicit bounded runtime without waiting for it.
   /// A refusal before admission is returned here; an admitted command carries
   /// every later transport or tmux failure in its operation.
+  ///
+  /// Admission does not wait for a slot, but the daemon's release is asked
+  /// before it. A submission to an endpoint whose daemon has not answered yet
+  /// can block the calling thread on that probe, up to the command's timeout.
+  /// An empty command is a validation error.
   [[nodiscard]] expected<CommandOperation, CommandFailure>
   try_submit(CommandRuntime& runtime, CommandRequest command,
              std::optional<std::chrono::milliseconds> timeout = {},
