@@ -229,6 +229,7 @@ std::optional<unsigned long long> blocked_signals(int pid) {
 // not set a mask of its own. A server that cannot be terminated by SIGTERM
 // outlives whatever was supposed to stop it.
 TEST(ControlModeConnection, ServerDoesNotInheritABlockedSignalMask) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   sigset_t blocked;
   sigemptyset(&blocked);
   sigaddset(&blocked, SIGTERM);
@@ -257,6 +258,7 @@ TEST(ControlModeConnection, ServerDoesNotInheritABlockedSignalMask) {
 // The other spawn: the server starts outside the block, so only the control
 // client this library launches is under it.
 TEST(ControlModeConnection, ControlClientDoesNotInheritABlockedSignalMask) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto server = start_server(unique_name("control-client-mask"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
 
@@ -285,6 +287,7 @@ TEST(ControlModeConnection, ControlClientDoesNotInheritABlockedSignalMask) {
 
 #if defined(LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
 TEST(ControlModeConnection, ForcedNumericPolicyDoesNotLeakAConcurrentHighDescriptor) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto server = start_server(unique_name("control-descriptor-policy"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
 
@@ -383,6 +386,7 @@ TEST(ControlModeConnection, ForcedNumericPolicyDoesNotLeakAConcurrentHighDescrip
 
 #if defined(__GLIBC__) && defined(LIBTMUX_SPAWN_DESCRIPTOR_TEST_SEAM)
 TEST(ControlModeConnection, ForcedNumericPolicyRefusesAMarkerAboveALoweredSoftLimit) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto server = start_server(unique_name("control-high-descriptor-policy"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
 
@@ -439,6 +443,7 @@ TEST(ControlModeConnection, ForcedNumericPolicyRefusesAMarkerAboveALoweredSoftLi
 #endif
 
 TEST(ControlModeConnection, RejectsBoundsTooSmallForItsPrivateBoundary) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto server = start_server(unique_name("control-boundary-bounds"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
   ConnectionOptions options{.tmux_binary = LIBTMUX_CONTROL_TMUX_PATH,
@@ -460,6 +465,7 @@ TEST(ControlModeConnection, RejectsBoundsTooSmallForItsPrivateBoundary) {
 }
 
 TEST(ControlModeConnection, FailFastGroupStopsAtTheErrorBoundary) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto server = start_server(unique_name("control-fail-fast"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
   auto connected = connect_to(*server);
@@ -489,6 +495,7 @@ TEST(ControlModeConnection, FailFastGroupStopsAtTheErrorBoundary) {
 }
 
 TEST(ControlModeConnection, ConcurrentIndependentRequestsKeepReplyOwnership) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto server = start_server(unique_name("control-independent"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
   auto connected = connect_to(*server);
@@ -537,6 +544,7 @@ TEST(ControlModeConnection, ConcurrentIndependentRequestsKeepReplyOwnership) {
 }
 
 TEST(ControlModeConnection, AliasExpansionKeepsEveryReplyAndTheNextRequestAligned) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto fixture = start_server(unique_name("control-alias-boundary"));
   ASSERT_TRUE(fixture.has_value()) << (fixture.has_value() ? "" : fixture.error());
   auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
@@ -580,6 +588,7 @@ TEST(ControlModeConnection, AliasExpansionKeepsEveryReplyAndTheNextRequestAligne
 // library writes on stdin into a file, which works the same on 3.2a and on a
 // development build.
 TEST(ControlModeConnection, ConnectAsksForJsonLayoutsOnEveryVersion) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto fixture = start_server(unique_name("control-layout-request"));
   ASSERT_TRUE(fixture.has_value()) << (fixture.has_value() ? "" : fixture.error());
 
@@ -639,6 +648,7 @@ TEST(ControlModeConnection, ConnectAsksForJsonLayoutsOnEveryVersion) {
 // agree, on tmux 3.8+, instead of one being JSON and the other the classic
 // form.
 TEST(ControlModeConnection, LayoutChangePayloadAgreesWithAPlainSnapshotOn38Plus) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto fixture = start_server(unique_name("control-layout-json"));
   ASSERT_TRUE(fixture.has_value()) << (fixture.has_value() ? "" : fixture.error());
   auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
@@ -693,6 +703,7 @@ TEST(ControlModeConnection, LayoutChangePayloadAgreesWithAPlainSnapshotOn38Plus)
 // signal `layout_contains_pane` reads is really there, end to end, for a
 // pane this connection was watching and tmux then removed.
 TEST(ControlModeConnection, LayoutContainsPaneAnswersAfterTheObservedPaneIsKilled) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto fixture = start_server(unique_name("control-pane-lost"));
   ASSERT_TRUE(fixture.has_value()) << (fixture.has_value() ? "" : fixture.error());
   auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
@@ -746,6 +757,7 @@ TEST(ControlModeConnection, LayoutContainsPaneAnswersAfterTheObservedPaneIsKille
 }
 
 TEST(ControlModeConnection, InsertedReplyStaysWithItsConcurrentRequest) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto server = start_server(unique_name("control-explicit-replies"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
   auto connected = connect_to(*server);
@@ -792,6 +804,7 @@ TEST(ControlModeConnection, InsertedReplyStaysWithItsConcurrentRequest) {
 
 // Waiting, rather than asking repeatedly and sleeping in between.
 TEST(ControlModeConnection, WaitForNotificationsWakesOnTheEventNotTheDeadline) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto server = start_server(unique_name("control-wait"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
   auto connected = connect_to(*server);
@@ -832,6 +845,7 @@ TEST(ControlModeConnection, WaitForNotificationsWakesOnTheEventNotTheDeadline) {
 }
 
 TEST(ControlModeConnection, NotificationWatchesDoNotStealFromEachOther) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto server = start_server(unique_name("control-watch"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
   auto connected = connect_to(*server);
@@ -894,6 +908,7 @@ TEST(ControlModeConnection, NotificationWatchesDoNotStealFromEachOther) {
 }
 
 TEST(ControlModeConnection, NotificationWatchDrainsAfterConnectionDestruction) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto server = start_server(unique_name("control-watch-lifetime"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
   libtmux::NotificationWatch watch;
@@ -929,6 +944,7 @@ TEST(ControlModeConnection, NotificationWatchDrainsAfterConnectionDestruction) {
 // above; this one retries until it sees the deadline path, which is the case
 // it exists for.
 TEST(ControlModeConnection, WaitForNotificationsReturnsEmptyOnlyAtItsDeadline) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto server = start_server(unique_name("control-wait"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
   auto connected = connect_to(*server);
@@ -963,6 +979,7 @@ TEST(ControlModeConnection, WaitForNotificationsReturnsEmptyOnlyAtItsDeadline) {
 // a subscription. The measurements behind that are in
 // `docs/design/pane-output-streaming.md`.
 TEST(ControlModeConnection, ServerOwnsTheRouteAndPreservesStreamPolicy) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto fixture = start_server(unique_name("control-server-options"));
   ASSERT_TRUE(fixture.has_value()) << (fixture.has_value() ? "" : fixture.error());
 
@@ -1013,6 +1030,7 @@ TEST(ControlModeConnection, ServerOwnsTheRouteAndPreservesStreamPolicy) {
 // name it actually assigned, and anchors on that -- so the assertion holds
 // on every era, and only skips where creating the scenario is impossible.
 TEST(ControlModeConnection, ReachesASessionNamedWithADot) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto fixture = start_server(unique_name("control-dotted"));
   ASSERT_TRUE(fixture.has_value()) << (fixture.has_value() ? "" : fixture.error());
 
@@ -1039,6 +1057,7 @@ TEST(ControlModeConnection, ReachesASessionNamedWithADot) {
 }
 
 TEST(ControlModeConnection, DeliversPaneOutputOnlyWhenAskedAtConnectTime) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto server = start_server(unique_name("control-output"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
 
@@ -1090,6 +1109,7 @@ TEST(ControlModeConnection, DeliversPaneOutputOnlyWhenAskedAtConnectTime) {
 // The parser against what tmux actually sends, rather than what its source
 // suggests it sends.
 TEST(ControlModeConnection, ParsesTheNotificationsARealServerEmits) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto server = start_server(unique_name("control-parsed"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
   auto connected = connect_to(*server);
@@ -1132,6 +1152,7 @@ TEST(ControlModeConnection, ParsesTheNotificationsARealServerEmits) {
 // The descriptor, used the way it exists to be used: one `poll` over tmux and
 // something else, on one thread, with nothing blocked on the connection.
 TEST(ControlModeConnection, NotificationFdPollsBesideAnotherDescriptor) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto server = start_server(unique_name("control-poll"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
   auto connected = connect_to(*server);
@@ -1204,6 +1225,7 @@ TEST(ControlModeConnection, NotificationFdPollsBesideAnotherDescriptor) {
 // Muting one pane, and the asymmetry that makes muting the only per-pane
 // control there is.
 TEST(ControlModeConnection, MutesOnePaneAndRefusesToWidenASilentConnection) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto server = start_server(unique_name("control-mute"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
 
@@ -1300,6 +1322,7 @@ TEST(ControlModeConnection, MutesOnePaneAndRefusesToWidenASilentConnection) {
 
 // The same waiting, as one loop.
 TEST(ControlModeConnection, EventsRangeYieldsWhatTheHandLoopWould) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto server = start_server(unique_name("control-events"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
   auto connected = connect_to(*server);
@@ -1339,6 +1362,7 @@ TEST(ControlModeConnection, EventsRangeYieldsWhatTheHandLoopWould) {
 }
 
 TEST(ControlModeConnection, NotificationShapedCommandOutputRemainsBlockBody) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   LIBTMUX_REQUIRES_TMUX(3, 4,
                         "keeping notification-shaped command output in the block body");
 
@@ -1358,6 +1382,7 @@ TEST(ControlModeConnection, NotificationShapedCommandOutputRemainsBlockBody) {
 }
 
 TEST(ControlModeConnection, WaitCapableCommandsFinishAfterTheirGuardedBlocks) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto server = start_server(unique_name("control-delayed-result"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
   auto connected = connect_to(*server);
@@ -1404,6 +1429,7 @@ TEST(ControlModeConnection, WaitCapableCommandsFinishAfterTheirGuardedBlocks) {
 }
 
 TEST(ControlModeConnection, EncodesArgumentsWithoutCreatingAnotherCommand) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   LIBTMUX_SKIP_TMUX_DEFECT(
       3, 4, 3, 5,
       "tmux echoes a non-UTF-8 byte back as its octal escape rather than the byte");
@@ -1436,6 +1462,7 @@ TEST(ControlModeConnection, EncodesArgumentsWithoutCreatingAnotherCommand) {
 }
 
 TEST(ControlModeConnection, ShutdownIsBoundedAndLeavesFixtureAlive) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto server = start_server(unique_name("control-shutdown"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
   auto connected = connect_to(*server);
@@ -1457,6 +1484,7 @@ TEST(ControlModeConnection, ShutdownIsBoundedAndLeavesFixtureAlive) {
 }
 
 TEST(ControlModeConnection, ExecuteVsShutdownCompletesOnceWithOnlyReceivedBlocks) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto server = start_server(unique_name("control-shutdown-race"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
   auto connected = connect_to(*server);
@@ -1507,6 +1535,7 @@ TEST(ControlModeConnection, ExecuteVsShutdownCompletesOnceWithOnlyReceivedBlocks
 }
 
 TEST(ControlModeConnection, LargeSubmitVsShutdownReturnsNoFabricatedBlocks) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   LIBTMUX_SKIP_WITHOUT_PROCFS("how many bytes are queued on the client's stdin");
 
   auto server = start_server(unique_name("control-large-shutdown-race"));
@@ -1566,6 +1595,7 @@ TEST(ControlModeConnection, LargeSubmitVsShutdownReturnsNoFabricatedBlocks) {
 }
 
 TEST(ControlModeConnection, PartialWriteShutdownNeverDispatchesTruncatedCommand) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   LIBTMUX_SKIP_WITHOUT_PROCFS("how many bytes are queued on the client's stdin");
 
   auto server = start_server(unique_name("control-partial-write"));
@@ -1641,6 +1671,7 @@ TEST(ControlModeConnection, PartialWriteShutdownNeverDispatchesTruncatedCommand)
 }
 
 TEST(ControlModeConnection, ConcurrentShutdownHonorsEachCallerDeadline) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto server = start_server(unique_name("control-concurrent-shutdown"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
   auto connected = connect_to(*server);
@@ -1797,6 +1828,7 @@ WriterDeadlineAttempt run_writer_deadline_attempt(std::size_t index) {
 }
 
 TEST(ControlModeConnection, WriterWaitHonorsDeadlineWithoutPoisoningOwner) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   // Fewer than before: the probe makes the owner blocking observable rather
   // than likely, so a retry now only covers the owner never blocking at all.
   constexpr std::size_t kAttempts = 3;
@@ -1827,6 +1859,7 @@ TEST(ControlModeConnection, WriterWaitHonorsDeadlineWithoutPoisoningOwner) {
 }
 
 TEST(ControlModeConnection, ExternallyTerminatedClientIsReapedWhileOwned) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   LIBTMUX_SKIP_WITHOUT_PROCFS("how many bytes are queued on the client's stdin");
 
   auto server = start_server(unique_name("control-external-termination"));
@@ -1894,6 +1927,7 @@ TEST(ControlModeConnection, ExternallyTerminatedClientIsReapedWhileOwned) {
 }
 
 TEST(ControlModeConnection, DeadlineReturnsOnlyReceivedBlocksAndPoisonsTheConnection) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto server = start_server(unique_name("control-deadline"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
   auto connected = connect_to(*server);
@@ -1920,6 +1954,7 @@ TEST(ControlModeConnection, DeadlineReturnsOnlyReceivedBlocksAndPoisonsTheConnec
 }
 
 TEST(ControlModeConnection, ExpiredDeadlineDoesNotStartTheRequest) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto server = start_server(unique_name("control-expired-deadline"));
   ASSERT_TRUE(server.has_value()) << (server.has_value() ? "" : server.error());
   auto connected = connect_to(*server);
@@ -1946,6 +1981,7 @@ TEST(ControlModeConnection, ExpiredDeadlineDoesNotStartTheRequest) {
 // has a different binary and would fail a test that has nothing to say about
 // them.
 TEST(ControlModeConnection, ResolvedTmuxIdentityIsBound) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   const std::filesystem::path resolved{LIBTMUX_CONTROL_TMUX_PATH};
   EXPECT_TRUE(resolved.is_absolute()) << resolved;
   EXPECT_TRUE(std::filesystem::exists(resolved)) << resolved;

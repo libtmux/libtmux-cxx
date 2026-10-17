@@ -170,7 +170,14 @@ int main() {
   // Buffers are named, so one can be dropped without touching the others.
   if (const auto held = server.buffers(); held.has_value()) {
     for (const libtmux::Buffer& buffer : *held) {
-      if (buffer.name() == "reloaded" && !buffer.remove().has_value()) {
+      if (buffer.name() != "reloaded") {
+        continue;
+      }
+      // Dropping a buffer by name needs tmux 3.4: earlier releases can drop
+      // an unrelated one, so the library refuses rather than risk it.
+      const auto dropped = buffer.remove();
+      if (!dropped.has_value() &&
+          dropped.error().kind != libtmux::FailureKind::unsupported) {
         std::fprintf(stderr, "could not drop the reloaded buffer\n");
         return 1;
       }

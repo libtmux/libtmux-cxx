@@ -1,3 +1,4 @@
+#include "libtmux/testing/capabilities.hpp"
 #include "libtmux_consumers/mcp.hpp"
 
 #include <algorithm>
@@ -308,6 +309,7 @@ void inject_foreign_output(const Server& server, const ToolRegistry& tools,
 } // namespace echo_contract_test
 
 TEST(McpToolsTmux, EchoShortUnsubmittedAnswerDoesNotMaskLongerRealOutput) {
+  LIBTMUX_REQUIRES_TMUX(3, 4, "paste_text staging");
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
@@ -385,6 +387,7 @@ TEST(McpToolsTmux, EchoWaitBeforeSendMatchesOutputNotEcho) {
 }
 
 TEST(McpToolsTmux, EchoWaitAfterSendMatchesOutputNotEcho) {
+  LIBTMUX_REQUIRES_TMUX(3, 4, "paste_text staging");
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
@@ -415,6 +418,7 @@ TEST(McpToolsTmux, EchoWaitAfterSendMatchesOutputNotEcho) {
 }
 
 TEST(McpToolsTmux, EchoUnsubmittedTextTimesOut) {
+  LIBTMUX_REQUIRES_TMUX(3, 4, "paste_text staging");
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
@@ -442,6 +446,7 @@ TEST(McpToolsTmux, EchoUnsubmittedTextTimesOut) {
 }
 
 TEST(McpToolsTmux, EchoBeforeTheFirstPromptIsNotOutput) {
+  LIBTMUX_REQUIRES_TMUX(3, 4, "paste_text staging");
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
@@ -471,6 +476,7 @@ TEST(McpToolsTmux, EchoBeforeTheFirstPromptIsNotOutput) {
 }
 
 TEST(McpToolsTmux, EchoSubmittedCommandDoesNotHideOutputWithoutANewline) {
+  LIBTMUX_REQUIRES_TMUX(3, 4, "paste_text staging");
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
@@ -490,6 +496,7 @@ TEST(McpToolsTmux, EchoSubmittedCommandDoesNotHideOutputWithoutANewline) {
 }
 
 TEST(McpToolsTmux, EchoEditsAreAppliedAndKeyNamesNeverJoinTrackedText) {
+  LIBTMUX_REQUIRES_TMUX(3, 4, "paste_text staging");
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
@@ -527,6 +534,7 @@ TEST(McpToolsTmux, EchoEditsAreAppliedAndKeyNamesNeverJoinTrackedText) {
 }
 
 TEST(McpToolsTmux, EchoUnknownKeyFailsOpenRatherThanHidingRealOutput) {
+  LIBTMUX_REQUIRES_TMUX(3, 4, "paste_text staging");
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
@@ -566,6 +574,7 @@ TEST(McpToolsTmux, EchoUnknownKeyFailsOpenRatherThanHidingRealOutput) {
 }
 
 TEST(McpToolsTmux, EchoResizeControlStillMatchesRealOutputAfterReflow) {
+  LIBTMUX_REQUIRES_TMUX(3, 4, "paste_text staging");
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);

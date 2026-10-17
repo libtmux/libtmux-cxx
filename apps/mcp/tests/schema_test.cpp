@@ -265,6 +265,7 @@ TEST(McpProtocolSchema, WaitOmitsThePaneIdItNeverResolved) {
 // Writes what a client actually receives — the published schema beside a real
 // answer from every tool — for the validator in `tools/schema` to check.
 TEST(McpProtocolSchemaTmux, EmitsEveryToolAnswerBesideItsPublishedSchema) {
+  LIBTMUX_REQUIRES_TMUX(3, 4, "paste_text staging");
   const char* const destination = std::getenv("LIBTMUX_MCP_OUTPUT_CORPUS");
   ASSERT_NE(destination, nullptr)
       << "LIBTMUX_MCP_OUTPUT_CORPUS names where to write the corpus";

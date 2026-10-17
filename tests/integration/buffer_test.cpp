@@ -13,6 +13,7 @@
 
 #include "libtmux/entities.hpp"
 #include "libtmux/server.hpp"
+#include "libtmux/testing/capabilities.hpp"
 #include "libtmux/testing/scoped_server.hpp"
 
 namespace {
@@ -78,6 +79,7 @@ TEST(Buffers, ContentsReadBackExactlyWhatWentIn) {
 }
 
 TEST(Buffers, RemoveTakesOneAwayAndLeavesTheRest) {
+  LIBTMUX_REQUIRES_TMUX(3, 4, "deleting a named buffer");
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);

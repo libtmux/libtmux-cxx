@@ -53,6 +53,13 @@ int main() {
   // decides it here: a control client that starts without output cannot be
   // asked for it afterwards. `docs/design/pane-output-streaming.md` measures
   // that, and what tmux does to a reader who falls behind.
+  // Control mode needs tmux 3.7: earlier servers can crash when a client
+  // attaches and leaves early, so the library refuses to attach to them.
+  if (const auto version = server.tmux_version();
+      version.has_value() && *version < libtmux::Version{.major = 3, .minor = 7}) {
+    std::printf("streaming needs tmux 3.7 or newer\n");
+    return 0;
+  }
   auto connected = server.control_with_options("example", {.pane_output = true});
   if (!connected.has_value()) {
     std::fprintf(stderr, "%s\n", connected.error().message.c_str());
