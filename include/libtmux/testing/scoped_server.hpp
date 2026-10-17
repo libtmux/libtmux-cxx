@@ -6,7 +6,8 @@
 // server gets a `mkdtemp` tree of its own, `TMUX_TMPDIR` inside it, and a
 // child environment with `TMUX` and `TMUX_PANE` erased, so a suite run from
 // inside tmux cannot reach the surrounding server. Teardown kills the server
-// and removes the tree even when a test aborts.
+// and removes the tree after observing daemon exit. If exit cannot be verified,
+// it retains the tree and records that outcome in the teardown report.
 
 #include "libtmux/expected.hpp"
 

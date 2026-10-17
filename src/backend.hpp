@@ -22,6 +22,8 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <exception>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -222,6 +224,12 @@ validate_layouts(const Backend& backend, std::span<const LayoutRequest> layouts,
 }
 
 // tmux in a child process: the only executor this library binds to.
+struct ReceiptReply {
+  std::string output;
+  std::optional<CommandFailure> failure{};
+  std::exception_ptr observer_exception{};
+};
+
 class SubprocessBackend final : public Backend {
   struct PublishedEndpoint {
     std::vector<std::string> connection;
@@ -240,6 +248,11 @@ public:
   open_startable(std::vector<std::string> connection,
                  std::optional<std::string> configuration,
                  CommandObserver observer = {}, ExecutionPolicy policy = {});
+
+  [[nodiscard]] ReceiptReply
+  run_receipted(const CommandRequest& command, std::chrono::milliseconds timeout,
+                const std::function<bool()>& cancelled = {},
+                std::optional<std::string> startup_nonce = {}) const;
 
   // Declaring an override hides the base's other overload, and the
   // one-argument form is how most callers spell "no timeout".
@@ -367,7 +380,7 @@ private:
   SubprocessBackend(std::vector<std::string> connection, std::string socket_path,
                     std::string selected_socket_path, std::string identity,
                     std::shared_ptr<const SocketAlias> socket_alias,
-                    bool socket_missing, bool startable,
+                    bool socket_missing, bool startable, std::string startup_directory,
                     std::optional<std::string> startup_configuration,
                     CommandObserver observer, ExecutionPolicy policy);
 
@@ -410,8 +423,9 @@ private:
   // backend's lifetime.
   mutable std::shared_ptr<const PublishedEndpoint> started_endpoint_;
   bool startable_{};
+  std::string startup_directory_;
   std::optional<std::string> startup_configuration_;
-  mutable std::mutex startup_mutex_;
+  mutable std::timed_mutex startup_mutex_;
   // `tmux -V` asks the executable, and the policy fixes which executable this
   // handle runs for its lifetime, so the answer cannot change under it.
   // Probing once keeps a version check — `select_layout` takes one to resolve

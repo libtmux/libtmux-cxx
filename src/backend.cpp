@@ -9,6 +9,7 @@
 #include <variant>
 
 #include "environment.hpp"
+#include "libtmux/socket.hpp"
 #include "process.hpp"
 #include "psmux.hpp"
 #include "socket_identity.hpp"
@@ -268,18 +269,73 @@ SubprocessBackend::SubprocessBackend(std::vector<std::string> connection,
                                      std::string identity,
                                      std::shared_ptr<const SocketAlias> socket_alias,
                                      bool socket_missing, bool startable,
+                                     std::string startup_directory,
                                      std::optional<std::string> startup_configuration,
                                      CommandObserver observer, ExecutionPolicy policy)
     : Backend{std::move(observer), policy}, connection_{std::move(connection)},
       identity_{std::move(identity)}, socket_path_{std::move(socket_path)},
       selected_socket_path_{std::move(selected_socket_path)},
       socket_alias_{std::move(socket_alias)}, socket_missing_{socket_missing},
-      startable_{startable}, startup_configuration_{std::move(startup_configuration)} {}
+      startable_{startable}, startup_directory_{std::move(startup_directory)},
+      startup_configuration_{std::move(startup_configuration)} {}
+
+namespace {
+
+expected<std::string, CommandFailure>
+freeze_endpoint(std::vector<std::string>& connection, ExecutionPolicy& policy) {
+  if (!policy.child_environment.has_value()) {
+    policy.child_environment = libtmux_env::snapshot();
+  }
+  if (!libtmux_env::valid(*policy.child_environment)) {
+    return unexpected(CommandFailure{
+        .kind = FailureKind::validation,
+        .delivery = DeliveryStatus::not_started,
+        .exit_code = 0,
+        .diagnostic =
+            "the child environment must contain NAME=value entries without NUL"});
+  }
+  const auto selected = resolved_socket_path(connection, *policy.child_environment);
+  if (!selected.has_value()) {
+    return unexpected(CommandFailure{
+        .kind = FailureKind::validation,
+        .delivery = DeliveryStatus::not_started,
+        .exit_code = 0,
+        .diagnostic =
+            "the selected TMUX_TMPDIR must be an existing absolute directory"});
+  }
+#if !defined(_WIN32)
+  if (const auto arguments = socket_path_arguments(*selected); !arguments) {
+    return unexpected(
+        CommandFailure{.kind = FailureKind::validation,
+                       .delivery = DeliveryStatus::not_started,
+                       .exit_code = 0,
+                       .diagnostic = std::string{to_string(arguments.error())}});
+  }
+  if (connection.empty() || connection.front() == "-L") {
+    const auto directory = std::filesystem::path{*selected}.parent_path().string();
+    if (auto checked = prepare_socket_directory(directory, false); !checked) {
+      return unexpected(CommandFailure{.kind = FailureKind::validation,
+                                       .delivery = DeliveryStatus::not_started,
+                                       .exit_code = 0,
+                                       .diagnostic = std::move(checked.error())});
+    }
+  }
+  connection = {"-S", *selected};
+#endif
+  libtmux_env::erase(*policy.child_environment, "TMUX");
+  libtmux_env::erase(*policy.child_environment, "TMUX_PANE");
+  return *selected;
+}
+
+} // namespace
 
 expected<std::shared_ptr<const SubprocessBackend>, CommandFailure>
 SubprocessBackend::open(std::vector<std::string> connection, CommandObserver observer,
                         ExecutionPolicy policy) {
-  const std::string selected = resolved_socket_path(connection).value_or(std::string{});
+  auto selected = freeze_endpoint(connection, policy);
+  if (!selected) {
+    return unexpected(std::move(selected.error()));
+  }
   auto endpoint = bind_socket_endpoint(connection);
   if (!endpoint.has_value()) {
     return unexpected(CommandFailure{.kind = FailureKind::pipe,
@@ -287,10 +343,18 @@ SubprocessBackend::open(std::vector<std::string> connection, CommandObserver obs
                                      .exit_code = 0,
                                      .diagnostic = std::move(endpoint.error())});
   }
-  auto backend = std::shared_ptr<SubprocessBackend>{new SubprocessBackend{
-      std::move(endpoint->connection), std::move(endpoint->socket_path), selected,
-      std::move(endpoint->identity), std::move(endpoint->alias), endpoint->missing,
-      false, std::nullopt, std::move(observer), policy}};
+  auto backend = std::shared_ptr<SubprocessBackend>{
+      new SubprocessBackend{std::move(endpoint->connection),
+                            std::move(endpoint->socket_path),
+                            *std::move(selected),
+                            std::move(endpoint->identity),
+                            std::move(endpoint->alias),
+                            endpoint->missing,
+                            false,
+                            {},
+                            std::nullopt,
+                            std::move(observer),
+                            std::move(policy)}};
   return std::shared_ptr<const SubprocessBackend>{std::move(backend)};
 }
 
@@ -298,8 +362,11 @@ expected<std::shared_ptr<const SubprocessBackend>, CommandFailure>
 SubprocessBackend::open_startable(std::vector<std::string> connection,
                                   std::optional<std::string> configuration,
                                   CommandObserver observer, ExecutionPolicy policy) {
-  const std::vector<std::string> selector = connection;
-  const std::string selected = resolved_socket_path(selector).value_or(std::string{});
+  const bool named = connection.empty() || connection.front() == "-L";
+  auto selected = freeze_endpoint(connection, policy);
+  if (!selected) {
+    return unexpected(std::move(selected.error()));
+  }
   auto endpoint = bind_socket_endpoint(connection);
   if (!endpoint.has_value()) {
     return unexpected(CommandFailure{.kind = FailureKind::pipe,
@@ -308,31 +375,24 @@ SubprocessBackend::open_startable(std::vector<std::string> connection,
                                      .diagnostic = std::move(endpoint.error())});
   }
   if (endpoint->missing) {
-    const auto resolved = resolved_socket_path(selector);
-    if (!resolved.has_value()) {
-      return unexpected(CommandFailure{
-          .kind = FailureKind::validation,
-          .delivery = DeliveryStatus::not_started,
-          .exit_code = 0,
-          .diagnostic = "the startable tmux socket path could not be resolved"});
-    }
-    // Keep the caller's own selector, not a `-S <resolved path>` of our own:
-    // tmux only creates the missing `tmux-<uid>` directory a socket lives
-    // under when *it* resolves the path (no `-S`, or `-L`), and does not
-    // when handed one by `-S`. Forcing `-S` here made the first command
-    // this backend ever ran — the `start-server`/`new-session` that has to
-    // create that directory — the one command guaranteed to skip the step
-    // that creates it. tmux's own client then reports "error creating
-    // <path>" on stderr but still exits 0, so nothing here saw it fail.
-    endpoint->connection = selector;
-    endpoint->socket_path = *resolved;
-    endpoint->identity = "pending:" + *resolved;
+    endpoint->connection = connection;
+    endpoint->socket_path = *selected;
+    endpoint->identity = "pending:" + *selected;
     endpoint->alias.reset();
   }
+  std::string startup_directory;
+#if !defined(_WIN32)
+  if (named) {
+    startup_directory = std::filesystem::path{*selected}.parent_path().string();
+  }
+#else
+  static_cast<void>(named);
+#endif
   auto backend = std::shared_ptr<SubprocessBackend>{new SubprocessBackend{
-      std::move(endpoint->connection), std::move(endpoint->socket_path), selected,
-      std::move(endpoint->identity), std::move(endpoint->alias), endpoint->missing,
-      true, std::move(configuration), std::move(observer), policy}};
+      std::move(endpoint->connection), std::move(endpoint->socket_path),
+      *std::move(selected), std::move(endpoint->identity), std::move(endpoint->alias),
+      endpoint->missing, true, std::move(startup_directory), std::move(configuration),
+      std::move(observer), std::move(policy)}};
   return std::shared_ptr<const SubprocessBackend>{std::move(backend)};
 }
 
@@ -553,9 +613,11 @@ SubprocessBackend::build_request(const CommandRequest& command,
   const auto& active_connection = connection();
   request.executable = policy().tmux_binary;
   request.timeout = timeout;
+  request.base_environment = policy().child_environment;
 #if defined(_WIN32)
   // Warm claiming reserializes the caller's cwd into psmux's line protocol.
-  request.environment = libtmux_env::psmux_child_environment();
+  request.environment =
+      libtmux_env::psmux_child_environment(*policy().child_environment);
   if (session.has_value()) {
     if (auto target = psmux_session(active_connection, *session); target.has_value()) {
       request.environment.emplace_back("PSMUX_TARGET_SESSION", std::move(*target));
@@ -664,6 +726,17 @@ SubprocessBackend::run_scoped(const CommandRequest& command,
             .diagnostic =
                 "this handle predates the socket; reopen it after the server starts"});
   }
+#if !defined(_WIN32)
+  if (publishes_started_endpoint && !startup_directory_.empty()) {
+    if (auto prepared = prepare_socket_directory(startup_directory_); !prepared) {
+      return report_failure(command,
+                            CommandFailure{.kind = FailureKind::validation,
+                                           .delivery = DeliveryStatus::not_started,
+                                           .exit_code = 0,
+                                           .diagnostic = std::move(prepared.error())});
+    }
+  }
+#endif
   ProcessRequest request = build_request(command, session, timeout, output_limit);
   // From here down the command is actually dispatched, so this is what its
   // duration means. Everything refused above it never ran, and reports none.
@@ -714,6 +787,106 @@ SubprocessBackend::run_scoped(const CommandRequest& command,
   }
   observe(command, nullptr);
   return interpreted;
+}
+
+ReceiptReply
+SubprocessBackend::run_receipted(const CommandRequest& command,
+                                 std::chrono::milliseconds timeout,
+                                 const std::function<bool()>& cancelled,
+                                 std::optional<std::string> startup_nonce) const {
+#if defined(_WIN32)
+  static_cast<void>(command);
+  static_cast<void>(timeout);
+  static_cast<void>(cancelled);
+  static_cast<void>(startup_nonce);
+  return {.output = {},
+          .failure = CommandFailure{
+              .kind = FailureKind::unsupported,
+              .diagnostic = "ownership receipts require the POSIX tmux transport"}};
+#else
+  ReceiptReply answer;
+  const auto fail = [&](CommandFailure failure) {
+    answer.failure = std::move(failure);
+    return answer;
+  };
+  if ((cancelled && cancelled())) {
+    return fail(CommandFailure{.kind = FailureKind::cancelled,
+                               .diagnostic = "acquisition cancelled before dispatch"});
+  }
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  std::unique_lock lock{startup_mutex_, std::defer_lock};
+  if (socket_missing_.load(std::memory_order_acquire)) {
+    while (!lock.try_lock_for(std::chrono::milliseconds{5})) {
+      if (cancelled && cancelled())
+        return fail(
+            CommandFailure{.kind = FailureKind::cancelled,
+                           .diagnostic = "cancelled while waiting for startup"});
+      if (std::chrono::steady_clock::now() >= deadline)
+        return fail(
+            CommandFailure{.kind = FailureKind::timeout,
+                           .diagnostic = "timed out while waiting for startup"});
+    }
+  }
+  timeout = std::chrono::duration_cast<std::chrono::milliseconds>(
+      deadline - std::chrono::steady_clock::now());
+  const bool cold = socket_missing_.load(std::memory_order_acquire);
+  const bool starts =
+      !command.empty() && command.arguments().front().value() == "new-session";
+  if (cold && (!startable_ || !starts)) {
+    return fail(CommandFailure{
+        .kind = FailureKind::missing,
+        .diagnostic =
+            "this handle predates the socket; reopen it after the server starts"});
+  }
+  if (cold && !startup_directory_.empty()) {
+    if (auto prepared = prepare_socket_directory(startup_directory_); !prepared) {
+      return fail(CommandFailure{.kind = FailureKind::validation,
+                                 .diagnostic = std::move(prepared.error())});
+    }
+  }
+  auto request = build_request(command, std::nullopt, timeout, std::nullopt);
+  request.cancelled = cancelled;
+  if (startup_nonce) {
+    request.environment.emplace_back("LIBTMUX_OWNER_STARTUP_NONCE", *startup_nonce);
+  }
+  const Dispatching dispatching;
+  auto reply = run_process(request);
+  if (reply) {
+    answer.output = text(reply->stdout_bytes);
+    auto interpreted =
+        interpret_unobserved(command, request.capture_limit, std::move(*reply));
+    if (!interpreted) {
+      answer.failure = std::move(interpreted.error());
+    }
+  } else {
+    answer.output = text(reply.error().stdout_bytes);
+    answer.failure = CommandFailure{.kind = kind_of(reply.error().kind),
+                                    .delivery = reply.error().delivery,
+                                    .exit_code = -1,
+                                    .diagnostic = std::move(reply.error().diagnostic)};
+  }
+  if (cold && !answer.output.empty()) {
+    auto published = publish_started_endpoint({});
+    if (!published && !answer.failure) {
+      answer.failure = std::move(published.error());
+    }
+  }
+  if (lock.owns_lock()) {
+    lock.unlock();
+  }
+  try {
+    observe(command, answer.failure ? &*answer.failure : nullptr);
+  } catch (...) {
+    answer.observer_exception = std::current_exception();
+    if (!answer.failure) {
+      answer.failure =
+          CommandFailure{.kind = FailureKind::pipe,
+                         .delivery = DeliveryStatus::replied,
+                         .diagnostic = "command observer threw after receipt capture"};
+    }
+  }
+  return answer;
+#endif
 }
 
 expected<std::string, CommandFailure>

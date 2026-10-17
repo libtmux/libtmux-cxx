@@ -1,6 +1,9 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdlib>
+#include <cwchar>
+#include <filesystem>
 #include <limits>
 #include <optional>
 #include <string>
@@ -16,6 +19,9 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#else
+#include <unistd.h>
+extern char** environ;
 #endif
 
 namespace libtmux_env {
@@ -122,9 +128,111 @@ repaired_pathext(std::optional<std::string> inherited) {
 #endif
 }
 
+[[nodiscard]] inline std::vector<std::string> snapshot() {
+  std::vector<std::string> result;
+#if defined(_WIN32)
+  const auto entries = ::GetEnvironmentStringsW();
+  if (entries == nullptr) {
+    return result;
+  }
+  for (const wchar_t* entry = entries; *entry != L'\0';
+       entry += std::wcslen(entry) + 1U) {
+    const int size =
+        ::WideCharToMultiByte(CP_UTF8, 0, entry, -1, nullptr, 0, nullptr, nullptr);
+    if (size > 1) {
+      std::string text(static_cast<std::size_t>(size), '\0');
+      ::WideCharToMultiByte(CP_UTF8, 0, entry, -1, text.data(), size, nullptr, nullptr);
+      text.pop_back();
+      result.push_back(std::move(text));
+    }
+  }
+  ::FreeEnvironmentStringsW(entries);
+#else
+  for (auto entry = environ; entry != nullptr && *entry != nullptr; ++entry) {
+    result.emplace_back(*entry);
+  }
+#endif
+  return result;
+}
+
+[[nodiscard]] inline bool named(std::string_view entry, std::string_view name) {
+  if (entry.size() <= name.size() || entry[name.size()] != '=') {
+    return false;
+  }
+#if defined(_WIN32)
+  return std::equal(name.begin(), name.end(), entry.begin(),
+                    [](char a, char b) { return ascii_lower(a) == ascii_lower(b); });
+#else
+  return entry.starts_with(name);
+#endif
+}
+
+[[nodiscard]] inline std::optional<std::string>
+value(const std::vector<std::string>& entries, std::string_view name) {
+  for (auto entry = entries.rbegin(); entry != entries.rend(); ++entry) {
+    if (named(*entry, name)) {
+      return entry->size() == name.size() + 1U
+                 ? std::nullopt
+                 : std::optional{entry->substr(name.size() + 1U)};
+    }
+  }
+  return std::nullopt;
+}
+
+inline void erase(std::vector<std::string>& entries, std::string_view name) {
+  std::erase_if(entries, [name](const auto& entry) { return named(entry, name); });
+}
+
+[[nodiscard]] inline bool valid(const std::vector<std::string>& entries) {
+  return std::all_of(entries.begin(), entries.end(), [](const auto& entry) {
+    const auto separator = entry.find('=',
+#if defined(_WIN32)
+                                      entry.starts_with('=') ? 1U : 0U
+#else
+                                      0U
+#endif
+    );
+    return separator != std::string::npos && separator != 0U &&
+           entry.find('\0') == std::string::npos;
+  });
+}
+
+#if !defined(_WIN32)
+[[nodiscard]] inline std::optional<std::string>
+executable(std::string_view name, const std::vector<std::string>& entries) {
+  if (name.find('/') != std::string_view::npos) {
+    return std::string{name};
+  }
+  std::string search{"/bin:/usr/bin"};
+  for (auto entry = entries.rbegin(); entry != entries.rend(); ++entry) {
+    if (named(*entry, "PATH")) {
+      search = entry->substr(5U);
+      break;
+    }
+  }
+  std::string_view remaining{search};
+  do {
+    const auto separator = remaining.find(':');
+    const auto directory = remaining.substr(0, separator);
+    const auto candidate =
+        (std::filesystem::path{directory.empty() ? "." : directory} / name).string();
+    std::error_code error;
+    if (::access(candidate.c_str(), X_OK) == 0 &&
+        std::filesystem::is_regular_file(candidate, error)) {
+      return candidate;
+    }
+    if (separator == std::string_view::npos) {
+      break;
+    }
+    remaining.remove_prefix(separator + 1U);
+  } while (true);
+  return std::nullopt;
+}
+#endif
+
 #if defined(_WIN32)
 [[nodiscard]] inline std::vector<std::pair<std::string, std::optional<std::string>>>
-psmux_child_environment() {
+psmux_child_environment(const std::vector<std::string>& inherited = snapshot()) {
   std::vector<std::pair<std::string, std::optional<std::string>>> environment{
       {"TMUX", std::nullopt},
       {"TMUX_PANE", std::nullopt},
@@ -136,7 +244,8 @@ psmux_child_environment() {
       {"PSMUX_REMOTE_ATTACH", std::nullopt},
       {"PSMUX_NO_WARM", "1"},
   };
-  if (auto pathext = repaired_pathext(value("PATHEXT")); pathext.has_value()) {
+  if (auto pathext = repaired_pathext(value(inherited, "PATHEXT"));
+      pathext.has_value()) {
     environment.emplace_back("PATHEXT", std::move(*pathext));
   }
   return environment;

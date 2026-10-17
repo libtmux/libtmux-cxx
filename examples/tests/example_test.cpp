@@ -21,10 +21,13 @@
 
 #include <gtest/gtest.h>
 
+#include <libtmux/server.hpp>
 #include <libtmux/testing/scoped_server.hpp>
 #include <libtmux/testing/tmux_version.hpp>
 
+#include <signal.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "run_program.hpp"
@@ -197,4 +200,144 @@ TEST(Package, RefusesANamespaceThatWouldNotSurviveAPath) {
   EXPECT_NE(refused.error().find("A-Za-z0-9._-"), std::string::npos) << refused.error();
 }
 
+TEST(OrdinaryExample, RunsUnchangedWithAPathOrNameAndCleansItsSession) {
+  for (const auto mode :
+       {libtmux::test::SocketMode::Path, libtmux::test::SocketMode::Name}) {
+    auto report = std::make_shared<libtmux::test::TeardownReport>();
+    std::filesystem::path root;
+    int daemon = 0;
+    {
+      auto fixture = ScopedTmuxServer::start(
+          {.mode = mode,
+           .socket_namespace = SocketNamespace::consumer("ordinary"),
+           .teardown_report = report});
+      ASSERT_TRUE(fixture) << fixture.error();
+      root = fixture->tmux_tmpdir();
+      daemon = fixture->server_pid();
+      auto environment = fixture->child_environment();
+      libtmux::test::erase_environment(environment, "LIBTMUX_SOCKET_PATH");
+      libtmux::test::erase_environment(environment, "LIBTMUX_SOCKET_NAME");
+      if (mode == libtmux::test::SocketMode::Path) {
+        libtmux::test::set_environment(environment, "LIBTMUX_SOCKET_PATH",
+                                       fixture->socket_path().string());
+      } else {
+        libtmux::test::set_environment(environment, "LIBTMUX_SOCKET_NAME",
+                                       *fixture->socket_name());
+      }
+      const auto run = libtmux::examples::run_program(
+          example_binary("07_default"), environment, std::chrono::seconds{20});
+      ASSERT_TRUE(run) << run.error();
+      EXPECT_EQ(run->exit_code, 0) << run->output;
+      EXPECT_NE(run->output.find("created $"), std::string::npos) << run->output;
+      EXPECT_NE(run->output.find("1 window(s)"), std::string::npos) << run->output;
+      const auto server = libtmux::Server::at_socket_path(fixture->socket_path());
+      ASSERT_TRUE(server) << server.error().diagnostic;
+      const auto sessions = server->sessions();
+      ASSERT_TRUE(sessions) << sessions.error().diagnostic;
+      ASSERT_EQ(sessions->size(), 1U);
+      EXPECT_EQ(sessions->front().name(), fixture->session_name());
+    }
+    EXPECT_EQ(report->messages, std::vector<std::string>{"server teardown complete"});
+    EXPECT_FALSE(std::filesystem::exists(root));
+    EXPECT_EQ(::kill(daemon, 0), -1);
+    EXPECT_EQ(errno, ESRCH);
+  }
+}
+
+TEST(OrdinaryExample, BodyFailureStillCleansAndTeardownFailureStaysVisible) {
+  for (const bool fail_cleanup : {false, true}) {
+    auto report = std::make_shared<libtmux::test::TeardownReport>();
+    std::filesystem::path root;
+    int daemon = 0;
+    {
+      auto fixture = ScopedTmuxServer::start(
+          {.socket_namespace = SocketNamespace::consumer("exfail"),
+           .teardown_report = report});
+      ASSERT_TRUE(fixture) << fixture.error();
+      root = fixture->tmux_tmpdir();
+      daemon = fixture->server_pid();
+      const auto wrapper = root / "tmux";
+      {
+        std::ofstream script{wrapper};
+        script << "#!/bin/sh\nfor argument do\n"
+                  "case \"$argument\" in\n"
+                  "list-windows) echo 'injected body refusal' >&2; exit 1;;\n";
+        if (fail_cleanup) {
+          script << "*'\\153\\151\\154\\154\\055\\163\\145\\163\\163\\151\\157\\156'*) "
+                    "echo 'injected cleanup refusal' >&2; exit 1;;\n";
+        }
+        script << "esac\ndone\nexec \"$LIBTMUX_REAL_TMUX\" \"$@\"\n";
+        ASSERT_TRUE(script.good());
+      }
+      ASSERT_EQ(::chmod(wrapper.c_str(), 0700), 0);
+      auto environment = fixture->child_environment();
+      libtmux::test::set_environment(environment, "PATH", root.string());
+      libtmux::test::set_environment(environment, "LIBTMUX_REAL_TMUX",
+                                     LIBTMUX_TEST_TMUX_PATH);
+      libtmux::test::set_environment(environment, "LIBTMUX_SOCKET_PATH",
+                                     fixture->socket_path().string());
+      const auto run = libtmux::examples::run_program(
+          example_binary("07_default"), environment, std::chrono::seconds{20});
+      ASSERT_TRUE(run) << run.error();
+      EXPECT_EQ(run->exit_code, 1) << run->output;
+      EXPECT_NE(run->output.find("created $"), std::string::npos) << run->output;
+      EXPECT_NE(run->output.find("injected body refusal"), std::string::npos)
+          << run->output;
+      if (fail_cleanup) {
+        EXPECT_NE(run->output.find("session cleanup:"), std::string::npos)
+            << run->output;
+        EXPECT_NE(run->output.find("injected cleanup refusal"), std::string::npos)
+            << run->output;
+      }
+      const auto server = libtmux::Server::at_socket_path(fixture->socket_path());
+      ASSERT_TRUE(server) << server.error().diagnostic;
+      const auto sessions = server->sessions();
+      ASSERT_TRUE(sessions) << sessions.error().diagnostic;
+      EXPECT_EQ(sessions->size(), fail_cleanup ? 2U : 1U);
+    }
+    EXPECT_EQ(report->messages, std::vector<std::string>{"server teardown complete"});
+    EXPECT_FALSE(std::filesystem::exists(root));
+    EXPECT_EQ(::kill(daemon, 0), -1);
+    EXPECT_EQ(errno, ESRCH);
+  }
+}
+
+TEST(LifecycleExample, ExecutesTheDocumentedProgramWithExternalDefaults) {
+  auto report = std::make_shared<libtmux::test::TeardownReport>();
+  std::filesystem::path root;
+  int daemon = 0;
+  {
+    auto fixture = ScopedTmuxServer::start(
+        {.socket_namespace = SocketNamespace::consumer("lifeex"),
+         .teardown_report = report});
+    ASSERT_TRUE(fixture) << fixture.error();
+    root = fixture->tmux_tmpdir();
+    daemon = fixture->server_pid();
+    auto environment = fixture->child_environment();
+    libtmux::test::set_environment(environment, "LIBTMUX_SOCKET_PATH",
+                                   fixture->socket_path().string());
+    const auto run = libtmux::examples::run_program(
+        example_binary("08_lifecycle"), environment, std::chrono::seconds{20});
+    ASSERT_TRUE(run) << run.error();
+    EXPECT_EQ(run->exit_code, 0) << run->output;
+    EXPECT_NE(run->output.find("window created=1 reused=1"), std::string::npos)
+        << run->output;
+    EXPECT_NE(run->output.find("adopted pane cleaned=1"), std::string::npos)
+        << run->output;
+    EXPECT_NE(run->output.find("1 server(s) in the selected directory"),
+              std::string::npos)
+        << run->output;
+    const auto server = libtmux::Server::at_socket_path(fixture->socket_path());
+    ASSERT_TRUE(server);
+    const auto sessions = server->sessions();
+    ASSERT_TRUE(sessions);
+    EXPECT_EQ(sessions->size(), 1U);
+  }
+  EXPECT_FALSE(std::filesystem::exists(root));
+  errno = 0;
+  EXPECT_EQ(::kill(daemon, 0), -1);
+  EXPECT_EQ(errno, ESRCH);
+  ASSERT_FALSE(report->messages.empty());
+  EXPECT_EQ(report->messages.back(), "server teardown complete");
+}
 } // namespace

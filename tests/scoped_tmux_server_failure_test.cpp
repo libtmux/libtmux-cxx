@@ -480,6 +480,7 @@ TEST(ScopedTmuxServerFailure, TermResistantServerIsKilledAndReapedByDeadline) {
 #endif
   auto report = std::make_shared<libtmux::test::TeardownReport>();
   pid_t pid = -1;
+  std::filesystem::path fixture_root;
 
   constexpr auto kTeardown = std::chrono::milliseconds{300};
   std::chrono::steady_clock::time_point torn_down_from{};
@@ -490,6 +491,7 @@ TEST(ScopedTmuxServerFailure, TermResistantServerIsKilledAndReapedByDeadline) {
                                                 .teardown_report = report});
     ASSERT_TRUE(server.has_value()) << server.error();
     pid = server->server_pid();
+    fixture_root = server->tmux_tmpdir();
 #if defined(__linux__)
     tracer.emplace(pid);
     ASSERT_GT(tracer->pid, 0);
@@ -512,6 +514,8 @@ TEST(ScopedTmuxServerFailure, TermResistantServerIsKilledAndReapedByDeadline) {
 
 #if defined(__linux__)
   EXPECT_FALSE(libtmux::test::wait_until_reaped(pid, std::chrono::steady_clock::now()));
+  EXPECT_TRUE(std::filesystem::exists(fixture_root));
+  EXPECT_TRUE(report_contains(report, "server exit unverified; retained fixture tree"));
   tracer->release();
 #endif
   ASSERT_TRUE(libtmux::test::wait_until_reaped(pid, std::chrono::steady_clock::now() +
@@ -523,6 +527,7 @@ TEST(ScopedTmuxServerFailure, TermResistantServerIsKilledAndReapedByDeadline) {
             -1);
   EXPECT_EQ(errno, ECHILD);
   std::error_code error;
+  std::filesystem::remove_all(fixture_root, error);
   std::filesystem::remove_all(root, error);
 }
 
@@ -530,12 +535,15 @@ TEST(ScopedTmuxServerFailure, TermResistantServerIsKilledAndReapedByDeadline) {
 TEST(ScopedTmuxServerFailure, LatePtraceReapUsesBoundedOwnedHandoff) {
   ScopedEnvironment mode_environment{"LIBTMUX_FAKE_MODE", "ptrace-reap-delay"};
   std::optional<libtmux::test::ScopedTmuxServer> fixture;
+  auto report = std::make_shared<libtmux::test::TeardownReport>();
   auto started = libtmux::test::ScopedTmuxServer::start(
       {.tmux_binary = LIBTMUX_FAKE_TMUX_PATH,
-       .teardown_timeout = std::chrono::milliseconds{80}});
+       .teardown_timeout = std::chrono::milliseconds{80},
+       .teardown_report = report});
   ASSERT_TRUE(started.has_value()) << started.error();
   fixture.emplace(std::move(*started));
   const auto server_pid = fixture->server_pid();
+  const auto fixture_root = fixture->tmux_tmpdir();
   GatedTracer tracer{server_pid};
   ASSERT_GT(tracer.pid, 0);
   ASSERT_EQ(tracer.attach_result, 0);
@@ -548,9 +556,16 @@ TEST(ScopedTmuxServerFailure, LatePtraceReapUsesBoundedOwnedHandoff) {
   EXPECT_LT(teardown_elapsed, std::chrono::milliseconds{1000});
   EXPECT_FALSE(
       libtmux::test::wait_until_reaped(server_pid, std::chrono::steady_clock::now()));
+  EXPECT_TRUE(std::filesystem::exists(fixture_root));
+  EXPECT_TRUE(report_contains(report, "server exit unverified; retained fixture tree"));
   tracer.release();
-  EXPECT_TRUE(libtmux::test::wait_until_reaped(
-      server_pid, std::chrono::steady_clock::now() + std::chrono::milliseconds{300}));
+  const bool reaped = libtmux::test::wait_until_reaped(
+      server_pid, std::chrono::steady_clock::now() + std::chrono::milliseconds{300});
+  EXPECT_TRUE(reaped);
+  if (reaped) {
+    std::error_code error;
+    std::filesystem::remove_all(fixture_root, error);
+  }
 }
 #endif
 

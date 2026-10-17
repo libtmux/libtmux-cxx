@@ -44,6 +44,9 @@ enum class SocketError {
   name_has_separator,
   path_too_long,
   path_unsupported,
+  name_is_dot,
+  contains_nul,
+  path_not_absolute,
 };
 
 [[nodiscard]] constexpr std::string_view to_string(SocketError error) noexcept {
@@ -52,6 +55,12 @@ enum class SocketError {
     return "the socket selector is empty";
   case SocketError::name_has_separator:
     return "a socket name cannot contain a path separator";
+  case SocketError::name_is_dot:
+    return "a socket name cannot be dot or dot-dot";
+  case SocketError::contains_nul:
+    return "a socket selector cannot contain NUL";
+  case SocketError::path_not_absolute:
+    return "a socket path must be absolute";
   case SocketError::path_unsupported:
     return "psmux does not support socket paths on Windows; use a socket name";
   case SocketError::path_too_long:
@@ -65,6 +74,12 @@ enum class SocketError {
 socket_name_arguments(std::string_view name) {
   if (name.empty()) {
     return unexpected(SocketError::empty);
+  }
+  if (name.find('\0') != std::string_view::npos) {
+    return unexpected(SocketError::contains_nul);
+  }
+  if (name == "." || name == "..") {
+    return unexpected(SocketError::name_is_dot);
   }
   if (name.find('/') != std::string_view::npos
 #if defined(_WIN32)
@@ -85,6 +100,12 @@ socket_path_arguments(std::string_view path) {
 #if defined(_WIN32)
   return unexpected(SocketError::path_unsupported);
 #else
+  if (path.find('\0') != std::string_view::npos) {
+    return unexpected(SocketError::contains_nul);
+  }
+  if (path.front() != '/') {
+    return unexpected(SocketError::path_not_absolute);
+  }
   if (path.size() > kSocketPathLimit) {
     return unexpected(SocketError::path_too_long);
   }

@@ -2,8 +2,7 @@
 
 Programs that read top to bottom, plus two larger consumers. The first six run
 against a real tmux server of their own in every POSIX example build. The
-seventh is the native Windows psmux path and uses only that preview's safe typed
-surface. Each is an executed test on the platform it documents, so nothing here
+native Windows psmux example uses that preview's safe typed surface. Each is an executed test on the platform it documents, so nothing here
 can quietly stop compiling or stop being true.
 [`consume/`](consume/README.md) is the exception, and deliberately never
 contacts tmux; CI builds and runs it against a real install.
@@ -22,7 +21,7 @@ Or run them all the way CI does:
 $ ctest --preset cxx-dev -R example
 ```
 
-Each starts a private server through
+The first six start a private server through
 [`scratch_server.hpp`](scratch_server.hpp) and kills it on the way out, so
 running one never touches a tmux you are using. That header is four lines over
 `libtmux::testing`, the same fixture the library's own suite runs on — if you
@@ -40,6 +39,26 @@ $ cmake -S examples -B build/examples -DCMAKE_PREFIX_PATH="$PWD/build/prefix"
 That is the only way to prove an example compiles against what a reader would
 actually install, rather than against a build tree with this repository's
 include paths and warning flags leaking into it.
+
+
+## Ordinary defaults
+
+[`07-default.cpp`](07-default.cpp) uses `Server::at_default()` on POSIX and includes
+its imports and error handling. It creates one named session on the selected
+server, lists its windows, and removes it through `Owned<Session>` and `with_owned`. A failure
+in the body or cleanup produces a nonzero exit status and a diagnostic.
+
+The program uses your configured endpoint when run directly. Its CTest harness
+supplies `LIBTMUX_SOCKET_PATH` or `LIBTMUX_SOCKET_NAME` in a child environment,
+executes the same binary, checks session cleanup, then checks server termination
+and fixture-directory removal. The harness also injects body and cleanup
+failures without changing the example.
+
+```console
+$ ctest --preset cxx-dev -R '^example.07-default$' --output-on-failure
+```
+
+[`08-lifecycle.cpp`](08-lifecycle.cpp) creates and reuses a window, adopts a pane, checks cleanup, and discovers servers in the selected socket directory. [The lifecycle guide](../docs/lifecycle.md) quotes that complete program; the external harness runs the same binary against its private endpoint.
 
 ## Complete API programs
 

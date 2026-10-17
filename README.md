@@ -299,9 +299,33 @@ for (const libtmux::Session& session : *sessions) {
 }
 ```
 
-`Server::at_socket_path(...)` and `Server::at_socket_name(...)` reach a
-specific server; `Server::from_env()` reaches the one the calling program is
-running inside, and `Server::at_default()` the one a person means by "my tmux".
+`Server::at_default()` captures the first nonempty `LIBTMUX_SOCKET_PATH`,
+`LIBTMUX_SOCKET_NAME`, or `TMUX`, then tmux's named default socket.
+`Server::at_socket_path(...)` and `Server::at_socket_name(...)` select an
+explicit endpoint; `Server::from_env()` requires a valid `TMUX` context.
+Invalid selected input returns `FailureKind::validation`. Lower-precedence
+values do not affect an explicit selection.
+
+On POSIX, paths must be absolute. Names resolve under the captured
+`TMUX_TMPDIR`, or `/tmp`, and `tmux-<uid>`. The root must exist. A startable
+handle creates the per-UID directory with mode 0700 and launches against the
+captured path, without tmux's fallback to `/tmp`. It permits group permissions
+on an existing directory, but rejects symlinks, another owner and other-user
+permissions. Explicit paths leave parent directory creation to the caller.
+
+`ExecutionPolicy::child_environment` accepts a complete `NAME=value` vector;
+omitting it captures the host environment. Both transports use the retained
+values, including `PATH`, and remove `TMUX` and `TMUX_PANE` before launch.
+This changes neither the host environment nor an existing tmux server's
+stored environment. `ConnectionOptions::child_environment` can supply a
+complete environment for one control connection.
+
+[`07-default.cpp`](examples/07-default.cpp) is a complete POSIX program:
+it connects through defaults, creates a session, lists its windows and removes
+that session with a local RAII guard. Cleanup errors reach stderr and the exit
+status. Its separate test harness redirects the unchanged program to a private
+server through the child environment. Dropping a `Server` handle leaves the
+remote server intact.
 
 ### Build a workspace
 

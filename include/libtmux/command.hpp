@@ -271,6 +271,12 @@ struct ExecutionPolicy {
   /// transports run the same executable unless the caller overrides it in
   /// `ConnectionOptions`.
   std::filesystem::path tmux_binary{"tmux"};
+  /// Complete child environment as `NAME=value` entries. Absent captures the
+  /// host environment when the Server is constructed. An empty vector means
+  /// an empty environment. Endpoint defaults and binary lookup use this same
+  /// snapshot; launches remove `TMUX` and `TMUX_PANE`. Host values are unchanged.
+  /// This does not change an existing tmux server's or session's environment.
+  std::optional<std::vector<std::string>> child_environment{};
 };
 
 /// A transport a caller supplies.

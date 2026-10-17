@@ -1,5 +1,6 @@
 #include "posix_child.hpp"
 
+#include "environment.hpp"
 #include "libtmux/expected.hpp"
 #include "path.hpp"
 #include "spawn_descriptors.hpp"
@@ -173,10 +174,11 @@ struct Pipe final {
 }
 
 [[nodiscard]] std::vector<std::string> environment_overlay(
-    const std::vector<std::pair<std::string, std::optional<std::string>>>& overlay) {
+    const std::vector<std::pair<std::string, std::optional<std::string>>>& overlay,
+    const std::optional<std::vector<std::string>>& base) {
   std::map<std::string, std::string, std::less<>> values;
-  for (auto entry = environ; entry != nullptr && *entry != nullptr; ++entry) {
-    const std::string_view current{*entry};
+  for (const auto& entry : (base.has_value() ? *base : libtmux_env::snapshot())) {
+    const std::string_view current{entry};
     const auto separator = current.find('=');
     if (separator != std::string_view::npos) {
       values.insert_or_assign(std::string{current.substr(0U, separator)},
@@ -359,13 +361,18 @@ expected<PosixChild, ProcessError> PosixChild::launch(const ProcessRequest& requ
   }
   // Pointer arrays borrow these strings until posix_spawnp returns.
   auto argument_pointers = mutable_pointers(arguments);
-  auto environment = environment_overlay(request.environment);
+  auto environment = environment_overlay(request.environment, request.base_environment);
   auto environment_pointers = mutable_pointers(environment);
 
   pid_t child = -1;
+  const auto executable = request.base_environment.has_value()
+                              ? libtmux_env::executable(arguments.front(), environment)
+                              : std::optional{arguments.front()};
   const auto spawn_result =
-      ::posix_spawnp(&child, arguments.front().c_str(), &actions, &attributes,
-                     argument_pointers.data(), environment_pointers.data());
+      executable.has_value()
+          ? ::posix_spawnp(&child, executable->c_str(), &actions, &attributes,
+                           argument_pointers.data(), environment_pointers.data())
+          : ENOENT;
   const auto attributes_destroyed = ::posix_spawnattr_destroy(&attributes);
   const auto actions_destroyed = ::posix_spawn_file_actions_destroy(&actions);
   // Dropping the parent's write ends lets capture readers observe EOF.

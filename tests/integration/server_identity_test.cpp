@@ -7,7 +7,9 @@
 
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <future>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <unordered_set>
@@ -18,6 +20,8 @@
 // mkdtemp is POSIX and glibc declares it in <stdlib.h>; <cstdlib>
 // promises only the std:: names.
 #include <stdlib.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 #include <gtest/gtest.h>
@@ -118,6 +122,9 @@ TEST_P(StartableServerIdentity, PublishesTheCreatedServersExactIdentity) {
   ASSERT_TRUE(owner.has_value()) << owner.error();
   const libtmux::test::EnvironmentGuard tmpdir{"TMUX_TMPDIR",
                                                owner->tmux_tmpdir().string()};
+  const libtmux::test::EnvironmentGuard default_path{"LIBTMUX_SOCKET_PATH", ""};
+  const libtmux::test::EnvironmentGuard default_name{"LIBTMUX_SOCKET_NAME", ""};
+  const libtmux::test::EnvironmentGuard default_context{"TMUX", ""};
   const std::filesystem::path selected = owner->tmux_tmpdir() / "startable.sock";
   // tmux spends `$TMUX_TMPDIR/tmux-<uid>/` before this name, and macOS gives
   // `sun_path` four fewer bytes than Linux does. `startable-name` overran it by
@@ -698,3 +705,408 @@ TEST(ServerFromEnvironment, ReadsASocketPathThatContainsACommaItself) {
   ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
   EXPECT_FALSE(sessions->empty());
 }
+
+TEST(ServerDefaults, PathEnvironmentSelectsTheOrdinaryHandle) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("defaults")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const libtmux::test::EnvironmentGuard root{"TMUX_TMPDIR",
+                                             fixture->tmux_tmpdir().string()};
+  const libtmux::test::EnvironmentGuard path{"LIBTMUX_SOCKET_PATH",
+                                             fixture->socket_path().string()};
+  const libtmux::test::EnvironmentGuard name{"LIBTMUX_SOCKET_NAME", "invalid/name"};
+  const libtmux::test::EnvironmentGuard context{"TMUX", "invalid-context"};
+
+  for (const auto& server :
+       {Server::at_default(), Server::startable_at_default(std::nullopt)}) {
+    ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+    EXPECT_EQ(server->socket_path(), fixture->socket_path().string());
+    const auto sessions = server->sessions();
+    ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
+    ASSERT_EQ(sessions->size(), 1U);
+    EXPECT_EQ(sessions->front().name(), fixture->session_name());
+  }
+}
+
+TEST(ServerDefaults, NameEnvironmentUsesTheCapturedRoot) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.mode = libtmux::test::SocketMode::Name,
+       .socket_namespace = libtmux::test::SocketNamespace::consumer("defaults")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  ASSERT_TRUE(fixture->socket_name().has_value());
+  const libtmux::test::EnvironmentGuard root{"TMUX_TMPDIR",
+                                             fixture->tmux_tmpdir().string()};
+  const libtmux::test::EnvironmentGuard path{"LIBTMUX_SOCKET_PATH", ""};
+  const libtmux::test::EnvironmentGuard name{"LIBTMUX_SOCKET_NAME",
+                                             *fixture->socket_name()};
+  const libtmux::test::EnvironmentGuard context{"TMUX", "invalid-context"};
+
+  auto server = Server::at_default();
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+  EXPECT_EQ(server->socket_path(), fixture->socket_path().string());
+  const auto sessions = server->sessions();
+  ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
+  ASSERT_EQ(sessions->size(), 1U);
+  EXPECT_EQ(sessions->front().name(), fixture->session_name());
+}
+
+TEST(ServerDefaults, TmuxContextSelectsTheOrdinaryHandle) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("defaults")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const libtmux::test::EnvironmentGuard root{"TMUX_TMPDIR",
+                                             fixture->tmux_tmpdir().string()};
+  const libtmux::test::EnvironmentGuard path{"LIBTMUX_SOCKET_PATH", ""};
+  const libtmux::test::EnvironmentGuard name{"LIBTMUX_SOCKET_NAME", ""};
+  const libtmux::test::EnvironmentGuard context{
+      "TMUX", fixture->socket_path().string() + "," +
+                  std::to_string(fixture->server_pid()) + ",-1"};
+
+  auto server = Server::at_default();
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+  EXPECT_EQ(server->socket_path(), fixture->socket_path().string());
+  const auto sessions = server->sessions();
+  ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
+  EXPECT_FALSE(sessions->empty());
+}
+
+TEST(ServerDefaults, InvalidSelectedPathDoesNotFallThrough) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("defaults")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const libtmux::test::EnvironmentGuard root{"TMUX_TMPDIR",
+                                             fixture->tmux_tmpdir().string()};
+  const libtmux::test::EnvironmentGuard path{"LIBTMUX_SOCKET_PATH", "relative/socket"};
+  const libtmux::test::EnvironmentGuard name{"LIBTMUX_SOCKET_NAME", ""};
+  const libtmux::test::EnvironmentGuard context{
+      "TMUX", fixture->socket_path().string() + ",1,0"};
+  const auto server = Server::at_default();
+  ASSERT_FALSE(server.has_value());
+  EXPECT_EQ(server.error().kind, libtmux::FailureKind::validation);
+  EXPECT_EQ(server.error().delivery, libtmux::DeliveryStatus::not_started);
+}
+
+TEST(ServerDefaults, ExplicitPathIgnoresInvalidLowerPrecedenceValues) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("defaults")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const libtmux::test::EnvironmentGuard root{"TMUX_TMPDIR", "relative/root"};
+  const libtmux::test::EnvironmentGuard path{"LIBTMUX_SOCKET_PATH", "relative/socket"};
+  const libtmux::test::EnvironmentGuard name{"LIBTMUX_SOCKET_NAME", "invalid/name"};
+  const libtmux::test::EnvironmentGuard context{"TMUX", "invalid-context"};
+  const auto server = Server::at_socket_path(fixture->socket_path());
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+  const auto sessions = server->sessions();
+  ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
+  ASSERT_EQ(sessions->size(), 1U);
+  EXPECT_EQ(sessions->front().name(), fixture->session_name());
+}
+
+TEST(ServerDefaults, EmptyEnvironmentSelectorsRetainTheNormalDefaultName) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.mode = libtmux::test::SocketMode::Name,
+       .socket_namespace = libtmux::test::SocketNamespace::consumer("defaults")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const libtmux::test::EnvironmentGuard root{"TMUX_TMPDIR",
+                                             fixture->tmux_tmpdir().string()};
+  const libtmux::test::EnvironmentGuard path{"LIBTMUX_SOCKET_PATH", ""};
+  const libtmux::test::EnvironmentGuard name{"LIBTMUX_SOCKET_NAME", ""};
+  const libtmux::test::EnvironmentGuard context{"TMUX", ""};
+  const auto server = Server::at_default();
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+  EXPECT_EQ(server->socket_path(),
+            (fixture->socket_path().parent_path() / "default").string());
+  // Only inspect the selected endpoint. This test does not connect to it.
+}
+
+TEST(ServerDefaults, MalformedTmuxContextIsRejectedBeforeConnecting) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start(
+      {.socket_namespace = libtmux::test::SocketNamespace::consumer("defaults")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const libtmux::test::EnvironmentGuard root{"TMUX_TMPDIR",
+                                             fixture->tmux_tmpdir().string()};
+  const libtmux::test::EnvironmentGuard path{"LIBTMUX_SOCKET_PATH", ""};
+  const libtmux::test::EnvironmentGuard name{"LIBTMUX_SOCKET_NAME", ""};
+  for (const std::string_view suffix :
+       {"", ",1", ",0,0", ",-1,0", ",+1,0", ",1,-2", ",1,$-1", ",1,", ",1, 0", ", 1,0",
+        ",1,$$1", ",pid,0", ",1,+0", ",1,1tail", ",1,1 ", ",1,\xD9\xA1"}) {
+    const libtmux::test::EnvironmentGuard context{
+        "TMUX", fixture->socket_path().string() + std::string{suffix}};
+    SCOPED_TRACE(suffix);
+    for (const auto& server : {Server::at_default(), Server::from_env()}) {
+      ASSERT_FALSE(server.has_value());
+      EXPECT_EQ(server.error().kind, libtmux::FailureKind::validation);
+      EXPECT_EQ(server.error().delivery, libtmux::DeliveryStatus::not_started);
+    }
+  }
+}
+
+namespace {
+
+libtmux::ExecutionPolicy
+fixture_policy(const libtmux::test::ScopedTmuxServer& fixture) {
+  libtmux::ExecutionPolicy policy;
+  policy.child_environment = fixture.child_environment();
+  libtmux::test::erase_environment(*policy.child_environment, "LIBTMUX_SOCKET_PATH");
+  libtmux::test::erase_environment(*policy.child_environment, "LIBTMUX_SOCKET_NAME");
+  return policy;
+}
+
+TEST(ServerDefaults, CapturesEndpointAndChildEnvironmentForBothTransports) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture) << fixture.error();
+  auto policy = fixture_policy(*fixture);
+  const auto wrapper = fixture->tmux_tmpdir() / "tmux";
+  {
+    std::ofstream script{wrapper};
+    script << "#!/bin/sh\n"
+              "test \"$CAPTURED_VALUE\" = kept || exit 73\n"
+              "test -z \"${ADDED_LATER+x}\" || exit 74\n"
+              "test -z \"${TMUX+x}\" || exit 75\n"
+              "test -z \"${TMUX_PANE+x}\" || exit 76\n"
+              "exec \"$LIBTMUX_REAL_TMUX\" \"$@\"\n";
+    ASSERT_TRUE(script.good());
+  }
+  ASSERT_EQ(::chmod(wrapper.c_str(), 0700), 0);
+  libtmux::test::set_environment(*policy.child_environment, "PATH",
+                                 fixture->tmux_tmpdir().string());
+  libtmux::test::set_environment(*policy.child_environment, "LIBTMUX_SOCKET_PATH",
+                                 fixture->socket_path().string());
+  libtmux::test::set_environment(*policy.child_environment, "CAPTURED_VALUE", "kept");
+  libtmux::test::set_environment(*policy.child_environment, "LIBTMUX_REAL_TMUX",
+                                 LIBTMUX_TEST_TMUX_PATH);
+  libtmux::test::set_environment(*policy.child_environment, "TMUX",
+                                 "malformed-ignored");
+  libtmux::test::set_environment(*policy.child_environment, "TMUX_PANE", "%9");
+  auto server = Server::at_default({}, policy);
+  ASSERT_TRUE(server) << server.error().diagnostic;
+  const libtmux::test::EnvironmentGuard changed{"CAPTURED_VALUE", "changed"};
+  const libtmux::test::EnvironmentGuard added{"ADDED_LATER", "new"};
+  const libtmux::test::EnvironmentGuard path{"PATH", "/no-such-programs"};
+  const libtmux::test::EnvironmentGuard selected{"LIBTMUX_SOCKET_PATH", "relative"};
+  const libtmux::test::EnvironmentGuard context{"TMUX", "host-context"};
+  const libtmux::test::EnvironmentGuard pane{"TMUX_PANE", "%host"};
+  const auto sessions = server->sessions();
+  ASSERT_TRUE(sessions) << sessions.error().diagnostic;
+  auto connection = server->control(fixture->session_name());
+  ASSERT_TRUE(connection) << connection.error().message;
+  EXPECT_EQ(std::string{std::getenv("CAPTURED_VALUE")}, "changed");
+  EXPECT_EQ(std::string{std::getenv("TMUX")}, "host-context");
+  EXPECT_EQ(std::string{std::getenv("TMUX_PANE")}, "%host");
+}
+
+TEST(ServerDefaults, AbsentEnvironmentResolvesTheDefaultWithoutRunningAClient) {
+  libtmux::ExecutionPolicy policy;
+  policy.tmux_binary = "/must-not-launch";
+  policy.child_environment = std::vector<std::string>{};
+  const auto server = Server::at_default({}, policy);
+  ASSERT_TRUE(server) << server.error().diagnostic;
+  const auto directory =
+      std::filesystem::canonical("/tmp") / ("tmux-" + std::to_string(::getuid()));
+  EXPECT_EQ(server->socket_path(), (directory / "default").string());
+}
+
+TEST(ServerDefaults, HostSnapshotIsCapturedBeforeTheFirstCommand) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture) << fixture.error();
+  const libtmux::test::EnvironmentGuard path{"LIBTMUX_SOCKET_PATH",
+                                             fixture->socket_path().string()};
+  const libtmux::test::EnvironmentGuard binary{
+      "PATH", std::filesystem::path{LIBTMUX_TEST_TMUX_PATH}.parent_path().string()};
+  const auto server = Server::at_default();
+  ASSERT_TRUE(server) << server.error().diagnostic;
+  const libtmux::test::EnvironmentGuard changed{"PATH", "/missing"};
+  const libtmux::test::EnvironmentGuard redirected{"LIBTMUX_SOCKET_PATH", "relative"};
+  const auto sessions = server->sessions();
+  ASSERT_TRUE(sessions) << sessions.error().diagnostic;
+  EXPECT_EQ(sessions->front().name(), fixture->session_name());
+}
+
+TEST(ServerDefaults, ContextPreservesCommasAndWhitespaceInPaths) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture) << fixture.error();
+  auto policy = fixture_policy(*fixture);
+  const auto path = fixture->tmux_tmpdir() / " comma,path ";
+  std::filesystem::create_hard_link(fixture->socket_path(), path);
+  for (const auto suffix : {",0001,0", ",1,$0", ",1,-1"}) {
+    libtmux::test::set_environment(*policy.child_environment, "TMUX",
+                                   path.string() + suffix);
+    const auto server = Server::at_default({}, policy);
+    ASSERT_TRUE(server) << server.error().diagnostic;
+    EXPECT_EQ(server->socket_path(), path.string());
+    EXPECT_TRUE(server->sessions());
+  }
+}
+
+TEST(ServerDefaults, SelectedNamesAndPathsAreValidated) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture) << fixture.error();
+  const auto policy = fixture_policy(*fixture);
+  for (const std::string& name : {std::string{}, std::string{"."}, std::string{".."},
+                                  std::string{"a/b"}, std::string{"a\0b", 3}}) {
+    const auto server = Server::at_socket_name(name, {}, policy);
+    ASSERT_FALSE(server) << name;
+    EXPECT_EQ(server.error().kind, libtmux::FailureKind::validation);
+  }
+  for (const std::string& path :
+       {std::string{}, std::string{"relative"}, std::string{"/a\0b", 4}}) {
+    const auto server = Server::at_socket_path(path, {}, policy);
+    ASSERT_FALSE(server);
+    EXPECT_EQ(server.error().kind, libtmux::FailureKind::validation);
+  }
+  auto invalid = policy;
+  libtmux::test::set_environment(*invalid.child_environment, "LIBTMUX_SOCKET_NAME",
+                                 "..");
+  libtmux::test::set_environment(*invalid.child_environment, "TMUX",
+                                 fixture->socket_path().string() + ",1,0");
+  EXPECT_FALSE(Server::at_default({}, invalid));
+  EXPECT_TRUE(Server::at_socket_name("valid", {}, invalid));
+}
+
+TEST(ServerDefaults, FreshNamedRootIsFrozenAndPreparedWithPrivatePermissions) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture) << fixture.error();
+  auto policy = fixture_policy(*fixture);
+  const auto wrapper = fixture->tmux_tmpdir() / "launch";
+  const auto trace = fixture->tmux_tmpdir() / "launch-arguments";
+  {
+    std::ofstream script{wrapper};
+    script << "#!/bin/sh\n"
+              "if test ! -e \"$LAUNCH_TRACE\"; then\n"
+              "printf '%s\\n' \"$@\" > \"$LAUNCH_TRACE\"\n"
+              "fi\nexec \"$LIBTMUX_REAL_TMUX\" \"$@\"\n";
+    ASSERT_TRUE(script.good());
+  }
+  ASSERT_EQ(::chmod(wrapper.c_str(), 0700), 0);
+  policy.tmux_binary = wrapper;
+  libtmux::test::set_environment(*policy.child_environment, "LAUNCH_TRACE",
+                                 trace.string());
+  libtmux::test::set_environment(*policy.child_environment, "LIBTMUX_REAL_TMUX",
+                                 LIBTMUX_TEST_TMUX_PATH);
+  const auto root = fixture->tmux_tmpdir() / "fresh";
+  ASSERT_TRUE(std::filesystem::create_directory(root));
+  libtmux::test::set_environment(*policy.child_environment, "TMUX_TMPDIR",
+                                 root.string());
+  libtmux::test::set_environment(*policy.child_environment, "LIBTMUX_SOCKET_NAME",
+                                 "frozen");
+  auto server =
+      Server::startable_at_default(std::filesystem::path{"/dev/null"}, {}, policy);
+  ASSERT_TRUE(server) << server.error().diagnostic;
+  ServerCleanup cleanup{*server};
+  const libtmux::test::EnvironmentGuard changed{"TMUX_TMPDIR", "/does-not-exist"};
+  const auto created = server->new_session("owned");
+  ASSERT_TRUE(created) << created.error().diagnostic;
+  const auto directory = root / ("tmux-" + std::to_string(::getuid()));
+  struct stat metadata {};
+  ASSERT_EQ(::lstat(directory.c_str(), &metadata), 0);
+  EXPECT_EQ(metadata.st_mode & 0777, 0700);
+  EXPECT_EQ(server->socket_path(), (directory / "frozen").string());
+  EXPECT_TRUE(std::filesystem::exists(directory / "frozen"));
+  std::ifstream recorded{trace};
+  std::vector<std::string> arguments;
+  for (std::string argument; std::getline(recorded, argument);) {
+    arguments.push_back(std::move(argument));
+  }
+  const auto flag = std::ranges::find(arguments, "-S");
+  ASSERT_NE(flag, arguments.end());
+  ASSERT_NE(std::next(flag), arguments.end());
+  EXPECT_EQ(*std::next(flag), (directory / "frozen").string());
+  EXPECT_EQ(std::ranges::find(arguments, "-L"), arguments.end());
+  EXPECT_TRUE(server->kill());
+}
+
+TEST(ServerDefaults, MissingAndRemovedNamedRootsCannotLaunchAtFallback) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture) << fixture.error();
+  auto policy = fixture_policy(*fixture);
+  const auto root = fixture->tmux_tmpdir() / "removed";
+  for (const auto& invalid :
+       {std::string{"relative"}, root.string(),
+        (fixture->tmux_tmpdir() / "absent" / ".." / "home").string()}) {
+    libtmux::test::set_environment(*policy.child_environment, "TMUX_TMPDIR", invalid);
+    EXPECT_FALSE(Server::startable_at_socket_name("never", std::nullopt, {}, policy));
+  }
+  ASSERT_TRUE(std::filesystem::create_directory(root));
+  libtmux::test::set_environment(*policy.child_environment, "TMUX_TMPDIR",
+                                 root.string());
+  policy.tmux_binary = "/must-not-launch";
+  const auto server =
+      Server::startable_at_socket_name("never", std::nullopt, {}, policy);
+  ASSERT_TRUE(server) << server.error().diagnostic;
+  ASSERT_TRUE(std::filesystem::remove(root));
+  const auto failed = server->new_session("never");
+  ASSERT_FALSE(failed);
+  EXPECT_EQ(failed.error().kind, libtmux::FailureKind::validation);
+  EXPECT_EQ(failed.error().delivery, libtmux::DeliveryStatus::not_started);
+  EXPECT_FALSE(std::filesystem::exists(root));
+}
+
+TEST(ServerDefaults, NamedDirectoryChecksAllowGroupsAndRejectSymlinksAndOthers) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture) << fixture.error();
+  for (const auto mode : {0700, 0770, 0707}) {
+    auto policy = fixture_policy(*fixture);
+    const auto root = fixture->tmux_tmpdir() / std::to_string(mode);
+    const auto directory = root / ("tmux-" + std::to_string(::getuid()));
+    ASSERT_TRUE(std::filesystem::create_directories(directory));
+    ASSERT_EQ(::chmod(directory.c_str(), static_cast<mode_t>(mode)), 0);
+    libtmux::test::set_environment(*policy.child_environment, "TMUX_TMPDIR",
+                                   root.string());
+    const auto server = Server::startable_at_socket_name(
+        "owned", std::filesystem::path{"/dev/null"}, {}, policy);
+    if (mode == 0707) {
+      ASSERT_FALSE(server);
+      EXPECT_EQ(server.error().delivery, libtmux::DeliveryStatus::not_started);
+      continue;
+    }
+    ASSERT_TRUE(server) << server.error().diagnostic;
+    ServerCleanup cleanup{*server};
+    const auto created = server->new_session("owned");
+    ASSERT_TRUE(created) << created.error().diagnostic;
+    EXPECT_TRUE(server->kill());
+  }
+  const auto root = fixture->tmux_tmpdir() / "linked";
+  ASSERT_TRUE(std::filesystem::create_directory(root));
+  const auto directory = root / ("tmux-" + std::to_string(::getuid()));
+  std::filesystem::create_directory_symlink(fixture->tmux_tmpdir(), directory);
+  auto policy = fixture_policy(*fixture);
+  libtmux::test::set_environment(*policy.child_environment, "TMUX_TMPDIR",
+                                 root.string());
+  const auto server =
+      Server::startable_at_socket_name("refused", std::nullopt, {}, policy);
+  ASSERT_FALSE(server);
+  EXPECT_EQ(server.error().delivery, libtmux::DeliveryStatus::not_started);
+}
+
+TEST(ServerDefaults, ExplicitPathsDoNotCreateParentsOrEraseMissingComponents) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture) << fixture.error();
+  const auto selected = fixture->tmux_tmpdir() / "missing" / ".." / "uncreated.sock";
+  const auto server =
+      Server::startable_at_socket_path(selected, std::filesystem::path{"/dev/null"});
+  ASSERT_TRUE(server) << server.error().diagnostic;
+  EXPECT_EQ(server->socket_path(), selected.string());
+  const auto created = server->new_session("never");
+  EXPECT_FALSE(created);
+  EXPECT_FALSE(std::filesystem::exists(fixture->tmux_tmpdir() / "uncreated.sock"));
+  EXPECT_FALSE(std::filesystem::exists(fixture->tmux_tmpdir() / "missing"));
+}
+
+TEST(ServerDefaults, EnvironmentGuardRestoresAbsentPriorAndRepeatedValuesOnException) {
+  constexpr auto key = "LIBTMUX_CXX_GUARD_RESTORE_TEST";
+  ASSERT_EQ(std::getenv(key), nullptr);
+  {
+    const libtmux::test::EnvironmentGuard first{key, "prior"};
+    try {
+      const libtmux::test::EnvironmentGuard second{key, "changed"};
+      const libtmux::test::EnvironmentGuard third{key, "last"};
+      ASSERT_EQ(std::string{std::getenv(key)}, "last");
+      throw std::runtime_error{"body failure"};
+    } catch (const std::runtime_error&) {
+      EXPECT_EQ(std::string{std::getenv(key)}, "prior");
+    }
+  }
+  EXPECT_EQ(std::getenv(key), nullptr);
+}
+
+} // namespace
