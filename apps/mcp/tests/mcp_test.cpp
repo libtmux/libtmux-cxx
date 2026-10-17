@@ -1,3 +1,4 @@
+#include "libtmux/testing/capabilities.hpp"
 #include "libtmux_consumers/mcp.hpp"
 
 #include "libtmux/testing/environment_guard.hpp"
@@ -450,6 +451,7 @@ TEST(McpToolsTmux, ReportsTmuxsOwnVersionSpellingNotAReconstruction) {
 // someone attached: an agent deciding whether it is safe to act on a
 // detached session should not see its own observation as another user.
 TEST(McpToolsTmux, ListSessionsExcludesWaitForTextsOwnObservationClient) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "a wait_for_text control observation client");
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
@@ -1311,6 +1313,7 @@ TEST(McpToolsTmux, PaneInputPreflightAcceptsOneWindowAtMultipleSessionIndices) {
 }
 
 TEST(McpToolsTmux, PaneWritersRecheckStateImmediatelyBeforeDispatch) {
+  LIBTMUX_REQUIRES_TMUX(3, 4, "paste_text staging");
   for (const std::string_view tool_name :
        {"send_keys", "send_keys_batch", "paste_text", "run_shell_command"}) {
     auto fixture = libtmux::test::ScopedTmuxServer::start();
@@ -1666,6 +1669,7 @@ TEST(McpToolsTmux, PaneInputPreflightReadsFreshState) {
 }
 
 TEST(McpToolsTmux, CreatesAWindowAndTypesIntoItsPane) {
+  LIBTMUX_REQUIRES_TMUX(3, 4, "paste_text staging");
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
@@ -1690,6 +1694,29 @@ TEST(McpToolsTmux, CreatesAWindowAndTypesIntoItsPane) {
     const auto& pane = std::get<StructuredValue::Object>(value.value);
     return std::get<std::string>(pane.at("window_id").value) == window_id;
   }));
+}
+
+TEST(McpToolsTmux, PasteTextIsRefusedBefore34WithoutStagingABuffer) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const auto version = server.tmux_version();
+  ASSERT_TRUE(version.has_value());
+  if (*version >= libtmux::Version{.major = 3, .minor = 4}) {
+    GTEST_SKIP() << "paste_text stages a buffer from 3.4; this lane has no refusal";
+  }
+  const auto panes = server.panes();
+  ASSERT_TRUE(panes.has_value() && !panes->empty());
+
+  const auto typed =
+      all_tools().call(server, "paste_text",
+                       Arguments{{"paneId", std::string{panes->front().id().value()}},
+                                 {"text", "marker"}});
+  ASSERT_FALSE(typed.has_value());
+  EXPECT_NE(typed.error().message.find("3.4"), std::string::npos);
+  const auto buffers = server.buffers();
+  ASSERT_TRUE(buffers.has_value());
+  EXPECT_TRUE(buffers->empty()) << "nothing may be staged when cleanup cannot be exact";
 }
 
 TEST(McpToolsTmux, SelectLayoutRefusesALeadingDashInsteadOfRunningItAsAFlag) {
@@ -1739,6 +1766,7 @@ TEST(McpToolsTmux, SelectLayoutRefusesALeadingDashInsteadOfRunningItAsAFlag) {
 // guarantees the capture-at-entry check lands while only the echo — the
 // literal command line, marker included — is on screen.
 TEST(McpToolsTmux, WaitForTextAfterSendKeysDoesNotMatchTheEchoedCommandLine) {
+  LIBTMUX_REQUIRES_TMUX(3, 4, "paste_text staging");
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
@@ -1787,6 +1815,7 @@ TEST(McpToolsTmux, WaitForTextAfterSendKeysDoesNotMatchTheEchoedCommandLine) {
 // runner's own prompt length makes the wrap - and this proof - the same on
 // every platform.
 TEST(McpToolsTmux, WaitForTextNeverMatchesACommandThatWasNeverSubmitted) {
+  LIBTMUX_REQUIRES_TMUX(3, 4, "paste_text staging");
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
@@ -1827,6 +1856,7 @@ TEST(McpToolsTmux, WaitForTextNeverMatchesACommandThatWasNeverSubmitted) {
 // pending row, then `echo BGMARK` lands on a fresh row below it - the
 // pending row's own text never changes, only its position does.
 TEST(McpToolsTmux, WaitForTextDoesNotMatchAPendingLineOutputPushesOffTheActiveRow) {
+  LIBTMUX_REQUIRES_TMUX(3, 4, "paste_text staging");
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);

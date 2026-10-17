@@ -70,7 +70,7 @@ std::vector<Client> clients_once_attached(const Server& server) {
 }
 
 TEST(Client, AControlConnectionIsAClientTheServerReports) {
-  LIBTMUX_REQUIRES_TMUX(3, 3, "display-message -c against a control client");
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
 
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
@@ -96,6 +96,7 @@ TEST(Client, AControlConnectionIsAClientTheServerReports) {
 }
 
 TEST(Client, AClientIsPointedAtAnotherSessionAndThenSentAway) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
@@ -145,6 +146,7 @@ TEST(Client, AClientIsPointedAtAnotherSessionAndThenSentAway) {
 }
 
 TEST(Client, ASessionSendsEveryClientAway) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);
@@ -211,6 +213,7 @@ TEST(Client, AttachingIsACommandLineRatherThanACall) {
 }
 
 TEST(Client, AttachCommandOwnsItsPinnedRoute) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
 

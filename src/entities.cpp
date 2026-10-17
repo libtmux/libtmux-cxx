@@ -332,6 +332,12 @@ expected<Window, CommandFailure> Session::new_window(NewWindowOptions options) c
                   "psmux can report a failed new-window as an existing window")) {
     return unexpected(std::move(*refusal));
   }
+  if (backend() != nullptr) {
+    if (auto invalid =
+            detail::refuse_name_on_exact_37(*backend(), options.name, "window")) {
+      return unexpected(std::move(*invalid));
+    }
+  }
   std::string target = session_target(*this);
   if (options.index.has_value()) {
     target += ":" + std::to_string(*options.index);
@@ -373,6 +379,11 @@ expected<void, CommandFailure> Session::rename(std::string_view name) const {
   return unexpected(unsupported(
       "psmux cannot atomically prevent rename-session from replacing a session"));
 #else
+  if (backend() != nullptr) {
+    if (auto invalid = detail::refuse_name_on_exact_37(*backend(), name, "session")) {
+      return unexpected(std::move(*invalid));
+    }
+  }
   std::vector<std::string> command{"rename-session", "-t", session_target(*this)};
   command.emplace_back("--");
   command.push_back(escape_literal(name));
@@ -639,6 +650,11 @@ expected<void, CommandFailure> Window::rename(std::string_view name) const {
   if (auto refusal = refused(ServerFeature::captured_mutation,
                              "psmux cannot safely target rename-window")) {
     return unexpected(std::move(*refusal));
+  }
+  if (backend() != nullptr) {
+    if (auto invalid = detail::refuse_name_on_exact_37(*backend(), name, "window")) {
+      return unexpected(std::move(*invalid));
+    }
   }
   std::vector<std::string> command{"rename-window", "-t", window_command_target(*this)};
   command.emplace_back("--");
@@ -1446,6 +1462,9 @@ expected<Window, CommandFailure> Pane::break_out(std::string_view name) const {
   if (auto unstable = unstable_break_target(*this)) {
     return unexpected(std::move(*unstable));
   }
+  if (auto invalid = detail::refuse_name_on_exact_37(*backend(), name, "window")) {
+    return unexpected(std::move(*invalid));
+  }
   const auto started = std::chrono::steady_clock::now();
   const ExecutionPolicy policy = backend()->policy();
   return name.empty() ? break_out_unnamed(*this, backend(), policy, started)
@@ -1652,6 +1671,14 @@ expected<void, CommandFailure> Buffer::remove() const {
   if (auto refusal = refused(ServerFeature::server_state,
                              "psmux buffers are separate in each session")) {
     return unexpected(std::move(*refusal));
+  }
+  // Before 3.4 a missing explicit name makes delete-buffer act on the top
+  // buffer, which may be somebody else's, and checking first is not atomic.
+  if (backend() != nullptr) {
+    if (auto early = detail::refuse_before(*backend(), Version{.major = 3, .minor = 4},
+                                           "deleting a named buffer", "3.4")) {
+      return unexpected(std::move(*early));
+    }
   }
   return effect(run({"delete-buffer", "-b", std::string{name()}}));
 }

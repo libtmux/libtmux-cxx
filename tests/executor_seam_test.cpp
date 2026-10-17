@@ -30,6 +30,7 @@
 #include "libtmux/entities.hpp"
 #include "libtmux/server.hpp"
 #include "libtmux/snapshot.hpp"
+#include "libtmux/testing/capabilities.hpp"
 #include "libtmux/testing/scoped_server.hpp"
 
 namespace {
@@ -211,6 +212,7 @@ TEST(ExecutorSeam, NoExecutorIsRefusedRatherThanDereferenced) {
 }
 
 TEST(ExecutorSeam, ListingsOverAControlConnectionMatchTheLaunchingPath) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const std::string socket = fixture->socket_path().string();
@@ -297,6 +299,7 @@ CountedTmux counted_tmux(const std::filesystem::path& directory) {
 // the same answers as launching. Counted, because a timing proves nothing
 // about which path ran.
 TEST(ControlBackedServer, BuildsAWindowWithoutLaunchingTmux) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const CountedTmux tmux = counted_tmux(fixture->socket_path().parent_path());
@@ -341,6 +344,7 @@ TEST(ControlBackedServer, BuildsAWindowWithoutLaunchingTmux) {
 // answer is the finished one. Over the wire this would read as done while the
 // shell was still running.
 TEST(ControlBackedServer, LaunchesWhatTmuxMayLeaveRunning) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const CountedTmux tmux = counted_tmux(fixture->socket_path().parent_path());
@@ -376,6 +380,7 @@ TEST(ControlBackedServer, LaunchesWhatTmuxMayLeaveRunning) {
 // A failure reads as the one a launch gives, so the typed layer classifies it
 // the same way whichever path answered.
 TEST(ControlBackedServer, RefusesInTheShapeALaunchDoes) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   auto launching = Server::at_socket_path(fixture->socket_path().string());
@@ -396,6 +401,7 @@ TEST(ControlBackedServer, RefusesInTheShapeALaunchDoes) {
 
 // Each client is attached, so a caller counting clients sees them.
 TEST(ControlBackedServer, SpreadsCommandsOverTheClientsItWasAskedFor) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   auto launching = Server::at_socket_path(fixture->socket_path().string());

@@ -24,6 +24,7 @@
 #include "libtmux/batch.hpp"
 #include "libtmux/entities.hpp"
 #include "libtmux/server.hpp"
+#include "libtmux/testing/capabilities.hpp"
 #include "libtmux/testing/scoped_server.hpp"
 #include "support/descriptors.hpp"
 #if !defined(_WIN32)
@@ -1985,6 +1986,7 @@ TEST(ServerContract, WaitingOutlivesTheServersDeadline) {
 // the surface that did not, so a hermetic build or a pinned version under test
 // had no way to say so except by arranging the environment around the process.
 TEST(ServerContract, AServerRunsTheTmuxItsPolicyNames) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
 

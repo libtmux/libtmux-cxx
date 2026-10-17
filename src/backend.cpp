@@ -914,6 +914,14 @@ SubprocessBackend::admit_command(
   if (!admitted.has_value()) {
     return unexpected(std::move(admitted.error()));
   }
+  // Raw tmux 3.7 crashes an unnamed break-pane. Refused here, before the call,
+  // so the typed repair is the only way to break a pane out on that release.
+  if (admitted->live && admitted->version == Version{.major = 3, .minor = 7} &&
+      has_unnamed_break_pane(command.argv())) {
+    return unexpected(admission_failure(
+        FailureKind::validation,
+        "tmux 3.7 crashes on a break-pane that names no window; use Pane::break_out"));
+  }
   return std::optional<EndpointVersion>{*std::move(admitted)};
 #endif
 }
