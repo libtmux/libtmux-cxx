@@ -5327,7 +5327,7 @@ Both also require the range to yield references. A range whose elements are prod
 ```cpp
 template <ReferenceRange Range> [[nodiscard]] auto first(Range& range);
 ```
-`first` states that a caller tolerates extras; it never reports several. Returns `std::optional<const T&>` when available, otherwise `tl::optional`. The result borrows a const element; keep the range and its storage alive.
+`first` states that a caller tolerates extras; it never reports several. Returns `std::optional<const T&>` or the Beman backport. Keep the range and its storage alive.
 
 <a id="libtmux-cardinality-hpp-free-symbols-exactly-one"></a>
 #### `exactly_one`

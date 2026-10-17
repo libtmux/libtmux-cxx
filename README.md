@@ -263,7 +263,7 @@ the vcpkg package; the other packaged targets are Linux and macOS.
 
 `LIBTMUX_FETCH_DEPS` is off on purpose: a build that would reach the network
 says so and stops, rather than downloading quietly. That covers every
-header dependency, including the C++20 lane's `tl::expected` and `tl::optional`:
+header dependency, including the C++20 lane's `tl::expected` and `beman::optional::optional`:
 it looks for an installed copy first, and says what to install when there is
 none.
 

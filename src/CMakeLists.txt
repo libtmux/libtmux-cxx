@@ -76,17 +76,19 @@ if(LIBTMUX_CXX_STANDARD STREQUAL "20")
             DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
   endif()
 endif()
-include("${PROJECT_SOURCE_DIR}/cmake/TlOptional.cmake")
-libtmux_resolve_tl_optional(_tl_optional_include _tl_optional_source)
-if(_tl_optional_include)
+include("${PROJECT_SOURCE_DIR}/cmake/BemanOptional.cmake")
+libtmux_resolve_beman_optional(_beman_optional_include)
+if(_beman_optional_include)
   target_include_directories(libtmux SYSTEM PUBLIC
-    $<BUILD_INTERFACE:${_tl_optional_include}>)
+    $<BUILD_INTERFACE:${_beman_optional_include}>)
 endif()
-if(LIBTMUX_INSTALL AND _tl_optional_source)
-  install(FILES "${_tl_optional_source}/include/tl/optional.hpp"
-    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/tl")
-  install(FILES "${_tl_optional_source}/COPYING"
-    DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/licenses/libtmux/tl_optional")
+if(LIBTMUX_INSTALL AND _beman_optional_include)
+  install(DIRECTORY "${_beman_optional_include}/beman/optional"
+    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/beman"
+    FILES_MATCHING PATTERN "*.hpp")
+  install(FILES "${PROJECT_SOURCE_DIR}/cmake/licenses/beman-optional-LICENSE"
+                "${PROJECT_SOURCE_DIR}/cmake/licenses/beman-optional-BOOST-LICENSE"
+    DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/licenses/libtmux/beman_optional")
 endif()
 # The full version, prerelease tag and all — `PROJECT_VERSION` has had the tag
 # stripped so CMake would accept it, and a library that reports "0.1.0" while

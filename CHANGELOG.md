@@ -19,7 +19,7 @@ was recorded as it landed.
 ### Build
 
 - `first` uses native optional references when available, or pinned
-  `tl::optional` headers installed with the package.
+  `beman::optional::optional` headers installed with the package.
 
 ## 0.1.0-alpha.11 (2026-09-26)
 

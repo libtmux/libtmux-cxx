@@ -144,6 +144,31 @@ TEST(Cardinality, FirstBorrowsAConstReferenceAndRebindsWithoutAssignment) {
   EXPECT_EQ(std::addressof(*first(constant)), std::addressof(words.front()));
 }
 
+TEST(Cardinality, FirstBorrowsNestedOptionalsEvenWhenTheElementIsEmpty) {
+  std::vector<std::optional<int>> values{11, std::nullopt};
+  auto selected = first(values);
+  ASSERT_TRUE(selected.has_value());
+  EXPECT_EQ(std::addressof(*selected), std::addressof(values.front()));
+  EXPECT_EQ(**selected, 11);
+  values.front().reset();
+  EXPECT_TRUE(selected.has_value());
+  EXPECT_FALSE(selected->has_value());
+
+  std::vector<int> numbers{23};
+  using Reference = decltype(first(numbers));
+  std::vector<Reference> references{first(numbers)};
+  auto nested = first(references);
+  ASSERT_TRUE(nested.has_value());
+  EXPECT_EQ(std::addressof(*nested), std::addressof(references.front()));
+  EXPECT_EQ(**nested, 23);
+  references.front() = Reference{};
+  EXPECT_TRUE(nested.has_value());
+  EXPECT_FALSE(nested->has_value());
+  auto empty_element = first(references);
+  ASSERT_TRUE(empty_element.has_value());
+  EXPECT_FALSE(empty_element->has_value());
+}
+
 TEST(Cardinality, EveryErrorSaysWhichOneItWas) {
   EXPECT_EQ(libtmux::to_string(CardinalityError::none_matched), "nothing matched");
   EXPECT_EQ(libtmux::to_string(CardinalityError::several_matched),
