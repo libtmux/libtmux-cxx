@@ -426,8 +426,9 @@ TEST_F(SupportedDaemon, AdmittingAnEndpointFiresNeitherAfterNorErrorHooks) {
   ASSERT_TRUE(wait_for_lines(after, 1U));
   EXPECT_EQ(lines_in(after), 1U) << "admission must not fire after-display-message";
   if (has_error_hook) {
-    const auto failing = setter.run({"no-such-command"});
-    EXPECT_FALSE(failing.has_value());
+    // With the hook installed tmux answers a failing command with status 0,
+    // so the outcome is not asserted; the hook firing is.
+    static_cast<void>(setter.run({"kill-session", "-t", "=no-such-session"}));
     ASSERT_TRUE(wait_for_lines(errors, 1U));
     EXPECT_EQ(lines_in(errors), 1U) << "admission must not fire command-error";
   }
