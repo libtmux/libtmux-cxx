@@ -75,7 +75,7 @@ TEST(ServerSessions, KillEndsTheServerAndEverythingOnIt) {
 
 // Fields tmux answers for every session and window, which nothing read.
 //
-// `libtmux.compatibility` proves tmux 3.2a knows each of these format tokens.
+// `libtmux.compatibility` proves tmux 3.3a knows each of these format tokens.
 // That is a different claim from the value decoding correctly, and these are
 // the four where nothing made the second one.
 
