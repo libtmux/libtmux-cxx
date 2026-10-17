@@ -16,7 +16,9 @@ was recorded as it landed.
   an undated `master`, is refused with `FailureKind::unsupported` before the
   command has any effect, whatever the client executable reports. Release
   candidates order below their release (`Version::candidate`), so version
-  gates that include them say `.candidate = 1`.
+  gates that include them say `.candidate = 1`. `parse_version` no longer
+  reads `master`, `X.Y-master`, `X.Y-dev` or a `next-` build with a patch
+  letter as a version; tmux reports none of them.
 - Every command to a live daemon now carries a check that fails the list
   unrun if another daemon has replaced it, and is sent with `-N`, so a
   vanished server is not restarted by the client binary. `kill-server` on a
