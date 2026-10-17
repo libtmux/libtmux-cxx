@@ -245,6 +245,13 @@ def _prose_above(
     cursor = index - 1
     while cursor >= 0:
         stripped = lines[cursor].strip()
+        if (
+            stripped.startswith(("#if ", "#ifdef ", "#ifndef "))
+            and cursor > 0
+            and DOXYGEN_MARKER.match(lines[cursor - 1].strip())
+        ):
+            cursor -= 1
+            continue
         if not stripped.startswith("//"):
             break
         collected.append(stripped)
@@ -279,7 +286,7 @@ def _function_symbol(signature: str) -> str | None:
     ]
     if not names:
         return None
-    ignored = {"decltype", "noexcept", "requires", "sizeof"}
+    ignored = {"decltype", "delete", "noexcept", "requires", "sizeof"}
     for match in reversed(names):
         if match.group("name") not in ignored:
             return match.group("name")
