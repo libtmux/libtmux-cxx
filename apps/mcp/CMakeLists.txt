@@ -17,7 +17,7 @@ if(LIBTMUX_BUILD_TESTS AND NOT WIN32)
   # through the exported target.
   add_executable(mcp_tools_test tests/mcp_test.cpp tests/pane_echo_test.cpp)
   target_include_directories(
-    mcp_tools_test PRIVATE "${PROJECT_SOURCE_DIR}/src"
+    mcp_tools_test PRIVATE "${PROJECT_SOURCE_DIR}/src" "${PROJECT_SOURCE_DIR}/tests"
                            "${CMAKE_CURRENT_SOURCE_DIR}/src")
   target_link_libraries(
     mcp_tools_test
@@ -35,13 +35,20 @@ if(LIBTMUX_BUILD_TESTS AND NOT WIN32)
     COMMAND mcp_tools_test "--gtest_filter=McpToolsTmux.*")
   set_tests_properties(
     consumer.mcp.real-tmux PROPERTIES LABELS "consumer;real-tmux" TIMEOUT 30)
+  add_test(
+    NAME consumer.mcp.rejected
+    COMMAND mcp_tools_test "--gtest_filter=McpToolsRejected.*")
+  set_tests_properties(
+    consumer.mcp.rejected PROPERTIES LABELS "consumer;real-tmux" TIMEOUT 60)
 endif()
 
 # The server as a program, over JSON-RPC, against a real tmux. Needs the JSON
 # parser and the binary, so it follows the server rather than the tool surface.
 if(LIBTMUX_BUILD_TESTS AND LIBTMUX_BUILD_MCP_SERVER AND NOT WIN32)
   add_executable(mcp_protocol_test tests/protocol_test.cpp src/cli.cpp)
-  target_include_directories(mcp_protocol_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+  target_include_directories(
+    mcp_protocol_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
+                              "${PROJECT_SOURCE_DIR}/tests")
   target_link_libraries(
     mcp_protocol_test
     PRIVATE GTest::gtest_main libtmux_build_options libtmux::testing
@@ -58,6 +65,11 @@ if(LIBTMUX_BUILD_TESTS AND LIBTMUX_BUILD_MCP_SERVER AND NOT WIN32)
     COMMAND mcp_protocol_test "--gtest_filter=McpProtocolCli.*")
   set_tests_properties(
     consumer.mcp.protocol PROPERTIES LABELS "consumer;contract" TIMEOUT 120)
+  add_test(
+    NAME consumer.mcp.protocol.rejected
+    COMMAND mcp_protocol_test "--gtest_filter=McpProtocolRejected.*")
+  set_tests_properties(
+    consumer.mcp.protocol.rejected PROPERTIES LABELS "consumer;real-tmux" TIMEOUT 120)
   # One entry per test rather than one for the suite. The tests shared a
   # single 120 s budget and ran 92-119 s under a loaded gate, and 135 s at load
   # 60, so one slow machine timed all of them out together. Apart, each has its

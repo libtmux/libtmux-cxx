@@ -28,6 +28,7 @@
 #include "libtmux/testing/environment_guard.hpp"
 #include "libtmux/testing/scoped_server.hpp"
 #include "libtmux_consumers/tmuxp.hpp"
+#include "support/rejected_daemon.hpp"
 
 namespace {
 using Json = nlohmann::json;
@@ -3755,6 +3756,122 @@ TEST(WorkspaceCliTmux, FailedTerminalLoadRetainsOnlyBoundedScriptContext) {
   ASSERT_TRUE(server.has_value());
   EXPECT_FALSE(server->session("=failed:"));
   EXPECT_TRUE(server->session(fixture->session_name()));
+}
+
+// Every command that reaches a daemon older than the floor says why it was
+// refused, in the words the library uses, and sends nothing. The rejection
+// lanes run these against 3.0a, 3.1c, 3.2a and 3.3 behind a 3.3a client.
+class WorkspaceCliRejected : public libtmux::test::rejected::RejectedDaemonTest {
+protected:
+  void expect_refusal_text(const Result& result) {
+    EXPECT_EQ(result.code, 1) << result.out << result.err;
+    EXPECT_TRUE(result.out.empty()) << result.out;
+    EXPECT_EQ(result.err.rfind("Error: ", 0), 0U) << result.err;
+    libtmux::test::rejected::expect_floor_and_remedy(result.err);
+    EXPECT_EQ(result.err.find("no session named"), std::string::npos) << result.err;
+  }
+
+  // The machine record of a refusal is on standard error. A load also reports
+  // its envelope on standard output, and that carries the same error.
+  void expect_refusal_json(const Result& result, bool enveloped = false) {
+    EXPECT_EQ(result.code, 1) << result.out << result.err;
+    const auto record = Json::parse(result.err);
+    EXPECT_EQ(record.at("code"), "tmux_unsupported") << record.dump();
+    libtmux::test::rejected::expect_floor_and_remedy(
+        record.at("message").get<std::string>());
+    if (!enveloped) {
+      EXPECT_TRUE(result.out.empty()) << result.out;
+      return;
+    }
+    const auto envelope = Json::parse(result.out);
+    EXPECT_EQ(envelope.at("status"), "error") << envelope.dump();
+    const auto& error = envelope.at("errors").at(0);
+    EXPECT_EQ(error.at("code"), record.at("code")) << envelope.dump();
+    EXPECT_EQ(error.at("message"), record.at("message")) << envelope.dump();
+  }
+};
+
+TEST_F(WorkspaceCliRejected, FreezeReportsTheRefusalNotAMissingSession) {
+  Files files;
+  const auto socket = daemon_->socket_path().string();
+  expect_refusal_text(
+      invoke({"freeze", "sentinel", "-S", socket, "--save-to", "out.yaml"}));
+  expect_refusal_json(
+      invoke({"freeze", "sentinel", "-S", socket, "--save-to", "out.yaml", "--json"}));
+  EXPECT_FALSE(std::filesystem::exists("out.yaml"));
+  expect_untouched();
+}
+
+TEST_F(WorkspaceCliRejected, LoadStopsAtStartupWithTheRefusalBeforeJudgingTheDocument) {
+  Files files;
+  const auto socket = daemon_->socket_path().string();
+  // A layout whose validity depends on the release makes the daemon's version
+  // the first thing a load would ask; the refusal still comes first.
+  std::ofstream{"layout.yaml"} << "session_name: intruder\nwindows:\n"
+                                  "  - window_name: w\n    layout: main-h\n"
+                                  "    panes: [echo A, echo B]\n";
+  expect_refusal_text(invoke({"load", "layout.yaml", "-d", "-S", socket}));
+  const auto machine = invoke({"load", "layout.yaml", "-d", "-S", socket, "--json"});
+  expect_refusal_json(machine, true);
+  EXPECT_EQ(Json::parse(machine.err).at("failed_stage"), "startup");
+  expect_untouched();
+}
+
+TEST_F(WorkspaceCliRejected, AppendAndTheInvokingPaneReportTheRefusalToo) {
+  Files files;
+  const auto socket = daemon_->socket_path().string();
+  std::ofstream{"plain.yaml"} << "session_name: intruder\nwindows: [{}]\n";
+  // Inside a pane of the refused daemon, the attached and appending paths look
+  // the pane up first; neither may read the refusal as a missing pane.
+  const libtmux::test::EnvironmentGuard tmux{"TMUX", socket + ",1,0"};
+  const libtmux::test::EnvironmentGuard pane{"TMUX_PANE", "%0"};
+  expect_refusal_json(
+      invoke({"load", "plain.yaml", "--append", "-S", socket, "--json"}), true);
+  expect_refusal_text(invoke({"load", "plain.yaml", "-S", socket, "--yes"}));
+  expect_untouched();
+}
+
+TEST_F(WorkspaceCliRejected, ShellRefusesBeforeLaunchingTmuxp) {
+  Files files;
+  const auto socket = daemon_->socket_path().string();
+  // A tmuxp that records its launch: the refusal comes first, so it never runs.
+  const auto launched = files.directory / "launched";
+  const auto tmuxp = files.directory / "tmuxp";
+  std::ofstream{tmuxp} << "#!/bin/sh\ntouch '" << launched.string() << "'\nexit 0\n";
+  std::filesystem::permissions(tmuxp, std::filesystem::perms::owner_all);
+  const libtmux::test::EnvironmentGuard runtime{"TMUX_WORKSPACE_TMUXP", tmuxp.string()};
+  expect_refusal_text(invoke({"shell", "-S", socket, "-c", "print(server.sessions)"}));
+  expect_refusal_json(
+      invoke({"shell", "-S", socket, "-c", "print(server.sessions)", "--json"}));
+  EXPECT_FALSE(std::filesystem::exists(launched)) << "tmuxp was launched";
+  expect_untouched();
+}
+
+TEST_F(WorkspaceCliRejected, ALoadOnAColdSocketNamesTheOldExecutableAndStartsNothing) {
+  Files files;
+  // `tmux` on PATH is the old release, as it would be on a host that never
+  // upgraded: there is no daemon to refuse, so the executable is.
+  const auto bin = files.directory / "bin";
+  std::filesystem::create_directories(bin);
+  std::filesystem::create_symlink(*libtmux::test::rejected::rejected_tmux(),
+                                  bin / "tmux");
+  const libtmux::test::EnvironmentGuard path{"PATH",
+                                             bin.string() + ":" + std::getenv("PATH")};
+  const auto cold = (files.directory / "cold.sock").string();
+  std::ofstream{"plain.yaml"} << "session_name: intruder\nwindows: [{}]\n";
+  const auto text = invoke({"load", "plain.yaml", "-d", "-S", cold});
+  EXPECT_EQ(text.code, 1) << text.out << text.err;
+  libtmux::test::rejected::expect_floor_and_remedy(text.err);
+  // An executable that can run the probe is named by its release; an older one
+  // cannot, and is refused as older than 3.2. The lane pins which.
+  const bool names_release = libtmux::test::rejected::rejected_release_runs_the_probe(
+      libtmux::test::rejected::rejected_release());
+  EXPECT_EQ(text.err.find("reports '") != std::string::npos, names_release) << text.err;
+  EXPECT_EQ(text.err.find("older than 3.2") != std::string::npos, !names_release)
+      << text.err;
+  const auto machine = invoke({"load", "plain.yaml", "-d", "-S", cold, "--json"});
+  expect_refusal_json(machine, true);
+  EXPECT_FALSE(std::filesystem::exists(cold)) << "a server was started";
 }
 
 } // namespace

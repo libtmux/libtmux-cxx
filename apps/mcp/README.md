@@ -72,7 +72,7 @@ beside the full generated inventory:
 
 | Tool | Arguments | Result |
 |---|---|---|
-| `get_server_info` | — | Server liveness and tmux version |
+| `get_server_info` | — | Server liveness and tmux version; a daemon older than 3.3a is refused, with the instruction to upgrade tmux and restart the server |
 | `list_sessions` | — | Stable session IDs, names, paths, client counts, and window counts |
 | `list_windows` | `session` | Windows belonging to one exact session |
 | `list_panes` | — | Every pane with stable pane, window, and session IDs |

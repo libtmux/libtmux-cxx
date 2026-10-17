@@ -238,8 +238,10 @@ created temporary file; replacing an existing destination requires `--force`.
 An error record's `code` names what happened to the workspace operation, from
 the vocabulary the libtmux workspace ports share: `workspace_not_found`,
 `invalid_workspace`, `unsupported_key`, `session_not_found`,
-`session_mismatch`, `tmux_unavailable`, `tmux_failed`, `script_failed`,
-`destination_exists` and `usage`. A command that ends because this tool's own
+`session_mismatch`, `tmux_unavailable`, `tmux_unsupported`, `tmux_failed`,
+`script_failed`, `destination_exists` and `usage`. `tmux_unsupported` is a tmux
+older than 3.3a, refused with the upgrade remedy; `tmux_unavailable` is a tmux
+that could not be reached or started. A command that ends because this tool's own
 plumbing broke reports it separately, and those codes are local to this port:
 `write_failed` (the destination could not be written, where the path itself is usable), `output_closed` (this
 command's own output stream closed), `output_limit` (a child wrote more than

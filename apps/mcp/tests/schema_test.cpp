@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -161,6 +162,40 @@ TEST(McpProtocolSchema, PreservesStructuredScalarTypes) {
   EXPECT_EQ(structured["array"], json::array({nullptr, true, 7, "mcp"}));
   EXPECT_EQ(structured["object"], json({{"nested", "value"}}));
   EXPECT_EQ(result["content"][0]["text"], structured.dump());
+}
+
+TEST(McpProtocolSchema, NamesTheTmuxFloorWhereTheServerDescribesTmux) {
+  const std::string instructions =
+      libtmux::mcp::server::initialize_result("2025-06-18")["instructions"];
+  EXPECT_NE(instructions.find("requires tmux 3.3a or newer"), std::string::npos)
+      << instructions;
+  EXPECT_NE(instructions.find("upgrade tmux and restart the server"), std::string::npos)
+      << instructions;
+  EXPECT_EQ(libtmux::mcp::server::discover_result()["instructions"].get<std::string>(),
+            instructions);
+
+  const json listed =
+      libtmux::mcp::server::tools_result(all_tools(), ProtocolEra::legacy);
+  const auto info = std::ranges::find_if(listed.at("tools"), [](const json& tool) {
+    return tool.at("name") == "get_server_info";
+  });
+  ASSERT_NE(info, listed.at("tools").end());
+  const std::string description = info->at("description");
+  EXPECT_NE(description.find("older than 3.3a is refused"), std::string::npos)
+      << description;
+  EXPECT_NE(description.find("upgrade tmux and restart the server"), std::string::npos)
+      << description;
+
+  const auto disclosure = libtmux::mcp::server::capability_disclosure(
+      libtmux::ServerImplementation::tmux, "name:review", "operator-current",
+      "existing", "unknown", "/tmp/tmux-1000/review");
+  const json result = libtmux::mcp::server::capabilities_resource_result(
+      all_tools(), ProtocolEra::legacy, disclosure);
+  const json document = json::parse(result["contents"][0]["text"].get<std::string>());
+  const auto floor = libtmux::parse_version(
+      "tmux " + document.at("minimumTmuxVersion").get<std::string>());
+  ASSERT_TRUE(floor.has_value());
+  EXPECT_EQ(*floor, libtmux::kMinimumSupported);
 }
 
 TEST(McpProtocolSchema, DescribesPsmuxAsANamespaceWithoutAPosixAttachRoute) {

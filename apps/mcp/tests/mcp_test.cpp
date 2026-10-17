@@ -25,6 +25,7 @@
 #include "libtmux/server.hpp"
 #include "libtmux/testing/scoped_server.hpp"
 #include "pane_input.hpp"
+#include "support/rejected_daemon.hpp"
 #include "tool_support.hpp"
 
 namespace {
@@ -2610,6 +2611,54 @@ TEST(McpToolsTmux, ReportsAPaneThatDisappearsDuringSearch) {
   ASSERT_FALSE(searched.has_value());
   EXPECT_FALSE(searched.error().caller_error);
   EXPECT_FALSE(searched.error().message.empty());
+}
+
+// A daemon older than the floor, reached by a handle that was pinned to it:
+// the shape of a server that was replaced while the process ran. Every tool that
+// reaches tmux answers with the library's refusal as an error the caller can
+// act on, never as an empty listing or a stopped server.
+class McpToolsRejected : public libtmux::test::rejected::RejectedDaemonTest {
+protected:
+  [[nodiscard]] Server pinned() {
+    auto server = Server::at_socket_path(daemon_->socket_path().string());
+    EXPECT_TRUE(server.has_value());
+    return server.value();
+  }
+
+  void expect_refused(const ToolResult& result, std::string_view tool) {
+    ASSERT_FALSE(result.has_value()) << tool << " answered instead of refusing";
+    EXPECT_FALSE(result.error().caller_error) << tool;
+    libtmux::test::rejected::expect_floor_and_remedy(result.error().message);
+  }
+};
+
+TEST_F(McpToolsRejected, EveryToolThatReachesTmuxRefusesWithTheRemedy) {
+  auto registry = default_tools(ToolSelection::all());
+  ASSERT_TRUE(registry.has_value()) << registry.error();
+  const Server server = pinned();
+  expect_refused(registry->call(server, "get_server_info", {}), "get_server_info");
+  expect_refused(registry->call(server, "list_sessions", {}), "list_sessions");
+  expect_refused(registry->call(server, "list_panes", {}), "list_panes");
+  expect_refused(
+      registry->call(server, "list_windows", Arguments{{"session", "sentinel"}}),
+      "list_windows");
+  expect_refused(
+      registry->call(server, "create_session", Arguments{{"name", "intruder"}}),
+      "create_session");
+  expect_untouched();
+}
+
+TEST_F(McpToolsRejected, AHandleThatMayStartAServerRefusesToo) {
+  // A handle that may start a server answers the same way once a daemon is
+  // there, rather than reading it as a server that is not running.
+  auto opened =
+      Server::startable_at_socket_path(daemon_->socket_path().string(), std::nullopt);
+  ASSERT_TRUE(opened.has_value()) << opened.error().diagnostic;
+  auto registry = default_tools(ToolSelection::all());
+  ASSERT_TRUE(registry.has_value()) << registry.error();
+  expect_refused(registry->call(*opened, "get_server_info", {}), "get_server_info");
+  expect_refused(registry->call(*opened, "list_sessions", {}), "list_sessions");
+  expect_untouched();
 }
 
 } // namespace
