@@ -13,6 +13,7 @@ is the prose there. Run it with `--check` to prove this page is current.
 - [`libtmux/server.hpp`](#libtmux-server-hpp)
 - [`libtmux/layout.hpp`](#libtmux-layout-hpp)
 - [`libtmux/async.hpp`](#libtmux-async-hpp)
+- [`libtmux/execution.hpp`](#libtmux-execution-hpp)
 - [`libtmux/capabilities.hpp`](#libtmux-capabilities-hpp)
 - [`libtmux/entities.hpp`](#libtmux-entities-hpp)
 - [`libtmux/snapshot.hpp`](#libtmux-snapshot-hpp)
@@ -1130,6 +1131,27 @@ Releases the result obligation without cancelling the command. The Server's glob
 [[nodiscard]] bool request_cancel();
 ```
 Requests withdrawal; false means no live transport cancellation remains. The eventual result's delivery says whether tmux may have acted.
+
+<a id="libtmux-execution-hpp"></a>
+## `libtmux/execution.hpp`
+
+Submits lazily and waits on the supplied scheduler's worker. Owns a Server copy. Runtime, scheduler and an explicit stop source must outlive the connected operation. Each pending command occupies one scheduler worker; dependent wait/signal commands need enough workers to make progress. The value channel carries expected<string, CommandFailure>, including cancellation and its delivery information. The explicit stop token requests transport cancellation; receiver stop requests may stop scheduling before command admission. Other exceptions use the error channel. Global observers remain subject to CommandRuntime::dispatch_ready.
+
+**Symbols:**
+
+- [`Free symbols`](#libtmux-execution-hpp-free-symbols)
+  - [`command_sender`](#libtmux-execution-hpp-free-symbols-command-sender)
+
+<a id="libtmux-execution-hpp-free-symbols"></a>
+### `Free symbols`
+
+<a id="libtmux-execution-hpp-free-symbols-command-sender"></a>
+#### `command_sender`
+
+```cpp
+template <stdexec::scheduler Scheduler> [[nodiscard]] auto command_sender(Scheduler scheduler, const Server& server, CommandRuntime& runtime, CommandRequest request, stdexec::inplace_stop_token stop = {});
+```
+Submits lazily and waits on the supplied scheduler's worker. Owns a Server copy. Runtime, scheduler and an explicit stop source must outlive the connected operation. Each pending command occupies one scheduler worker; dependent wait/signal commands need enough workers to make progress. The value channel carries expected<string, CommandFailure>, including cancellation and its delivery information. The explicit stop token requests transport cancellation; receiver stop requests may stop scheduling before command admission. Other exceptions use the error channel. Global observers remain subject to CommandRuntime::dispatch_ready.
 
 <a id="libtmux-capabilities-hpp"></a>
 ## `libtmux/capabilities.hpp`

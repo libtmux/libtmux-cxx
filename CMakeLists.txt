@@ -29,6 +29,10 @@ project(
   LANGUAGES CXX)
 
 option(LIBTMUX_BUILD_TESTS "Build libtmux C++ tests" ${PROJECT_IS_TOP_LEVEL})
+option(LIBTMUX_BUILD_EXECUTION_TESTS "Build the optional stdexec adapter tests" OFF)
+if(LIBTMUX_BUILD_EXECUTION_TESTS AND (NOT LIBTMUX_BUILD_TESTS OR WIN32))
+  message(FATAL_ERROR "Execution adapter tests require POSIX LIBTMUX_BUILD_TESTS")
+endif()
 # Off by default: a build that would reach the network says so and stops,
 # rather than silently downloading. Covers the test frameworks and the
 # MCP server's JSON parser and the MCP switcher's TOML validator; the library
