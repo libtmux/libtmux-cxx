@@ -1,9 +1,18 @@
-# Format tokens registered by tmux 3.2a, the oldest version this
+# Format tokens registered by tmux 3.3a, the oldest version this
 # library supports. Extracted from the format table in
-# https://github.com/tmux/tmux/blob/3.2a/format.c
+# https://github.com/tmux/tmux/blob/3.3a/format.c
 #
 # A token tmux does not know expands to the empty string, so a field
 # outside this list would read as present-but-empty on an old server.
+active_window_index
+alternate_on
+alternate_saved_x
+alternate_saved_y
+buffer_created
+buffer_mode_format
+buffer_name
+buffer_sample
+buffer_size
 client_activity
 client_cell_height
 client_cell_width
@@ -24,8 +33,39 @@ client_termfeatures
 client_termname
 client_termtype
 client_tty
+client_uid
+client_user
+client_utf8
 client_width
 client_written
+config_files
+cursor_character
+cursor_flag
+cursor_x
+cursor_y
+history_all_bytes
+history_bytes
+history_limit
+history_size
+host
+host_short
+insert_flag
+keypad_cursor_flag
+keypad_flag
+last_window_index
+mouse_all_flag
+mouse_any_flag
+mouse_button_flag
+mouse_line
+mouse_pane
+mouse_sgr_flag
+mouse_standard_flag
+mouse_utf8_flag
+mouse_word
+mouse_x
+mouse_y
+next_session_id
+origin_flag
 pane_active
 pane_at_bottom
 pane_at_left
@@ -36,7 +76,9 @@ pane_bottom
 pane_current_command
 pane_current_path
 pane_dead
+pane_dead_signal
 pane_dead_status
+pane_dead_time
 pane_fg
 pane_format
 pane_height
@@ -55,12 +97,16 @@ pane_pipe
 pane_right
 pane_search_string
 pane_start_command
+pane_start_path
 pane_synchronized
 pane_tabs
 pane_title
 pane_top
 pane_tty
 pane_width
+pid
+scroll_region_lower
+scroll_region_upper
 session_activity
 session_alerts
 session_attached
@@ -82,6 +128,12 @@ session_name
 session_path
 session_stack
 session_windows
+socket_path
+start_time
+tree_mode_format
+uid
+user
+version
 window_active
 window_active_clients
 window_active_clients_list
@@ -116,3 +168,4 @@ window_start_flag
 window_visible_layout
 window_width
 window_zoomed_flag
+wrap_flag

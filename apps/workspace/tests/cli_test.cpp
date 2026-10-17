@@ -429,7 +429,7 @@ TEST(WorkspaceCliTmux, LayoutCorpusPreservesTmuxCompatibilityAndTheExistingSessi
   const auto version = libtmux::parse_version("tmux " + *reply);
   ASSERT_TRUE(version.has_value());
   const auto column =
-      *version >= libtmux::Version{.major = 3, .minor = 5} ? "3.7c" : "3.2a";
+      *version >= libtmux::Version{.major = 3, .minor = 5} ? "3.7c" : "3.3a";
   std::ifstream input{std::filesystem::path{__FILE__}.parent_path() / "fixtures" /
                       "layouts.json"};
   ASSERT_TRUE(input.is_open());

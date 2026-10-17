@@ -108,8 +108,8 @@ add_executable(libtmux_compatibility_test compatibility_test.cpp)
 target_compile_definitions(
   libtmux_compatibility_test
   PRIVATE
-    LIBTMUX_FORMAT_TOKENS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/data/format-tokens-3.2a.txt"
-    LIBTMUX_KEY_NAMES_PATH="${CMAKE_CURRENT_SOURCE_DIR}/data/key-names-3.2a.txt")
+    LIBTMUX_FORMAT_TOKENS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/data/format-tokens-3.3a.txt"
+    LIBTMUX_KEY_NAMES_PATH="${CMAKE_CURRENT_SOURCE_DIR}/data/key-names-3.3a.txt")
 target_link_libraries(
   libtmux_compatibility_test
   PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)

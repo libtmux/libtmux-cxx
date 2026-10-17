@@ -925,8 +925,6 @@ TEST(Entity, CreationVerbsCarryTheFlagsTmuxHas) {
 }
 
 TEST(Entity, ASessionIsCreatedAtASizeAndADirectory) {
-  LIBTMUX_REQUIRES_TMUX(3, 3, "honouring -x and -y on a detached new-session");
-
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);

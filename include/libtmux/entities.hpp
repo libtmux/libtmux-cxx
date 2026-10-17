@@ -22,7 +22,7 @@
 // Psmux numbers windows and panes per session, so Windows snapshots retain
 // their owning session identity alongside tmux's `$0`, `@0`, and `%0` IDs.
 //
-// Every field below is a format token tmux 3.2a already registers, which is
+// Every field below is a format token tmux 3.3a already registers, which is
 // the oldest version this library supports. That is a hard constraint rather
 // than a preference: tmux expands a token it does not know to the empty
 // string, so requesting a newer one would read as a present-but-empty value on
@@ -64,7 +64,7 @@ class Command;
 
 /// What a creation command can be told.
 ///
-/// Every field maps to a flag tmux 3.2a already has, and every default is what
+/// Every field maps to a flag tmux 3.3a already has, and every default is what
 /// tmux does when the flag is absent — except focus, which defaults to leaving
 /// it where the user put it. A library that moves someone's cursor because it
 /// created something is a library people stop calling.

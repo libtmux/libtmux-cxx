@@ -1190,7 +1190,7 @@ expected<std::string, CommandFailure> Pane::capture(CaptureOptions options) cons
   if (!captured.has_value() || !options.join_wrapped || options.keep_trailing_spaces) {
     return captured;
   }
-  // tmux 3.2 and 3.3 make -J retain cell padding even without -N.
+  // tmux 3.3a still makes -J retain cell padding even without -N.
   return trim_line_end_spaces(*captured);
 }
 

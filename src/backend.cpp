@@ -631,8 +631,7 @@ SubprocessBackend::publish_started_endpoint(std::string_view start_stderr) const
     // directory) and still exit 0 - the same stderr-but-exit-0 quirk guarded
     // against elsewhere in this file. Surface it instead of a causeless
     // message when tmux gave one; say plainly that it gave none rather than
-    // inventing one, which is what tmux 3.2a does here - it writes nothing at
-    // all, where every later release explains itself.
+    // inventing one.
     std::string diagnostic =
         "tmux started but its exact endpoint was not available to retain";
     if (start_stderr.empty()) {
