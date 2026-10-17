@@ -9,6 +9,61 @@ was recorded as it landed.
 
 ## Unreleased
 
+### Breaking
+
+- tmux 3.3a is the oldest supported release. A daemon older than 3.3a,
+  including 3.3 itself, `next-3.3a` and an undated `master`, is refused
+  with `FailureKind::unsupported` before the command has any effect,
+  whatever the client executable reports. Upgrade tmux and restart the
+  server, or stay on the previous libtmux release. Behaviour-breaking. (#68)
+- A daemon or client older than 3.2 is refused the same way: 3.0a answers
+  "server version is too old for client", 3.1c has no `run-shell -C`, and
+  either client rejects `-N`. The refusal returns at once, although those
+  daemons keep the client's stdout open after it exits. (#68)
+- `Version::candidate` orders a release candidate below its release, so a
+  gate names the earliest candidate that has the behaviour: JSON saved layouts
+  need `3.8-rc2` or newer and are refused on `3.8-rc`, written
+  `.candidate = 2`. `parse_version` no longer reads `master`, `X.Y-master`,
+  `X.Y-dev` or a `next-` build with a patch letter; tmux reports none of
+  them. Source-breaking. (#68)
+- Every command to a live daemon is sent with `-N` and a check that fails
+  the list unrun if another daemon has replaced it, so a vanished server is
+  not restarted by the client binary. `Session::attach_command` carries
+  `-N` too. Raw client flags such as `-c` are no longer dispatched, and
+  `kill-server` on a server that is already gone succeeds. Behaviour-breaking.
+  (#68)
+
+### Server
+
+- Add `Server::check_release`, which refuses a release below the floor as the
+  first command would and sends nothing. Use it before launching tmux outside
+  the library. (#68)
+- `Server::try_submit` asks the daemon for its release before admission, so a
+  submission to an endpoint with no answering daemon can block on that probe
+  for up to the command's timeout. (#68)
+
+### MCP server
+
+- `get_server_info` returns an error for a daemon older than 3.3a instead
+  of `running: false`. (#68)
+- The server instructions, the `get_server_info` description and
+  `tmux://capabilities` (`minimumTmuxVersion`) name the 3.3a floor. (#68)
+
+### Workspace CLI
+
+- `tmux-workspace` checks the release a selector reaches before `load` goes
+  further, including its bootstrap launch, and stops when the daemon is
+  refused rather than starting a server on top of it. `load`, `freeze` and
+  `shell` report the refusal as `tmux_unsupported`, `shell` before it starts
+  tmuxp, and `freeze` no longer reports it as `session_not_found`;
+  `tmux_unavailable` stays for a tmux that cannot be reached. (#68)
+
+### Testing
+
+- Add `LIBTMUX_REQUIRES_TMUX_CANDIDATE` for a capability that a release
+  candidate already has. The control-mode suite refuses to start when the
+  tmux it was built against differs from the tmux on `PATH`. (#68)
+
 ## 0.1.0-alpha.11 (2026-09-26)
 
 This alpha adds `tmux-workspace`, an optional POSIX executable for workspace
