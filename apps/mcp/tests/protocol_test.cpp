@@ -30,6 +30,7 @@
 #include <unistd.h>
 
 #include "cli.hpp"
+#include "libtmux/testing/capabilities.hpp"
 #include "run_server.hpp"
 #include "support/rejected_daemon.hpp"
 
@@ -1101,6 +1102,7 @@ TEST_F(McpProtocol, RejectsForceForPaneInputButKeepsRespawnForce) {
 }
 
 TEST_F(McpProtocol, CreatesThenDiscoversAWindow) {
+  LIBTMUX_REQUIRES_TMUX(3, 4, "staging a private paste buffer");
   const auto created_messages = converse_ready(
       socket(), {call("create_window", {{"session", "mcp"}, {"name", "from-mcp"}}, 1)});
   const json* created = response(created_messages, 1);
@@ -1141,6 +1143,7 @@ TEST_F(McpProtocol, ValidatesEveryNamedKeyBeforeSending) {
 }
 
 TEST_F(McpProtocol, RunShellCommandWaitsForItsOwnValidCompletionRecord) {
+  LIBTMUX_REQUIRES_TMUX(3, 4, "staging a private paste buffer");
   const libtmux::Server server = connect_server();
   auto pane = server.pane("mcp");
   ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
@@ -1198,6 +1201,7 @@ TEST_F(McpProtocol, RunShellCommandWaitsForItsOwnValidCompletionRecord) {
 // channel this test releases, so "still running" and "finished" are states the
 // test chooses rather than ones a loaded machine races.
 TEST_F(McpProtocol, KeepsTimedOutRunInputReservedUntilCompletion) {
+  LIBTMUX_REQUIRES_TMUX(3, 4, "staging a private paste buffer");
   const libtmux::Server server = connect_server();
   auto pane = server.pane("mcp");
   ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
@@ -1251,6 +1255,7 @@ TEST_F(McpProtocol, KeepsTimedOutRunInputReservedUntilCompletion) {
 }
 
 TEST_F(McpProtocol, KeepsCancelledRunInputReservedUntilCompletion) {
+  LIBTMUX_REQUIRES_TMUX(3, 4, "staging a private paste buffer");
   const libtmux::Server server = connect_server();
   auto pane = server.pane("mcp");
   ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
@@ -1547,6 +1552,7 @@ TEST_F(McpProtocol, IsolatesCompletionFramingAcrossInstalledPosixShells) {
 }
 
 TEST_F(McpProtocol, PreservesInheritedErrorAndDebugTrapsAcrossBashAndZsh) {
+  LIBTMUX_REQUIRES_TMUX(3, 4, "staging a private paste buffer");
   const auto tmux_executable = executable_on_path("tmux");
   ASSERT_TRUE(tmux_executable.has_value());
   const libtmux::Server server = connect_server();
@@ -1722,6 +1728,7 @@ TEST_F(McpProtocol, RefusesEveryInputToolWhileTheNamedPaneIsModal) {
 }
 
 TEST_F(McpProtocol, KeepsEmptyPasteBufferFreeAndEnterTargetOnly) {
+  LIBTMUX_REQUIRES_TMUX(3, 4, "staging a private paste buffer");
   const libtmux::Server server = connect_server();
   const auto panes = split_sorted_panes(server);
   ASSERT_EQ(panes.size(), 2U);
@@ -1842,6 +1849,7 @@ TEST_F(McpProtocol, ResolvesAnAuthenticatedCallerOutsideTheTargetWindow) {
 }
 
 TEST_F(McpProtocol, GuardsTheEffectiveSynchronizedCohortButPastesOnlyTheTarget) {
+  LIBTMUX_REQUIRES_TMUX(3, 4, "staging a private paste buffer");
   const libtmux::Server server = connect_server();
   const auto panes = split_sorted_panes(server);
   ASSERT_EQ(panes.size(), 2U);
@@ -2307,6 +2315,7 @@ TEST_F(McpProtocol, ExpandsOnlyBoundedValidatedVariableNames) {
 }
 
 TEST_F(McpProtocol, WaitsThroughControlOutputAndSearchesTheResult) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   // The marker is produced after the wait is already running, so it cannot be
   // on the screen when the tool captures at entry. That is what makes this the
   // streaming path; a delay in the pane only makes it likely, and stops being

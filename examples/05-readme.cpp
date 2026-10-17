@@ -329,32 +329,39 @@ int main() {
   std::cout << "the pane answered 6 x 7 = 42\n";
   // #endregion wait
 
-  // #region watch
-  // Given: const libtmux::Server& server
-  // Hold one control connection open, then let tmux say what changed.
-  auto connected = server.control("example");
-  if (!connected.has_value()) {
-    std::cerr << std::format("{}\n", connected.error().message);
-    return 1;
-  }
-  auto connection = *std::move(connected);
-
-  (void)server.run({"new-window", "-d", "-n", "watched"});
-
-  std::string added;
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{10};
-  for (const auto& event : connection.events(deadline)) {
-    if (event.kind == libtmux::NotificationKind::window_add) {
-      added = std::string{event.window};
-      break;
+  // Control mode needs tmux 3.7: earlier servers can crash when a client
+  // attaches and leaves early, so the library refuses to attach to them.
+  if (const auto running = server.tmux_version();
+      running.has_value() && *running >= libtmux::Version{.major = 3, .minor = 7}) {
+    // #region watch
+    // Given: const libtmux::Server& server
+    // Hold one control connection open, then let tmux say what changed.
+    auto connected = server.control("example");
+    if (!connected.has_value()) {
+      std::cerr << std::format("{}\n", connected.error().message);
+      return 1;
     }
+    auto connection = *std::move(connected);
+
+    (void)server.run({"new-window", "-d", "-n", "watched"});
+
+    std::string added;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{10};
+    for (const auto& event : connection.events(deadline)) {
+      if (event.kind == libtmux::NotificationKind::window_add) {
+        added = std::string{event.window};
+        break;
+      }
+    }
+    if (added.empty()) {
+      std::cerr << "tmux never reported the new window\n";
+      return 1;
+    }
+    std::cout << std::format("window added: {}\n", added);
+    // #endregion watch
+  } else {
+    std::cout << "control mode needs tmux 3.7 or newer\n";
   }
-  if (added.empty()) {
-    std::cerr << "tmux never reported the new window\n";
-    return 1;
-  }
-  std::cout << std::format("window added: {}\n", added);
-  // #endregion watch
 
   // #region submit
   // Given: const libtmux::Server& server

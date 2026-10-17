@@ -311,6 +311,11 @@ TEST(McpProtocolSchemaTmux, EmitsEveryToolAnswerBesideItsPublishedSchema) {
   const Server server = *opened;
   const std::string session{fixture->session_name()};
   const auto tools = all_tools();
+  // paste_text stages a private buffer and is refused before tmux 3.4, so
+  // there is no answer to record there; the other tools still are.
+  const auto running = server.tmux_version();
+  ASSERT_TRUE(running.has_value()) << running.error().diagnostic;
+  const bool stages_paste = !libtmux::test::lacks_tmux(*running, 3, 4);
 
   auto root = server.session(session);
   ASSERT_TRUE(root.has_value()) << root.error().diagnostic;
@@ -431,6 +436,9 @@ TEST(McpProtocolSchemaTmux, EmitsEveryToolAnswerBesideItsPublishedSchema) {
   for (const ToolDefinition& tool : tools.tools()) {
     const auto call = calls.find(tool.name);
     ASSERT_NE(call, calls.end()) << tool.name << " has no schema-conformance call";
+    if (tool.name == "paste_text" && !stages_paste) {
+      continue;
+    }
     std::optional<std::thread> signal;
     if (tool.name == "wait_for_channel") {
       signal.emplace([server] {

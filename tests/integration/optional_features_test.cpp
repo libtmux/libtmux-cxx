@@ -7,8 +7,8 @@
 // proves that a refusal changed nothing.
 
 #include <chrono>
-#include <optional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -51,9 +51,9 @@ TEST(OptionalFeatures, ControlModeIsRefusedBeforeAnyClientAttachesBelow37) {
 
   if (lane.running >= Version{.major = 3, .minor = 7}) {
     ASSERT_TRUE(connection.has_value()) << connection.error().message;
-    EXPECT_TRUE(connection->shutdown(std::chrono::steady_clock::now() +
-                                     std::chrono::seconds{2})
-                    .has_value());
+    EXPECT_TRUE(
+        connection->shutdown(std::chrono::steady_clock::now() + std::chrono::seconds{2})
+            .has_value());
     return;
   }
   ASSERT_FALSE(connection.has_value());
@@ -133,7 +133,8 @@ TEST(OptionalFeatures, DotsAndColonsInNamesAreRefusedOnExactly37) {
     EXPECT_EQ(created.error().delivery, DeliveryStatus::not_started);
     EXPECT_NE(created.error().diagnostic.find("3.7"), std::string::npos);
     EXPECT_EQ(lane.server.sessions()->size(), 1U);
-    const auto window = lane.server.sessions()->front().new_window(libtmux::NewWindowOptions{.name = "a:b"});
+    const auto window = lane.server.sessions()->front().new_window(
+        libtmux::NewWindowOptions{.name = "a:b"});
     ASSERT_FALSE(window.has_value());
     EXPECT_EQ(window.error().kind, FailureKind::validation);
   } else if (!created.has_value()) {

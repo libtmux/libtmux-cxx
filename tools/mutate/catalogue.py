@@ -72,7 +72,10 @@ CATALOGUE: t.Final = (
         find="  options.socket_path = std::move(socket_path);",
         replace="  static_cast<void>(socket_path);",
         target="libtmux_client_test",
-        test_regex=r"^libtmux[.]client[.]",
+        test_regex=r"^libtmux[.]client[.]Client[.]"
+        r"(AControlConnectionIsAClientTheServerReports"
+        r"|AClientIsPointedAtAnotherSessionAndThenSentAway"
+        r"|ASessionSendsEveryClientAway|AttachCommandOwnsItsPinnedRoute)$",
         guards="caller control policy is preserved while the Server's socket "
         "remains the route used by the connection",
     ),
