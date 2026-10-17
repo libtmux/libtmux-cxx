@@ -892,7 +892,7 @@ It links no test framework, so GoogleTest, Catch2 and doctest all work.
 tmux 3.3a and newer. The floor is the complete release: tmux 3.3 is below it.
 `Version` orders releases correctly: `3.7 < 3.7a < 3.7b`, and `next-3.8` and
 `3.8-rc2` precede `3.8`. CI builds and tests pinned compatibility cells from
-3.3a through 3.7c, plus `master`, on every pull request and master change.
+3.3a through 3.8, plus `master`, on every pull request and master change.
 
 The daemon a command reaches decides, not the executable that launches it. The
 first command to a server asks the daemon for its version without running a
@@ -1178,7 +1178,7 @@ Pull requests and master changes run against real tmux under clang with
 libc++, GCC with libstdc++, the C++20 build over `tl::expected`, address and
 undefined-behaviour sanitizers, the thread sanitizer, a locale that is not
 UTF-8, and macOS with Apple Clang. The tmux matrix spans pinned compatibility
-cells from 3.3a through 3.7c, plus `master`, and refusal cells for 3.0a, 3.1c,
+cells from 3.3a through 3.8, plus `master`, and refusal cells for 3.0a, 3.1c,
 3.2a and tmux 3.3, which assert that nothing they are sent has an effect. The
 examples run as tests, and so do the programs that must fail to compile.
 
