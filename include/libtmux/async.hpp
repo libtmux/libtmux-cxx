@@ -24,6 +24,9 @@
 LIBTMUX_NAMESPACE_BEGIN
 
 class Server;
+namespace detail {
+struct CommandCancellationAccess;
+}
 
 enum class ReadyStatus : std::uint8_t { ready, timeout, closed };
 
@@ -204,6 +207,7 @@ private:
   [[nodiscard]] std::function<void()> cancellation_callback() const;
   friend class CommandRuntime;
   friend class Server;
+  friend struct detail::CommandCancellationAccess;
 
   std::unique_ptr<State> state_;
 };

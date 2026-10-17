@@ -21,6 +21,7 @@ HEADER_ORDER = [
     "server.hpp",
     "layout.hpp",
     "async.hpp",
+    "execution.hpp",
     "capabilities.hpp",
     "entities.hpp",
     "snapshot.hpp",

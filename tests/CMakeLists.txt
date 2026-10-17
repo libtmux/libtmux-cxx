@@ -4,6 +4,17 @@ target_link_libraries(
 add_test(NAME build_smoke COMMAND build_smoke)
 set_tests_properties(build_smoke PROPERTIES LABELS "contract")
 
+if(LIBTMUX_BUILD_EXECUTION_TESTS)
+  include("${PROJECT_SOURCE_DIR}/cmake/Stdexec.cmake")
+  libtmux_resolve_stdexec()
+  add_executable(libtmux_execution_test execution_test.cpp)
+  target_link_libraries(
+    libtmux_execution_test PRIVATE GTest::gtest_main libtmux_build_options
+                                  libtmux::libtmux libtmux::testing STDEXEC::stdexec)
+  add_test(NAME libtmux.execution COMMAND libtmux_execution_test)
+  set_tests_properties(libtmux.execution PROPERTIES LABELS "real-tmux;execution" TIMEOUT 10)
+endif()
+
 # What is left of this suite's own scaffolding once the reusable part has been
 # extracted: `libtmux::testing` carries the fixture, and this carries the
 # handful of headers that are only meaningful inside this repository —

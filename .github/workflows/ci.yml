@@ -18,6 +18,39 @@ defaults:
     shell: bash
 
 jobs:
+  execution:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        standard: ['20', '23']
+        toolchain:
+          - cxx: g++
+            flags: ''
+          - cxx: clang++-18
+            flags: '-stdlib=libc++'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install the adapter test toolchains
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ clang-18 libc++-18-dev libc++abi-18-dev ninja-build tmux
+      - name: Build the optional adapter
+        run: |
+          cmake -S . -B build/execution -G Ninja \
+            -DCMAKE_CXX_COMPILER=${{ matrix.toolchain.cxx }} \
+            -DCMAKE_CXX_FLAGS="${{ matrix.toolchain.flags }}" \
+            -DLIBTMUX_CXX_STANDARD=${{ matrix.standard }} \
+            -DLIBTMUX_FETCH_DEPS=ON \
+            -DLIBTMUX_WARNINGS_AS_ERRORS=ON \
+            -DLIBTMUX_BUILD_TESTS=ON \
+            -DLIBTMUX_BUILD_EXECUTION_TESTS=ON \
+            -DLIBTMUX_BUILD_EXAMPLES=OFF
+          cmake --build build/execution --target libtmux_execution_test --parallel 2
+      - name: Test command composition and cancellation
+        run: ctest --test-dir build/execution -R '^libtmux.execution$' --output-on-failure --no-tests=error
+
   compatibility:
     # The C++ library claims the same tmux range as the Python one, so it is
     # tested against the same versions rather than only the newest.
@@ -1123,6 +1156,7 @@ jobs:
     if: always()
     needs:
       - compatibility
+      - execution
       - macos
       - windows
       - toolchains
