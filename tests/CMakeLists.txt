@@ -204,6 +204,20 @@ gtest_discover_tests(
   TEST_PREFIX libtmux.snapshot.framing.
   PROPERTIES LABELS real-tmux TIMEOUT 60)
 
+add_executable(libtmux_support_commands_test integration/support_commands_test.cpp)
+target_include_directories(
+  libtmux_support_commands_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_link_libraries(
+  libtmux_support_commands_test
+  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+target_compile_options(
+  libtmux_support_commands_test PRIVATE -fno-sanitize-recover=undefined)
+
+gtest_discover_tests(
+  libtmux_support_commands_test
+  TEST_PREFIX libtmux.support_commands.
+  PROPERTIES LABELS contract TIMEOUT 60)
+
 add_executable(libtmux_support_versions_test integration/support_versions_test.cpp)
 target_link_libraries(
   libtmux_support_versions_test

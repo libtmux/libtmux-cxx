@@ -90,6 +90,12 @@ require_supported(const EndpointVersion& endpoint,
 
 [[nodiscard]] CommandFailure replaced_daemon();
 
+/// Whether a command list holds a `break-pane` that names no window, however
+/// the list spells the command: its alias, a unique prefix, or after a `;`. tmux
+/// 3.7 crashes on that call and ignores an explicit name there, so only the
+/// typed repair, which names the window and then corrects it, may send one.
+[[nodiscard]] bool has_unnamed_break_pane(const std::vector<std::string>& argv);
+
 /// A failure that stopped before any command was dispatched.
 [[nodiscard]] CommandFailure version_check_failure(FailureKind kind,
                                                    std::string diagnostic);

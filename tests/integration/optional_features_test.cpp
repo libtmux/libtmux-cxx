@@ -145,4 +145,58 @@ TEST(OptionalFeatures, DotsAndColonsInNamesAreRefusedOnExactly37) {
   EXPECT_TRUE(lane.server.new_session("plain-name").has_value());
 }
 
+// Every spelling tmux accepts for an unnamed break-pane, each followed by a
+// check that the server answers and that no window appeared.
+TEST(OptionalFeatures, AnUnnamedRawBreakPaneIsRefusedOnExactly37) {
+  Lane lane = start_lane();
+  ASSERT_TRUE(lane.server.run({"split-window", "-d"}).has_value());
+  auto pane = lane.server.pane(lane.fixture.session_name());
+  ASSERT_TRUE(pane.has_value());
+  const std::string source{pane->id().value()};
+
+  const std::vector<std::vector<std::string>> spellings{
+      {"break-pane", "-d", "-s", source},
+      {"breakp", "-d", "-s", source},
+      {"break-p", "-d", "-s", source},
+      {"break", "-d", "-s", source},
+      {"split-window", "-d", ";", "break-p", "-d", "-s", source},
+      {"split-window", "-d;", "breakp", "-d", "-s", source},
+  };
+  const bool exact_37 = lane.running == Version{.major = 3, .minor = 7};
+  for (const auto& spelling : spellings) {
+    const auto before = lane.server.windows();
+    ASSERT_TRUE(before.has_value());
+    const auto raw = lane.server.run(spelling);
+    if (!exact_37) {
+      // Other releases are not this library's to refuse.
+      EXPECT_TRUE(raw.has_value() || raw.error().kind != FailureKind::validation)
+          << spelling.front();
+      return;
+    }
+    ASSERT_FALSE(raw.has_value()) << spelling.front();
+    EXPECT_EQ(raw.error().kind, FailureKind::validation) << spelling.front();
+    EXPECT_EQ(raw.error().delivery, DeliveryStatus::not_started) << spelling.front();
+    const auto after = lane.server.windows();
+    ASSERT_TRUE(after.has_value()) << spelling.front() << ": the server must survive";
+    EXPECT_EQ(after->size(), before->size()) << "nothing may be broken out or split";
+  }
+  // The typed call is the supported route and still works.
+  const auto typed = pane->break_out();
+  EXPECT_TRUE(typed.has_value()) << (typed ? "" : typed.error().diagnostic);
+}
+
+// tmux rejects an ambiguous or unknown command word and runs nothing, so the
+// library has nothing to add: the refusal must come from tmux, not from it.
+TEST(OptionalFeatures, AnAmbiguousOrUnknownRawCommandWordIsLeftToTmux) {
+  Lane lane = start_lane();
+  for (const char* word : {"b", "breakpane"}) {
+    const auto raw = lane.server.run({word, "-d"});
+    ASSERT_FALSE(raw.has_value()) << word;
+    EXPECT_NE(raw.error().kind, FailureKind::validation) << word;
+    EXPECT_EQ(raw.error().diagnostic.find("tmux 3.7 crashes"), std::string::npos)
+        << word;
+    EXPECT_TRUE(lane.server.windows().has_value()) << word;
+  }
+}
+
 } // namespace
