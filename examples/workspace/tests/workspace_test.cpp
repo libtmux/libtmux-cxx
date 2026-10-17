@@ -659,7 +659,7 @@ TEST(WorkspaceBuilder, ObserverRefusalStopsCreationAndFinalFocusWithOwnedRollbac
   }
 }
 
-TEST(WorkspaceBuilder, LayoutVersionProbePreservesPermissionFailure) {
+TEST(WorkspaceBuilder, LayoutVersionIsRememberedOncePermissionIsLost) {
   if (::geteuid() == 0) {
     GTEST_SKIP() << "root bypasses directory search permissions";
   }
@@ -698,9 +698,12 @@ TEST(WorkspaceBuilder, LayoutVersionProbePreservesPermissionFailure) {
   const auto invalid = workspace::validate_layouts(*server, description);
   std::filesystem::permissions(permissions.path, permissions.previous);
   ASSERT_TRUE(invalid.has_value());
-  // tmux's own reason, not a guess that the daemon is absent.
-  EXPECT_NE(invalid->reason.find("Permission denied"), std::string::npos)
+  // The keeper lookup admitted this daemon, so its release is remembered and
+  // the layouts are judged against it: nothing is asked of a socket that now
+  // refuses, and the verdict is about the layout, not the permission.
+  EXPECT_NE(invalid->reason.find("more than one layout preset"), std::string::npos)
       << invalid->reason;
+  // tmux's own reason for a command that does reach the socket.
   EXPECT_NE(refused.error().diagnostic.find("Permission denied"), std::string::npos);
   // The version is read without a command a user's hooks could see.
   EXPECT_TRUE(commands.empty());
