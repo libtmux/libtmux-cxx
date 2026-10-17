@@ -300,7 +300,7 @@ constexpr std::string_view json_pane =
 
 TEST(BackendSeam, JsonLayoutsKeepTheirPayloadAndUseTheSelectedDaemonVersion) {
   for (const auto* version : {"3.7c", "next-3.8", "3.8-rc", "3.8-rc2", "3.8",
-                              "next-3.9", "3.9", "3.7-master"}) {
+                              "next-3.9", "3.9"}) {
     SCOPED_TRACE(version);
     auto backend = std::make_shared<ScriptedBackend>(
         std::vector<std::string>{window_row("@3", "work", "$2"), version, ""});
@@ -308,8 +308,9 @@ TEST(BackendSeam, JsonLayoutsKeepTheirPayloadAndUseTheSelectedDaemonVersion) {
     ASSERT_TRUE(windows.has_value());
     backend->issued.clear();
     const auto selected = windows->front().select_layout(json_pane);
-    const bool supported =
-        std::string_view{version} != "3.7c" && std::string_view{version} != "next-3.8";
+    const bool supported = std::string_view{version} != "3.7c" &&
+                           std::string_view{version} != "next-3.8" &&
+                           std::string_view{version} != "3.8-rc";
     ASSERT_EQ(selected.has_value(), supported);
     ASSERT_EQ(backend->issued.size(), supported ? 2U : 1U);
     EXPECT_EQ(backend->issued.front(),
@@ -345,8 +346,7 @@ TEST(BackendSeam, JsonLayoutBatchKeepsTheIndexAndTransportFailure) {
     auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{version});
     const auto checked =
         libtmux::detail::server_over(backend).validate_layouts(requests);
-    const bool supported = std::string_view{version} == "3.8-rc" ||
-                           std::string_view{version} == "3.8-rc2" ||
+    const bool supported = std::string_view{version} == "3.8-rc2" ||
                            std::string_view{version} == "3.8" ||
                            std::string_view{version} == "next-3.9";
     EXPECT_EQ(checked.has_value(), supported);

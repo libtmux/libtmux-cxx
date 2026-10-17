@@ -645,7 +645,7 @@ TEST(ControlModeConnection, LayoutChangePayloadAgreesWithAPlainSnapshotOn38Plus)
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
   const auto version = server->tmux_version();
   ASSERT_TRUE(version.has_value()) << version.error().diagnostic;
-  if (*version < libtmux::Version{.major = 3, .minor = 8}) {
+  if (*version < libtmux::Version{.major = 3, .minor = 8, .candidate = 2}) {
     GTEST_SKIP() << "the JSON layout form this compares needs tmux 3.8+";
   }
 
@@ -699,7 +699,7 @@ TEST(ControlModeConnection, LayoutContainsPaneAnswersAfterTheObservedPaneIsKille
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
   const auto version = server->tmux_version();
   ASSERT_TRUE(version.has_value()) << version.error().diagnostic;
-  if (*version < libtmux::Version{.major = 3, .minor = 8}) {
+  if (*version < libtmux::Version{.major = 3, .minor = 8, .candidate = 2}) {
     GTEST_SKIP() << "the JSON layout this answers from needs tmux 3.8+";
   }
 

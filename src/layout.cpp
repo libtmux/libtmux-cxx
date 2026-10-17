@@ -411,9 +411,10 @@ detail::validate_layouts(const Backend& backend, std::span<const LayoutRequest> 
   const bool mirrored = version >= Version{.major = 3, .minor = 5};
   for (std::size_t index = 0; index < layouts.size(); ++index) {
     const auto& request = layouts[index];
-    if (json_layout(request.layout) && version < Version{.major = 3, .minor = 8})
+    if (json_layout(request.layout) &&
+        version < Version{.major = 3, .minor = 8, .candidate = 2})
       return unexpected(LayoutFailure{
-          index, invalid_layout("JSON saved layouts require tmux 3.8 or newer")});
+          index, invalid_layout("JSON saved layouts require tmux 3.8-rc2 or newer")});
     if (layout_needs_version(request.layout))
       if (auto error = layout_error(request.layout, request.minimum_panes, mirrored))
         return unexpected(LayoutFailure{index, invalid_layout(std::move(*error))});
