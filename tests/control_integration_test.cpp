@@ -133,6 +133,14 @@ struct LateMarker final {
 
 LateMarker* pending_marker = nullptr;
 
+// connect asks the daemon its version with a spawn of its own before it
+// launches the control client, and that first spawn meets the marker: it names
+// the failed pipe where the client's spawn names the policy.
+bool refused_by_descriptor_policy(const std::string& message) {
+  return message.find("posix spawn descriptor policy") != std::string::npos ||
+         message.find("Bad file descriptor") != std::string::npos;
+}
+
 void finish_descriptor_policy(int result) { pending_marker->finish_policy(result); }
 #endif
 
@@ -329,8 +337,8 @@ TEST(ControlModeConnection, ForcedNumericPolicyDoesNotLeakAConcurrentHighDescrip
     ASSERT_EQ(marker.policy_error, EBADF);
     ASSERT_EQ(marker.error, 0);
     ASSERT_EQ(marker.descriptors, (std::array<int, 2>{-1, -1}));
-    EXPECT_NE(connected.error().message.find("posix spawn descriptor policy"),
-              std::string::npos);
+    EXPECT_TRUE(refused_by_descriptor_policy(connected.error().message))
+        << connected.error().message;
 
     auto observed_server =
         libtmux::Server::at_socket_path(server->socket_path().string());
@@ -425,8 +433,8 @@ TEST(ControlModeConnection, ForcedNumericPolicyRefusesAMarkerAboveALoweredSoftLi
   ASSERT_FALSE(connected.has_value());
   EXPECT_EQ(late_marker.policy_error, EBADF);
   EXPECT_EQ(late_marker.descriptors, (std::array<int, 2>{-1, -1}));
-  EXPECT_NE(connected.error().message.find("posix spawn descriptor policy"),
-            std::string::npos);
+  EXPECT_TRUE(refused_by_descriptor_policy(connected.error().message))
+      << connected.error().message;
 
   auto observed_server =
       libtmux::Server::at_socket_path(server->socket_path().string());
