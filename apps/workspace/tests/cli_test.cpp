@@ -428,7 +428,7 @@ TEST(WorkspaceCliTmux, LayoutCorpusPreservesTmuxCompatibilityAndTheExistingSessi
   const auto version = libtmux::parse_version("tmux " + *reply);
   ASSERT_TRUE(version.has_value());
   const auto column =
-      *version >= libtmux::Version{.major = 3, .minor = 5} ? "3.7c" : "3.2a";
+      *version >= libtmux::Version{.major = 3, .minor = 5} ? "3.7c" : "3.3a";
   std::ifstream input{std::filesystem::path{__FILE__}.parent_path() / "fixtures" /
                       "layouts.json"};
   ASSERT_TRUE(input.is_open());
@@ -1252,7 +1252,7 @@ TEST(WorkspaceCliTmux, ErrorCodesMatchTheSharedLowerSnakeCaseVocabulary) {
   const auto version = server->tmux_version();
   ASSERT_TRUE(version.has_value());
   const auto saved = invoke({"load", "v2.yaml", "-d", "-S", socket, "--json"});
-  if (*version < libtmux::Version{.major = 3, .minor = 8}) {
+  if (*version < libtmux::Version{.major = 3, .minor = 8, .candidate = 1}) {
     EXPECT_NE(saved.code, 0) << saved.out;
     record = Json::parse(saved.err);
     EXPECT_EQ(record.at("code"), "tmux_failed") << record.dump();

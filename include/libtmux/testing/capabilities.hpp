@@ -17,6 +17,8 @@
 #include <gtest/gtest.h>
 
 /// Skip unless tmux is at least `major.minor`, naming what is missing below it.
+/// A release candidate or `next-` build of `major.minor` ranks below it and
+/// does not count as having it.
 #define LIBTMUX_REQUIRES_TMUX(major_version, minor_version, capability)                \
   do {                                                                                 \
     const ::libtmux::Version required{.major = (major_version),                        \
