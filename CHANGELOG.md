@@ -9,6 +9,18 @@ was recorded as it landed.
 
 ## Unreleased
 
+### Breaking
+
+- `first(range)` returns an optional const reference. Source-breaking; the
+  compiled library ABI is unchanged. Access the element as `result->name()`
+  or `*result` instead of `result->get()`. `exactly_one` keeps its existing
+  reference-wrapper result.
+
+### Build
+
+- `first` uses native optional references when available, or pinned
+  `beman::optional::optional` headers installed with the package.
+
 ## 0.1.0-alpha.11 (2026-09-26)
 
 This alpha adds `tmux-workspace`, an optional POSIX executable for workspace

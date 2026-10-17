@@ -86,7 +86,7 @@ TEST(Cardinality, FirstToleratesTheExtrasExactlyOneRefuses) {
   auto twins = windows | matching(window::name == "twin");
   const auto found = first(twins);
   ASSERT_TRUE(found.has_value());
-  EXPECT_EQ(found->get().name(), "twin");
+  EXPECT_EQ(found->name(), "twin");
   ASSERT_FALSE(exactly_one(twins).has_value());
 
   auto absent = windows | matching(window::name == "no-such-window");
@@ -108,13 +108,65 @@ TEST(Cardinality, TheAnswerRefersIntoTheRangeRatherThanCopying) {
   ASSERT_TRUE(referenced.has_value());
   const auto only = exactly_one(lone);
   ASSERT_TRUE(only.has_value());
-  EXPECT_EQ(std::addressof(referenced->get()), std::addressof(only->get()));
+  EXPECT_EQ(std::addressof(*referenced), std::addressof(only->get()));
 
   // Named, because `begin` on a temporary view is deleted — the same refusal
   // the cardinality helpers make, one layer down.
   auto again = windows | matching(window::name == "lone");
-  EXPECT_EQ(std::addressof(referenced->get()),
-            std::addressof(*std::ranges::begin(again)));
+  EXPECT_EQ(std::addressof(*referenced), std::addressof(*std::ranges::begin(again)));
+}
+
+template <typename Range>
+concept CanBorrowFirst =
+    requires(Range&& range) { libtmux::first(std::forward<Range>(range)); };
+template <typename Range>
+concept CanBorrowExactlyOne =
+    requires(Range&& range) { libtmux::exactly_one(std::forward<Range>(range)); };
+static_assert(!CanBorrowFirst<std::vector<std::string>>);
+static_assert(!CanBorrowExactlyOne<std::vector<std::string>>);
+using Produced = decltype(std::views::iota(0, 1));
+static_assert(!CanBorrowFirst<Produced&>);
+static_assert(!CanBorrowExactlyOne<Produced&>);
+
+TEST(Cardinality, FirstBorrowsAConstReferenceAndRebindsWithoutAssignment) {
+  std::vector<std::string> words{"first", "second"};
+  auto selected = first(words);
+  static_assert(std::is_same_v<decltype(*selected), const std::string&>);
+  ASSERT_TRUE(selected.has_value());
+  EXPECT_EQ(selected->size(), 5U);
+  EXPECT_EQ(std::addressof(*selected), std::addressof(words.front()));
+  words.front() = "changed";
+  EXPECT_EQ(*selected, "changed");
+  selected = words.back();
+  EXPECT_EQ(std::addressof(*selected), std::addressof(words.back()));
+  EXPECT_EQ(words.front(), "changed");
+  const auto& constant = words;
+  EXPECT_EQ(std::addressof(*first(constant)), std::addressof(words.front()));
+}
+
+TEST(Cardinality, FirstBorrowsNestedOptionalsEvenWhenTheElementIsEmpty) {
+  std::vector<std::optional<int>> values{11, std::nullopt};
+  auto selected = first(values);
+  ASSERT_TRUE(selected.has_value());
+  EXPECT_EQ(std::addressof(*selected), std::addressof(values.front()));
+  EXPECT_EQ(**selected, 11);
+  values.front().reset();
+  EXPECT_TRUE(selected.has_value());
+  EXPECT_FALSE(selected->has_value());
+
+  std::vector<int> numbers{23};
+  using Reference = decltype(first(numbers));
+  std::vector<Reference> references{first(numbers)};
+  auto nested = first(references);
+  ASSERT_TRUE(nested.has_value());
+  EXPECT_EQ(std::addressof(*nested), std::addressof(references.front()));
+  EXPECT_EQ(**nested, 23);
+  references.front() = Reference{};
+  EXPECT_TRUE(nested.has_value());
+  EXPECT_FALSE(nested->has_value());
+  auto empty_element = first(references);
+  ASSERT_TRUE(empty_element.has_value());
+  EXPECT_FALSE(empty_element->has_value());
 }
 
 TEST(Cardinality, EveryErrorSaysWhichOneItWas) {

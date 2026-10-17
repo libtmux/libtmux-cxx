@@ -13,6 +13,10 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <version>
+#if !defined(__cpp_lib_optional) || __cpp_lib_optional < 202506L
+#include <beman/optional/optional.hpp>
+#endif
 #include <ranges>
 #include <string_view>
 #include <type_traits>
@@ -56,13 +60,21 @@ concept ReferenceRange =
     std::is_lvalue_reference_v<std::ranges::range_reference_t<Range>>;
 
 /// `first` states that a caller tolerates extras; it never reports several.
-template <ReferenceRange Range>
-[[nodiscard]] std::optional<Referenced<Range>> first(Range& range) {
+/// Returns `std::optional<const T&>` or the Beman backport.
+/// Keep the range and its storage alive.
+template <ReferenceRange Range> [[nodiscard]] auto first(Range& range) {
+#if defined(__cpp_lib_optional) && __cpp_lib_optional >= 202506L
+  using Result = std::optional<const std::ranges::range_value_t<Range>&>;
+#else
+  using Result = beman::optional::optional<const std::ranges::range_value_t<Range>&>;
+#endif
   auto iterator = std::ranges::begin(range);
   if (iterator == std::ranges::end(range)) {
-    return std::nullopt;
+    return Result{};
   }
-  return std::cref(*iterator);
+  Result result;
+  result.emplace(*iterator);
+  return result;
 }
 
 /// `exactly_one` states that several is a caller error, and says which one.

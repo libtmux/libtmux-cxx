@@ -128,7 +128,7 @@ int main() {
                                    libtmux::pane::active);
 
     if (auto pane = libtmux::first(editing)) {
-      (void)pane->get().send_key("Escape");
+      (void)pane->send_key("Escape");
     }
   }
   // #endregion intro

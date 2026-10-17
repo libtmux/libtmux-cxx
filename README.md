@@ -49,7 +49,7 @@ Given a `server` — from `Server::from_env()` inside tmux,
                                  libtmux::pane::active);
 
   if (auto pane = libtmux::first(editing)) {
-    (void)pane->get().send_key("Escape");
+    (void)pane->send_key("Escape");
   }
 }
 ```
@@ -104,7 +104,8 @@ allocation and soft-limit changes remain covered.
 
 ## Installation
 
-Nothing to install alongside it: the library has no dependencies. Pick
+The core links no external packages. CMake resolves header-only compatibility
+types from the system or a pinned fallback. Pick
 whichever of these your project already uses.
 
 ### CMake FetchContent
@@ -262,8 +263,9 @@ the vcpkg package; the other packaged targets are Linux and macOS.
 
 `LIBTMUX_FETCH_DEPS` is off on purpose: a build that would reach the network
 says so and stops, rather than downloading quietly. That covers every
-dependency, the C++20 lane's `tl::expected` included — it looks for an
-installed one first, and says what to install when there is none.
+header dependency, including the C++20 lane's `tl::expected` and `beman::optional::optional`:
+it looks for an installed copy first, and says what to install when there is
+none.
 
 ## Quickstart
 

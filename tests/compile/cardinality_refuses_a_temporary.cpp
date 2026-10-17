@@ -7,4 +7,4 @@
 
 std::vector<libtmux::Window> listed();
 
-auto rejected() { return libtmux::exactly_one(listed()); }
+auto rejected() { return libtmux::first(listed()); }
