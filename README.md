@@ -941,7 +941,7 @@ for anything else. The daemon decides, not the client executable.
 | `wait_for_text` streaming | 3.7 | Polls the pane; control mode is never tried | Operative with synchronization |
 | `Buffer::remove` and the MCP `paste_text` staging buffer | 3.4 | Refused with `FailureKind::unsupported` before any buffer is touched: `delete-buffer -b` acts on an unrelated buffer when the name is missing. `Pane::paste` with `consume` stays available | Qualified |
 | Names containing `:` or `.` for sessions and windows | not exactly 3.7 | tmux 3.7 refuses them; refused first with `FailureKind::validation` | Qualified |
-| `Pane::break_out` | any | Exactly 3.7 gets the existing repair; unchanged here | Unverified by this change |
+| `break-pane` through `Server::run` | not exactly 3.7 | tmux 3.7 crashes on a `break-pane` that names no window, so an unnamed raw one is refused with `FailureKind::validation`; `Pane::break_out` stays the route and names the window itself | Qualified on 3.7 |
 
 `Server::run_shell` does not capture the job's output, so the 3.3 to 3.4
 `run-shell` stdout defect does not reach it. Percentage splits are always

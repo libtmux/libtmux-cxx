@@ -243,6 +243,46 @@ query_endpoint(const std::filesystem::path& binary,
   return unexpected(admission_failure(FailureKind::refused, std::move(detail)));
 }
 
+bool has_unnamed_break_pane(const std::vector<std::string>& argv) {
+  std::vector<std::vector<std::string>> commands(1);
+  for (const std::string& argument : argv) {
+    if (argument == ";") {
+      commands.emplace_back();
+    } else {
+      commands.back().push_back(argument);
+    }
+  }
+  for (const auto& command : commands) {
+    if (command.empty() ||
+        (command.front() != "break-pane" && command.front() != "breakp")) {
+      continue;
+    }
+    bool named = false;
+    for (std::size_t index = 1; index < command.size(); ++index) {
+      const std::string& argument = command[index];
+      if (argument == "--") {
+        break;
+      }
+      if (argument.size() < 2U || argument.front() != '-') {
+        continue;
+      }
+      for (const char flag : std::string_view{argument}.substr(1)) {
+        if (flag == 'n') {
+          named = true;
+        }
+        if (flag == 'n' || flag == 'F' || flag == 's' || flag == 't') {
+          ++index;
+          break;
+        }
+      }
+    }
+    if (!named) {
+      return true;
+    }
+  }
+  return false;
+}
+
 std::vector<Argument> version_fence(std::string_view token, std::string_view marker) {
   std::vector<Argument> fence;
   fence.push_back(Argument{"if-shell"});

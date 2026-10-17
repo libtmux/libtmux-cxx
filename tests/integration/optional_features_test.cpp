@@ -145,4 +145,29 @@ TEST(OptionalFeatures, DotsAndColonsInNamesAreRefusedOnExactly37) {
   EXPECT_TRUE(lane.server.new_session("plain-name").has_value());
 }
 
+TEST(OptionalFeatures, AnUnnamedRawBreakPaneIsRefusedOnExactly37) {
+  Lane lane = start_lane();
+  ASSERT_TRUE(lane.server.run({"split-window", "-d"}).has_value());
+  const auto before = lane.server.windows();
+  ASSERT_TRUE(before.has_value());
+  auto pane = lane.server.pane(lane.fixture.session_name());
+  ASSERT_TRUE(pane.has_value());
+
+  const auto raw =
+      lane.server.run({"break-pane", "-d", "-s", std::string{pane->id().value()}});
+  if (lane.running != Version{.major = 3, .minor = 7}) {
+    // Other releases are not this library's to refuse.
+    EXPECT_TRUE(raw.has_value() || raw.error().kind != FailureKind::validation);
+    return;
+  }
+  ASSERT_FALSE(raw.has_value());
+  EXPECT_EQ(raw.error().kind, FailureKind::validation);
+  EXPECT_EQ(raw.error().delivery, DeliveryStatus::not_started);
+  EXPECT_EQ(lane.server.windows()->size(), before->size())
+      << "nothing may be broken out";
+  // The typed call is the supported route and still works.
+  const auto typed = pane->break_out();
+  EXPECT_TRUE(typed.has_value()) << (typed ? "" : typed.error().diagnostic);
+}
+
 } // namespace
