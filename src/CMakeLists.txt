@@ -76,6 +76,19 @@ if(LIBTMUX_CXX_STANDARD STREQUAL "20")
             DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
   endif()
 endif()
+include("${PROJECT_SOURCE_DIR}/cmake/Indirect.cmake")
+libtmux_resolve_value_types(_value_types_include)
+if(_value_types_include)
+  target_include_directories(libtmux SYSTEM PUBLIC
+    $<BUILD_INTERFACE:${_value_types_include}>)
+endif()
+if(LIBTMUX_INSTALL AND _value_types_include)
+  install(FILES "${_value_types_include}/value_types/indirect.h"
+                "${_value_types_include}/value_types/feature_check.h"
+    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/value_types")
+  install(FILES "${PROJECT_SOURCE_DIR}/cmake/licenses/value-types-LICENSE.txt"
+    DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/licenses/libtmux/value_types")
+endif()
 # The full version, prerelease tag and all — `PROJECT_VERSION` has had the tag
 # stripped so CMake would accept it, and a library that reports "0.1.0" while
 # it is an alpha is telling the truth to nobody.

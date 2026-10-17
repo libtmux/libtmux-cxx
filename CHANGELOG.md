@@ -9,6 +9,19 @@ was recorded as it landed.
 
 ## Unreleased
 
+### Breaking
+
+- `FilterExpr::Negation::operand` owns an indirect value and propagates const
+  access to the expression. Source-breaking; rebuild consumers that expose
+  this template type across binary boundaries. Construct with
+  `std::in_place` and an expression; assign a moved-from expression before
+  evaluating it.
+
+### Build
+
+- Recursive filters use native `std::indirect` when available, or pinned
+  `value_types` headers installed with the package.
+
 ## 0.1.0-alpha.11 (2026-09-26)
 
 This alpha adds `tmux-workspace`, an optional POSIX executable for workspace
