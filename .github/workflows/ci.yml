@@ -27,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        tmux-version: ['3.2a', '3.3a', '3.4', '3.5', '3.6', '3.7', '3.7a', '3.7b', '3.7c', 'master']
+        tmux-version: ['3.3a', '3.4', '3.5', '3.6', '3.7', '3.7a', '3.7b', '3.7c', 'master']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -93,6 +93,56 @@ jobs:
             --output-on-failure || status=$?
           rmdir "$base" || status=1
           exit "$status"
+
+  rejection:
+    # Releases below the floor are not a supported cell. They are run to prove
+    # the refusal: a daemon of each is started, a 3.3a client is pointed at it,
+    # and nothing the library, the workspace CLI or the MCP server sends may
+    # change it. 3.0a and 3.1c answer the probe differently from every later
+    # release and keep a client's stdout open after it exits, so their cells
+    # also hold the refusal to a time bound.
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        rejected-tmux: ['3.0a', '3.1c', '3.2a', '3.3']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: hendrikmuhs/ccache-action@f09c25b45002a07be2955cbe52e8cee55643f89d # v1.2.24
+        with:
+          key: ${{ github.job }}-tmux-${{ matrix.rejected-tmux }}
+          max-size: 400M
+
+      - name: Install the pinned toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 libc++-18-dev libc++abi-18-dev ninja-build
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
+
+      - name: Build the supported client and the rejected daemon
+        run: |
+          sudo apt-get install -y libevent-dev libncurses5-dev libtinfo-dev libutempter-dev bison
+          mkdir -p ~/tmux-builds ~/tmux-src
+          for version in 3.3a ${{ matrix.rejected-tmux }}; do
+            git clone --branch "$version" --depth 1 https://github.com/tmux/tmux.git "$HOME/tmux-src/tmux-$version"
+            (cd "$HOME/tmux-src/tmux-$version" && sh autogen.sh &&
+              ./configure --prefix="$HOME/tmux-builds/tmux-$version" && make && make install)
+          done
+
+      - name: Refuse tmux ${{ matrix.rejected-tmux }} without effects
+        run: |
+          export PATH=$HOME/tmux-builds/tmux-3.3a/bin:$PATH
+          export LIBTMUX_TEST_REJECTED_TMUX=$HOME/tmux-builds/tmux-${{ matrix.rejected-tmux }}/bin/tmux
+          export LIBTMUX_REQUIRE_REJECTED_TMUX=1
+          tmux -V
+          "$LIBTMUX_TEST_REJECTED_TMUX" -V
+          cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache --preset cxx-dev
+          cmake --build --preset cxx-dev --target libtmux_support_versions_test workspace_cli_test mcp_tools_test mcp_protocol_test
+          ctest --preset cxx-dev --no-tests=error --output-on-failure -R 'libtmux\.support_versions\.|^consumer\..*\.rejected$'
 
   macos:
     # tmux is used at least as much on macOS as on Linux, and Apple Clang with
