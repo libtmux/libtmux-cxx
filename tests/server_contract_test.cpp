@@ -1669,18 +1669,19 @@ TEST(ServerContract, TheVersionIsReadableWithoutAServer) {
   EXPECT_EQ(*after, *running);
 }
 
-TEST(ServerContract, SubprocessVersionHonoursTheServersOutputBound) {
+TEST(ServerContract, SubprocessVersionIsReadWhateverTheOutputBound) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  // A bound meant for listings must not make the daemon's one-line version
+  // unreadable, or every command behind it would be refused.
   const libtmux::ExecutionPolicy bounded{.output_limit = 1U};
   auto server = Server::at_socket_path(fixture->socket_path().string(), {}, bounded);
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
 
   const auto version = server->tmux_version();
 
-  ASSERT_FALSE(version.has_value());
-  EXPECT_EQ(version.error().kind, libtmux::FailureKind::truncated);
-  EXPECT_EQ(version.error().delivery, DeliveryStatus::replied);
+  ASSERT_TRUE(version.has_value()) << version.error().diagnostic;
+  EXPECT_TRUE(libtmux::is_supported(*version));
 }
 
 TEST(ServerContract, LivenessIsAskedAndAnsweredWithoutThrowing) {

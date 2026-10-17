@@ -19,6 +19,7 @@
 #include "libtmux/layout.hpp"
 #include "libtmux/version.hpp"
 #include "process.hpp"
+#include "support_versions.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -35,6 +36,7 @@ LIBTMUX_NAMESPACE_BEGIN
 class Server;
 
 namespace detail {
+using namespace support::versions;
 
 class SocketAlias;
 
@@ -135,8 +137,10 @@ public:
   // backends override this with the routing contract they implement.
   [[nodiscard]] virtual ServerCapabilities capabilities() const noexcept { return {}; }
 
-  // Which tmux is behind this connection. How to ask depends on the executor,
-  // so the executor answers.
+  // Which tmux is behind this connection: the daemon when one answers, and
+  // otherwise the executable that would start it. How to ask depends on the
+  // executor, so the executor answers. A release below the floor is reported
+  // rather than refused; every command is what refuses it.
   [[nodiscard]] virtual expected<Version, CommandFailure> version() const = 0;
 
   // Whether this backend's own client binary is a trustworthy stand-in for
@@ -325,12 +329,44 @@ public:
 
   [[nodiscard]] expected<void, CommandFailure> async_preflight() const;
 
+  // A command ready to launch, or nothing to launch because the endpoint is
+  // already gone and the command is `kill-server`.
+  struct PreparedRequest {
+    ProcessRequest request;
+    bool absent_noop{false};
+  };
+
+  // Check the endpoint, then build the invocation. A release below the floor,
+  // an unreadable version and a raw tmux flag are refused here, before
+  // anything is dispatched. `-V` and `-h` are executable diagnostics and are
+  // not checked.
+  [[nodiscard]] expected<PreparedRequest, CommandFailure> prepare_request(
+      const CommandRequest& command, std::optional<std::string_view> session,
+      std::optional<std::chrono::milliseconds> timeout,
+      std::optional<std::size_t> output_limit, bool allow_noop = true) const;
+
+  // The two halves of `prepare_request`. Version check can launch a probe and wait
+  // for it, so a caller holding a lock asks it first, outside the lock, and
+  // assembles under it, which launches nothing. Nothing when the command is
+  // one of the executable's own diagnostics.
+  [[nodiscard]] expected<std::optional<EndpointVersion>, CommandFailure>
+  check_command(const CommandRequest& command,
+                std::optional<std::chrono::milliseconds> timeout) const;
+
+  [[nodiscard]] PreparedRequest assemble_request(
+      const CommandRequest& command, std::optional<std::string_view> session,
+      std::optional<std::chrono::milliseconds> timeout,
+      std::optional<std::size_t> output_limit,
+      const std::optional<EndpointVersion>& checked, bool allow_noop) const;
+
   // The tmux invocation a command becomes: the connection, the UTF-8 flag
   // every listing depends on, the argument escaping, and the capture bound.
+  // `checked` adds what keeps the command on the daemon that was checked.
   [[nodiscard]] ProcessRequest
   build_request(const CommandRequest& command, std::optional<std::string_view> session,
                 std::optional<std::chrono::milliseconds> timeout,
-                std::optional<std::size_t> output_limit) const;
+                std::optional<std::size_t> output_limit,
+                const EndpointVersion* checked = nullptr) const;
 
   // What a reply means: the capture bound, the exit status, the diagnostic
   // tmux wrote, and the observer. All of it belongs to whoever is consuming
@@ -352,8 +388,8 @@ public:
   interpret_failure_unobserved(const CommandRequest& command,
                                CommandFailure failure) const;
 
-  // `tmux -V` answers without connecting, so this works against a socket with
-  // no server on it.
+  // The daemon's version, read fresh; the executable's `-V` while no daemon
+  // answers, so this works against a socket with no server on it.
   [[nodiscard]] expected<Version, CommandFailure> version() const override;
 
   [[nodiscard]] bool allows_cold_socket_version_fallback() const noexcept override {
@@ -379,6 +415,12 @@ private:
   [[nodiscard]] expected<std::string, CommandFailure>
   interpret_reply(const CommandRequest& command, std::size_t allowed_bytes,
                   ProcessReply reply, bool notify_observer) const;
+
+  // The endpoint's version once it has passed the floor. A live daemon is
+  // remembered until a fenced command finds it replaced; an absent endpoint is
+  // asked again every time, since a server can appear at any moment.
+  [[nodiscard]] expected<EndpointVersion, CommandFailure>
+  check_version(std::optional<std::chrono::milliseconds> timeout) const;
 
   [[nodiscard]] std::shared_ptr<const PublishedEndpoint>
   published_endpoint() const noexcept {
@@ -420,6 +462,11 @@ private:
   // would make a handle that met a busy machine once stay broken.
   mutable std::mutex version_mutex_;
   mutable std::optional<Version> version_;
+  // What the fence of every command to a live daemon fails with when that
+  // daemon is not the one checked.
+  std::string fence_marker_{version_marker()};
+  mutable std::mutex version_cache_mutex_;
+  mutable std::optional<EndpointVersion> version_cache_;
 };
 
 // Build a Server over any backend. The only way to reach the private

@@ -1,16 +1,59 @@
-// The tmux version ordering the support floor rests on.
+// The core support floor, tmux 3.3a, and what enforces it.
+//
+// A client executable and the daemon it reaches can be different releases, so
+// the daemon answers. These tests hold a refusal to three standards: it
+// happens before the requested command has an effect, the same command is
+// accepted by a qualifying daemon, and removing the check makes the refusal
+// test fail.
+//
+// The refusal tests need a daemon older than the floor, which a supported
+// build lane does not have. They read it from LIBTMUX_TEST_REJECTED_TMUX and
+// report a skip otherwise; the rejection lanes in CI set it.
 
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <csignal>
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <memory>
+#include <optional>
+#include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
+
+#include <stdlib.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <gtest/gtest.h>
 
+#include "libtmux/async.hpp"
+#include "libtmux/command.hpp"
+#include "libtmux/control.hpp"
+#include "libtmux/server.hpp"
 #include "libtmux/testing/capabilities.hpp"
+#include "libtmux/testing/environment_guard.hpp"
+#include "libtmux/testing/scoped_server.hpp"
 #include "libtmux/version.hpp"
+#include "support/rejected_daemon.hpp"
 
 namespace {
-using libtmux::Version;
 
+using libtmux::CommandFailure;
+using libtmux::DeliveryStatus;
+using libtmux::ExecutionPolicy;
+using libtmux::FailureKind;
+using libtmux::Server;
+using libtmux::Version;
+using libtmux::test::rejected::OldDaemon;
+using libtmux::test::rejected::PrivateDirectory;
+using libtmux::test::rejected::rejected_tmux;
+using libtmux::test::rejected::shell_quote;
+using libtmux::test::rejected::slurp;
 
 Version parsed(std::string_view text) {
   const auto version = libtmux::parse_version("tmux " + std::string{text});
@@ -128,4 +171,496 @@ TEST(SupportVersions, FormsTmuxNeverReportsAreErrorsNotVersions) {
   }
   EXPECT_TRUE(libtmux::parse_version("tmux next-3.4").has_value());
 }
+
+// A tmux executable on PATH, resolved the way the library resolves it.
+std::filesystem::path find_on_path(std::string_view name) {
+  const char* const path = std::getenv("PATH");
+  if (path == nullptr) {
+    return {};
+  }
+  std::stringstream directories{path};
+  for (std::string directory; std::getline(directories, directory, ':');) {
+    const auto candidate = std::filesystem::path{directory} / name;
+    if (::access(candidate.c_str(), X_OK) == 0 &&
+        std::filesystem::is_regular_file(candidate)) {
+      return candidate;
+    }
+  }
+  return {};
+}
+
+std::size_t lines_in(const std::filesystem::path& path) {
+  const std::string text = slurp(path);
+  return static_cast<std::size_t>(std::ranges::count(text, '\n'));
+}
+
+bool wait_for_lines(const std::filesystem::path& path, std::size_t wanted) {
+  for (int attempt = 0; attempt < 100; ++attempt) {
+    if (lines_in(path) >= wanted) {
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds{50});
+  }
+  return false;
+}
+
+// Run a command line and return its standard output.
+std::string output_of(const std::vector<std::string>& argv) {
+  std::string command;
+  for (const std::string& argument : argv) {
+    command += shell_quote(argument) + " ";
+  }
+  command += "2>&1";
+  std::string output;
+  if (FILE* const pipe = ::popen(command.c_str(), "r"); pipe != nullptr) {
+    std::array<char, 512> buffer{};
+    while (const std::size_t count =
+               std::fread(buffer.data(), 1, buffer.size(), pipe)) {
+      output.append(buffer.data(), count);
+    }
+    ::pclose(pipe);
+  }
+  return output;
+}
+
+template <typename Fixture>
+Server server_for(const Fixture& fixture, ExecutionPolicy policy = {}) {
+  auto server =
+      Server::at_socket_path(fixture.socket_path().string(), {}, std::move(policy));
+  EXPECT_TRUE(server.has_value());
+  return server.value();
+}
+
+// The sessions a daemon holds, asked of the daemon's own executable so that
+// nothing here depends on the library under test.
+std::string sessions_held_by(const libtmux::test::ScopedTmuxServer& fixture) {
+  auto argv = fixture.command_prefix();
+  argv.insert(argv.end(), {"list-sessions", "-F", "#{session_name}"});
+  return output_of(argv);
+}
+
+// ---------------------------------------------------------------------------
+// Refusal below the floor.
+// ---------------------------------------------------------------------------
+
+class RejectedDaemon : public libtmux::test::rejected::RejectedDaemonTest {
+protected:
+  void expect_refused(const CommandFailure& failure) {
+    EXPECT_EQ(failure.kind, FailureKind::unsupported) << failure.diagnostic;
+    EXPECT_EQ(failure.delivery, DeliveryStatus::not_started);
+    libtmux::test::rejected::expect_floor_and_remedy(failure.diagnostic);
+  }
+};
+
+TEST_F(RejectedDaemon, ACommandIsRefusedBeforeItHasAnEffect) {
+  // The client is the supported tmux on PATH: a newer executable does not
+  // qualify the older daemon it reaches.
+  auto server = server_for(*daemon_);
+  const auto refused = server.run({"new-session", "-d", "-s", "intruder"});
+  ASSERT_FALSE(refused.has_value());
+  expect_refused(refused.error());
+  expect_untouched();
+}
+
+TEST_F(RejectedDaemon, EveryEntryPointIsRefusedWithNoEffect) {
+  auto server = server_for(*daemon_);
+
+  libtmux::CommandBatch batch;
+  ASSERT_TRUE(batch.add(libtmux::CommandRequest{"new-session", "-d", "-s", "first"}));
+  ASSERT_TRUE(batch.add(libtmux::CommandRequest{"new-session", "-d", "-s", "second"}));
+  const auto batched = server.run_batch(batch);
+  ASSERT_FALSE(batched.has_value());
+  expect_refused(batched.error());
+
+  const auto created = server.new_session("typed");
+  ASSERT_FALSE(created.has_value());
+  expect_refused(created.error());
+
+  // A lenient list must say why it is empty rather than answer empty.
+  const auto sessions = server.sessions();
+  ASSERT_FALSE(sessions.has_value());
+  expect_refused(sessions.error());
+  ASSERT_FALSE(server.windows().has_value());
+  ASSERT_FALSE(server.panes().has_value());
+  ASSERT_FALSE(server.buffers().has_value());
+
+  const auto alive = server.check_alive();
+  ASSERT_FALSE(alive.has_value());
+  expect_refused(alive.error());
+
+  // kill-server is the command that would hurt: it must not reach the daemon.
+  const auto killed = server.kill();
+  ASSERT_FALSE(killed.has_value());
+  expect_refused(killed.error());
+
+  expect_untouched();
+  EXPECT_TRUE(daemon_->is_alive());
+}
+
+TEST_F(RejectedDaemon, AnOlderClientIsRefusedToo) {
+  ExecutionPolicy policy;
+  policy.tmux_binary = *rejected_tmux();
+  auto server = server_for(*daemon_, policy);
+  const auto refused = server.run({"new-session", "-d", "-s", "intruder"});
+  ASSERT_FALSE(refused.has_value());
+  expect_refused(refused.error());
+  expect_untouched();
+}
+
+TEST_F(RejectedDaemon, TheVersionStaysReadableForADiagnostic) {
+  // The lane's release decides which answer is right, and the table in the
+  // support header pins it. A daemon from 3.2 can run the probe, so its
+  // release is reported and is below the floor. An older one cannot, and says
+  // so.
+  const auto printed = output_of({rejected_tmux()->string(), "-V"});
+  const auto daemon = libtmux::parse_version(printed);
+  ASSERT_TRUE(daemon.has_value()) << printed;
+  ASSERT_FALSE(libtmux::is_supported(*daemon)) << printed;
+
+  auto server = server_for(*daemon_);
+  const auto version = server.tmux_version();
+  if (!libtmux::test::rejected::rejected_release_runs_the_probe(
+          libtmux::test::rejected::rejected_release())) {
+    ASSERT_FALSE(version.has_value()) << printed;
+    expect_refused(version.error());
+  } else {
+    ASSERT_TRUE(version.has_value()) << version.error().diagnostic;
+    EXPECT_EQ(*version, *daemon);
+  }
+  // The executable's own report authorizes nothing.
+  const auto banner = server.run({"-V"});
+  EXPECT_TRUE(banner.has_value());
+  expect_untouched();
+}
+
+TEST_F(RejectedDaemon, ARefusalReturnsLongBeforeTheCommandTimeout) {
+  // A daemon older than 3.2 keeps the client's stdout open after the client
+  // has exited, so a transport that reads to the end waits out its timeout.
+  ExecutionPolicy policy;
+  policy.timeout = std::chrono::seconds{30};
+  auto server = server_for(*daemon_, policy);
+  const auto started = std::chrono::steady_clock::now();
+  const auto refused = server.run({"new-session", "-d", "-s", "intruder"});
+  const auto elapsed = std::chrono::steady_clock::now() - started;
+  ASSERT_FALSE(refused.has_value());
+  expect_refused(refused.error());
+  EXPECT_LT(elapsed, std::chrono::seconds{5});
+  expect_untouched();
+}
+
+// ---------------------------------------------------------------------------
+// A pre-3.2 answer from a stand-in client.
+// ---------------------------------------------------------------------------
+
+// A client that says `stderr_text`, exits `status`, and leaves a descendant
+// holding its stdout for a minute, as a pre-3.2 daemon does.
+std::filesystem::path stand_in_client(const PrivateDirectory& directory,
+                                      const std::string& stderr_text, int status) {
+  const auto script = directory.path() / "tmux-stand-in";
+  std::ofstream file{script};
+  file << "#!/bin/sh\n"
+          "printf '%s\\n' "
+       << shell_quote(stderr_text)
+       << " >&2\n"
+          "sleep 60 2>/dev/null &\n"
+          "exit "
+       << status << "\n";
+  file.close();
+  ::chmod(script.c_str(), 0700);
+  return script;
+}
+
+struct StandIn {
+  std::string name;
+  std::string stderr_text;
+};
+
+const std::vector<StandIn>& stand_ins() {
+  static const std::vector<StandIn> answers{
+      {"3.0a daemon", "server version is too old for client"},
+      {"3.1c daemon", "usage: run-shell [-b] [-t target-pane] shell-command"},
+      {"3.1c client", "tmux: unknown option -- N\nusage: tmux [-2CluvV] [-c "
+                      "shell-command] [-f file] [-L socket-name]"},
+  };
+  return answers;
+}
+
+TEST(PreThreeTwoAnswers, EachIsTheVersionRefusalAndReturnsWhileStdoutIsHeldOpen) {
+  for (const auto& [name, stderr_text] : stand_ins()) {
+    SCOPED_TRACE(name);
+    PrivateDirectory directory;
+    ASSERT_FALSE(directory.path().empty());
+    ExecutionPolicy policy;
+    policy.tmux_binary = stand_in_client(directory, stderr_text, 1);
+    policy.timeout = std::chrono::seconds{30};
+    auto server = Server::startable_at_socket_path((directory.path() / "s").string(),
+                                                   std::nullopt, {}, policy);
+    ASSERT_TRUE(server.has_value());
+    const auto started = std::chrono::steady_clock::now();
+    const auto refused = server->run({"new-session", "-d"});
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    ASSERT_FALSE(refused.has_value());
+    EXPECT_EQ(refused.error().kind, FailureKind::unsupported)
+        << refused.error().diagnostic;
+    EXPECT_EQ(refused.error().delivery, DeliveryStatus::not_started);
+    EXPECT_NE(refused.error().diagnostic.find("older than 3.2"), std::string::npos);
+    EXPECT_NE(refused.error().diagnostic.find("restart the server"), std::string::npos);
+    EXPECT_LT(elapsed, std::chrono::seconds{5});
+  }
+}
+
+TEST(PreThreeTwoAnswers, TheSameWordsFromASuccessfulRunAreNotAVersionRefusal) {
+  // The control: the signature alone refuses nothing. It needs the exit
+  // status 1 that tmux gives it.
+  for (const auto& [name, stderr_text] : stand_ins()) {
+    SCOPED_TRACE(name);
+    PrivateDirectory directory;
+    ASSERT_FALSE(directory.path().empty());
+    ExecutionPolicy policy;
+    policy.tmux_binary = stand_in_client(directory, stderr_text, 0);
+    auto server = Server::startable_at_socket_path((directory.path() / "s").string(),
+                                                   std::nullopt, {}, policy);
+    ASSERT_TRUE(server.has_value());
+    const auto failed = server->run({"new-session", "-d"});
+    ASSERT_FALSE(failed.has_value());
+    EXPECT_EQ(failed.error().kind, FailureKind::refused) << failed.error().diagnostic;
+    EXPECT_NE(failed.error().diagnostic.find(stderr_text.substr(0, 12)),
+              std::string::npos);
+    EXPECT_EQ(failed.error().diagnostic.find("older than 3.2"), std::string::npos);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The same commands on a qualifying daemon.
+// ---------------------------------------------------------------------------
+
+class SupportedDaemon : public testing::Test {
+protected:
+  void SetUp() override {
+    libtmux::test::ScopedTmuxServerOptions options;
+    options.session_name = "sentinel";
+    auto started = libtmux::test::ScopedTmuxServer::start(std::move(options));
+    ASSERT_TRUE(started.has_value()) << started.error();
+    fixture_ = std::make_unique<libtmux::test::ScopedTmuxServer>(std::move(*started));
+  }
+
+  std::unique_ptr<libtmux::test::ScopedTmuxServer> fixture_;
+};
+
+TEST_F(SupportedDaemon, TheCommandsRefusedBelowTheFloorRunAtOrAboveIt) {
+  auto server = server_for(*fixture_);
+  const auto version = server.tmux_version();
+  ASSERT_TRUE(version.has_value());
+  ASSERT_TRUE(libtmux::is_supported(*version))
+      << "the supported lanes run these against tmux 3.3a or newer";
+  const auto created = server.run({"new-session", "-d", "-s", "extra"});
+  EXPECT_TRUE(created.has_value()) << (created ? "" : created.error().diagnostic);
+  EXPECT_NE(sessions_held_by(*fixture_).find("extra"), std::string::npos);
+  EXPECT_TRUE(server.sessions().has_value());
+  EXPECT_TRUE(server.check_alive().has_value());
+}
+
+TEST_F(SupportedDaemon, RawClientFlagsAndEmptyCommandsAreNotDispatched) {
+  auto server = server_for(*fixture_);
+  const auto shell = server.run({"-c", "touch should-not-exist"});
+  ASSERT_FALSE(shell.has_value());
+  EXPECT_EQ(shell.error().kind, FailureKind::validation);
+  EXPECT_EQ(shell.error().delivery, DeliveryStatus::not_started);
+  const auto control = server.run({"-C", "list-sessions"});
+  ASSERT_FALSE(control.has_value());
+  EXPECT_EQ(control.error().kind, FailureKind::validation);
+  const auto empty = server.run(libtmux::CommandRequest{});
+  ASSERT_FALSE(empty.has_value());
+  EXPECT_EQ(empty.error().kind, FailureKind::validation);
+  // The executable's diagnostics remain available.
+  EXPECT_TRUE(server.run({"-V"}).has_value());
+}
+
+TEST_F(SupportedDaemon, CheckingAnEndpointFiresNeitherAfterNorErrorHooks) {
+  PrivateDirectory scratch;
+  ASSERT_FALSE(scratch.path().empty());
+  const auto after = scratch.path() / "after-display-message";
+  const auto errors = scratch.path() / "command-error";
+
+  // Set the hooks through one handle, then check through a fresh one: its
+  // first command is the probe.
+  auto setter = server_for(*fixture_);
+  ASSERT_TRUE(setter
+                  .run({"set-hook", "-g", "after-display-message",
+                        "run-shell 'echo hit >> " + after.string() + "'"})
+                  .has_value());
+  // `command-error` exists from tmux 3.5; an older tmux refuses the name.
+  const bool has_error_hook =
+      setter
+          .run({"set-hook", "-g", "command-error",
+                "run-shell 'echo hit >> " + errors.string() + "'"})
+          .has_value();
+
+  auto fresh = server_for(*fixture_);
+  ASSERT_TRUE(fresh.run({"list-sessions"}).has_value());
+  ASSERT_TRUE(fresh.tmux_version().has_value());
+  ASSERT_TRUE(fresh.run({"list-windows", "-a"}).has_value());
+
+  // Controls: each hook does fire for the thing it names, so silence above is
+  // the probe's doing and not a hook that never worked.
+  ASSERT_TRUE(setter.run({"display-message", "-p", "control"}).has_value());
+  ASSERT_TRUE(wait_for_lines(after, 1U));
+  EXPECT_EQ(lines_in(after), 1U) << "version check must not fire after-display-message";
+  if (has_error_hook) {
+    // With the hook installed tmux answers a failing command with status 0,
+    // so the outcome is not asserted; the hook firing is.
+    static_cast<void>(setter.run({"kill-session", "-t", "=no-such-session"}));
+    ASSERT_TRUE(wait_for_lines(errors, 1U));
+    EXPECT_EQ(lines_in(errors), 1U) << "version check must not fire command-error";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The fence and the live-endpoint flag, against a tmux that is wrapped so the
+// arguments the library really sent can be inspected and altered.
+// ---------------------------------------------------------------------------
+
+class WrappedTmux : public SupportedDaemon {
+protected:
+  void SetUp() override {
+    SupportedDaemon::SetUp();
+    if (HasFatalFailure()) {
+      return;
+    }
+    real_ = find_on_path("tmux");
+    ASSERT_FALSE(real_.empty());
+    ASSERT_FALSE(scratch_.path().empty());
+    log_ = scratch_.path() / "argv.log";
+    wrapper_ = scratch_.path() / "tmux-wrapper";
+    // Every invocation is logged one argument per line, a blank line apart. A
+    // rewrite of the fence's condition stands for a daemon that has been
+    // replaced by another release.
+    std::ofstream script{wrapper_};
+    script << "#!/bin/sh\n"
+              "{ for a in \"$@\"; do printf '%s\\n' \"$a\"; done; echo --; } >> \""
+           << log_.string()
+           << "\"\n"
+              "if [ -n \"$LIBTMUX_TEST_REWRITE_FENCE\" ]; then\n"
+              "  n=$#; i=0\n"
+              "  while [ $i -lt $n ]; do\n"
+              "    a=$1; shift\n"
+              "    case $a in '#{==:#{version},'*) a='#{==:#{version},9.9z}' ;; esac\n"
+              "    set -- \"$@\" \"$a\"\n"
+              "    i=$((i+1))\n"
+              "  done\n"
+              "fi\n"
+              "exec \""
+           << real_.string() << "\" \"$@\"\n";
+    script.close();
+    ::chmod(wrapper_.c_str(), 0700);
+  }
+
+  [[nodiscard]] ExecutionPolicy wrapped_policy() const {
+    ExecutionPolicy policy;
+    policy.tmux_binary = wrapper_;
+    return policy;
+  }
+
+  PrivateDirectory scratch_;
+  std::filesystem::path real_;
+  std::filesystem::path log_;
+  std::filesystem::path wrapper_;
+};
+
+TEST_F(WrappedTmux, ALiveEndpointIsFencedAndNeverRestarted) {
+  auto server = server_for(*fixture_, wrapped_policy());
+  ASSERT_TRUE(server.run({"list-sessions"}).has_value());
+  const std::string log = slurp(log_);
+  // The probe: no daemon is started to answer it.
+  EXPECT_NE(log.find("-N\nrun-shell\n-C\nlibtmux-version-"), std::string::npos) << log;
+  // The command: not restartable, and behind a fence naming the checked
+  // release and a marker no command has.
+  EXPECT_NE(log.find("-N\nif-shell\n-F\n#{==:#{version},"), std::string::npos) << log;
+  EXPECT_NE(log.find("\n;\nlist-sessions\n"), std::string::npos) << log;
+}
+
+TEST_F(WrappedTmux, ADaemonThatChangesAfterTheVersionCheckStopsTheCommandListUnrun) {
+  auto server = server_for(*fixture_, wrapped_policy());
+  ASSERT_TRUE(server.run({"list-sessions"}).has_value());
+
+  const libtmux::test::EnvironmentGuard replaced{"LIBTMUX_TEST_REWRITE_FENCE", "1"};
+  const auto refused = server.run({"new-session", "-d", "-s", "intruder"});
+  ASSERT_FALSE(refused.has_value());
+  EXPECT_EQ(refused.error().kind, FailureKind::unsupported)
+      << refused.error().diagnostic;
+  EXPECT_EQ(refused.error().delivery, DeliveryStatus::not_started);
+  EXPECT_NE(refused.error().diagnostic.find("changed"), std::string::npos)
+      << refused.error().diagnostic;
+  EXPECT_EQ(sessions_held_by(*fixture_), "sentinel\n");
+
+  // A batch is one fenced command list: nothing in it runs.
+  libtmux::CommandBatch batch;
+  ASSERT_TRUE(batch.add(libtmux::CommandRequest{"new-session", "-d", "-s", "one"}));
+  ASSERT_TRUE(batch.add(libtmux::CommandRequest{"new-session", "-d", "-s", "two"}));
+  EXPECT_FALSE(server.run_batch(batch).has_value());
+  EXPECT_EQ(sessions_held_by(*fixture_), "sentinel\n");
+}
+
+std::size_t probes_in(const std::filesystem::path& log) {
+  const std::string text = slurp(log);
+  std::size_t count = 0;
+  for (std::size_t at = text.find("run-shell\n-C\n"); at != std::string::npos;
+       at = text.find("run-shell\n-C\n", at + 1U)) {
+    ++count;
+  }
+  return count;
+}
+
+TEST_F(WrappedTmux, TheNextCommandChecksAgainAfterAChangedDaemonWasRefused) {
+  auto server = server_for(*fixture_, wrapped_policy());
+  ASSERT_TRUE(server.run({"list-sessions"}).has_value());
+  {
+    const libtmux::test::EnvironmentGuard replaced{"LIBTMUX_TEST_REWRITE_FENCE", "1"};
+    ASSERT_FALSE(server.run({"list-sessions"}).has_value());
+  }
+  const std::size_t probes_before = probes_in(log_);
+  EXPECT_TRUE(server.run({"new-session", "-d", "-s", "after"}).has_value());
+  EXPECT_GT(probes_in(log_), probes_before)
+      << "the refusal cleared what was remembered, so a probe came before the retry";
+  EXPECT_NE(sessions_held_by(*fixture_).find("after"), std::string::npos);
+}
+
+TEST_F(WrappedTmux, AbsentEndpointCleanupIsANoOpAndNothingIsStarted) {
+  auto server = server_for(*fixture_, wrapped_policy());
+  ASSERT_TRUE(server.kill().has_value());
+  for (int attempt = 0; attempt < 100 && fixture_->is_alive(); ++attempt) {
+    std::this_thread::sleep_for(std::chrono::milliseconds{20});
+  }
+  ASSERT_FALSE(fixture_->is_alive());
+
+  // The daemon is gone. Cleanup that finds it gone is not a failure, and no
+  // command from this handle restarts it with whatever executable it holds.
+  EXPECT_TRUE(server.kill().has_value());
+  const std::size_t probes_before = probes_in(log_);
+  const auto revived = server.run({"new-session", "-d", "-s", "revived"});
+  EXPECT_FALSE(revived.has_value());
+  EXPECT_GT(probes_in(log_), probes_before) << "a vanished daemon is asked about again";
+  EXPECT_TRUE(server.kill().has_value())
+      << "cleanup of an absent endpoint stays a no-op";
+  EXPECT_NE(slurp(log_).find("-N\nnew-session\n-d\n-s\nrevived\n"), std::string::npos);
+  EXPECT_EQ(sessions_held_by(*fixture_).find("revived"), std::string::npos);
+}
+
+TEST_F(WrappedTmux, ANamedExecutableIsAcceptedByTheNameItPrints) {
+  // tmux 3.3a prints its own executable name where later releases print tmux.
+  const auto renamed = scratch_.path() / "tmux-renamed";
+  std::filesystem::copy_file(real_, renamed);
+  ::chmod(renamed.c_str(), 0700);
+
+  ExecutionPolicy policy;
+  policy.tmux_binary = renamed;
+  const auto socket = scratch_.path() / "fresh.sock";
+  auto server =
+      Server::startable_at_socket_path(socket.string(), std::nullopt, {}, policy);
+  ASSERT_TRUE(server.has_value());
+  const auto started = server->run({"new-session", "-d", "-s", "fresh"});
+  EXPECT_TRUE(started.has_value()) << (started ? "" : started.error().diagnostic);
+  EXPECT_TRUE(server->kill().has_value());
+}
+
 } // namespace

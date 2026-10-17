@@ -372,7 +372,14 @@ SubprocessBackend::run_unobserved(const CommandRequest& command,
             .diagnostic =
                 "this handle predates the socket; reopen it after the server starts"});
   }
-  ProcessRequest request = build_request(command, std::nullopt, timeout, output_limit);
+  auto prepared = prepare_request(command, std::nullopt, timeout, output_limit);
+  if (!prepared.has_value()) {
+    return interpret_failure_unobserved(command, std::move(prepared.error()));
+  }
+  if (prepared->absent_noop) {
+    return std::string{};
+  }
+  ProcessRequest request = std::move(prepared->request);
   const auto allowed_bytes = request.capture_limit;
   auto reply = run_process(request);
   if (!reply.has_value()) {
@@ -544,11 +551,10 @@ expected<void, CommandFailure> SubprocessBackend::async_preflight() const {
           "this handle predates the socket; reopen it after the server starts"});
 }
 
-ProcessRequest
-SubprocessBackend::build_request(const CommandRequest& command,
-                                 std::optional<std::string_view> session,
-                                 std::optional<std::chrono::milliseconds> timeout,
-                                 std::optional<std::size_t> output_limit) const {
+ProcessRequest SubprocessBackend::build_request(
+    const CommandRequest& command, std::optional<std::string_view> session,
+    std::optional<std::chrono::milliseconds> timeout,
+    std::optional<std::size_t> output_limit, const EndpointVersion* checked) const {
   ProcessRequest request;
   const auto& active_connection = connection();
   request.executable = policy().tmux_binary;
@@ -582,6 +588,19 @@ SubprocessBackend::build_request(const CommandRequest& command,
   }
   for (const std::string& argument : active_connection) {
     request.arguments.push_back(Argument{argument});
+  }
+  if (checked != nullptr) {
+    // A daemon that has gone is never restarted by this client binary, which
+    // may be older than the one that was checked. Only a handle that exists
+    // to start a server, and found none, lets the command start one.
+    if (checked->live || !startable_) {
+      request.arguments.push_back(Argument{"-N"});
+    }
+    if (checked->live) {
+      for (Argument& argument : version_fence(checked->token, fence_marker_)) {
+        request.arguments.push_back(std::move(argument));
+      }
+    }
   }
   for (const CommandArgument& argument : command.arguments()) {
     request.arguments.push_back(
@@ -664,7 +683,15 @@ SubprocessBackend::run_scoped(const CommandRequest& command,
             .diagnostic =
                 "this handle predates the socket; reopen it after the server starts"});
   }
-  ProcessRequest request = build_request(command, session, timeout, output_limit);
+  auto prepared = prepare_request(command, session, timeout, output_limit);
+  if (!prepared.has_value()) {
+    return report_failure(command, std::move(prepared.error()));
+  }
+  if (prepared->absent_noop) {
+    observe(command, nullptr);
+    return std::string{};
+  }
+  ProcessRequest request = std::move(prepared->request);
   // From here down the command is actually dispatched, so this is what its
   // duration means. Everything refused above it never ran, and reports none.
   const Dispatching dispatching;
@@ -771,6 +798,32 @@ SubprocessBackend::interpret_reply(const CommandRequest& command,
   std::string out = text(reply_ptr->stdout_bytes);
   // A signalled tmux is a failure with no exit code of its own.
   const auto* exited = std::get_if<Exited>(&reply_ptr->termination);
+  if (exited != nullptr && exited->code != 0 &&
+      fence_fired(text(reply_ptr->stderr_bytes), fence_marker_)) {
+    // The daemon at this endpoint is no longer the one checked, and tmux
+    // stopped the command list before the command ran.
+    {
+      const std::lock_guard cached{version_cache_mutex_};
+      version_cache_.reset();
+    }
+    return failed(replaced_daemon());
+  }
+  if (exited != nullptr && exited->code != 0 &&
+      endpoint_is_absent(text(reply_ptr->stderr_bytes))) {
+    // The daemon checked earlier is gone, so the next command must ask again
+    // rather than trust it. Stopping a server that is already stopped is not
+    // a failure.
+    {
+      const std::lock_guard cached{version_cache_mutex_};
+      version_cache_.reset();
+    }
+    if (command.size() == 1U && command.arguments().front().value() == "kill-server") {
+      if (notify_observer) {
+        observe(command, nullptr);
+      }
+      return std::string{};
+    }
+  }
   if (exited == nullptr || exited->code != 0) {
     // tmux reports why it refused on stderr, so a diagnostic built from
     // stdout alone is empty for every ordinary failure.
@@ -811,7 +864,113 @@ SubprocessBackend::interpret_reply(const CommandRequest& command,
   return out;
 }
 
+expected<EndpointVersion, CommandFailure> SubprocessBackend::check_version(
+    std::optional<std::chrono::milliseconds> timeout) const {
+  {
+    const std::lock_guard cached{version_cache_mutex_};
+    if (version_cache_.has_value()) {
+      return *version_cache_;
+    }
+  }
+  auto endpoint = query_endpoint(policy().tmux_binary, connection(),
+                                 timeout.value_or(std::chrono::seconds{30}));
+  if (!endpoint.has_value()) {
+    return unexpected(std::move(endpoint.error()));
+  }
+  if (auto supported = require_supported(*endpoint); !supported.has_value()) {
+    return unexpected(std::move(supported.error()));
+  }
+  if (endpoint->live) {
+    const std::lock_guard cached{version_cache_mutex_};
+    version_cache_ = *endpoint;
+  }
+  return *std::move(endpoint);
+}
+
+expected<std::optional<EndpointVersion>, CommandFailure>
+SubprocessBackend::check_command(
+    const CommandRequest& command,
+    std::optional<std::chrono::milliseconds> timeout) const {
+#if defined(_WIN32)
+  static_cast<void>(command);
+  static_cast<void>(timeout);
+  return std::optional<EndpointVersion>{};
+#else
+  if (command.empty()) {
+    return unexpected(version_check_failure(
+        FailureKind::validation, "a tmux command needs at least a command name"));
+  }
+  const std::string& name = command.arguments().front().value();
+  // The executable's own diagnostics answer without a daemon and authorize
+  // nothing.
+  if (command.size() == 1U && (name == "-V" || name == "-h")) {
+    return std::optional<EndpointVersion>{};
+  }
+  if (name.starts_with('-')) {
+    return unexpected(version_check_failure(
+        FailureKind::validation,
+        "'" + name + "' is a tmux client flag; commands are dispatched by name"));
+  }
+  auto checked = check_version(timeout);
+  if (!checked.has_value()) {
+    return unexpected(std::move(checked.error()));
+  }
+  return std::optional<EndpointVersion>{*std::move(checked)};
+#endif
+}
+
+SubprocessBackend::PreparedRequest SubprocessBackend::assemble_request(
+    const CommandRequest& command, std::optional<std::string_view> session,
+    std::optional<std::chrono::milliseconds> timeout,
+    std::optional<std::size_t> output_limit,
+    const std::optional<EndpointVersion>& checked, bool allow_noop) const {
+  if (!checked.has_value()) {
+    return PreparedRequest{build_request(command, session, timeout, output_limit),
+                           false};
+  }
+  if (allow_noop && !checked->live && command.size() == 1U &&
+      command.arguments().front().value() == "kill-server") {
+    return PreparedRequest{{}, true};
+  }
+  return PreparedRequest{
+      build_request(command, session, timeout, output_limit, &*checked), false};
+}
+
+expected<SubprocessBackend::PreparedRequest, CommandFailure>
+SubprocessBackend::prepare_request(const CommandRequest& command,
+                                   std::optional<std::string_view> session,
+                                   std::optional<std::chrono::milliseconds> timeout,
+                                   std::optional<std::size_t> output_limit,
+                                   bool allow_noop) const {
+  auto checked = check_command(command, timeout);
+  if (!checked.has_value()) {
+    return unexpected(std::move(checked.error()));
+  }
+  return assemble_request(command, session, timeout, output_limit, *checked,
+                          allow_noop);
+}
+
 expected<Version, CommandFailure> SubprocessBackend::version() const {
+#if !defined(_WIN32)
+  // A daemon checked earlier is remembered until a fence finds it replaced or
+  // a command finds it gone, so the version of one daemon is read once.
+  {
+    const std::lock_guard cached{version_cache_mutex_};
+    if (version_cache_.has_value()) {
+      return version_cache_->version;
+    }
+  }
+  auto endpoint = query_endpoint(policy().tmux_binary, connection(),
+                                 policy().timeout.value_or(std::chrono::seconds{30}));
+  if (!endpoint.has_value()) {
+    return unexpected(std::move(endpoint.error()));
+  }
+  if (endpoint->live && require_supported(*endpoint).has_value()) {
+    const std::lock_guard cached{version_cache_mutex_};
+    version_cache_ = *endpoint;
+  }
+  return endpoint->version;
+#else
   {
     const std::lock_guard cached{version_mutex_};
     if (version_.has_value()) {
@@ -832,6 +991,7 @@ expected<Version, CommandFailure> SubprocessBackend::version() const {
   const std::lock_guard cached{version_mutex_};
   version_ = *version;
   return *version;
+#endif
 }
 
 } // namespace detail
