@@ -929,6 +929,24 @@ Everything else holds across the whole range. A `split` carrying a percentage
 is spelled `-l 25%` rather than the `-p 25` that tmux 3.4 removed, so it works
 on every supported release — Python libtmux still emits `-p` and does not.
 
+### Optional features by release
+
+The floor above is for ordinary commands. A feature that needs a newer daemon
+says so itself, is refused before it has an effect, and does not raise the floor
+for anything else. The daemon decides, not the client executable.
+
+| Feature | Daemon | Below it | State |
+|---|---|---|---|
+| Control mode: `Server::control`, `control_with_options`, `over_control`, `Connection::connect` | 3.7 | Refused with a message naming 3.7, before any client attaches. Short-lived control attaches crash 3.2a and 3.6b servers | Refusal qualified on the lanes below 3.7; attach qualified on 3.7 and newer for idle attachment only |
+| `wait_for_text` streaming | 3.7 | Polls the pane; control mode is never tried | Operative with synchronization |
+| `Buffer::remove` and the MCP `paste_text` staging buffer | 3.4 | Refused with `FailureKind::unsupported` before any buffer is touched: `delete-buffer -b` acts on an unrelated buffer when the name is missing. `Pane::paste` with `consume` stays available | Qualified |
+| Names containing `:` or `.` for sessions and windows | not exactly 3.7 | tmux 3.7 refuses them; refused first with `FailureKind::validation` | Qualified |
+| `Pane::break_out` | any | Exactly 3.7 gets the existing repair; unchanged here | Unverified by this change |
+
+`Server::run_shell` does not capture the job's output, so the 3.3 to 3.4
+`run-shell` stdout defect does not reach it. Percentage splits are always
+`-l N%`, and layout strings are validated before dispatch.
+
 ### Windows through psmux
 
 On Windows, install psmux with its `tmux.exe` alias and use
