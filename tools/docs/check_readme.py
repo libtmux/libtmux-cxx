@@ -10,6 +10,11 @@ as a `#region` in that example, and each region must be quoted somewhere. A
 sample that drifts from the code, or code nobody shows, fails the build rather
 than greeting the next reader. The top-level README and the core package README
 under `include/libtmux/` both quote it.
+
+A whole program is quoted from its own file instead. A block that follows
+`<!-- cpp-file: PATH -->` must equal that file, and one that follows
+`<!-- text-file: PATH -->` must equal the file holding what the program prints,
+which its test compares against the real output.
 """
 
 from __future__ import annotations
@@ -25,6 +30,11 @@ REGION = re.compile(
     re.MULTILINE | re.DOTALL,
 )
 FENCE = re.compile(r"^```cpp\n(?P<body>.*?)^```\n", re.MULTILINE | re.DOTALL)
+FILE_BLOCK = re.compile(
+    r"<!-- (?P<kind>cpp|text)-file: (?P<path>\S+) -->\n\n```(?P=kind)\n"
+    r"(?P<body>.*?)^```\n",
+    re.MULTILINE | re.DOTALL,
+)
 GIVEN = re.compile(r"^// Given: .+$")
 INCLUDE = re.compile(r"^#include [<\"].+[>\"]$")
 
@@ -68,9 +78,41 @@ def regions(source: pathlib.Path) -> dict[str, str]:
     return found
 
 
+def _file_spans(text: str) -> list[tuple[int, int]]:
+    """Return where each block quoted from a whole file starts and ends."""
+    return [(m.start(), m.end()) for m in FILE_BLOCK.finditer(text)]
+
+
+def _inside(spans: list[tuple[int, int]], position: int) -> bool:
+    """Report whether a position falls inside one of the spans."""
+    return any(start <= position < end for start, end in spans)
+
+
 def quoted(readme: pathlib.Path) -> list[str]:
-    """C++ blocks the README shows, in the order it shows them."""
-    return [match.group("body").strip() for match in FENCE.finditer(readme.read_text())]
+    """C++ blocks quoted from regions, in the order the README shows them."""
+    text = readme.read_text()
+    spans = _file_spans(text)
+    return [
+        match.group("body").strip()
+        for match in FENCE.finditer(text)
+        if not _inside(spans, match.start())
+    ]
+
+
+def file_problems(readme: pathlib.Path, root: pathlib.Path) -> tuple[list[str], int]:
+    """Compare each block quoted from a whole file to that file."""
+    problems: list[str] = []
+    found = list(FILE_BLOCK.finditer(readme.read_text()))
+    for match in found:
+        source = root / match.group("path")
+        if not source.is_file():
+            problems.append(f"{readme}: {match.group('path')} does not exist")
+        elif match.group("body").strip() != source.read_text().strip():
+            problems.append(
+                f"{readme}: the block after {match.group('kind')}-file: "
+                f"{match.group('path')} is not that file; re-run with --fix"
+            )
+    return problems, len(found)
 
 
 def check(
@@ -78,6 +120,7 @@ def check(
     example: pathlib.Path,
     available: dict[str, str],
     includes: frozenset[str],
+    root: pathlib.Path = pathlib.Path(),
 ) -> tuple[list[str], int]:
     """Compare every README's C++ blocks to the regions, and return what disagrees.
 
@@ -90,6 +133,9 @@ def check(
     problems: list[str] = []
     blocks = 0
     for readme in readmes:
+        wholes, count = file_problems(readme, root)
+        problems.extend(wholes)
+        blocks += count
         for index, block in enumerate(quoted(readme), start=1):
             blocks += 1
             directives = include_lines(block)
@@ -171,7 +217,12 @@ def main() -> int:
     return 0
 
 
-def _fix(readme: pathlib.Path, example: pathlib.Path, available: dict[str, str]) -> int:
+def _fix(
+    readme: pathlib.Path,
+    example: pathlib.Path,
+    available: dict[str, str],
+    root: pathlib.Path = pathlib.Path(),
+) -> int:
     """Rewrite each C++ block from the region it already resembles.
 
     Matching is by first line, which is what makes this safe to run: a block
@@ -183,8 +234,26 @@ def _fix(readme: pathlib.Path, example: pathlib.Path, available: dict[str, str])
     unmatched: list[int] = []
     counter = iter(range(1, 10_000))
 
+    def whole(match: re.Match[str]) -> str:
+        nonlocal replaced
+        source = root / match.group("path")
+        if not source.is_file():
+            return match.group(0)
+        body = source.read_text().strip()
+        if body != match.group("body").strip():
+            replaced += 1
+        kind = match.group("kind")
+        return (
+            f"<!-- {kind}-file: {match.group('path')} -->\n\n```{kind}\n{body}\n```\n"
+        )
+
+    text = FILE_BLOCK.sub(whole, readme.read_text())
+    spans = _file_spans(text)
+
     def substitute(match: re.Match[str]) -> str:
         nonlocal replaced
+        if _inside(spans, match.start()):
+            return match.group(0)
         index = next(counter)
         block = match.group("body").strip()
         if include_lines(block) is not None:
@@ -198,7 +267,7 @@ def _fix(readme: pathlib.Path, example: pathlib.Path, available: dict[str, str])
             replaced += 1
         return f"```cpp\n{body}\n```\n"
 
-    updated = FENCE.sub(substitute, readme.read_text())
+    updated = FENCE.sub(substitute, text)
     readme.write_text(updated)
 
     for index in unmatched:

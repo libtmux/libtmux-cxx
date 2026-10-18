@@ -924,7 +924,8 @@ jobs:
         run: |
           python3 tools/docs/check_readme.py \
             --readme README.md \
-            --readme include/libtmux/README.md
+            --readme include/libtmux/README.md \
+            --readme docs/runtime.md
 
       # Links resolve in the checkout, an API is linked where a README first
       # names it, and the cmake commands name options and presets that exist.

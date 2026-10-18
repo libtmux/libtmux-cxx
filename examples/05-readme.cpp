@@ -301,6 +301,91 @@ int main() {
                            columns.value_or(-1));
   // #endregion compose
 
+  // A pane running `sh`, whose prompt does not vary with the login shell.
+  const auto shell_window =
+      session.new_window({.name = "shell", .shell_command = "exec sh"});
+  if (!shell_window.has_value()) {
+    std::cerr << std::format("{}\n", shell_window.error());
+    return 1;
+  }
+  const auto shell_panes = shell_window->panes();
+  if (!shell_panes.has_value() || shell_panes->empty()) {
+    std::cerr << "the shell window has no pane\n";
+    return 1;
+  }
+  const libtmux::Pane& shell = shell_panes->at(0);
+
+  // #region wait
+  // Given: const libtmux::Pane& shell
+  // Type a command, then wait for what it prints. The terminal echoes the typed
+  // line too, so wait for text the answer has and the typed line lacks.
+  (void)shell.send_line("echo \"6 x 7 = $((6 * 7))\"");
+
+  const auto answered =
+      shell.wait_for_text("6 x 7 = 42", {.timeout = std::chrono::seconds{5}});
+  if (!answered.has_value() || !answered->matched) {
+    std::cerr << "the pane never printed the answer\n";
+    return 1;
+  }
+  std::cout << "the pane answered 6 x 7 = 42\n";
+  // #endregion wait
+
+  // #region watch
+  // Given: const libtmux::Server& server
+  // Hold one control connection open, then let tmux say what changed.
+  auto connected = server.control("example");
+  if (!connected.has_value()) {
+    std::cerr << std::format("{}\n", connected.error().message);
+    return 1;
+  }
+  auto connection = *std::move(connected);
+
+  (void)server.run({"new-window", "-d", "-n", "watched"});
+
+  std::string added;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{10};
+  for (const auto& event : connection.events(deadline)) {
+    if (event.kind == libtmux::NotificationKind::window_add) {
+      added = std::string{event.window};
+      break;
+    }
+  }
+  if (added.empty()) {
+    std::cerr << "tmux never reported the new window\n";
+    return 1;
+  }
+  std::cout << std::format("window added: {}\n", added);
+  // #endregion watch
+
+  // #region submit
+  // Given: const libtmux::Server& server
+  // Submit one command to a bounded runtime, then wait for its result.
+  auto started =
+      libtmux::CommandRuntime::start(libtmux::CommandRuntimeConfig{.capacity = 1U});
+  if (!started.has_value()) {
+    std::cerr << std::format("{}\n", started.error());
+    return 1;
+  }
+  auto pool = *std::move(started);
+
+  auto job = server.try_submit(pool, {"display-message", "-p", "submitted"});
+  if (!job.has_value()) { // Refused before admission.
+    std::cerr << std::format("{}\n", job.error());
+    return 1;
+  }
+  const auto reply = std::move(*job).wait();
+  if (!reply.has_value()) { // Failed after admission.
+    std::cerr << std::format("{}\n", reply.error());
+    return 1;
+  }
+  std::cout << std::format("answered: {}", *reply);
+
+  if (const auto shutdown = pool.close(); shutdown.failure.has_value()) {
+    std::cerr << std::format("{}\n", *shutdown.failure);
+    return 1;
+  }
+  // #endregion submit
+
   // #region async
   // Given: const libtmux::Server& server
   std::size_t observed = 0U;

@@ -165,5 +165,55 @@ class CheckTest(unittest.TestCase):
         self.assertIn("libtmuxx.hpp", broken_problems[0])
 
 
+class FileBlockTest(unittest.TestCase):
+    """A block quoted from a whole file must equal that file."""
+
+    def check(self, readme_text: str, files: dict[str, str]) -> list[str]:
+        """Return the problems for a README beside the given files."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            for name, content in files.items():
+                (root / name).write_text(content, encoding="utf-8")
+            readme = root / "README.md"
+            readme.write_text(readme_text, encoding="utf-8")
+            problems, _ = check_readme.check(
+                [readme], pathlib.Path("example.cpp"), {}, frozenset(), root
+            )
+        return [p for p in problems if "is compiled" not in p]
+
+    program = "int main() { return 0; }\n"
+
+    def test_accepts_a_block_equal_to_its_file(self) -> None:
+        """A whole program quoted as it is on disk is clean."""
+        text = f"<!-- cpp-file: main.cpp -->\n\n```cpp\n{self.program}```\n"
+        self.assertEqual(self.check(text, {"main.cpp": self.program}), [])
+
+    def test_refuses_a_block_that_differs_from_its_file(self) -> None:
+        """A drifted program is named with the file it should equal."""
+        text = "<!-- cpp-file: main.cpp -->\n\n```cpp\nint main() {}\n```\n"
+        found = self.check(text, {"main.cpp": self.program})
+        self.assertEqual(len(found), 1)
+        self.assertIn("is not that file", found[0])
+
+    def test_refuses_a_file_that_does_not_exist(self) -> None:
+        """A marker pointing nowhere fails rather than passing silently."""
+        text = f"<!-- cpp-file: gone.cpp -->\n\n```cpp\n{self.program}```\n"
+        found = self.check(text, {})
+        self.assertEqual(len(found), 1)
+        self.assertIn("does not exist", found[0])
+
+    def test_checks_the_output_block_against_its_file(self) -> None:
+        """What the program prints is held to the file its test compares."""
+        text = "<!-- text-file: out.txt -->\n\n```text\nhello\n```\n"
+        self.assertEqual(self.check(text, {"out.txt": "hello\n"}), [])
+        self.assertEqual(len(self.check(text, {"out.txt": "other\n"})), 1)
+
+    def test_a_file_block_is_not_matched_to_a_region(self) -> None:
+        """The whole program has no region, and must not be reported as drift."""
+        text = f"<!-- cpp-file: main.cpp -->\n\n```cpp\n{self.program}```\n"
+        found = self.check(text, {"main.cpp": self.program})
+        self.assertFalse(any("is not any region" in p for p in found))
+
+
 if __name__ == "__main__":
     unittest.main()

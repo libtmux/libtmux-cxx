@@ -48,6 +48,27 @@ foreach(example 01-tour 02-workspace 03-filter 04-errors 05-readme 06-streaming)
     example.${example} PROPERTIES LABELS "example;real-tmux" TIMEOUT 60)
 endforeach()
 
+# The quickstart is quoted whole in the README with its output beside it, so
+# its test compares what it prints to that file. A test that cannot fail proves
+# nothing, so the same comparison is run against a wrong file and must refuse.
+add_executable(libtmux_example_08_quickstart 08-quickstart.cpp)
+target_link_libraries(libtmux_example_08_quickstart PRIVATE libtmux_example_support)
+add_test(
+  NAME example.08-quickstart
+  COMMAND "${CMAKE_COMMAND}" "-DPROGRAM=$<TARGET_FILE:libtmux_example_08_quickstart>"
+          "-DEXPECTED=${CMAKE_CURRENT_SOURCE_DIR}/08-quickstart.out"
+          -P "${CMAKE_CURRENT_SOURCE_DIR}/compare_output.cmake")
+add_test(
+  NAME example.08-quickstart.refuses
+  COMMAND "${CMAKE_COMMAND}" "-DPROGRAM=$<TARGET_FILE:libtmux_example_08_quickstart>"
+          "-DEXPECTED=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/quickstart_wrong.out"
+          -P "${CMAKE_CURRENT_SOURCE_DIR}/compare_output.cmake")
+set_tests_properties(
+  example.08-quickstart example.08-quickstart.refuses
+  PROPERTIES LABELS "example;real-tmux" TIMEOUT 60)
+set_tests_properties(example.08-quickstart.refuses
+                     PROPERTIES PASS_REGULAR_EXPRESSION "holds:")
+
 add_subdirectory(api)
 
 # A separate project; see `tests/README.md`.
