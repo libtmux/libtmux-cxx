@@ -144,6 +144,33 @@ discovery field that release provides. The probe refuses dirty port or versions
 data. Its optional `--keep` path must be new and outside both the project and
 vcpkg checkouts.
 
+## The `mcp` feature
+
+The MCP server ships from the same source, so it is a feature of `libtmux`
+rather than a second package. Ask for it with
+`{"name": "libtmux", "features": ["mcp"]}` in `vcpkg.json`.
+
+It installs as a program at
+`<installed-root>/<triplet>/tools/libtmux/libtmux-mcp-server[.exe]`; manifest
+mode normally uses `vcpkg_installed` as the root, classic mode uses
+`<vcpkg-root>/installed`, and `--x-install-root` overrides both. Nothing links
+the executable. The current checkout uses a dedicated `libtmux-mcp` socket
+without a selector. Pass `--socket inherit` to retain the earlier inherited
+`TMUX` behavior, or select `name:NAME` or `path:/ABSOLUTE/PATH` with `--socket`;
+`--socket-name`, `--socket-path`, and one positional POSIX path remain accepted.
+Use `--tmux-config /ABSOLUTE/PATH` for an explicit tmux configuration. Alpha.2's
+legacy POSIX server instead takes one socket path as its sole argument, and
+omitting it falls back to inherited or default tmux.
+
+## Packaged Windows targets
+
+The immutable `0.1.0-alpha.2` registry entry predates the Windows backend and
+remains Windows-disabled. A later tagged release can enable the standard x64
+desktop target only after passing the pinned native psmux and package gates,
+advancing its `version-semver` and archive hash, and resetting its packaging
+revision. MinGW, UWP, Xbox, and non-x64 Windows triplets remain excluded from
+the vcpkg package; the other packaged targets are Linux and macOS.
+
 ## Related
 
 - [Installing from this registry](../README.md#vcpkg) — the consumer's half

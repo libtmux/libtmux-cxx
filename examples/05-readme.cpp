@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <format>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -135,8 +136,8 @@ int main() {
 
   // #region query
   // Given: const libtmux::Server& server
-  // A filter is a value built from typed fields, not a string tmux parses.
-  // They compose with `&&`, `||` and `!`, and the result is a standard range.
+  // A filter is built from typed fields. Filters compose with `&&`, `||` and
+  // `!`, and applying one gives a standard range.
   {
     const auto panes = server.panes();
     if (!panes.has_value()) {
@@ -187,8 +188,7 @@ int main() {
 
   // #region cardinality
   // Given: const libtmux::Server& server
-  // "Exactly one, or say why not" is a question the library answers directly,
-  // rather than one every caller reimplements around `.size() == 1`.
+  // `exactly_one` replaces a `.size() == 1` check, and says why it failed.
   const auto panes = server.panes();
   if (!panes.has_value()) {
     std::cerr << std::format("{}\n", panes.error());
@@ -244,8 +244,8 @@ int main() {
 
   // #region snapshot
   // Given: const libtmux::Session& session
-  // An entity is one row of the listing that produced it: a moment, not a
-  // live handle. Ask again for the present.
+  // An entity holds the row its listing returned. Ask again to read the
+  // present.
   const auto editor = session.new_window({.name = "editor"});
   if (!editor.has_value()) {
     std::cerr << std::format("{}\n", editor.error());
@@ -289,9 +289,9 @@ int main() {
 
   // #region compose
   // Given: const libtmux::Server& server; const libtmux::Session& session
-  // One failure type covers the whole surface, so calls compose rather than
-  // nest: each step runs only when the last one answered, and the first
-  // failure is what comes out.
+  // One failure type covers the whole surface, so calls chain without nesting:
+  // each step runs only when the last one answered, and the first failure is
+  // what comes out.
   const auto columns =
       server.session(session.name())
           .and_then([](const libtmux::Session& found) { return found.active_pane(); })
@@ -299,6 +299,91 @@ int main() {
   std::cout << std::format("the active pane is {} columns wide\n",
                            columns.value_or(-1));
   // #endregion compose
+
+  // A pane running `sh`, whose prompt does not vary with the login shell.
+  const auto shell_window =
+      session.new_window({.name = "shell", .shell_command = "exec sh"});
+  if (!shell_window.has_value()) {
+    std::cerr << std::format("{}\n", shell_window.error());
+    return 1;
+  }
+  const auto shell_panes = shell_window->panes();
+  if (!shell_panes.has_value() || shell_panes->empty()) {
+    std::cerr << "the shell window has no pane\n";
+    return 1;
+  }
+  const libtmux::Pane& shell = shell_panes->at(0);
+
+  // #region wait
+  // Given: const libtmux::Pane& shell
+  // Type a command, then wait for what it prints. The terminal echoes the typed
+  // line too, so wait for text the answer has and the typed line lacks.
+  (void)shell.send_line("echo \"6 x 7 = $((6 * 7))\"");
+
+  const auto answered =
+      shell.wait_for_text("6 x 7 = 42", {.timeout = std::chrono::seconds{5}});
+  if (!answered.has_value() || !answered->matched) {
+    std::cerr << "the pane never printed the answer\n";
+    return 1;
+  }
+  std::cout << "the pane answered 6 x 7 = 42\n";
+  // #endregion wait
+
+  // #region watch
+  // Given: const libtmux::Server& server
+  // Hold one control connection open, then let tmux say what changed.
+  auto connected = server.control("example");
+  if (!connected.has_value()) {
+    std::cerr << std::format("{}\n", connected.error().message);
+    return 1;
+  }
+  auto connection = *std::move(connected);
+
+  (void)server.run({"new-window", "-d", "-n", "watched"});
+
+  std::string added;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{10};
+  for (const auto& event : connection.events(deadline)) {
+    if (event.kind == libtmux::NotificationKind::window_add) {
+      added = std::string{event.window};
+      break;
+    }
+  }
+  if (added.empty()) {
+    std::cerr << "tmux never reported the new window\n";
+    return 1;
+  }
+  std::cout << std::format("window added: {}\n", added);
+  // #endregion watch
+
+  // #region submit
+  // Given: const libtmux::Server& server
+  // Submit one command to a bounded runtime, then wait for its result.
+  auto started =
+      libtmux::CommandRuntime::start(libtmux::CommandRuntimeConfig{.capacity = 1U});
+  if (!started.has_value()) {
+    std::cerr << std::format("{}\n", started.error());
+    return 1;
+  }
+  auto pool = *std::move(started);
+
+  auto job = server.try_submit(pool, {"display-message", "-p", "submitted"});
+  if (!job.has_value()) { // Refused before admission.
+    std::cerr << std::format("{}\n", job.error());
+    return 1;
+  }
+  const auto reply = std::move(*job).wait();
+  if (!reply.has_value()) { // Failed after admission.
+    std::cerr << std::format("{}\n", reply.error());
+    return 1;
+  }
+  std::cout << std::format("answered: {}", *reply);
+
+  if (const auto shutdown = pool.close(); shutdown.failure.has_value()) {
+    std::cerr << std::format("{}\n", *shutdown.failure);
+    return 1;
+  }
+  // #endregion submit
 
   // #region async
   // Given: const libtmux::Server& server
@@ -414,6 +499,37 @@ int main() {
       libtmux::Server::at_socket_path(fixture->socket_path().string());
   std::cout << std::format("sessions on it: {}\n", under_test->sessions()->size());
   // #endregion fixture
+
+  // #region capabilities
+  // Given: const libtmux::Server& server
+  // Ask what this server promises before choosing a workflow. The answer comes
+  // from the handle: it starts no process and cannot fail.
+  const libtmux::ServerCapabilities capabilities = server.capabilities();
+  const bool pane_io = capabilities.supports(libtmux::ServerFeature::pane_io);
+  std::cout << std::format("{} over {}: pane input and output supported: {}\n",
+                           libtmux::to_string(capabilities.implementation),
+                           libtmux::to_string(capabilities.backend), pane_io);
+  // #endregion capabilities
+
+  // #region teardown
+  // A private server, and the messages its teardown recorded.
+  {
+    const auto report = std::make_shared<libtmux::test::TeardownReport>();
+    {
+      auto scoped = libtmux::test::ScopedTmuxServer::start({
+          .socket_namespace = libtmux::test::SocketNamespace::consumer("report"),
+          .teardown_report = report,
+      });
+      if (!scoped.has_value()) {
+        std::cerr << std::format("{}\n", scoped.error());
+        return 1;
+      }
+    }
+    for (const std::string& message : report->messages) {
+      std::cout << std::format("teardown: {}\n", message);
+    }
+  }
+  // #endregion teardown
 
   // The stand-in editor's directory, which the scratch server does not own.
   std::error_code cleanup;

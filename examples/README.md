@@ -58,6 +58,7 @@ and error handling and can be built against an installed package.
 | [`05-readme.cpp`](05-readme.cpp) | The README, compiled | Every C++ sample in the top-level README lives here, so none of them can stop working. |
 | [`06-streaming.cpp`](06-streaming.cpp) | Watching instead of asking | A control connection held open, tmux's events read as they happen, and pane output as it is printed. Then the same stream from a program that owns its event loop, through the descriptor that goes readable when a take would return something. |
 | [`07-windows-psmux.cpp`](07-windows-psmux.cpp) | The Windows preview | Connect to an existing session and make exact, read-only entity queries. Its [native runner](windows/README.md) also wraps the MCP server in an isolated fixture. |
+| [`08-quickstart.cpp`](08-quickstart.cpp) | The README's quick start | A whole program on a private server: start a session, type a command, wait for its answer. Its output is compared with [`08-quickstart.out`](08-quickstart.out). |
 
 If you read one, read [`04-errors.cpp`](04-errors.cpp) second. The error model
 is the part of this library least like the Python one, and it is easier to see

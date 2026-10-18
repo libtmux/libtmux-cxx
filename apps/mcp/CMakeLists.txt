@@ -199,6 +199,31 @@ if(LIBTMUX_BUILD_MCP_SERVER)
       consumer.mcp.readme PROPERTIES LABELS "consumer;contract" TIMEOUT 30)
   endif()
 
+  # The commands the READMEs tell a reader to run are started for real. A
+  # checker nobody has watched fail is not a gate, so it is run again over a
+  # README holding a flag the server lacks, and passes only on that refusal.
+  if(LIBTMUX_BUILD_TESTS AND NOT WIN32 AND Python3_Interpreter_FOUND)
+    set(_readme_commands
+        "${PROJECT_SOURCE_DIR}/tools/docs/check_readme_commands.py")
+    add_test(
+      NAME consumer.mcp.readme_commands
+      COMMAND Python3::Interpreter "${_readme_commands}"
+              --root "${PROJECT_SOURCE_DIR}"
+              --mcp "$<TARGET_FILE:libtmux_mcp_server>")
+    add_test(
+      NAME consumer.mcp.readme_commands.refuses
+      COMMAND Python3::Interpreter "${_readme_commands}"
+              --root "${PROJECT_SOURCE_DIR}"
+              --mcp "$<TARGET_FILE:libtmux_mcp_server>"
+              "${PROJECT_SOURCE_DIR}/tools/docs/fixtures/readme_commands_refused.md")
+    set_tests_properties(
+      consumer.mcp.readme_commands PROPERTIES LABELS "consumer;contract" TIMEOUT 120)
+    set_tests_properties(
+      consumer.mcp.readme_commands.refuses
+      PROPERTIES LABELS "consumer;contract" TIMEOUT 60
+                 PASS_REGULAR_EXPRESSION "unknown or duplicate argument: --no-such-flag")
+  endif()
+
   if(LIBTMUX_BUILD_TESTS AND NOT WIN32)
     add_executable(mcp_schema_test tests/schema_test.cpp src/schema.cpp)
     target_include_directories(

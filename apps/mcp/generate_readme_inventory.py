@@ -12,6 +12,7 @@ from pathlib import Path
 BEGIN = "<!-- BEGIN GENERATED TOOL INVENTORY -->"
 END = "<!-- END GENERATED TOOL INVENTORY -->"
 TOOLSETS = ("inspect", "manage", "execute", "teardown")
+TOOL_PAGE = "https://libtmux.org/en/cxx/latest/mcp/tools/{name}/"
 
 
 def capability_document(server: Path) -> dict[str, object]:
@@ -65,7 +66,12 @@ def capability_document(server: Path) -> dict[str, object]:
 
 
 def inventory(document: dict[str, object]) -> str:
-    """Render tool names in registry order, grouped by their declared toolset."""
+    """Render tool names in registry order, grouped by their declared toolset.
+
+    Each name links to its page on libtmux.org through a `tool-<name>`
+    reference, defined after the table so a row stays readable in the source.
+    The rest of the README links the same names through those definitions.
+    """
     grouped = {toolset: [] for toolset in TOOLSETS}
     for tool in document["tools"]:
         grouped[tool["toolset"]].append(tool["name"])
@@ -76,8 +82,16 @@ def inventory(document: dict[str, object]) -> str:
         "|---|---|",
     ]
     rows.extend(
-        f"| `{toolset}` | " + ", ".join(f"`{name}`" for name in grouped[toolset]) + " |"
+        f"| `{toolset}` | "
+        + ", ".join(f"[`{name}`][tool-{name}]" for name in grouped[toolset])
+        + " |"
         for toolset in TOOLSETS
+    )
+    rows.append("")
+    rows.extend(
+        f"[tool-{name}]: {TOOL_PAGE.format(name=name)}"
+        for toolset in TOOLSETS
+        for name in grouped[toolset]
     )
     rows.append(END)
     return "\n".join(rows)

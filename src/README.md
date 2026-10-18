@@ -18,7 +18,7 @@ interface, and the rest of the library is written against that.
 |---|---|
 | [`backend.hpp`](backend.hpp) | The seam itself — the only way anything here reaches tmux |
 | [`backend.cpp`](backend.cpp) | The default backend: one process per command |
-| [`control_backend.hpp`](control_backend.hpp), [`control_backend.cpp`](control_backend.cpp) | The other one: entity operations over a held-open control connection |
+| `ControlExecutor`, in [`server.cpp`](server.cpp) | The other one: commands over held-open control connections, behind `Server::over_control` |
 | [`process.hpp`](process.hpp), [`process.cpp`](process.cpp) | Spawning, timeouts, capture limits. The only file that knows what a pipe is |
 | [`connection.cpp`](connection.cpp) | The control client lifecycle, request writes, and reply ownership |
 | [`notification_stream.cpp`](notification_stream.cpp) | One bounded notification log with independent consumer cursors |
