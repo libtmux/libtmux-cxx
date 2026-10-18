@@ -1,6 +1,9 @@
 # matrix
 
-What each way of reaching tmux costs, printed as one table.
+What each way of reaching tmux costs, printed as one table. Part of the
+[C++ libtmux](../../README.md); see [`apps/`](../README.md) for the others.
+
+## Run it
 
 ```console
 $ cmake -S . -B build/matrix -G Ninja \
@@ -48,24 +51,37 @@ as integer nanoseconds, or `--check` to assert the claims the table makes.
 
 ## Reading it
 
-**The last column checks equivalence.** Every measured row queries the same
-six-pane topology. Only cost should differ. This is what makes the timings
-comparable against the other libtmux ports.
+- **The last column checks equivalence.** Every measured row queries the same
+  six-pane topology, so only cost should differ. That is what makes the timings
+  comparable against the other libtmux ports.
+- **Count invocations, not milliseconds.** Wall clock moves with the machine;
+  the process column does not.
 
-**Count invocations, not milliseconds.** Wall clock moves with the machine. The
-process column does not.
+### [`Server::over_control`][ref-server-over_control]: the connection lanes
 
 The three connection lanes run the same build through
-`Server::over_control`: over one held-open control client, over a pool of four
-as the Go port's `concurrent x4` does, and chained over one. Every command in
-this workload is one tmux answers completely inside its guarded block —
-`split-window` defers only under `-I` or `-W`, and nothing here sends either —
-so none of them launches, and `--check` requires exactly zero. A lane that
-fell back to launching would show its invocations there. The clients are
-opened before the measured build, as the server is started before it.
+[`Server::over_control`][ref-server-over_control]:
 
-The harness writes a POSIX proxy that records one invocation and execs the real
-tmux, then names it twice: to the fixture as `tmux_binary`, so the server it
-starts runs through it, and to the `Server` as `ExecutionPolicy::tmux_binary`,
-so every measured command does too. Naming it to the fixture alone covers only
-the server it starts, and every measured command then bypasses the counter.
+- over one held-open control client, over a pool of four as the Go port's
+  `concurrent x4` does, and chained over one;
+- every command in this workload is one tmux answers completely inside its
+  guarded block (`split-window` defers only under `-I` or `-W`, and nothing here
+  sends either), so none launches and `--check` requires exactly zero;
+- a lane that fell back to launching would show its invocations there, and the
+  clients are opened before the measured build, as the server is started before
+  it.
+
+### The process counter
+
+- The harness writes a POSIX proxy that records one invocation and execs the
+  real tmux.
+- It names the proxy twice: to the fixture as `tmux_binary`, so the server it
+  starts runs through it, and to the [`Server`][ref-server] as
+  [`ExecutionPolicy::tmux_binary`][ref-executionpolicy], so every measured
+  command does too.
+- Naming it to the fixture alone covers only the server it starts, and every
+  measured command then bypasses the counter.
+
+[ref-server]: https://libtmux.org/en/cxx/latest/reference/libtmux-server/
+[ref-server-over_control]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-over_control/
+[ref-executionpolicy]: https://libtmux.org/en/cxx/latest/reference/libtmux-executionpolicy/
