@@ -24,6 +24,9 @@ through one of its own, so a program calling that builder and this command
 line build a workspace the same way and a fix to one is a fix to both. That
 builder is part of this repository, not of the installed library.
 
+Reference: the [command manual][ws-cli], the [guides][ws-guides] and the
+[workspace configuration][ws-configuration].
+
 Build the application with the pinned development toolchain:
 
 ```console
@@ -45,6 +48,27 @@ $ build/cxx-dev/apps/workspace/tmux-workspace --help
 
 ```console
 $ build/cxx-dev/apps/workspace/tmux-workspace --command-tree
+```
+
+## Install
+
+To install the command outside this checkout, build with tests and examples off
+and install into a prefix:
+
+```console
+$ cmake -S . -B build/workspace \
+    -DLIBTMUX_BUILD_WORKSPACE_CLI=ON \
+    -DLIBTMUX_FETCH_DEPS=ON \
+    -DLIBTMUX_BUILD_TESTS=OFF \
+    -DLIBTMUX_BUILD_EXAMPLES=OFF \
+    && cmake --build build/workspace \
+    && cmake --install build/workspace --prefix ~/.local
+```
+
+That installs `~/.local/bin/tmux-workspace`. Check it with:
+
+```console
+$ ~/.local/bin/tmux-workspace --version
 ```
 
 ## A workspace
@@ -74,6 +98,74 @@ $ tmux-workspace load example.yaml \
     -d \
     -L workspace-example \
     --json
+```
+
+## Commands
+
+Each command has a page in the [command manual][ws-cli]. These run against
+`example.yaml` above. [`ls`][ws-ls], [`search`][ws-search] and
+[`edit`][ws-edit] find workspaces by name in a project's `.tmuxp.yaml` or in
+`~/.tmuxp`, so copy the file there first:
+
+```console
+$ mkdir -p ~/.tmuxp && cp example.yaml ~/.tmuxp/example.yaml
+```
+
+List the workspaces `tmux-workspace` can see with [`ls`][ws-ls]:
+
+```console
+$ tmux-workspace ls
+```
+
+Group them by directory:
+
+```console
+$ tmux-workspace ls --tree
+```
+
+Find workspaces that have a window named `editor` with [`search`][ws-search]:
+
+```console
+$ tmux-workspace search window:editor
+```
+
+Load one by its saved name instead of a path:
+
+```console
+$ tmux-workspace load \
+    -d \
+    -L workspace-named \
+    example
+```
+
+Capture a running session back into a workspace file with
+[`freeze`][ws-freeze]:
+
+```console
+$ tmux-workspace freeze example \
+    -L workspace-example \
+    --save-to frozen.yaml
+```
+
+Convert a workspace between YAML and JSON with [`convert`][ws-convert]:
+
+```console
+$ tmux-workspace convert example.yaml \
+    --workspace-format json \
+    --save-to example.json
+```
+
+Open a saved workspace in `$VISUAL` or `$EDITOR` with [`edit`][ws-edit]:
+
+```console
+$ tmux-workspace edit example
+```
+
+Print the runtime, configuration and tmux diagnostics with
+[`debug-info`][ws-debug-info]:
+
+```console
+$ tmux-workspace debug-info
 ```
 
 ## Inspect a workspace through MCP
@@ -476,3 +568,13 @@ $ python3 apps/workspace/tools/verify_process.py \
     --load \
     --output /tmp/cxx-workspace-process.json
 ```
+
+[ws-cli]: https://libtmux.org/en/cxx/latest/workspace/cli/
+[ws-guides]: https://libtmux.org/en/cxx/latest/workspace/guides/
+[ws-configuration]: https://libtmux.org/en/cxx/latest/workspace/configuration/
+[ws-ls]: https://libtmux.org/en/cxx/latest/workspace/cli/ls/
+[ws-search]: https://libtmux.org/en/cxx/latest/workspace/cli/search/
+[ws-freeze]: https://libtmux.org/en/cxx/latest/workspace/cli/freeze/
+[ws-convert]: https://libtmux.org/en/cxx/latest/workspace/cli/convert/
+[ws-edit]: https://libtmux.org/en/cxx/latest/workspace/cli/edit/
+[ws-debug-info]: https://libtmux.org/en/cxx/latest/workspace/cli/debug-info/

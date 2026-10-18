@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <format>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -414,6 +415,37 @@ int main() {
       libtmux::Server::at_socket_path(fixture->socket_path().string());
   std::cout << std::format("sessions on it: {}\n", under_test->sessions()->size());
   // #endregion fixture
+
+  // #region capabilities
+  // Given: const libtmux::Server& server
+  // Ask what this server promises before choosing a workflow. The answer comes
+  // from the handle: it starts no process and cannot fail.
+  const libtmux::ServerCapabilities capabilities = server.capabilities();
+  const bool pane_io = capabilities.supports(libtmux::ServerFeature::pane_io);
+  std::cout << std::format("{} over {}: pane input and output supported: {}\n",
+                           libtmux::to_string(capabilities.implementation),
+                           libtmux::to_string(capabilities.backend), pane_io);
+  // #endregion capabilities
+
+  // #region teardown
+  // A private server, and the messages its teardown recorded.
+  {
+    const auto report = std::make_shared<libtmux::test::TeardownReport>();
+    {
+      auto scoped = libtmux::test::ScopedTmuxServer::start({
+          .socket_namespace = libtmux::test::SocketNamespace::consumer("report"),
+          .teardown_report = report,
+      });
+      if (!scoped.has_value()) {
+        std::cerr << std::format("{}\n", scoped.error());
+        return 1;
+      }
+    }
+    for (const std::string& message : report->messages) {
+      std::cout << std::format("teardown: {}\n", message);
+    }
+  }
+  // #endregion teardown
 
   // The stand-in editor's directory, which the scratch server does not own.
   std::error_code cleanup;

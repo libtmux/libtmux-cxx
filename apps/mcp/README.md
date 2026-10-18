@@ -23,6 +23,13 @@ advertised on POSIX and native Windows. Psmux support remains
 command-dependent on Windows: unsupported operations fail explicitly at
 dispatch rather than disappearing from the declared capability surface.
 
+- Full contract: the [C++ MCP overview][mcp-index], the [tool pages][mcp-tools]
+  and the [topics][mcp-topics].
+- Start here: [build and install](#build-and-install), then
+  [client configuration](#client-configuration).
+- Choose what it serves: [toolsets](#capability-selection) and
+  [socket selection](#socket-selection).
+
 ## Tool catalog
 
 One native registry owns the 45 public tools and their names, titles,
@@ -38,10 +45,56 @@ only schema-keyed `inputLiteralization`, never `inputSinks` or
 <!-- Generated from tmux://capabilities; run this script to update. -->
 | Toolset | Tools |
 |---|---|
-| `inspect` | `list_sessions`, `list_windows`, `list_panes`, `get_server_info`, `get_session_info`, `get_window_info`, `get_pane_info`, `capture_pane`, `capture_since`, `snapshot_pane`, `search_panes`, `find_pane_by_position`, `wait_for_text`, `get_tmux_variables`, `show_option`, `show_environment`, `show_hooks`, `call_read_tools_batch` |
-| `manage` | `rename_session`, `rename_window`, `select_window`, `select_pane`, `select_layout`, `resize_window`, `resize_pane`, `move_window`, `swap_pane`, `set_pane_title`, `wait_for_channel`, `signal_channel`, `set_mouse_enabled`, `set_history_limit` |
-| `execute` | `create_session`, `create_window`, `split_window`, `respawn_pane`, `run_shell_command`, `send_keys`, `send_keys_batch`, `paste_text`, `set_synchronize_panes` |
-| `teardown` | `clear_pane_scrollback`, `kill_pane`, `kill_window`, `kill_session` |
+| `inspect` | [`list_sessions`][tool-list_sessions], [`list_windows`][tool-list_windows], [`list_panes`][tool-list_panes], [`get_server_info`][tool-get_server_info], [`get_session_info`][tool-get_session_info], [`get_window_info`][tool-get_window_info], [`get_pane_info`][tool-get_pane_info], [`capture_pane`][tool-capture_pane], [`capture_since`][tool-capture_since], [`snapshot_pane`][tool-snapshot_pane], [`search_panes`][tool-search_panes], [`find_pane_by_position`][tool-find_pane_by_position], [`wait_for_text`][tool-wait_for_text], [`get_tmux_variables`][tool-get_tmux_variables], [`show_option`][tool-show_option], [`show_environment`][tool-show_environment], [`show_hooks`][tool-show_hooks], [`call_read_tools_batch`][tool-call_read_tools_batch] |
+| `manage` | [`rename_session`][tool-rename_session], [`rename_window`][tool-rename_window], [`select_window`][tool-select_window], [`select_pane`][tool-select_pane], [`select_layout`][tool-select_layout], [`resize_window`][tool-resize_window], [`resize_pane`][tool-resize_pane], [`move_window`][tool-move_window], [`swap_pane`][tool-swap_pane], [`set_pane_title`][tool-set_pane_title], [`wait_for_channel`][tool-wait_for_channel], [`signal_channel`][tool-signal_channel], [`set_mouse_enabled`][tool-set_mouse_enabled], [`set_history_limit`][tool-set_history_limit] |
+| `execute` | [`create_session`][tool-create_session], [`create_window`][tool-create_window], [`split_window`][tool-split_window], [`respawn_pane`][tool-respawn_pane], [`run_shell_command`][tool-run_shell_command], [`send_keys`][tool-send_keys], [`send_keys_batch`][tool-send_keys_batch], [`paste_text`][tool-paste_text], [`set_synchronize_panes`][tool-set_synchronize_panes] |
+| `teardown` | [`clear_pane_scrollback`][tool-clear_pane_scrollback], [`kill_pane`][tool-kill_pane], [`kill_window`][tool-kill_window], [`kill_session`][tool-kill_session] |
+
+[tool-list_sessions]: https://libtmux.org/en/cxx/latest/mcp/tools/list_sessions/
+[tool-list_windows]: https://libtmux.org/en/cxx/latest/mcp/tools/list_windows/
+[tool-list_panes]: https://libtmux.org/en/cxx/latest/mcp/tools/list_panes/
+[tool-get_server_info]: https://libtmux.org/en/cxx/latest/mcp/tools/get_server_info/
+[tool-get_session_info]: https://libtmux.org/en/cxx/latest/mcp/tools/get_session_info/
+[tool-get_window_info]: https://libtmux.org/en/cxx/latest/mcp/tools/get_window_info/
+[tool-get_pane_info]: https://libtmux.org/en/cxx/latest/mcp/tools/get_pane_info/
+[tool-capture_pane]: https://libtmux.org/en/cxx/latest/mcp/tools/capture_pane/
+[tool-capture_since]: https://libtmux.org/en/cxx/latest/mcp/tools/capture_since/
+[tool-snapshot_pane]: https://libtmux.org/en/cxx/latest/mcp/tools/snapshot_pane/
+[tool-search_panes]: https://libtmux.org/en/cxx/latest/mcp/tools/search_panes/
+[tool-find_pane_by_position]: https://libtmux.org/en/cxx/latest/mcp/tools/find_pane_by_position/
+[tool-wait_for_text]: https://libtmux.org/en/cxx/latest/mcp/tools/wait_for_text/
+[tool-get_tmux_variables]: https://libtmux.org/en/cxx/latest/mcp/tools/get_tmux_variables/
+[tool-show_option]: https://libtmux.org/en/cxx/latest/mcp/tools/show_option/
+[tool-show_environment]: https://libtmux.org/en/cxx/latest/mcp/tools/show_environment/
+[tool-show_hooks]: https://libtmux.org/en/cxx/latest/mcp/tools/show_hooks/
+[tool-call_read_tools_batch]: https://libtmux.org/en/cxx/latest/mcp/tools/call_read_tools_batch/
+[tool-rename_session]: https://libtmux.org/en/cxx/latest/mcp/tools/rename_session/
+[tool-rename_window]: https://libtmux.org/en/cxx/latest/mcp/tools/rename_window/
+[tool-select_window]: https://libtmux.org/en/cxx/latest/mcp/tools/select_window/
+[tool-select_pane]: https://libtmux.org/en/cxx/latest/mcp/tools/select_pane/
+[tool-select_layout]: https://libtmux.org/en/cxx/latest/mcp/tools/select_layout/
+[tool-resize_window]: https://libtmux.org/en/cxx/latest/mcp/tools/resize_window/
+[tool-resize_pane]: https://libtmux.org/en/cxx/latest/mcp/tools/resize_pane/
+[tool-move_window]: https://libtmux.org/en/cxx/latest/mcp/tools/move_window/
+[tool-swap_pane]: https://libtmux.org/en/cxx/latest/mcp/tools/swap_pane/
+[tool-set_pane_title]: https://libtmux.org/en/cxx/latest/mcp/tools/set_pane_title/
+[tool-wait_for_channel]: https://libtmux.org/en/cxx/latest/mcp/tools/wait_for_channel/
+[tool-signal_channel]: https://libtmux.org/en/cxx/latest/mcp/tools/signal_channel/
+[tool-set_mouse_enabled]: https://libtmux.org/en/cxx/latest/mcp/tools/set_mouse_enabled/
+[tool-set_history_limit]: https://libtmux.org/en/cxx/latest/mcp/tools/set_history_limit/
+[tool-create_session]: https://libtmux.org/en/cxx/latest/mcp/tools/create_session/
+[tool-create_window]: https://libtmux.org/en/cxx/latest/mcp/tools/create_window/
+[tool-split_window]: https://libtmux.org/en/cxx/latest/mcp/tools/split_window/
+[tool-respawn_pane]: https://libtmux.org/en/cxx/latest/mcp/tools/respawn_pane/
+[tool-run_shell_command]: https://libtmux.org/en/cxx/latest/mcp/tools/run_shell_command/
+[tool-send_keys]: https://libtmux.org/en/cxx/latest/mcp/tools/send_keys/
+[tool-send_keys_batch]: https://libtmux.org/en/cxx/latest/mcp/tools/send_keys_batch/
+[tool-paste_text]: https://libtmux.org/en/cxx/latest/mcp/tools/paste_text/
+[tool-set_synchronize_panes]: https://libtmux.org/en/cxx/latest/mcp/tools/set_synchronize_panes/
+[tool-clear_pane_scrollback]: https://libtmux.org/en/cxx/latest/mcp/tools/clear_pane_scrollback/
+[tool-kill_pane]: https://libtmux.org/en/cxx/latest/mcp/tools/kill_pane/
+[tool-kill_window]: https://libtmux.org/en/cxx/latest/mcp/tools/kill_window/
+[tool-kill_session]: https://libtmux.org/en/cxx/latest/mcp/tools/kill_session/
 <!-- END GENERATED TOOL INVENTORY -->
 
 `select_layout` accepts built-in names, unique abbreviations and saved layouts
@@ -59,10 +112,10 @@ other four map as follows:
 
 | Earlier route | Current route |
 |---|---|
-| `inspect_tmux` | `list_sessions` + `list_windows` + `list_panes` |
-| `list_session_panes` | `list_panes`; filter returned `session_id` |
-| `new_window` | `create_window`; `session` and `name` remain |
-| `send_text` | `paste_text`; `target` becomes `paneId` |
+| `inspect_tmux` | [`list_sessions`][tool-list_sessions] + [`list_windows`][tool-list_windows] + [`list_panes`][tool-list_panes] |
+| `list_session_panes` | [`list_panes`][tool-list_panes]; filter returned `session_id` |
+| `new_window` | [`create_window`][tool-create_window]; `session` and `name` remain |
+| `send_text` | [`paste_text`][tool-paste_text]; `target` becomes `paneId` |
 
 ### Core workflow quick reference
 
@@ -72,20 +125,20 @@ beside the full generated inventory:
 
 | Tool | Arguments | Result |
 |---|---|---|
-| `get_server_info` | — | Server liveness and tmux version; a daemon older than 3.3a is refused, with the instruction to upgrade tmux and restart the server |
-| `list_sessions` | — | Stable session IDs, names, paths, client counts, and window counts |
-| `list_windows` | `session` | Windows belonging to one exact session |
-| `list_panes` | — | Every pane with stable pane, window, and session IDs |
-| `create_session` | `name?`, `windowName?`, `startDirectory?`, `width?`, `height?` | New session ID and name |
-| `create_window` | `session`, `name?`, `startDirectory?` | New window ID and owning session ID |
-| `capture_pane` | `paneId`, `history?` | Visible or retained pane text |
-| `capture_since` | `paneId`, `cursor?` | Text after a byte cursor and a replacement cursor |
-| `snapshot_pane` | `paneId` | Pane metadata and visible text from one call |
-| `paste_text` | `paneId`, `text` | Pane ID after pasting literal text |
-| `send_keys` | `paneId`, `keys` | Pane ID and every resolved synchronized target |
-| `wait_for_text` | `target`, `text`, `timeout_ms?` | Match, timeout, elapsed time, transport mode, and final capture |
-| `search_panes` | `pattern` | Matching pane IDs and matching lines |
-| `call_read_tools_batch` | `operations`, `onError?` | Ordered nested results, counters, and explicit truncation state |
+| [`get_server_info`][tool-get_server_info] | — | Server liveness and tmux version; a daemon older than 3.3a is refused, with the instruction to upgrade tmux and restart the server |
+| [`list_sessions`][tool-list_sessions] | — | Stable session IDs, names, paths, client counts, and window counts |
+| [`list_windows`][tool-list_windows] | `session` | Windows belonging to one exact session |
+| [`list_panes`][tool-list_panes] | — | Every pane with stable pane, window, and session IDs |
+| [`create_session`][tool-create_session] | `name?`, `windowName?`, `startDirectory?`, `width?`, `height?` | New session ID and name |
+| [`create_window`][tool-create_window] | `session`, `name?`, `startDirectory?` | New window ID and owning session ID |
+| [`capture_pane`][tool-capture_pane] | `paneId`, `history?` | Visible or retained pane text |
+| [`capture_since`][tool-capture_since] | `paneId`, `cursor?` | Text after a byte cursor and a replacement cursor |
+| [`snapshot_pane`][tool-snapshot_pane] | `paneId` | Pane metadata and visible text from one call |
+| [`paste_text`][tool-paste_text] | `paneId`, `text` | Pane ID after pasting literal text |
+| [`send_keys`][tool-send_keys] | `paneId`, `keys` | Pane ID and every resolved synchronized target |
+| [`wait_for_text`][tool-wait_for_text] | `target`, `text`, `timeout_ms?` | Match, timeout, elapsed time, transport mode, and final capture |
+| [`search_panes`][tool-search_panes] | `pattern` | Matching pane IDs and matching lines |
+| [`call_read_tools_batch`][tool-call_read_tools_batch] | `operations`, `onError?` | Ordered nested results, counters, and explicit truncation state |
 
 Read terminal text without changing pane modes. `capture_pane` with `history`
 retrieves retained scrollback, `capture_since` follows appended output,
@@ -403,6 +456,48 @@ For Claude Desktop, the equivalent entry is:
   }
 }
 ```
+
+With no selector the server uses a dedicated `libtmux-mcp` socket:
+
+```console
+$ claude mcp add tmux -- ~/.local/bin/libtmux-mcp-server
+```
+
+Serve only the [`inspect`][mcp-toolset-inspect] toolset by setting
+`LIBTMUX_TOOLSETS` in the client's environment for the server:
+
+```console
+$ claude mcp add tmux \
+    -e LIBTMUX_TOOLSETS=inspect \
+    -- ~/.local/bin/libtmux-mcp-server --socket-name libtmux-agent
+```
+
+Remove tools by name. `LIBTMUX_EXCLUDE_TOOLS` is applied last, after the
+toolsets and `LIBTMUX_TOOLS`:
+
+```console
+$ claude mcp add tmux \
+    -e LIBTMUX_EXCLUDE_TOOLS=send_keys,send_keys_batch,paste_text \
+    -- ~/.local/bin/libtmux-mcp-server --socket-name libtmux-agent
+```
+
+The Claude Desktop entry carries the same variables in `env`:
+
+```json
+{
+  "mcpServers": {
+    "tmux": {
+      "command": "/home/you/.local/bin/libtmux-mcp-server",
+      "args": ["--socket-name", "libtmux-agent"],
+      "env": { "LIBTMUX_TOOLSETS": "inspect,manage" }
+    }
+  }
+}
+```
+
+The [toolset topics][mcp-topics] cover what each toolset holds, and
+[`tmux://capabilities`][mcp-capabilities] reports the tools a running server
+serves.
 
 ### Native Windows with psmux
 
@@ -859,3 +954,9 @@ generic internal JSON-RPC error while the detailed diagnostic stays on stderr.
 ## License
 
 MIT. See [LICENSE](../../LICENSE).
+
+[mcp-index]: https://libtmux.org/en/cxx/latest/mcp/
+[mcp-tools]: https://libtmux.org/en/cxx/latest/mcp/tools/
+[mcp-topics]: https://libtmux.org/en/cxx/latest/mcp/topics/
+[mcp-capabilities]: https://libtmux.org/en/cxx/latest/mcp/resources/tmux-capabilities/
+[mcp-toolset-inspect]: https://libtmux.org/en/cxx/latest/mcp/reference/libtmux-mcp-toolset-inspect/

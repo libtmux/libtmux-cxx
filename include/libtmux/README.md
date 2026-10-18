@@ -112,6 +112,118 @@ Asking is the only way to get it — `find_package(libtmux)` alone leaves the
 target undefined, so a program that would link a test archive by accident
 fails at configure time instead of shipping one.
 
+## Packages
+
+- [`libtmux`](#libtmux): this package. Typed, value-semantic servers, sessions,
+  windows and panes; it links nothing.
+- [`libtmux::testing`](#libtmuxtesting): a private tmux server for your own
+  tests, installed as a CMake component.
+- [`tmux-workspace`](#tmux-workspace): a command that loads, captures and
+  converts tmuxp-style workspace files.
+- [`libtmux-mcp-server`](#libtmux-mcp-server): a Model Context Protocol server,
+  so an agent can drive tmux.
+
+### [`libtmux`](https://github.com/libtmux/libtmux-cxx/tree/master/include/libtmux)
+
+Typed, value-semantic control of tmux servers, sessions, windows and panes.
+Reference: the [API reference][ref-index], [getting started][guide-start] and
+[concepts][guide-concepts].
+
+[`Server::capabilities`][ref-server-capabilities] reports what a
+[`Server`][ref-server] handle can promise without starting tmux, so a program
+can choose a workflow before its first command.
+[`ServerCapabilities`][ref-servercapabilities] answers `supports(...)` for each
+[`ServerFeature`][ref-serverfeature]:
+
+```cpp
+// Given: const libtmux::Server& server
+// Ask what this server promises before choosing a workflow. The answer comes
+// from the handle: it starts no process and cannot fail.
+const libtmux::ServerCapabilities capabilities = server.capabilities();
+const bool pane_io = capabilities.supports(libtmux::ServerFeature::pane_io);
+std::cout << std::format("{} over {}: pane input and output supported: {}\n",
+                         libtmux::to_string(capabilities.implementation),
+                         libtmux::to_string(capabilities.backend), pane_io);
+```
+
+### [`libtmux::testing`](https://github.com/libtmux/libtmux-cxx/tree/master/include/libtmux/testing)
+
+A private tmux server for your own tests, removed when the scope ends. POSIX
+only. Reference: [Testing with libtmux][guide-testing] and the
+[`ScopedTmuxServer`][ref-scopedtmuxserver] page. [`testing/`](testing/) holds
+the headers; the section above shows how to ask for the component.
+
+A [`TeardownReport`][ref-teardownreport] passed to
+[`ScopedTmuxServer::start`][ref-scopedtmuxserver-start] collects what teardown
+did, including anything it could not clean up:
+
+```cpp
+// A private server, and the messages its teardown recorded.
+{
+  const auto report = std::make_shared<libtmux::test::TeardownReport>();
+  {
+    auto scoped = libtmux::test::ScopedTmuxServer::start({
+        .socket_namespace = libtmux::test::SocketNamespace::consumer("report"),
+        .teardown_report = report,
+    });
+    if (!scoped.has_value()) {
+      std::cerr << std::format("{}\n", scoped.error());
+      return 1;
+    }
+  }
+  for (const std::string& message : report->messages) {
+    std::cout << std::format("teardown: {}\n", message);
+  }
+}
+```
+
+### [`tmux-workspace`](https://github.com/libtmux/libtmux-cxx/tree/master/apps/workspace)
+
+Loads, captures, converts and imports tmuxp-style workspace files from the
+command line. Optional and POSIX only. Reference: the [command manual][ws-cli],
+[`load`][ws-load] and [workspace configuration][ws-configuration]. The
+[`apps/workspace/` README](../../apps/workspace/README.md) walks through each
+command.
+
+Build and install it:
+
+```console
+$ cmake -S . -B build/workspace \
+    -DLIBTMUX_BUILD_WORKSPACE_CLI=ON \
+    -DLIBTMUX_FETCH_DEPS=ON \
+    -DLIBTMUX_BUILD_TESTS=OFF \
+    -DLIBTMUX_BUILD_EXAMPLES=OFF \
+    && cmake --build build/workspace \
+    && cmake --install build/workspace --prefix ~/.local
+```
+
+With a workspace file saved as `project.yaml`, load it on a socket named
+`project` without attaching:
+
+```console
+$ tmux-workspace load \
+    -L project \
+    -d \
+    ./project.yaml
+```
+
+### [`libtmux-mcp-server`](https://github.com/libtmux/libtmux-cxx/tree/master/apps/mcp)
+
+A Model Context Protocol server over stdio, so an agent can drive tmux.
+Reference: the [MCP overview][mcp-index], the [tool reference][mcp-tools] and
+[connecting a client][mcp-guide]. The
+[`apps/mcp/` README](../../apps/mcp/README.md) lists the toolsets and the socket
+options.
+
+Register it with Claude Code, limited to the
+[`inspect`][mcp-toolset-inspect] toolset:
+
+```console
+$ claude mcp add tmux \
+    -e LIBTMUX_TOOLSETS=inspect \
+    -- ~/.local/bin/libtmux-mcp-server --socket-name libtmux-agent
+```
+
 ## Related
 
 - [The library](../../README.md) — installing it, and what using it looks like
@@ -120,3 +232,22 @@ fails at configure time instead of shipping one.
   `libtmux::testing`
 - [`src/`](../../src/README.md) — what implements this, and may change freely
 - [`tests/`](../../tests/README.md) — where each promise above is pinned
+
+[ref-index]: https://libtmux.org/en/cxx/latest/reference/
+[ref-server]: https://libtmux.org/en/cxx/latest/reference/libtmux-server/
+[ref-server-capabilities]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-capabilities/
+[ref-servercapabilities]: https://libtmux.org/en/cxx/latest/reference/libtmux-servercapabilities/
+[ref-serverfeature]: https://libtmux.org/en/cxx/latest/reference/libtmux-serverfeature/
+[ref-scopedtmuxserver]: https://libtmux.org/en/cxx/latest/reference/libtmux-test-scopedtmuxserver/
+[ref-scopedtmuxserver-start]: https://libtmux.org/en/cxx/latest/reference/libtmux-test-scopedtmuxserver-start/
+[ref-teardownreport]: https://libtmux.org/en/cxx/latest/reference/libtmux-test-teardownreport/
+[guide-start]: https://libtmux.org/en/cxx/latest/guides/getting-started/
+[guide-concepts]: https://libtmux.org/en/cxx/latest/concepts/
+[guide-testing]: https://libtmux.org/en/cxx/latest/guides/testing-with-libtmux/
+[ws-cli]: https://libtmux.org/en/cxx/latest/workspace/cli/
+[ws-load]: https://libtmux.org/en/cxx/latest/workspace/cli/load/
+[ws-configuration]: https://libtmux.org/en/cxx/latest/workspace/configuration/
+[mcp-index]: https://libtmux.org/en/cxx/latest/mcp/
+[mcp-tools]: https://libtmux.org/en/cxx/latest/mcp/tools/
+[mcp-guide]: https://libtmux.org/en/cxx/latest/mcp/guides/
+[mcp-toolset-inspect]: https://libtmux.org/en/cxx/latest/mcp/reference/libtmux-mcp-toolset-inspect/

@@ -26,12 +26,14 @@
 ## What is libtmux?
 
 A C++ port of [libtmux], the Python library behind [tmuxp]. Stop shelling out
-to `tmux ls` and parsing the result. Work with `Server`, `Session`, `Window`
-and `Pane` as ordinary C++ values instead.
+to `tmux ls` and parsing the result. Work with [`Server`][ref-server],
+[`Session`][ref-session], [`Window`][ref-window] and [`Pane`][ref-pane] as
+ordinary C++ values instead.
 
-Given a `server` — from `Server::from_env()` inside tmux,
-`Server::at_socket_name(...)`, `Server::at_socket_path(...)`, or
-`Server::at_default()`:
+Given a `server` — from [`Server::from_env()`][ref-server-from_env] inside
+tmux, [`Server::at_socket_name(...)`][ref-server-at_socket_name],
+[`Server::at_socket_path(...)`][ref-server-at_socket_path], or
+[`Server::at_default()`][ref-server-at_default]:
 
 ```cpp
 // Given: const libtmux::Server& server
@@ -56,8 +58,10 @@ Given a `server` — from `Server::from_env()` inside tmux,
 
 Two things make it different from a wrapper around `system()`: **failure is a
 value** — no tmux or transport error is ever thrown, every call hands back
-either the answer or the reason there isn't one — and **queries are typed**, so
-a filter that asks a number whether it starts with a string does not compile.
+either the answer or the reason there isn't one, a
+[`CommandFailure`][ref-commandfailure] — and **queries are typed**
+([`FilterExpr`][ref-filterexpr]), so a filter that asks a number whether it
+starts with a string does not compile.
 
 (Not a `noexcept` claim on the whole surface: allocation can throw, and so can
 a `CommandObserver` you supply. What the library will not do is signal a tmux
@@ -85,6 +89,9 @@ failure by throwing.)
 - **An [MCP server](#the-mcp-server)** so an agent can drive tmux directly.
 - **Compile-time refusals.** `pane::active.starts_with("x")` is a build error,
   and [a test proves it stays one](tests/README.md#the-compile-tests-are-the-interesting-ones).
+
+Beyond the library, the repository ships a test fixture, a workspace command
+and an MCP server; each has an entry under [Packages](#packages).
 
 ## Requirements & support
 
@@ -449,8 +456,9 @@ if (history.has_value()) {
 ```
 
 A scrollback can be far larger than the default bound. A capture that does not
-fit is **reported, not truncated** — `CaptureOptions::output_limit` says how
-much you are prepared to hold.
+fit is **reported, not truncated** —
+[`CaptureOptions::output_limit`][ref-captureoptions] says how much you are
+prepared to hold.
 
 ### Traverse the hierarchy
 
@@ -626,7 +634,8 @@ if (!shutdown.transports_stopped || !shutdown.safe_to_unload || observed != 1U) 
 }
 ```
 
-No runtime is hidden in a `Server`. `CommandRuntime::start` creates the
+No runtime is hidden in a `Server`.
+[`CommandRuntime::start`][ref-commandruntime-start] creates the
 transport threads and fixes their admission capacity; zero or a startup
 failure returns `unexpected` with `delivery == not_started`. A full runtime
 refuses rather than waiting for a slot.
@@ -644,10 +653,10 @@ existed, a full capacity, or a failure to register its observer. These create
 no operation or observer record; refusals against a live runtime increment
 `refused`, while a moved-from runtime has no counters. They are safe to retry
 when their cause is fixed. Once it
-returns a `CommandOperation`, every tmux, transport, cancellation, or runtime
+returns a [`CommandOperation`][ref-commandoperation], every tmux, transport, cancellation, or runtime
 publication failure is that operation's eventual result. A server that dies
 after its handle captured the socket can therefore be admitted and fail through
-`wait`; its `DeliveryStatus` says what the transport can prove. The runtime also
+`wait`; its [`DeliveryStatus`][ref-deliverystatus] says what the transport can prove. The runtime also
 preserves its first lifecycle failure in `close().failure`, the only channel
 available when no operation can carry it.
 
@@ -671,7 +680,8 @@ guarantee.
 `CommandOperation::wait_for` and `wait_until` observe readiness without consuming
 the handle. Their `false` result means the wait expired: the command keeps running
 and retains its runtime slot. The timeout passed to `try_submit` instead bounds
-the command itself, whose eventual result reports `FailureKind::timeout`.
+the command itself, whose eventual result reports
+[`FailureKind::timeout`][ref-failurekind].
 `request_cancel` separately asks the transport to withdraw the command; its
 eventual `DeliveryStatus` still says whether tmux may have acted.
 
@@ -682,11 +692,11 @@ still wins over a later stop request. libc++ 18 requires an experimental library
 mode for stop tokens; the ordinary pinned build keeps `request_cancel` available
 and does not enable that mode implicitly.
 
-`wait_ready` and `wait_ready_for` block until an observer is ready, their deadline
-expires, or `close` finishes with no ready observations left. They return
-`ReadyStatus::ready`, `timeout` or `closed` and never run callbacks. A ready
-observation takes precedence over an expired deadline or closure; callers still
-choose `dispatch_ready` or `discard_ready`.
+`wait_ready` and `wait_ready_for` block until an observer is ready, their
+deadline expires, or `close` finishes with no ready observations left. They
+return [`ReadyStatus::ready`][ref-readystatus], `timeout` or `closed` and never
+run callbacks. A ready observation takes precedence over an expired deadline or
+closure; callers still choose `dispatch_ready` or `discard_ready`.
 
 `snapshot` is one lock-consistent instant; it does not wait for command
 completion or runtime work to finish. `accepted`, `refused`, and `completed`
@@ -782,7 +792,8 @@ Four ways to send typed work, plus a raw control stream:
 
 `Server` uses ordinary tmux client processes because they remain alive through
 waiting jobs and file operations and return tmux's final exit status.
-`Server::control(session)` instead opens a low-level `Connection` for guarded
+`Server::control(session)` instead opens a low-level
+[`Connection`][ref-connection] for guarded
 reply blocks and outside-block events. A guard proves where tmux framed a
 request; it does not prove that a waiting command has finished. Use this raw
 surface for notification streams and protocol tooling, not as a faster typed
@@ -793,8 +804,9 @@ caller-selected executable, deadlines, limits, and pane-output policy. Windows
 psmux rejects control mode before launching a client.
 
 `take_notifications` is a single draining cursor on `Connection`. For two
-independent consumers, open a `NotificationWatch`; every watch has its own wait,
-dropped-event count, and readiness descriptor over one shared bounded log.
+independent consumers, open a [`NotificationWatch`][ref-notificationwatch];
+every watch has its own wait, dropped-event count, and readiness descriptor over
+one shared bounded log.
 
 ## Core concepts
 
@@ -891,7 +903,7 @@ It links no test framework, so GoogleTest, Catch2 and doctest all work.
 ## Compatibility
 
 tmux 3.3a and newer. The floor is the complete release: tmux 3.3 is below it.
-`Version` orders releases correctly: `3.7 < 3.7a < 3.7b`, and `next-3.8` and
+[`Version`][ref-version] orders releases correctly: `3.7 < 3.7a < 3.7b`, and `next-3.8` and
 `3.8-rc2` precede `3.8`. CI builds and tests pinned compatibility cells from
 3.3a through 3.8, plus `master`, on every pull request and master change.
 
@@ -991,9 +1003,9 @@ identity-checked session, window, and pane expansion and refresh, and
 child-to-parent relations that first prove the child still exists.
 
 `Server::capabilities()` reports this routing contract locally, without
-launching `tmux.exe`. Check `ServerFeature` before choosing a workflow; a
-custom backend is unknown and supports nothing until it identifies its own
-contract. Unsupported typed calls return `FailureKind::unsupported` with
+launching `tmux.exe`. Check [`ServerFeature`][ref-serverfeature] before choosing
+a workflow; a custom backend is unknown and supports nothing until it identifies
+its own contract. Unsupported typed calls return `FailureKind::unsupported` with
 `delivery == DeliveryStatus::not_started`.
 
 The following capability boundaries fail before dispatch on Windows:
@@ -1108,9 +1120,9 @@ never issues `kill-server`. Psmux itself scans that global registry and reaps
 entries it considers orphaned before it parses `-L`; the library cannot isolate
 or disable that upstream maintenance in 3.3.7. Cleanup is bounded and
 best-effort if another process continuously renames or creates sessions. Its
-deadline is the Server's `ExecutionPolicy`; an explicitly unbounded policy is
-unbounded here too. Do not treat a psmux namespace as a lock or security
-boundary from other local psmux users.
+deadline is the Server's [`ExecutionPolicy`][ref-executionpolicy]; an explicitly
+unbounded policy is unbounded here too. Do not treat a psmux namespace as a lock
+or security boundary from other local psmux users.
 
 ## What the design commits to
 
@@ -1132,7 +1144,7 @@ works after that string dies.
 factories, so `Server::from_env().and_then(...)` composes. The one exception
 follows a rule worth stating: a call reports the failure type its *result*
 speaks, so `Server::control` — which hands back a `Connection` — reports
-`ProtocolError` like the `Connection` does.
+[`ProtocolError`][ref-protocolerror] like the `Connection` does.
 
 **The transport is private, and replaceable.** No process type appears in any
 installed header. The suite substitutes a scripted executor and runs the whole
@@ -1172,6 +1184,121 @@ Link the target, not the file: `find_package(libtmux)` then
 `target_link_libraries(you PRIVATE libtmux::libtmux)`. Outside CMake the
 installed `libtmux.pc` carries the same answer, including the standard and the
 `LIBTMUX_USE_TL_EXPECTED` the C++20 build needs.
+
+## Packages
+
+- [`libtmux`](#libtmux): the library. Typed, value-semantic servers, sessions,
+  windows and panes; the core links nothing.
+- [`libtmux::testing`](#libtmuxtesting): a private tmux server for your own
+  tests, installed as a CMake component.
+- [`tmux-workspace`](#tmux-workspace): a command that loads, captures and
+  converts tmuxp-style workspace files.
+- [`libtmux-mcp-server`](#libtmux-mcp-server): a Model Context Protocol server,
+  so an agent can drive tmux.
+
+### [`libtmux`](https://github.com/libtmux/libtmux-cxx/tree/master/include/libtmux)
+
+Typed, value-semantic control of tmux servers, sessions, windows and panes.
+Reference: the [API reference][ref-index], [getting started][guide-start] and
+[concepts][guide-concepts]. The
+[`include/libtmux/` README](include/libtmux/README.md) says what each public
+header holds.
+
+[`Server::capabilities`][ref-server-capabilities] reports what a
+[`Server`][ref-server] handle can promise without starting tmux, so a program
+can choose a workflow before its first command.
+[`ServerCapabilities`][ref-servercapabilities] answers `supports(...)` for each
+[`ServerFeature`][ref-serverfeature]:
+
+```cpp
+// Given: const libtmux::Server& server
+// Ask what this server promises before choosing a workflow. The answer comes
+// from the handle: it starts no process and cannot fail.
+const libtmux::ServerCapabilities capabilities = server.capabilities();
+const bool pane_io = capabilities.supports(libtmux::ServerFeature::pane_io);
+std::cout << std::format("{} over {}: pane input and output supported: {}\n",
+                         libtmux::to_string(capabilities.implementation),
+                         libtmux::to_string(capabilities.backend), pane_io);
+```
+
+### [`libtmux::testing`](https://github.com/libtmux/libtmux-cxx/tree/master/include/libtmux/testing)
+
+A private tmux server for your own tests, removed when the scope ends. POSIX
+only. Reference: [Testing with libtmux][guide-testing] and the
+[`ScopedTmuxServer`][ref-scopedtmuxserver] page. Ask for it with
+`find_package(libtmux REQUIRED COMPONENTS testing)`;
+[Testing your own tmux tools](#testing-your-own-tmux-tools) shows it in a
+suite.
+
+A [`TeardownReport`][ref-teardownreport] passed to
+[`ScopedTmuxServer::start`][ref-scopedtmuxserver-start] collects what teardown
+did, including anything it could not clean up:
+
+```cpp
+// A private server, and the messages its teardown recorded.
+{
+  const auto report = std::make_shared<libtmux::test::TeardownReport>();
+  {
+    auto scoped = libtmux::test::ScopedTmuxServer::start({
+        .socket_namespace = libtmux::test::SocketNamespace::consumer("report"),
+        .teardown_report = report,
+    });
+    if (!scoped.has_value()) {
+      std::cerr << std::format("{}\n", scoped.error());
+      return 1;
+    }
+  }
+  for (const std::string& message : report->messages) {
+    std::cout << std::format("teardown: {}\n", message);
+  }
+}
+```
+
+### [`tmux-workspace`](https://github.com/libtmux/libtmux-cxx/tree/master/apps/workspace)
+
+Loads, captures, converts and imports tmuxp-style workspace files from the
+command line. Optional and POSIX only. Reference: the [command manual][ws-cli],
+[`load`][ws-load] and [workspace configuration][ws-configuration]. The
+[`apps/workspace/` README](apps/workspace/README.md) walks through each command.
+
+Build and install it:
+
+```console
+$ cmake -S . -B build/workspace \
+    -DLIBTMUX_BUILD_WORKSPACE_CLI=ON \
+    -DLIBTMUX_FETCH_DEPS=ON \
+    -DLIBTMUX_BUILD_TESTS=OFF \
+    -DLIBTMUX_BUILD_EXAMPLES=OFF \
+    && cmake --build build/workspace \
+    && cmake --install build/workspace --prefix ~/.local
+```
+
+With a workspace file saved as `project.yaml`, load it on a socket named
+`project` without attaching:
+
+```console
+$ tmux-workspace load \
+    -L project \
+    -d \
+    ./project.yaml
+```
+
+### [`libtmux-mcp-server`](https://github.com/libtmux/libtmux-cxx/tree/master/apps/mcp)
+
+A Model Context Protocol server over stdio, so an agent can drive tmux.
+Reference: the [MCP overview][mcp-index], the [tool reference][mcp-tools] and
+[connecting a client][mcp-guide]. The [`apps/mcp/` README](apps/mcp/README.md)
+lists the toolsets and the socket options; [The MCP server](#the-mcp-server)
+above builds and installs it.
+
+Register it with Claude Code, limited to the
+[`inspect`][mcp-toolset-inspect] toolset:
+
+```console
+$ claude mcp add tmux \
+    -e LIBTMUX_TOOLSETS=inspect \
+    -- ~/.local/bin/libtmux-mcp-server --socket-name libtmux-agent
+```
 
 ## How it is checked
 
@@ -1264,3 +1391,42 @@ MIT. See [LICENSE](LICENSE).
 [psmux]: https://github.com/psmux/psmux
 [psmux-integration]: https://github.com/psmux/psmux/blob/master/docs/integration.md
 [psmux-compatibility]: https://github.com/psmux/psmux/blob/master/docs/compatibility.md
+
+[ref-index]: https://libtmux.org/en/cxx/latest/reference/
+[ref-server]: https://libtmux.org/en/cxx/latest/reference/libtmux-server/
+[ref-session]: https://libtmux.org/en/cxx/latest/reference/libtmux-session/
+[ref-window]: https://libtmux.org/en/cxx/latest/reference/libtmux-window/
+[ref-pane]: https://libtmux.org/en/cxx/latest/reference/libtmux-pane/
+[ref-server-from_env]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-from_env/
+[ref-server-at_socket_name]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-at_socket_name/
+[ref-server-at_socket_path]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-at_socket_path/
+[ref-server-at_default]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-at_default/
+[ref-server-capabilities]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-capabilities/
+[ref-servercapabilities]: https://libtmux.org/en/cxx/latest/reference/libtmux-servercapabilities/
+[ref-serverfeature]: https://libtmux.org/en/cxx/latest/reference/libtmux-serverfeature/
+[ref-filterexpr]: https://libtmux.org/en/cxx/latest/reference/libtmux-filterexpr/
+[ref-commandfailure]: https://libtmux.org/en/cxx/latest/reference/libtmux-commandfailure/
+[ref-failurekind]: https://libtmux.org/en/cxx/latest/reference/libtmux-failurekind/
+[ref-deliverystatus]: https://libtmux.org/en/cxx/latest/reference/libtmux-deliverystatus/
+[ref-captureoptions]: https://libtmux.org/en/cxx/latest/reference/libtmux-captureoptions/
+[ref-commandruntime-start]: https://libtmux.org/en/cxx/latest/reference/libtmux-commandruntime-start/
+[ref-commandoperation]: https://libtmux.org/en/cxx/latest/reference/libtmux-commandoperation/
+[ref-readystatus]: https://libtmux.org/en/cxx/latest/reference/libtmux-readystatus/
+[ref-connection]: https://libtmux.org/en/cxx/latest/reference/libtmux-connection/
+[ref-notificationwatch]: https://libtmux.org/en/cxx/latest/reference/libtmux-notificationwatch/
+[ref-version]: https://libtmux.org/en/cxx/latest/reference/libtmux-version/
+[ref-executionpolicy]: https://libtmux.org/en/cxx/latest/reference/libtmux-executionpolicy/
+[ref-protocolerror]: https://libtmux.org/en/cxx/latest/reference/libtmux-protocolerror/
+[ref-scopedtmuxserver]: https://libtmux.org/en/cxx/latest/reference/libtmux-test-scopedtmuxserver/
+[ref-scopedtmuxserver-start]: https://libtmux.org/en/cxx/latest/reference/libtmux-test-scopedtmuxserver-start/
+[ref-teardownreport]: https://libtmux.org/en/cxx/latest/reference/libtmux-test-teardownreport/
+[guide-start]: https://libtmux.org/en/cxx/latest/guides/getting-started/
+[guide-concepts]: https://libtmux.org/en/cxx/latest/concepts/
+[guide-testing]: https://libtmux.org/en/cxx/latest/guides/testing-with-libtmux/
+[ws-cli]: https://libtmux.org/en/cxx/latest/workspace/cli/
+[ws-load]: https://libtmux.org/en/cxx/latest/workspace/cli/load/
+[ws-configuration]: https://libtmux.org/en/cxx/latest/workspace/configuration/
+[mcp-index]: https://libtmux.org/en/cxx/latest/mcp/
+[mcp-tools]: https://libtmux.org/en/cxx/latest/mcp/tools/
+[mcp-guide]: https://libtmux.org/en/cxx/latest/mcp/guides/
+[mcp-toolset-inspect]: https://libtmux.org/en/cxx/latest/mcp/reference/libtmux-mcp-toolset-inspect/
