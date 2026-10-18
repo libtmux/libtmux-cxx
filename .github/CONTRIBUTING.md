@@ -316,12 +316,13 @@ lists them.
 
 Linux and macOS are the supported platforms. macOS is supported on a
 best-effort basis, and CI coverage for it is highly limited: CI runs no macOS
-job. Windows is an experimental x64
-desktop preview built with Visual Studio 2022 against a pinned
-[psmux](../README.md#windows-through-psmux), and it is deliberately narrower:
-it serves exact read-only entity queries and refuses what it cannot do safely
-with `FailureKind::unsupported` rather than approximating it. A claim about
-this library now carries a platform — say which one it holds on, and check
+job. Windows is an experimental x64 desktop preview built with Visual Studio
+2022 against a pinned [psmux](../README.md#windows-through-psmux), which is
+supported on a best-effort basis with highly limited CI coverage (CI builds it
+but runs no psmux test), and it is deliberately narrower: it serves exact
+read-only entity queries and refuses what it cannot do safely with
+`FailureKind::unsupported` rather than approximating it. A claim about this
+library now carries a platform — say which one it holds on, and check
 `Server::capabilities()` rather than assuming the POSIX surface.
 
 Two standards are supported: C++23 over `std::expected`, and C++20 over pinned

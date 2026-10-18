@@ -93,8 +93,9 @@ locally — same contents, different gzip. So the order is fixed:
    a tag that disagrees with `VERSION`, is not merged into `master`, lacks a
    successful exact-commit CI run, or moves while publication is in flight.
 3. GitHub generates the tarball; only now does its hash exist.
-4. The tagged source passes the native Windows, pinned psmux, and all four
-   built-in x64 desktop linkage/CRT package gates.
+4. The tagged source builds natively on Windows, and all four built-in x64
+   desktop linkage/CRT packages install and are consumed. The release does not
+   run psmux.
 5. The port's `version-semver` and `SHA512` are updated, a previous
    `port-version` is reset, the audited Windows policy is enabled explicitly,
    and `x-add-version` records the new git-tree.
@@ -166,7 +167,7 @@ omitting it falls back to inherited or default tmux.
 
 The immutable `0.1.0-alpha.2` registry entry predates the Windows backend and
 remains Windows-disabled. A later tagged release can enable the standard x64
-desktop target only after passing the pinned native psmux and package gates,
+desktop target only after passing the native Windows build and package gates,
 advancing its `version-semver` and archive hash, and resetting its packaging
 revision. MinGW, UWP, Xbox, and non-x64 Windows triplets remain excluded from
 the vcpkg package; the other packaged targets are Linux and macOS.
