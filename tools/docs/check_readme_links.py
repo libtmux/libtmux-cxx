@@ -9,7 +9,9 @@ that can be checked from a checkout:
 - the first prose mention of a public type is a link, and the reference page
   for each one the prose names is linked at least once;
 - a tool name in a table row or list item of the MCP README links to its page
-  at `libtmux.org/en/cxx/latest/mcp/tools/<name>/`.
+  at `libtmux.org/en/cxx/latest/mcp/tools/<name>/`;
+- each package README opens with the shared logo header, in a centred `div`,
+  over art that exists.
 
 Public symbols come from the generated API pages, so a new declaration joins
 the rule without anyone editing a list here. A page for a symbol lives at
@@ -41,6 +43,25 @@ REPOSITORY = "https://github.com/libtmux/libtmux-cxx"
 # that resolve, because a directory index names headers rather than teaching
 # them.
 LINKED_READMES = ("README.md", "include/libtmux/README.md")
+
+# The package READMEs that open with the logo header. The directories under
+# `apps/` that are not packages, `src/`, `cmake/` and the like are internal and
+# carry none.
+LOGO_READMES = (
+    "README.md",
+    "include/libtmux/README.md",
+    "apps/mcp/README.md",
+    "apps/workspace/README.md",
+)
+LOGO_BEGIN = "<!-- libtmux-logo -->"
+LOGO_END = "<!-- /libtmux-logo -->"
+LOGO_BLOCK = re.compile(
+    r'\A\s*<div align="center">\s*<picture>\s*'
+    r'<source srcset="(?P<svg>[^"]+\.svg)" type="image/svg\+xml">\s*'
+    r'<img src="(?P<png>[^"]+\.png)" width="128" height="128" '
+    r'alt="(?P<alt>libtmux for C\+\+[^"]*)">\s*'
+    r"</picture>\s*</div>\s*\Z"
+)
 
 # The API pages the symbols come from, and the namespace each one documents.
 API_PAGES = (("docs/api.md", ""), ("docs/api-testing.md", "test"))
@@ -290,12 +311,44 @@ def check_tool_links(readme: pathlib.Path, text: str) -> Iterable[Problem]:
         offset += len(line) + 1
 
 
+def check_logo(readme: pathlib.Path, text: str) -> Iterable[Problem]:
+    """Report a package README that does not open with the shared logo header."""
+    if not text.startswith(LOGO_BEGIN + "\n"):
+        yield Problem(readme, f"must open with {LOGO_BEGIN}, the shared logo header")
+        return
+    end = text.find(LOGO_END)
+    if end == -1:
+        yield Problem(readme, f"the logo header is never closed by {LOGO_END}")
+        return
+    block = LOGO_BLOCK.match(text[len(LOGO_BEGIN) : end])
+    if block is None:
+        yield Problem(
+            readme,
+            'the logo header must be a <div align="center"> holding a <picture> '
+            "with an svg <source> and a 128 by 128 png <img> whose alt text "
+            "starts `libtmux for C++`; a <p> wrapper is not accepted",
+        )
+    else:
+        for kind in ("svg", "png"):
+            if not (readme.parent / block.group(kind)).is_file():
+                yield Problem(
+                    readme, f"logo {kind} does not exist: {block.group(kind)}"
+                )
+    if not text[end + len(LOGO_END) :].startswith('\n\n<div align="center">\n'):
+        yield Problem(
+            readme,
+            f'{LOGO_END} must be followed by a blank line and a <div align="center"> '
+            "holding the title",
+        )
+
+
 def check_readme(
     readme: pathlib.Path,
     root: pathlib.Path,
     known: dict[str, str],
     *,
     introductions: bool,
+    logo: bool = False,
 ) -> list[Problem]:
     """Every problem one README has."""
     text = readme.read_text(encoding="utf-8")
@@ -306,6 +359,8 @@ def check_readme(
     for target in dict.fromkeys(targets):
         problems.extend(check_link(readme, Link(0, 0, "", target), root))
     problems.extend(check_tool_links(readme, text))
+    if logo:
+        problems.extend(check_logo(readme, text))
     if introductions:
         problems.extend(check_introductions(readme, text, known))
     return problems
@@ -384,9 +439,18 @@ def main() -> int:
         return 1
 
     held = {(root / name).resolve() for name in LINKED_READMES}
+    logos = {(root / name).resolve() for name in LOGO_READMES}
     problems: list[Problem] = []
     for readme in readmes:
-        problems.extend(check_readme(readme, root, known, introductions=readme in held))
+        problems.extend(
+            check_readme(
+                readme,
+                root,
+                known,
+                introductions=readme in held,
+                logo=readme in logos,
+            )
+        )
     if arguments.online:
         problems.extend(check_online(readmes))
 

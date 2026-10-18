@@ -1,8 +1,21 @@
+<!-- libtmux-logo -->
+<div align="center">
+  <picture>
+    <source srcset="../../assets/logo.svg" type="image/svg+xml">
+    <img src="../../assets/logo.png" width="128" height="128" alt="libtmux for C++">
+  </picture>
+</div>
+<!-- /libtmux-logo -->
+
+<div align="center">
+
 # The public headers
 
 If it is not in this directory, it is not the contract. Everything under
 [`src/`](../../src/README.md) is free to change without notice; everything here
 is what a consumer may depend on.
+
+</div>
 
 ```cpp
 #include <libtmux/libtmux.hpp>

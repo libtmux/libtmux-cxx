@@ -27,6 +27,9 @@ class Fixture:
             "# Guide\n\n## A section\n", encoding="utf-8"
         )
         (self.root / "include").mkdir()
+        (self.root / "assets").mkdir()
+        (self.root / "assets" / "logo.svg").write_text("<svg/>", encoding="utf-8")
+        (self.root / "assets" / "logo.png").write_bytes(b"\x89PNG")
 
     def readme(self, text: str) -> pathlib.Path:
         """Write a README into the checkout and return its path."""
@@ -34,13 +37,15 @@ class Fixture:
         path.write_text(textwrap.dedent(text), encoding="utf-8")
         return path
 
-    def check(self, text: str, *, introductions: bool = False) -> list[str]:
+    def check(
+        self, text: str, *, introductions: bool = False, logo: bool = False
+    ) -> list[str]:
         """Every problem the checker reports for a README with this text."""
         path = self.readme(text)
         return [
             problem.message
             for problem in links.check_readme(
-                path, self.root, KNOWN, introductions=introductions
+                path, self.root, KNOWN, introductions=introductions, logo=logo
             )
         ]
 
@@ -189,6 +194,104 @@ class IntroductionTest(unittest.TestCase):
             {
                 "Server": "libtmux-server",
                 "ScopedTmuxServer": "libtmux-test-scopedtmuxserver",
+            },
+        )
+
+
+HEADER = """\
+<!-- libtmux-logo -->
+<div align="center">
+  <picture>
+    <source srcset="assets/logo.svg" type="image/svg+xml">
+    <img src="assets/logo.png" width="128" height="128" alt="libtmux for C++">
+  </picture>
+</div>
+<!-- /libtmux-logo -->
+
+<div align="center">
+
+# Title
+
+</div>
+"""
+
+
+class LogoHeaderTest(unittest.TestCase):
+    """A package README opens with the shared, centred logo header."""
+
+    def check(self, text: str) -> list[str]:
+        """Check a README that is held to the logo header."""
+        with tempfile.TemporaryDirectory() as directory:
+            return Fixture(directory).check(text, logo=True)
+
+    def test_accepts_the_shared_header(self) -> None:
+        """The marker, centred picture and centred title are clean."""
+        self.assertEqual(self.check(HEADER), [])
+
+    def test_refuses_a_readme_with_no_header(self) -> None:
+        """A package README that opens with its title is named."""
+        found = self.check("# Title\n")
+        self.assertEqual(len(found), 1)
+        self.assertIn("must open with <!-- libtmux-logo -->", found[0])
+
+    def test_refuses_a_header_that_is_not_first(self) -> None:
+        """The header opens the file; a line above it does not count."""
+        found = self.check("Intro\n\n" + HEADER)
+        self.assertEqual(len(found), 1)
+        self.assertIn("must open with", found[0])
+
+    def test_refuses_a_paragraph_wrapper(self) -> None:
+        """A paragraph wrapper around the picture is not the shared pattern."""
+        found = self.check(
+            HEADER.replace(
+                '<div align="center">\n  <picture>',
+                '<p align="center">\n  <picture>',
+                1,
+            ).replace("</picture>\n</div>", "</picture>\n</p>", 1)
+        )
+        self.assertEqual(len(found), 1)
+        self.assertIn('<div align="center">', found[0])
+
+    def test_refuses_a_missing_svg_source(self) -> None:
+        """The `<picture>` needs its svg `<source>` beside the png."""
+        found = self.check(
+            HEADER.replace(
+                '    <source srcset="assets/logo.svg" type="image/svg+xml">\n', ""
+            )
+        )
+        self.assertEqual(len(found), 1)
+
+    def test_refuses_the_wrong_size(self) -> None:
+        """The logo is 128 by 128 wherever it appears."""
+        found = self.check(HEADER.replace('width="128"', 'width="64"'))
+        self.assertEqual(len(found), 1)
+
+    def test_refuses_art_that_does_not_exist(self) -> None:
+        """Both paths must name files in the checkout."""
+        found = self.check(HEADER.replace("assets/logo.svg", "assets/missing.svg"))
+        self.assertEqual(len(found), 1)
+        self.assertIn("logo svg does not exist: assets/missing.svg", found[0])
+
+    def test_refuses_a_title_that_is_not_centred_after_the_marker(self) -> None:
+        """A blank line and a centred `div` follow the closing marker."""
+        found = self.check(
+            HEADER.replace(
+                '<!-- /libtmux-logo -->\n\n<div align="center">\n',
+                "<!-- /libtmux-logo -->\n",
+            )
+        )
+        self.assertEqual(len(found), 1)
+        self.assertIn("followed by a blank line", found[0])
+
+    def test_internal_readmes_are_not_held_to_it(self) -> None:
+        """Only the four package READMEs are asked for the header."""
+        self.assertEqual(
+            set(links.LOGO_READMES),
+            {
+                "README.md",
+                "include/libtmux/README.md",
+                "apps/mcp/README.md",
+                "apps/workspace/README.md",
             },
         )
 
