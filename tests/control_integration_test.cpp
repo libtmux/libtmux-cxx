@@ -133,6 +133,14 @@ struct LateMarker final {
 
 LateMarker* pending_marker = nullptr;
 
+// connect asks the daemon its version with a spawn of its own before it
+// launches the control client, and that first spawn meets the marker: it names
+// the failed pipe where the client's spawn names the policy.
+bool refused_by_descriptor_policy(const std::string& message) {
+  return message.find("posix spawn descriptor policy") != std::string::npos ||
+         message.find("Bad file descriptor") != std::string::npos;
+}
+
 void finish_descriptor_policy(int result) { pending_marker->finish_policy(result); }
 #endif
 
@@ -329,8 +337,8 @@ TEST(ControlModeConnection, ForcedNumericPolicyDoesNotLeakAConcurrentHighDescrip
     ASSERT_EQ(marker.policy_error, EBADF);
     ASSERT_EQ(marker.error, 0);
     ASSERT_EQ(marker.descriptors, (std::array<int, 2>{-1, -1}));
-    EXPECT_NE(connected.error().message.find("posix spawn descriptor policy"),
-              std::string::npos);
+    EXPECT_TRUE(refused_by_descriptor_policy(connected.error().message))
+        << connected.error().message;
 
     auto observed_server =
         libtmux::Server::at_socket_path(server->socket_path().string());
@@ -425,8 +433,8 @@ TEST(ControlModeConnection, ForcedNumericPolicyRefusesAMarkerAboveALoweredSoftLi
   ASSERT_FALSE(connected.has_value());
   EXPECT_EQ(late_marker.policy_error, EBADF);
   EXPECT_EQ(late_marker.descriptors, (std::array<int, 2>{-1, -1}));
-  EXPECT_NE(connected.error().message.find("posix spawn descriptor policy"),
-            std::string::npos);
+  EXPECT_TRUE(refused_by_descriptor_policy(connected.error().message))
+      << connected.error().message;
 
   auto observed_server =
       libtmux::Server::at_socket_path(server->socket_path().string());
@@ -645,7 +653,7 @@ TEST(ControlModeConnection, LayoutChangePayloadAgreesWithAPlainSnapshotOn38Plus)
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
   const auto version = server->tmux_version();
   ASSERT_TRUE(version.has_value()) << version.error().diagnostic;
-  if (*version < libtmux::Version{.major = 3, .minor = 8}) {
+  if (*version < libtmux::Version{.major = 3, .minor = 8, .candidate = 2}) {
     GTEST_SKIP() << "the JSON layout form this compares needs tmux 3.8+";
   }
 
@@ -699,7 +707,7 @@ TEST(ControlModeConnection, LayoutContainsPaneAnswersAfterTheObservedPaneIsKille
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
   const auto version = server->tmux_version();
   ASSERT_TRUE(version.has_value()) << version.error().diagnostic;
-  if (*version < libtmux::Version{.major = 3, .minor = 8}) {
+  if (*version < libtmux::Version{.major = 3, .minor = 8, .candidate = 2}) {
     GTEST_SKIP() << "the JSON layout this answers from needs tmux 3.8+";
   }
 
@@ -1394,7 +1402,6 @@ TEST(ControlModeConnection, WaitCapableCommandsFinishAfterTheirGuardedBlocks) {
   // API exposes wire evidence rather than inventing a final command result.
   const auto running = libtmux::test::running_tmux(LIBTMUX_CONTROL_TMUX_PATH);
   const bool reports_run_shell_failures =
-      running < libtmux::Version{.major = 3, .minor = 3, .revision = 1} ||
       running >= libtmux::Version{.major = 3, .minor = 5};
   if (reports_run_shell_failures) {
     EXPECT_TRUE(contains("returned 17"));
@@ -1957,5 +1964,34 @@ TEST(ControlModeConnection, ResolvedTmuxIdentityIsBound) {
            (character >= 'a' && character <= 'f');
   })) << digest;
 }
+
+// The daemons and control clients here run LIBTMUX_CONTROL_TMUX_PATH, which the
+// build resolved from PATH at configure time. The `Server` handles and skip
+// macros resolve `tmux` on PATH when the suite runs. When those are different
+// releases the suite tests a client against a daemon it was never built for,
+// and fails on the mismatch rather than on the library, so it refuses to start.
+// A tmux it cannot read or that is below the floor is refused the same way.
+class SameTmuxEnvironment final : public testing::Environment {
+public:
+  void SetUp() override {
+    const std::string fixture =
+        libtmux::test::describe_running_tmux(LIBTMUX_CONTROL_TMUX_PATH);
+    const std::string resolved = libtmux::test::describe_running_tmux();
+    const auto parsed = libtmux::parse_version(fixture);
+    ASSERT_TRUE(parsed.has_value())
+        << LIBTMUX_CONTROL_TMUX_PATH << " printed '" << fixture
+        << "', which libtmux cannot read as a tmux version";
+    ASSERT_TRUE(libtmux::is_supported(*parsed))
+        << LIBTMUX_CONTROL_TMUX_PATH << " is " << fixture
+        << ", below the floor these tests need";
+    ASSERT_EQ(fixture, resolved)
+        << "the control fixture starts " << LIBTMUX_CONTROL_TMUX_PATH
+        << " but the suite resolves `tmux` on PATH to something else; configure "
+           "with the tmux that PATH names when the tests run";
+  }
+};
+
+[[maybe_unused]] testing::Environment* const same_tmux =
+    testing::AddGlobalTestEnvironment(new SameTmuxEnvironment);
 
 } // namespace

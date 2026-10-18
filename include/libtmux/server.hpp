@@ -280,6 +280,11 @@ public:
   /// Admit one command to an explicit bounded runtime without waiting for it.
   /// A refusal before admission is returned here; an admitted command carries
   /// every later transport or tmux failure in its operation.
+  ///
+  /// Admission does not wait for a slot, but the daemon's release is asked
+  /// before it. A submission to an endpoint whose daemon has not answered yet
+  /// can block the calling thread on that probe, up to the command's timeout.
+  /// An empty command is a validation error.
   [[nodiscard]] expected<CommandOperation, CommandFailure>
   try_submit(CommandRuntime& runtime, CommandRequest command,
              std::optional<std::chrono::milliseconds> timeout = {},
@@ -339,14 +344,22 @@ public:
   [[nodiscard]] expected<Server, ProtocolError>
   over_control(std::string_view session, std::size_t connections = 1) const;
 
-  /// Ask the selected subprocess executable with `tmux -V` without touching a
-  /// server. The call uses this Server's execution policy.
+  /// The release behind this handle: the daemon's when one answers, and
+  /// otherwise the executable that would start one, read with `tmux -V`. A
+  /// release below the floor is reported here, not refused; the commands are
+  /// what refuse it. The call uses this Server's execution policy.
   [[nodiscard]] expected<Version, CommandFailure> tmux_version() const;
 
-  /// Validate the complete batch's syntax before any I/O, then query its daemon
-  /// once for version-dependent names or v2 JSON layouts. No layout is applied.
-  /// Only an unbound native subprocess handle may use the client version for an
-  /// absent socket; failures from previously bound endpoints remain failures.
+  /// Refuse a tmux below the floor exactly as the first command to this
+  /// endpoint would, and send nothing. The daemon is asked when one answers,
+  /// and otherwise the executable that would start one. For a caller that
+  /// launches tmux itself, which this library cannot check. A refusal is
+  /// `FailureKind::unsupported` with `DeliveryStatus::not_started`.
+  [[nodiscard]] expected<void, CommandFailure> check_release() const;
+
+  /// Validate the complete batch's syntax before any I/O, then ask for the
+  /// release once for version-dependent names or v2 JSON layouts: the daemon's
+  /// when one answers, otherwise the executable's. No layout is applied.
   [[nodiscard]] expected<void, LayoutFailure>
   validate_layouts(std::span<const LayoutRequest> layouts) const;
 

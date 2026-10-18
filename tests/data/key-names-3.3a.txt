@@ -1,5 +1,5 @@
-# Key names tmux 3.2a accepts, from the table in
-# https://github.com/tmux/tmux/blob/3.2a/key-string.c
+# Key names tmux 3.3a accepts, from the table in
+# https://github.com/tmux/tmux/blob/3.3a/key-string.c
 F1
 F2
 F3

@@ -95,6 +95,11 @@ same_socket_inode(const std::filesystem::path& left,
 
 /// A tmux server that exists for the lifetime of this value.
 ///
+/// It starts whatever `tmux_binary` names without asking its release: the
+/// fixture owns the server, so there is no user hook to protect, and a suite
+/// that checks how the library refuses an older daemon needs one to exist. The
+/// library's own floor applies to a `Server` opened on this socket, not here.
+///
 /// Owns a private socket and directory and kills the server on destruction, so
 /// suites running at once cannot see each other's sessions. Teardown reports
 /// rather than throws — a destructor that throws during a failing test hides

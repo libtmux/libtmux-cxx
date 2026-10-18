@@ -546,6 +546,13 @@ std::optional<std::vector<std::string>> absent_windows(const Session& session,
   }
   return absent;
 }
+// A daemon the library refuses is running, so a lookup that met the refusal
+// says so rather than what its own failure would otherwise read as: no such
+// session, or no server to start.
+void rethrow_refusal(const libtmux::CommandFailure& failure) {
+  if (failure.kind == libtmux::FailureKind::unsupported)
+    throw Failure{1, "tmux_unsupported", failure.diagnostic};
+}
 Server endpoint(const Request& request) {
   auto server =
       !request.value("S").empty()   ? Server::at_socket_path(expand(request.value("S")))
@@ -683,6 +690,10 @@ struct Bootstrap {
       (void)session->kill();
   }
 };
+// The one tmux this tool launches itself rather than through a Server: the
+// bootstrap has to start a server that does not exist yet. `load` has put the
+// endpoint's release through the library's check before it gets here, so an
+// executable the library refuses never reaches this launch.
 Server start_endpoint(const Request& request, Bootstrap& bootstrap) {
   std::vector<std::string> command{"tmux", "-u"};
   if (!request.value("S").empty())
@@ -804,9 +815,12 @@ Json capture(const Request& request) {
   // ":" in names before reaching this call, so the gap cannot arise here.
   const auto session = server.session(by_id ? name : "=" + name + ":");
   // A lookup that finds nothing and a socket with no server behind it are the
-  // same answer here, and neither reads as one in the library's own words.
-  if (!session)
+  // same answer here, and neither reads as one in the library's own words. A
+  // daemon the library refuses is neither.
+  if (!session) {
+    rethrow_refusal(session.error());
     throw Failure{1, "session_not_found", "no session named " + name};
+  }
   // Never write a document load would refuse. A session named by id can still
   // hold an unaddressable name (tmux may keep "." or ":" in it verbatim), and
   // that name is what a saved workspace would carry.
@@ -1364,6 +1378,12 @@ void validate(const Request& request) {
 static Execution execute_impl(const Request& request, const EventSink& event,
                               const PromptSink& prompt) {
   if (request.command == "shell") {
+    // tmuxp talks to the daemon itself, so the floor is judged here, before
+    // anything is launched: a daemon, or the executable that would start one,
+    // which the library refuses ends the command with the library's message.
+    auto server = endpoint(request);
+    if (const auto released = server.check_release(); !released)
+      rethrow_refusal(released.error());
     // TMUX_WORKSPACE_PYTHON selects the interpreter and wins over
     // TMUX_WORKSPACE_TMUXP's executable path; tmuxp has no `__main__`, so
     // call its CLI entry point directly rather than `-m tmuxp`.
@@ -1635,6 +1655,12 @@ static Execution execute_impl(const Request& request, const EventSink& event,
     std::optional<Session> declined_session;
     try {
       auto server = endpoint(request);
+      // Before anything is judged against this endpoint: a daemon, or the
+      // executable that would start one, which the library refuses ends the
+      // load here with the library's own message, whichever path the load
+      // would otherwise take.
+      if (const auto released = server.check_release(); !released)
+        rethrow_refusal(released.error());
       for (const auto& plan : plans)
         if (auto error = validate_layouts(server, plan.workspace)) {
           // A layout this daemon is too old for is the daemon's limit, not a

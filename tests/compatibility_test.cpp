@@ -43,7 +43,7 @@ template <typename Entity> void require_fields_are_supported() {
   for (const std::string_view field : Entity::kFields) {
     EXPECT_NE(std::ranges::find(tokens, field), tokens.end())
         << Entity::kNoun << " asks for " << field
-        << ", which tmux 3.2a does not register";
+        << ", which tmux 3.3a does not register";
   }
 }
 

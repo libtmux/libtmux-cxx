@@ -11,6 +11,7 @@
 
 #include "libtmux/entities.hpp"
 #include "libtmux/server.hpp"
+#include "libtmux/testing/capabilities.hpp"
 #include "libtmux/testing/scoped_server.hpp"
 
 namespace {
@@ -134,11 +135,8 @@ TEST(WindowLayout, MalformedLayoutsLeaveTheRetainedServerUnchanged) {
 TEST(WindowLayout, JsonSavedLayoutsPreserveFloatingPanesAndRetainedSessions) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  LIBTMUX_REQUIRES_TMUX_CANDIDATE(3, 8, 2, "v2 layouts and floating panes");
   const Server server = connect(*fixture);
-  const auto version = server.tmux_version();
-  ASSERT_TRUE(version.has_value());
-  if (*version < libtmux::Version{.major = 3, .minor = 8})
-    GTEST_SKIP() << "v2 layouts and floating panes require tmux 3.8";
   const auto session = server.session(fixture->session_name());
   ASSERT_TRUE(session.has_value());
   const auto window = session->active_window();
@@ -188,7 +186,7 @@ TEST(WindowLayout, JsonSavedLayoutsRefuseOlderDaemonsBeforeMutation) {
   ASSERT_TRUE(server.has_value());
   const auto version = server->tmux_version();
   ASSERT_TRUE(version.has_value());
-  if (*version >= libtmux::Version{.major = 3, .minor = 8})
+  if (*version >= libtmux::Version{.major = 3, .minor = 8, .candidate = 2})
     GTEST_SKIP() << "requires a daemon without v2 layouts";
   const auto session = server->session(fixture->session_name());
   ASSERT_TRUE(session.has_value());
@@ -200,8 +198,8 @@ TEST(WindowLayout, JsonSavedLayoutsRefuseOlderDaemonsBeforeMutation) {
   ASSERT_FALSE(selected.has_value());
   EXPECT_EQ(selected.error().delivery, libtmux::DeliveryStatus::not_started);
   EXPECT_NE(selected.error().diagnostic.find("3.8"), std::string::npos);
-  ASSERT_EQ(issued.size(), 1U);
-  EXPECT_NE(issued.front().find("display-message"), std::string::npos);
+  // The version is read without a command a user's hooks could see.
+  EXPECT_TRUE(issued.empty());
   const auto after = window->refresh();
   ASSERT_TRUE(after.has_value());
   EXPECT_EQ(after->layout(), window->layout());

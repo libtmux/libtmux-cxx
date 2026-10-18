@@ -461,7 +461,7 @@ TEST(Entity, SelectLayoutGatesMirroredPresetsAndJsonByVersion) {
 
   const auto json_attempt =
       window->select_layout(R"({"V":2,"L":{"t":"p","w":1,"h":1,"x":0,"y":0,"i":0}})");
-  if (*version < libtmux::Version{.major = 3, .minor = 8}) {
+  if (*version < libtmux::Version{.major = 3, .minor = 8, .candidate = 2}) {
     ASSERT_FALSE(json_attempt.has_value());
     EXPECT_EQ(json_attempt.error().kind, FailureKind::validation);
   } else if (!json_attempt.has_value()) {
@@ -925,8 +925,6 @@ TEST(Entity, CreationVerbsCarryTheFlagsTmuxHas) {
 }
 
 TEST(Entity, ASessionIsCreatedAtASizeAndADirectory) {
-  LIBTMUX_REQUIRES_TMUX(3, 3, "honouring -x and -y on a detached new-session");
-
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const Server server = connect(*fixture);

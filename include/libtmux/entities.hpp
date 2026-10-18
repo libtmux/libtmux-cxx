@@ -22,7 +22,7 @@
 // Psmux numbers windows and panes per session, so Windows snapshots retain
 // their owning session identity alongside tmux's `$0`, `@0`, and `%0` IDs.
 //
-// Every field below is a format token tmux 3.2a already registers, which is
+// Every field below is a format token tmux 3.3a already registers, which is
 // the oldest version this library supports. That is a hard constraint rather
 // than a preference: tmux expands a token it does not know to the empty
 // string, so requesting a newer one would read as a present-but-empty value on
@@ -64,7 +64,7 @@ class Command;
 
 /// What a creation command can be told.
 ///
-/// Every field maps to a flag tmux 3.2a already has, and every default is what
+/// Every field maps to a flag tmux 3.3a already has, and every default is what
 /// tmux does when the flag is absent — except focus, which defaults to leaving
 /// it where the user put it. A library that moves someone's cursor because it
 /// created something is a library people stop calling.
@@ -613,8 +613,8 @@ public:
   /// JSON and carries each pane's id. On tmux 3.7 and earlier the classic
   /// layout string restores the shape but can rotate which pane lands in
   /// which cell (measured against raw tmux; not a choice this library
-  /// makes). A JSON layout is refused before 3.8, and a mirrored preset
-  /// before 3.5.
+  /// makes). A JSON layout is refused before 3.8-rc2, the first build that
+  /// sends one, and a mirrored preset before 3.5.
   ///
   /// Anything not shaped like one of those — a leading `-`, a name tmux
   /// does not know, or an incomplete layout string — is refused before

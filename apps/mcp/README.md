@@ -47,7 +47,7 @@ only schema-keyed `inputLiteralization`, never `inputSinks` or
 `select_layout` accepts built-in names, unique abbreviations and saved layouts
 up to 4096 characters. Malformed syntax is rejected before window lookup.
 Version-sensitive names and v2 JSON layouts use the selected daemon. JSON layouts
-require tmux 3.8 (including `3.8-rc`) or newer and preserve floating-pane metadata;
+require tmux 3.8-rc2 or newer and preserve floating-pane metadata;
 older saved layouts retain their checksum format. tmux owns geometry and pruning.
 The result identifies the changed window; use
 `get_window_info` to read the resulting layout.
@@ -72,7 +72,7 @@ beside the full generated inventory:
 
 | Tool | Arguments | Result |
 |---|---|---|
-| `get_server_info` | — | Server liveness and tmux version |
+| `get_server_info` | — | Server liveness and tmux version; a daemon older than 3.3a is refused, with the instruction to upgrade tmux and restart the server |
 | `list_sessions` | — | Stable session IDs, names, paths, client counts, and window counts |
 | `list_windows` | `session` | Windows belonging to one exact session |
 | `list_panes` | — | Every pane with stable pane, window, and session IDs |

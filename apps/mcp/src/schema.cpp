@@ -12,11 +12,14 @@
 namespace libtmux::mcp::server {
 namespace {
 
-constexpr std::string_view kInstructions =
+const std::string kInstructions =
     "Start with list_sessions and retain stable IDs. This process uses one pinned "
     "tmux endpoint; read tmux://capabilities for its connection route, "
-    "configuration provenance, and effective tools. Execute tools run pane "
-    "processes with this user's permissions; tool filtering is not an OS sandbox.";
+    "configuration provenance, and effective tools. This server requires tmux " +
+    std::string{libtmux::kMinimumSupportedText} +
+    " or newer and refuses an older daemon: upgrade tmux and restart the "
+    "server. Execute tools run pane processes with this user's permissions; tool "
+    "filtering is not an OS sandbox.";
 constexpr std::string_view kCapabilityMetadata = "com.git-pull.libtmux-mcp/capability";
 
 [[nodiscard]] std::string shell_quote(std::string_view value) {
@@ -434,6 +437,7 @@ template <class... Functions> struct Overloaded : Functions... {
   }
   return {{"schemaVersion", 1},
           {"frozen", true},
+          {"minimumTmuxVersion", std::string{libtmux::kMinimumSupportedText}},
           {"socket",
            {{"selector", disclosure.selector},
             {"selectionProvenance", disclosure.selection_provenance},

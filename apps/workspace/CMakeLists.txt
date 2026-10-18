@@ -25,14 +25,18 @@ if(LIBTMUX_BUILD_TESTS AND NOT WIN32)
   target_compile_definitions(workspace_cli_test PRIVATE
     "LIBTMUX_WORKSPACE_BINARY=\"$<TARGET_FILE:tmux-workspace>\"")
   add_dependencies(workspace_cli_test tmux-workspace)
+  target_include_directories(workspace_cli_test PRIVATE "${PROJECT_SOURCE_DIR}/tests")
   target_link_libraries(workspace_cli_test PRIVATE libtmux_build_options workspace_cli workspace_builder
     GTest::gtest_main libtmux::testing nlohmann_json::nlohmann_json)
   add_test(NAME consumer.workspace.cli COMMAND workspace_cli_test
     "--gtest_filter=WorkspaceCli.*")
   add_test(NAME consumer.workspace.cli.real-tmux COMMAND workspace_cli_test
     "--gtest_filter=WorkspaceCliTmux.*")
+  add_test(NAME consumer.workspace.cli.rejected COMMAND workspace_cli_test
+    "--gtest_filter=WorkspaceCliRejected.*")
   set_tests_properties(consumer.workspace.cli PROPERTIES LABELS "consumer;contract" TIMEOUT 5)
   set_tests_properties(consumer.workspace.cli.real-tmux PROPERTIES LABELS "consumer;real-tmux" TIMEOUT 120)
+  set_tests_properties(consumer.workspace.cli.rejected PROPERTIES LABELS "consumer;real-tmux" TIMEOUT 120)
 
   # What the in-process suite cannot reach: a real controlling terminal and the
   # foreground process group around it, and the generated completion scripts

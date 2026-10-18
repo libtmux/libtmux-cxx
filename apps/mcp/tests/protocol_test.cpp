@@ -31,6 +31,7 @@
 
 #include "cli.hpp"
 #include "run_server.hpp"
+#include "support/rejected_daemon.hpp"
 
 namespace {
 
@@ -798,7 +799,7 @@ TEST_F(McpProtocol, JsonLayoutSelectionPreservesFloatingPanesAndKeeperState) {
   const auto server = connect_server();
   const auto version = server.tmux_version();
   ASSERT_TRUE(version.has_value());
-  if (*version < libtmux::Version{.major = 3, .minor = 8})
+  if (*version < libtmux::Version{.major = 3, .minor = 8, .candidate = 2})
     GTEST_SKIP() << "v2 layouts and floating panes require tmux 3.8";
   const auto session = server.session("mcp");
   ASSERT_TRUE(session.has_value());
@@ -3297,6 +3298,9 @@ TEST(McpProtocolCli, PublishesStaticEffectiveCapabilitiesInBothEras) {
       json::parse((*read)["result"]["contents"][0]["text"].get<std::string>());
   EXPECT_EQ(document["schemaVersion"], 1);
   EXPECT_TRUE(document["frozen"].get<bool>());
+  EXPECT_EQ(libtmux::parse_version("tmux " +
+                                   document["minimumTmuxVersion"].get<std::string>()),
+            libtmux::kMinimumSupported);
   ASSERT_TRUE(document.contains("toolsets"));
   ASSERT_TRUE(document.contains("includedTools"));
   ASSERT_TRUE(document.contains("excludedTools"));
@@ -3778,6 +3782,41 @@ TEST(McpProtocolCli, DoesNotUseAnInvalidInheritedRoute) {
       server
           ->run({"show-options", "-sqv", "exit-empty"}, std::chrono::milliseconds{250})
           .has_value());
+}
+
+// The server refuses a daemon older than the floor where it starts, naming the
+// release and the remedy, and exits without serving a request.
+class McpProtocolRejected : public libtmux::test::rejected::RejectedDaemonTest {};
+
+TEST_F(McpProtocolRejected, StartupRefusesTheDaemonWithTheRemedy) {
+  libtmux::mcp::server::CliOptions options;
+  options.selector = libtmux::mcp::server::Selector::path;
+  options.value = daemon_->socket_path().string();
+  options.explicit_selector = true;
+  const auto opened = libtmux::mcp::server::open_server(options);
+  ASSERT_FALSE(opened.has_value());
+  libtmux::test::rejected::expect_floor_and_remedy(opened.error());
+  expect_untouched();
+}
+
+TEST_F(McpProtocolRejected, TheServerProgramExitsWithTheRefusalOnStandardError) {
+  const std::string command =
+      libtmux::test::rejected::shell_quote(LIBTMUX_MCP_SERVER_PATH) +
+      " --socket-path " +
+      libtmux::test::rejected::shell_quote(daemon_->socket_path().string()) +
+      " </dev/null 2>&1";
+  std::string output;
+  FILE* const pipe = ::popen(command.c_str(), "r");
+  ASSERT_NE(pipe, nullptr);
+  std::array<char, 512> buffer{};
+  while (const std::size_t count = std::fread(buffer.data(), 1, buffer.size(), pipe)) {
+    output.append(buffer.data(), count);
+  }
+  const int status = ::pclose(pipe);
+  EXPECT_TRUE(WIFEXITED(status) && WEXITSTATUS(status) == 1) << status << output;
+  EXPECT_EQ(output.rfind("libtmux-mcp: ", 0), 0U) << output;
+  libtmux::test::rejected::expect_floor_and_remedy(output);
+  expect_untouched();
 }
 
 } // namespace

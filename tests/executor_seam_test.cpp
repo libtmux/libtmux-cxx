@@ -363,7 +363,9 @@ TEST(ControlBackedServer, LaunchesWhatTmuxMayLeaveRunning) {
   if (*version >= Version{.major = 3, .minor = 5}) {
     EXPECT_EQ(*finished, "finished\n");
   }
-  EXPECT_EQ(tmux.launches(), 1);
+  // The launching server checks the daemon on its first command, so that
+  // launch is the probe and the command.
+  EXPECT_EQ(tmux.launches(), 2);
 
   // An abbreviation could be anything once aliases are counted, so it launches.
   tmux.reset();

@@ -32,6 +32,7 @@
 #include "libtmux/keys.hpp"
 #include "libtmux/server.hpp"
 #include "libtmux/snapshot.hpp"
+#include "libtmux/version.hpp"
 #include "pane_echo.hpp"
 #include "pane_input.hpp"
 #include "wait_for_text.hpp"
@@ -1758,10 +1759,23 @@ resolve_session(const Server& server, std::string_view target) {
                       std::move(handler), description));
       };
 
+  // The tool table keeps views of its descriptions, so this one outlives it.
+  static const std::string server_info_description =
+      "Report liveness, tmux version, and the resolved socket when running. A "
+      "daemon older than " +
+      std::string{libtmux::kMinimumSupportedText} +
+      " is refused: upgrade tmux and restart the server, or stay on the previous "
+      "libtmux release.";
   inspect_metadata(
       "get_server_info", "Get tmux server information", {}, OutputShape::object,
       [](const Server& server, const Arguments&, const CallContext&) -> ToolResult {
-        const bool running = server.is_alive();
+        const auto alive = server.check_alive();
+        // A daemon libtmux refuses is not a stopped one, and reporting it as
+        // stopped would invite starting a server on top of it.
+        if (!alive.has_value() && alive.error().kind == FailureKind::unsupported) {
+          return libtmux::unexpected(detail::tmux_error(alive.error()));
+        }
+        const bool running = alive.has_value();
         StructuredValue::Object result{{"running", running}};
         // tmux's own `-V` spelling, not a reconstruction from the parsed
         // Version: the parsed form cannot round-trip a letter revision
@@ -1789,7 +1803,7 @@ resolve_session(const Server& server, std::string_view target) {
         }
         return detail::output(std::move(result));
       },
-      "Report liveness, tmux version, and the resolved socket when running.");
+      server_info_description);
 
   inspect_metadata(
       "get_session_info", "Get tmux session information",
@@ -2357,7 +2371,7 @@ resolve_session(const Server& server, std::string_view target) {
       },
       "Replace the pane layout of one window. Names and mirrored layouts follow "
       "the selected daemon version. Saved layouts accept v1 checksums and v2 JSON; "
-      "v2 requires tmux 3.8 (including 3.8-rc) or newer.");
+      "v2 requires tmux 3.8-rc2 or newer.");
 
   manage(
       "resize_window", "Resize a tmux window",

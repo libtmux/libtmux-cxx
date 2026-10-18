@@ -454,8 +454,8 @@ Bad (Delete):
 Good (Keep):
 
 ```cpp
-// tmux < 3.2 reports the pane ID only after the command completes,
-// so this query must stay separate.
+// tmux 3.4 removed `split-window -p`, so the percentage is spelled
+// `-l 25%`, which every supported release accepts.
 ```
 
 ### Documentation exception
@@ -492,7 +492,7 @@ and to a caller who must relink — not by a soname that does not exist.
 
 Name toolchains and versions exactly. clang, GCC, MSVC, libc++, libstdc++ and
 Apple Clang are not interchangeable, and neither are tmux releases: `3.7a` is
-not `3.7`, and `master` is not a version. Write `clang 17+`, `tmux 3.2a`,
+not `3.7`, and `master` is not a version. Write `clang 17+`, `tmux 3.3a`,
 `CMake 3.25` — never "a recent compiler". tmux and psmux are different
 programs, and a sentence true of one is not automatically true of the other.
 

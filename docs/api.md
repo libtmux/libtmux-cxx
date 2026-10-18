@@ -77,6 +77,7 @@ The connection root.  A Server names which tmux server to talk to and how to rea
   - [`Server::control_with_options`](#libtmux-server-hpp-server-control-with-options)
   - [`Server::over_control`](#libtmux-server-hpp-server-over-control)
   - [`Server::tmux_version`](#libtmux-server-hpp-server-tmux-version)
+  - [`Server::check_release`](#libtmux-server-hpp-server-check-release)
   - [`Server::validate_layouts`](#libtmux-server-hpp-server-validate-layouts)
   - [`Server::is_alive`](#libtmux-server-hpp-server-is-alive)
   - [`Server::check_alive`](#libtmux-server-hpp-server-check-alive)
@@ -266,7 +267,7 @@ Run one command and return its standard output.  The timeout still rides on the 
 ```cpp
 [[nodiscard]] expected<CommandOperation, CommandFailure> try_submit(CommandRuntime& runtime, CommandRequest command, std::optional<std::chrono::milliseconds> timeout = {}, std::optional<std::size_t> output_limit = {}) const;
 ```
-Admit one command to an explicit bounded runtime without waiting for it. A refusal before admission is returned here; an admitted command carries every later transport or tmux failure in its operation.
+Admit one command to an explicit bounded runtime without waiting for it. A refusal before admission is returned here; an admitted command carries every later transport or tmux failure in its operation.  Admission does not wait for a slot, but the daemon's release is asked before it. A submission to an endpoint whose daemon has not answered yet can block the calling thread on that probe, up to the command's timeout. An empty command is a validation error.
 
 <a id="libtmux-server-hpp-server-run-batch"></a>
 #### `Server::run_batch`
@@ -314,7 +315,15 @@ A Server whose commands travel over held-open control clients attached to `sessi
 ```cpp
 [[nodiscard]] expected<Version, CommandFailure> tmux_version() const;
 ```
-Ask the selected subprocess executable with `tmux -V` without touching a server. The call uses this Server's execution policy.
+The release behind this handle: the daemon's when one answers, and otherwise the executable that would start one, read with `tmux -V`. A release below the floor is reported here, not refused; the commands are what refuse it. The call uses this Server's execution policy.
+
+<a id="libtmux-server-hpp-server-check-release"></a>
+#### `Server::check_release`
+
+```cpp
+[[nodiscard]] expected<void, CommandFailure> check_release() const;
+```
+Refuse a tmux below the floor exactly as the first command to this endpoint would, and send nothing. The daemon is asked when one answers, and otherwise the executable that would start one. For a caller that launches tmux itself, which this library cannot check. A refusal is `FailureKind::unsupported` with `DeliveryStatus::not_started`.
 
 <a id="libtmux-server-hpp-server-validate-layouts"></a>
 #### `Server::validate_layouts`
@@ -322,7 +331,7 @@ Ask the selected subprocess executable with `tmux -V` without touching a server.
 ```cpp
 [[nodiscard]] expected<void, LayoutFailure> validate_layouts(std::span<const LayoutRequest> layouts) const;
 ```
-Validate the complete batch's syntax before any I/O, then query its daemon once for version-dependent names or v2 JSON layouts. No layout is applied. Only an unbound native subprocess handle may use the client version for an absent socket; failures from previously bound endpoints remain failures.
+Validate the complete batch's syntax before any I/O, then ask for the release once for version-dependent names or v2 JSON layouts: the daemon's when one answers, otherwise the executable's. No layout is applied.
 
 <a id="libtmux-server-hpp-server-is-alive"></a>
 #### `Server::is_alive`
@@ -694,7 +703,7 @@ CommandFailure cause;
 ```cpp
 [[nodiscard]] expected<void, CommandFailure> validate_layout(std::string_view layout, std::size_t minimum_panes = 1);
 ```
-Check names, v1 saved-layout checksum, v1/v2 tree grammar and minimum cell count without I/O. Names must be valid on at least one supported tmux version; Server::validate_layouts resolves version-dependent names and requires tmux 3.8 (including 3.8-rc) or newer for v2 JSON layouts. Saved input, including floating-pane metadata, is retained unchanged. The v2 reader follows tmux's restricted JSON syntax. Geometry and resizing remain tmux's responsibility. Empty layouts are invalid.
+Check names, v1 saved-layout checksum, v1/v2 tree grammar and minimum cell count without I/O. Names must be valid on at least one supported tmux version; Server::validate_layouts resolves version-dependent names and requires tmux 3.8-rc2 or newer for v2 JSON layouts. Saved input, including floating-pane metadata, is retained unchanged. The v2 reader follows tmux's restricted JSON syntax. Geometry and resizing remain tmux's responsibility. Empty layouts are invalid.
 
 <a id="libtmux-async-hpp"></a>
 ## `libtmux/async.hpp`
@@ -1342,7 +1351,7 @@ Whether this implementation is known to get the feature wrong, which is the oppo
 <a id="libtmux-entities-hpp"></a>
 ## `libtmux/entities.hpp`
 
-The tmux object hierarchy.  A Session, Window, Pane or Client is one row of a snapshot: a shared pointer to the listing it came from plus the index of its row. That representation is what lets an entity be copied, stored in a container and returned from a function with nothing to keep alive alongside it, while still costing no per-row allocation and no tmux call to read.  The other side of that: keeping one entity keeps its whole listing. A pane held from a thousand-pane server retains all thousand rows and the bytes tmux sent for them, and ten panes from one listing retain it once, not ten times. For the sizes tmux serves this is the cheaper trade — but a program that holds handles across large servers for a long time should hold the id it needs and look the entity up again, rather than hold the entity.  Reading a field is local and cannot fail. Every method returning `expected` runs tmux, and a returned entity describes the moment that command ran: entities do not update themselves, `refresh` takes a new snapshot.  Psmux numbers windows and panes per session, so Windows snapshots retain their owning session identity alongside tmux's `$0`, `@0`, and `%0` IDs.  Every field below is a format token tmux 3.2a already registers, which is the oldest version this library supports. That is a hard constraint rather than a preference: tmux expands a token it does not know to the empty string, so requesting a newer one would read as a present-but-empty value on an older server instead of failing.
+The tmux object hierarchy.  A Session, Window, Pane or Client is one row of a snapshot: a shared pointer to the listing it came from plus the index of its row. That representation is what lets an entity be copied, stored in a container and returned from a function with nothing to keep alive alongside it, while still costing no per-row allocation and no tmux call to read.  The other side of that: keeping one entity keeps its whole listing. A pane held from a thousand-pane server retains all thousand rows and the bytes tmux sent for them, and ten panes from one listing retain it once, not ten times. For the sizes tmux serves this is the cheaper trade — but a program that holds handles across large servers for a long time should hold the id it needs and look the entity up again, rather than hold the entity.  Reading a field is local and cannot fail. Every method returning `expected` runs tmux, and a returned entity describes the moment that command ran: entities do not update themselves, `refresh` takes a new snapshot.  Psmux numbers windows and panes per session, so Windows snapshots retain their owning session identity alongside tmux's `$0`, `@0`, and `%0` IDs.  Every field below is a format token tmux 3.3a already registers, which is the oldest version this library supports. That is a hard constraint rather than a preference: tmux expands a token it does not know to the empty string, so requesting a newer one would read as a present-but-empty value on an older server instead of failing.
 
 **Symbols:**
 
@@ -2587,7 +2596,7 @@ How to address this window, and the reason a window id alone will not do.  The s
 ```cpp
 [[nodiscard]] expected<void, CommandFailure> select_layout(std::string_view layout) const;
 ```
-Rearrange the panes. tmux names five layouts, plus two mirrored ones on tmux 3.5+, and also accepts the layout description `layout()` returns.  Restoring one exactly — the same pane back at the same position, not only the same shape — holds on tmux 3.8+, where the saved string is JSON and carries each pane's id. On tmux 3.7 and earlier the classic layout string restores the shape but can rotate which pane lands in which cell (measured against raw tmux; not a choice this library makes). A JSON layout is refused before 3.8, and a mirrored preset before 3.5.  Anything not shaped like one of those — a leading `-`, a name tmux does not know, or an incomplete layout string — is refused before reaching tmux rather than passed through: on tmux 3.3 and 3.3a, that shape crashes the server outright rather than being refused.
+Rearrange the panes. tmux names five layouts, plus two mirrored ones on tmux 3.5+, and also accepts the layout description `layout()` returns.  Restoring one exactly — the same pane back at the same position, not only the same shape — holds on tmux 3.8+, where the saved string is JSON and carries each pane's id. On tmux 3.7 and earlier the classic layout string restores the shape but can rotate which pane lands in which cell (measured against raw tmux; not a choice this library makes). A JSON layout is refused before 3.8-rc2, the first build that sends one, and a mirrored preset before 3.5.  Anything not shaped like one of those — a leading `-`, a name tmux does not know, or an incomplete layout string — is refused before reaching tmux rather than passed through: on tmux 3.3 and 3.3a, that shape crashes the server outright rather than being refused.
 
 <a id="libtmux-entities-hpp-window-resize"></a>
 #### `Window::resize`
@@ -7840,7 +7849,7 @@ Wrap a variable name as a substitution. The name is not escaped: a name is chose
 <a id="libtmux-version-hpp"></a>
 ## `libtmux/version.hpp`
 
-Parse and order tmux version strings.  Suffixes follow bare releases; `next-` precedes its release and `master` follows all. Psmux 3.3.7 occupies `revision=7`, equal to tmux 3.3g.
+Parse and order tmux version strings.  Suffixes follow bare releases; `next-` precedes its release, a release candidate sits between the two. Psmux 3.3.7 occupies `revision=7`, equal to tmux 3.3g.
 
 **Symbols:**
 
@@ -7853,12 +7862,14 @@ Parse and order tmux version strings.  Suffixes follow bare releases; `next-` pr
   - [`Version::revision`](#libtmux-version-hpp-version-revision)
   - [`Version::prerelease`](#libtmux-version-hpp-version-prerelease)
   - [`Version::unbounded`](#libtmux-version-hpp-version-unbounded)
+  - [`Version::candidate`](#libtmux-version-hpp-version-candidate)
   - [`Version::operator<=>`](#libtmux-version-hpp-version-operator)
   - [`Version::operator==`](#libtmux-version-hpp-version-operator-2)
 - [`Free symbols`](#libtmux-version-hpp-free-symbols)
   - [`to_string`](#libtmux-version-hpp-free-symbols-to-string)
   - [`parse_version`](#libtmux-version-hpp-free-symbols-parse-version)
   - [`kMinimumSupported`](#libtmux-version-hpp-free-symbols-kminimumsupported)
+  - [`kMinimumSupportedText`](#libtmux-version-hpp-free-symbols-kminimumsupportedtext)
   - [`is_supported`](#libtmux-version-hpp-free-symbols-is-supported)
   - [`library_version`](#libtmux-version-hpp-free-symbols-library-version)
   - [`LIBTMUX_VERSION_MAJOR`](#libtmux-version-hpp-free-symbols-libtmux-version-major)
@@ -7884,7 +7895,7 @@ enum class VersionError;
 <a id="libtmux-version-hpp-version"></a>
 ### `Version`
 
-A tmux version, ordered so a feature gate can compare against a literal.  tmux marks a development build with a suffix, which orders after the release it follows rather than before it.
+A tmux version, ordered so a feature gate can compare against a literal.  A `next-` build and a release candidate order before the release they lead to, so a gate written against `3.8` does not accept `3.8-rc2`. A behaviour that candidates already have is gated at the earliest build measured to have it, as `{.major = 3, .minor = 8, .candidate = 2}` for JSON layouts.
 
 ```cpp
 struct Version;
@@ -7918,7 +7929,7 @@ std::uint32_t revision{};
 ```cpp
 bool prerelease{false};
 ```
-A `next-` build precedes the release it leads to; `master` follows every numbered release.
+A `next-` build precedes the release it leads to.
 
 <a id="libtmux-version-hpp-version-unbounded"></a>
 #### `Version::unbounded`
@@ -7926,6 +7937,15 @@ A `next-` build precedes the release it leads to; `master` follows every numbere
 ```cpp
 bool unbounded{false};
 ```
+Never set by `parse_version`. A harness that cannot read tmux's version sets it to mean "newest", so version-gated tests run rather than skip.
+
+<a id="libtmux-version-hpp-version-candidate"></a>
+#### `Version::candidate`
+
+```cpp
+std::uint16_t candidate{0};
+```
+0 for a release, 1 for `-rc` and N for `-rcN`: a candidate orders after a `next-` build and before its release.
 
 <a id="libtmux-version-hpp-version-operator"></a>
 #### `Version::operator<=>`
@@ -7963,9 +7983,17 @@ Parse the first line of `tmux -V`, with or without its trailing newline.
 #### `kMinimumSupported`
 
 ```cpp
-inline constexpr Version kMinimumSupported{.major = 3, .minor = 2, .revision = 1};
+inline constexpr Version kMinimumSupported{.major = 3, .minor = 3, .revision = 1};
 ```
-The oldest release this library supports, matching the Python package.
+The oldest release this library supports: 3.3a. Patch letters count, so 3.3 is below it, and `next-3.3a` and `3.3a-rc` order before it.
+
+<a id="libtmux-version-hpp-free-symbols-kminimumsupportedtext"></a>
+#### `kMinimumSupportedText`
+
+```cpp
+inline constexpr std::string_view kMinimumSupportedText{"3.3a"};
+```
+The floor as the messages name it; `parse_version` reads it back as `kMinimumSupported`.
 
 <a id="libtmux-version-hpp-free-symbols-is-supported"></a>
 #### `is_supported`

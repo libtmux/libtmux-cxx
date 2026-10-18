@@ -108,8 +108,8 @@ add_executable(libtmux_compatibility_test compatibility_test.cpp)
 target_compile_definitions(
   libtmux_compatibility_test
   PRIVATE
-    LIBTMUX_FORMAT_TOKENS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/data/format-tokens-3.2a.txt"
-    LIBTMUX_KEY_NAMES_PATH="${CMAKE_CURRENT_SOURCE_DIR}/data/key-names-3.2a.txt")
+    LIBTMUX_FORMAT_TOKENS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/data/format-tokens-3.3a.txt"
+    LIBTMUX_KEY_NAMES_PATH="${CMAKE_CURRENT_SOURCE_DIR}/data/key-names-3.3a.txt")
 target_link_libraries(
   libtmux_compatibility_test
   PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
@@ -202,6 +202,19 @@ target_compile_options(
 gtest_discover_tests(
   libtmux_snapshot_framing_test
   TEST_PREFIX libtmux.snapshot.framing.
+  PROPERTIES LABELS real-tmux TIMEOUT 60)
+
+add_executable(libtmux_support_versions_test integration/support_versions_test.cpp)
+target_link_libraries(
+  libtmux_support_versions_test
+  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+          libtmux_test_support)
+target_compile_options(
+  libtmux_support_versions_test PRIVATE -fno-sanitize-recover=undefined)
+
+gtest_discover_tests(
+  libtmux_support_versions_test
+  TEST_PREFIX libtmux.support_versions.
   PROPERTIES LABELS real-tmux TIMEOUT 60)
 
 add_executable(libtmux_server_identity_test integration/server_identity_test.cpp)
@@ -702,8 +715,8 @@ gtest_discover_tests(
 # onto the library that now ships the same connection.
 #
 # The prototype pinned one exact tmux binary, which is right for frozen bakeoff
-# evidence and wrong here: the library supports a range, so this resolves tmux,
-# records which binary ran, and checks the version is one the library claims.
+# evidence and wrong here: the library supports a range, so this resolves tmux
+# and records which binary ran.
 find_program(LIBTMUX_TEST_TMUX NAMES tmux REQUIRED NO_CACHE)
 file(SHA256 "${LIBTMUX_TEST_TMUX}" LIBTMUX_TEST_TMUX_SHA256)
 execute_process(
@@ -714,23 +727,16 @@ execute_process(
 if(NOT LIBTMUX_TEST_TMUX_RESULT EQUAL 0)
   message(FATAL_ERROR "tmux -V failed for ${LIBTMUX_TEST_TMUX}")
 endif()
-# `master` and `next-3.8` are what tmux built from git calls itself, and both
-# are newer than every numbered release — the library's own `Version` orders
-# them that way. A guard that only understands numbered releases turns the
-# newest tmux there is into "too old to test".
-if(NOT LIBTMUX_TEST_TMUX_VERSION MATCHES
-   "^tmux (master|next-|3\\.[2-9]|3\\.[1-9][0-9]|[4-9]\\.)")
-  message(
-    FATAL_ERROR
-      "control-mode tests need tmux 3.2 or newer, found ${LIBTMUX_TEST_TMUX_VERSION}")
-endif()
+# Whether this tmux is one the library supports is not decided here: a pattern
+# in this file would be a second copy of the version grammar. The control suite
+# reads the tmux it was built against with `parse_version` and `is_supported`
+# when it starts, and refuses to run on one it cannot read, one below the floor,
+# or one that differs from the tmux PATH names when the suite runs.
 
 # The version is no longer stamped into the support library from here.
 # `libtmux::testing` asks the binary it is about to spawn, at runtime, which
 # is both more honest — a configure-time answer can name a different tmux than
 # the one that runs — and the thing that made the fixture installable at all.
-# The check above stays: it is worth failing configuration over a tmux this
-# library does not claim, rather than discovering it 200 tests later.
 
 foreach(control_case parser integration)
   add_executable(
