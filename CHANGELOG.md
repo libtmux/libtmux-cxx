@@ -9,6 +9,17 @@ was recorded as it landed.
 
 ## Unreleased
 
+### Testing
+
+- CI no longer runs macOS or psmux. The `macos` job leaves `ci.yml`, the
+  `windows` job keeps its MSVC build, install and package steps but no
+  longer starts psmux, and `release.yml` drops `registry-macos` and the
+  psmux steps of `server-windows`, so `all-checks-passed` and `publish` wait
+  on no macOS or psmux run. Release builds still publish the macOS and
+  Windows binaries, and the README, `docs/windows.md` and `CONTRIBUTING.md`
+  state that both are supported on a best-effort basis with highly limited
+  CI coverage. (#82)
+
 ## 0.1.0-alpha.12 (2026-10-18)
 
 This alpha requires tmux 3.3a. Every command is checked against the daemon it
