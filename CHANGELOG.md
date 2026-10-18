@@ -9,6 +9,15 @@ was recorded as it landed.
 
 ## Unreleased
 
+## 0.1.0-alpha.12 (2026-10-18)
+
+This alpha requires tmux 3.3a. Every command is checked against the daemon it
+reaches, not the client executable, before it has any effect, and an older or
+unrecognized daemon is refused with `FailureKind::unsupported` and the remedy.
+The check fires no user hook, and a daemon replaced between commands runs
+nothing. The workspace CLI reports the refusal as `tmux_unsupported`, and the
+MCP server refuses at startup and names the floor.
+
 ### Breaking
 
 - tmux 3.3a is the oldest supported release. A daemon older than 3.3a,
