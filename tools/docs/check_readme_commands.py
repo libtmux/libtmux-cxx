@@ -251,8 +251,30 @@ def check_workspace(command: Command, tree: dict) -> Iterable[Problem]:
         yield Problem(command.where(), f"`{' '.join(path)}` needs {needed} argument(s)")
 
 
+def names_a_socket(command: Command) -> bool:
+    """Report whether a server command or its environment selects a socket."""
+    arguments = command.arguments[1:]
+    selects = any(
+        argument in {"--socket", "--socket-path", "--socket-name"}
+        for argument in arguments
+    ) or any(
+        not argument.startswith("-")
+        and (index == 0 or not arguments[index - 1].startswith("-"))
+        for index, argument in enumerate(arguments)
+    )
+    return selects or bool(
+        {"LIBTMUX_SOCKET", "LIBTMUX_SOCKET_PATH"} & command.environment.keys()
+    )
+
+
 def server_environment(command: Command, home: pathlib.Path) -> dict[str, str]:
-    """Return a private environment holding only the variables the README sets."""
+    """Return a private environment holding only the variables the README sets.
+
+    A server given no socket opens its dedicated `libtmux-mcp` socket, which
+    starts a tmux daemon that outlives the check and answers differently from
+    one tmux release to the next. Such a command is given a private socket path
+    instead, so its arguments are still run as written and nothing is started.
+    """
     environment = {
         name: value
         for name, value in os.environ.items()
@@ -260,6 +282,9 @@ def server_environment(command: Command, home: pathlib.Path) -> dict[str, str]:
     }
     environment["HOME"] = str(home)
     environment["TMUX_TMPDIR"] = str(home / "tmux")
+    (home / "tmux").mkdir(exist_ok=True)
+    if not names_a_socket(command):
+        environment["LIBTMUX_SOCKET_PATH"] = str(home / "socket")
     environment.update(command.environment)
     return environment
 

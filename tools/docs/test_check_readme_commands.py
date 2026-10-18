@@ -233,6 +233,46 @@ class CMakeCommandTest(unittest.TestCase):
         self.assertEqual(self.problems("cmake -DCMAKE_BUILD_TYPE=Release ."), [])
 
 
+class ServerSocketTest(unittest.TestCase):
+    """A server with no socket must not be left to start the dedicated daemon."""
+
+    def environment(self, environment: dict[str, str], *arguments: str) -> dict:
+        """Return the environment the checker would run the server under."""
+        command = commands.Command(
+            README, 1, environment, ("libtmux-mcp-server", *arguments)
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            return commands.server_environment(command, pathlib.Path(directory))
+
+    def test_a_server_with_no_socket_gets_a_private_path(self) -> None:
+        """The arguments stay as documented; only the socket is supplied."""
+        found = self.environment({})
+        self.assertIn("LIBTMUX_SOCKET_PATH", found)
+        self.assertTrue(found["LIBTMUX_SOCKET_PATH"].endswith("socket"))
+
+    def test_a_documented_socket_is_left_alone(self) -> None:
+        """A flag, a positional path or a variable that names one is not overridden."""
+        for arguments, environment in (
+            (("--socket-name", "agent"), {}),
+            (("--socket-path", "/tmp/s"), {}),
+            (("--socket", "name:agent"), {}),
+            (("/tmp/agent",), {}),
+            ((), {"LIBTMUX_SOCKET": "agent"}),
+        ):
+            with self.subTest(arguments=arguments, environment=environment):
+                found = self.environment(environment, *arguments)
+                self.assertNotIn(
+                    "LIBTMUX_SOCKET_PATH", found.keys() - environment.keys()
+                )
+
+    def test_the_tmux_tmpdir_exists(self) -> None:
+        """The tmux under test may refuse a TMUX_TMPDIR that is not a directory."""
+        command = commands.Command(README, 1, {}, ("libtmux-mcp-server",))
+        with tempfile.TemporaryDirectory() as directory:
+            found = commands.server_environment(command, pathlib.Path(directory))
+            self.assertTrue(pathlib.Path(found["TMUX_TMPDIR"]).is_dir())
+
+
 SERVER = """\
 #!/bin/sh
 case "$1" in
