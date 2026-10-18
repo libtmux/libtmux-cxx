@@ -73,6 +73,93 @@ struct ExecutorOptions {
 /// The entry point: sessions, windows and panes are read from here and carry
 /// the server with them. Constructing a handle sends no command. Only a
 /// startable handle may create an absent daemon; ordinary handles never do.
+///
+/// A Server is a handle. Copying one costs a reference count, and every entity
+/// read from it keeps the same connection alive, so a listing outlives the
+/// Server value that produced it. The connection is fixed at construction,
+/// which is what makes a Server safe to copy between threads. Apart from
+/// `is_alive()`, which answers `bool`, a call that reaches tmux returns an
+/// `expected`, and the library does not throw to report a tmux failure.
+///
+/// # What is on here
+///
+/// The members fall into a few groups.
+///
+/// **Connecting.** `at_socket_path()` and `at_socket_name()` choose a socket by
+/// path (`-S`) or by name (`-L`), `at_default()` takes the one tmux uses with
+/// neither flag, and `from_env()` reads the server this process is already
+/// inside. `startable_at_socket_path()`, `startable_at_socket_name()` and
+/// `startable_at_default()` build handles that may create an absent server, and
+/// `over()` builds a handle over a transport you supply. `is_alive()` and
+/// `check_alive()` answer whether anything is listening, the second keeping the
+/// reason when nothing is. `capabilities()` says what the handle may rely on and
+/// runs no command; on psmux that is exact inspection and namespace cleanup
+/// only. Most typed calls outside it report `FailureKind::unsupported` there;
+/// `control()` and `over_control()` report a `ProtocolError` instead, and the
+/// environment calls and raw commands are not checked. `tmux_version()`
+/// reports the tmux release, and
+/// `socket_path()` reports the resolved socket. `control()` and
+/// `control_with_options()` open a control-mode connection to one session, and
+/// `over_control()` returns a Server whose commands travel over held-open
+/// control clients.
+///
+/// **Finding one thing.** `session()`, `window()` and `pane()` take a target,
+/// such as an id or a `session:window` path, and resolve it the way tmux does:
+/// a session target names that session's active pane and the window that pane
+/// is in. A target tmux cannot resolve comes back as a `FailureKind::missing`
+/// failure.
+///
+/// **Listing everything.** `sessions()`, `windows()`, `panes()` and `clients()`.
+/// Each is one snapshot: iterating or filtering it never reaches tmux again, and
+/// a current view means calling again. `windows()` and `panes()` span every
+/// session.
+///
+/// **Querying things and getting around.** A listing already in memory is
+/// filtered without tmux: `matching()` takes a `FilterExpr` built from an
+/// entity's typed fields, and `exactly_one()` takes the single match, borrowing
+/// it from the listing, where `exactly_one_owned()` takes a copy. Both report
+/// `CardinalityError::none_matched` or `CardinalityError::several_matched`
+/// otherwise. `children_of()` and `parent_of()` join two listings on an id so a
+/// filter can ask about related rows. To move between levels, go down with
+/// `Session::windows()`, `Session::panes()` and `Window::panes()`, up with
+/// `Pane::window()`, `Pane::session()`, `Window::session()` and
+/// `Client::session()`, and across to the active window or pane with
+/// `Session::active_window()`, `Session::active_pane()` and
+/// `Window::active_pane()`. Each of those asks tmux, so each can fail.
+///
+/// **Changing things.** `new_session()` creates a session detached and returns
+/// it, and `kill()` ends the server and everything in it.
+///
+/// **Options and hooks.** `options()`, `server_options()`, `global_options()`,
+/// `hooks()` and `global_hooks()` read them, `global_hooks()` being how a hook
+/// set globally is read back, since `hooks()` without a target does not report
+/// it; `set_server_option()`, `set_global_option()` and `set_global_hook()`
+/// write them. The environment every new process starts with is
+/// `environment()`, with `set_environment()` to bind a name,
+/// `unset_environment()` to forget it, and `remove_environment()` to keep the
+/// name but take it out of what a process inherits.
+///
+/// **Everything else tmux keeps.** Paste buffers: `buffers()` lists them,
+/// `set_buffer()` fills one, and `load_buffer()` and `save_buffer()` move one to
+/// and from a file the tmux server reads or writes. Key bindings: `bind_key()`
+/// and `unbind_key()`.
+/// `commands()` lists every command this tmux understands, `expand()` expands a
+/// format against the server alone, `source_file()` runs a configuration file
+/// and `check_file()` reports what tmux would refuse in it without running any,
+/// and `validate_layouts()` checks saved layouts without applying them.
+/// `run_shell()` reports whether a shell command ran, not what it printed, and
+/// `show_message()` puts a message on every attached client's status line.
+/// `wait_for()` blocks until `signal()` releases a channel, and with no timeout
+/// never gives up; `wait_for_text()` waits for the pane a target names to
+/// produce some text.
+///
+/// **Things that need a terminal.** None are here: every command this library
+/// runs talks to tmux through pipes. `Session::attach_command()` returns the
+/// argv for a terminal you own to run.
+///
+/// Anything tmux can do that is not here is reachable through `run()`, which
+/// runs one command; `run_batch()` and `run_chain()` run several, and
+/// `try_submit()` admits one to a `CommandRuntime` without waiting for it.
 class Server {
 public:
   /// `-S path`: the socket file, used verbatim.
