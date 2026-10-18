@@ -5,6 +5,8 @@
 #include <format>
 #include <iostream>
 
+#include <unistd.h>
+
 #include <libtmux/libtmux.hpp>
 
 namespace {

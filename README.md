@@ -99,6 +99,8 @@ Type a command into tmux and wait for its answer. This is the whole program:
 #include <format>
 #include <iostream>
 
+#include <unistd.h>
+
 #include <libtmux/libtmux.hpp>
 
 namespace {
