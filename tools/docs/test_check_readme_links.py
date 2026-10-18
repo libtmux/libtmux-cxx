@@ -38,14 +38,24 @@ class Fixture:
         return path
 
     def check(
-        self, text: str, *, introductions: bool = False, logo: bool = False
+        self,
+        text: str,
+        *,
+        introductions: bool = False,
+        logo: bool = False,
+        paragraphs: bool = False,
     ) -> list[str]:
         """Every problem the checker reports for a README with this text."""
         path = self.readme(text)
         return [
             problem.message
             for problem in links.check_readme(
-                path, self.root, KNOWN, introductions=introductions, logo=logo
+                path,
+                self.root,
+                KNOWN,
+                introductions=introductions,
+                logo=logo,
+                paragraphs=paragraphs,
             )
         ]
 
@@ -132,7 +142,7 @@ class IntroductionTest(unittest.TestCase):
         """The first prose mention of a public type must be a link."""
         found = self.check("Open a `Server` here, then " + self.server)
         self.assertEqual(len(found), 1)
-        self.assertIn("first prose mention of `Server`", found[0])
+        self.assertIn("first mention of `Server` in its section", found[0])
         self.assertIn(f"{REFERENCE}libtmux-server/", found[0])
 
     def test_refuses_a_type_whose_page_is_never_linked(self) -> None:
@@ -196,6 +206,86 @@ class IntroductionTest(unittest.TestCase):
                 "ScopedTmuxServer": "libtmux-test-scopedtmuxserver",
             },
         )
+
+
+class SectionTest(unittest.TestCase):
+    """An API is linked at its first mention in each section, not once per file."""
+
+    linked = f"[`Server`][server]\n\n[server]: {REFERENCE}libtmux-server/\n"
+
+    def check(self, text: str) -> list[str]:
+        """Check a README for first-mention links."""
+        with tempfile.TemporaryDirectory() as directory:
+            return Fixture(directory).check(text, introductions=True)
+
+    def test_accepts_a_link_in_every_section(self) -> None:
+        """Each section links the type where it first names it."""
+        found = self.check(
+            "## One\n\nOpen a [`Server`][server].\n\n"
+            "## Two\n\nOpen a [`Server`][server] again.\n\n"
+            f"[server]: {REFERENCE}libtmux-server/\n"
+        )
+        self.assertEqual(found, [])
+
+    def test_refuses_an_unlinked_mention_in_a_later_section(self) -> None:
+        """A link in the first section does not cover the second."""
+        found = self.check(
+            "## One\n\nOpen a [`Server`][server].\n\n"
+            "## Two\n\nOpen a `Server` again.\n\n"
+            f"[server]: {REFERENCE}libtmux-server/\n"
+        )
+        self.assertEqual(len(found), 1)
+        self.assertIn("in its section", found[0])
+
+    def test_a_later_mention_in_the_same_section_may_be_bare(self) -> None:
+        """Only the first mention in a section needs the link."""
+        found = self.check(
+            "## One\n\nOpen a [`Server`][server], then a `Server`.\n\n"
+            f"[server]: {REFERENCE}libtmux-server/\n"
+        )
+        self.assertEqual(found, [])
+
+
+class ParagraphTest(unittest.TestCase):
+    """A paragraph or list item is short enough to scan."""
+
+    def check(self, text: str) -> list[str]:
+        """Check a README for walls."""
+        with tempfile.TemporaryDirectory() as directory:
+            return Fixture(directory).check(text, paragraphs=True)
+
+    wall = "word " * 60
+
+    def test_accepts_a_short_paragraph_and_list(self) -> None:
+        """A few sentences and a few bullets are clean."""
+        found = self.check("## A\n\nA short paragraph.\n\n- one\n- two\n")
+        self.assertEqual(found, [])
+
+    def test_refuses_a_wall_of_text(self) -> None:
+        """A paragraph past 240 rendered characters is named with its line."""
+        found = self.check(f"## A\n\n{self.wall}\n")
+        self.assertEqual(len(found), 1)
+        self.assertIn("line 3", found[0])
+
+    def test_refuses_a_long_list_item(self) -> None:
+        """Each bullet is measured alone, not the list as a whole."""
+        found = self.check(f"## A\n\n- short\n- {self.wall}\n- short\n")
+        self.assertEqual(len(found), 1)
+        self.assertIn("line 4", found[0])
+
+    def test_counts_link_text_and_not_the_target(self) -> None:
+        """A long URL does not make a short sentence a wall."""
+        url = "https://example.org/" + "a" * 300
+        found = self.check(f"## A\n\nSee [the page]({url}) for more.\n")
+        self.assertEqual(found, [])
+
+    def test_ignores_tables_code_html_and_definitions(self) -> None:
+        """Indexes and markup are not prose."""
+        found = self.check(
+            f"## A\n\n| {self.wall} |\n|---|\n\n```\n{self.wall}\n```\n\n"
+            f"<div>{self.wall}</div>\n\n[x]: https://example.org/{'a' * 300}\n"
+        )
+        self.assertEqual(found, [])
 
 
 HEADER = """\

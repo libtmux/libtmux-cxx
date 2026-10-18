@@ -381,6 +381,17 @@ def check_cmake(
             )
 
 
+# Pages that hold what the READMEs moved out, held to the same links and commands.
+EXTRA_PAGES = (
+    "docs/runtime.md",
+    "docs/windows.md",
+    "docs/compatibility.md",
+    "docs/mcp-server.md",
+    "docs/workspace-cli.md",
+    "docs/design/commitments.md",
+)
+
+
 def tracked_readmes(root: pathlib.Path) -> list[pathlib.Path]:
     """Every README the repository tracks, or those under it without a checkout."""
     try:
@@ -392,12 +403,14 @@ def tracked_readmes(root: pathlib.Path) -> list[pathlib.Path]:
         )
     except (OSError, subprocess.CalledProcessError):
         skipped = {"build", ".git", "_deps"}
-        return sorted(
+        found = sorted(
             path
             for path in root.rglob("README.md")
             if not skipped.intersection(path.relative_to(root).parts)
         )
-    return [root / name for name in listing.stdout.split()]
+        return found + [root / name for name in EXTRA_PAGES if (root / name).is_file()]
+    pages = [root / name for name in EXTRA_PAGES if (root / name).is_file()]
+    return [root / name for name in listing.stdout.split()] + pages
 
 
 def workspace_tree(binary: pathlib.Path) -> dict:

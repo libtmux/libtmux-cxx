@@ -6,8 +6,10 @@ that can be checked from a checkout:
 
 - a relative link, or a `github.com/libtmux/libtmux-cxx/{tree,blob}/master/`
   link, names a path that exists, and its `#fragment` names a heading;
-- the first prose mention of a public type is a link, and the reference page
-  for each one the prose names is linked at least once;
+- the first prose mention of a public type in each section is a link, and the
+  reference page for each one the prose names is linked at least once;
+- no paragraph or list item renders past 240 characters, so a page stays
+  scannable;
 - a tool name in a table row or list item of the MCP README links to its page
   at `libtmux.org/en/cxx/latest/mcp/tools/<name>/`;
 - each package README opens with the shared logo header, in a centred `div`,
@@ -25,6 +27,7 @@ external link to prove the page exists, which a checkout cannot.
 from __future__ import annotations
 
 import argparse
+import bisect
 import concurrent.futures
 import dataclasses
 import pathlib
@@ -42,7 +45,13 @@ REPOSITORY = "https://github.com/libtmux/libtmux-cxx"
 # The READMEs held to the first-mention rule. The rest are checked for links
 # that resolve, because a directory index names headers rather than teaching
 # them.
-LINKED_READMES = ("README.md", "include/libtmux/README.md")
+LINKED_READMES = (
+    "README.md",
+    "include/libtmux/README.md",
+    "apps/workspace/README.md",
+    "apps/mcp/README.md",
+    "apps/matrix/README.md",
+)
 
 # The package READMEs that open with the logo header. The directories under
 # `apps/` that are not packages, `src/`, `cmake/` and the like are internal and
@@ -79,6 +88,10 @@ HEADING = re.compile(r"^(?P<marks>#{1,6})\s+(?P<text>.+?)\s*#*\s*$")
 TOOL_DEFINITION = re.compile(
     r"^\[tool-(?P<name>[a-z_]+)\]:\s*(?P<target>\S+)", re.MULTILINE
 )
+SECTION = re.compile(r"^#{1,3} ", re.MULTILINE)
+LIST_ITEM = re.compile(r"^(?:[-*] |\d+\. )")
+DEFINITION_LINE = re.compile(r"^\[[^\]]+\]:\s")
+WALL_CHARACTERS = 240
 HTML_ANCHOR = re.compile(r"<a\s+(?:id|name)=\"(?P<name>[^\"]+)\"")
 LEADING_NAME = re.compile(r"^(?:libtmux::)?(?:test::)?(?P<name>[A-Za-z_]\w*)")
 
@@ -241,25 +254,28 @@ def check_link(
 def check_introductions(
     readme: pathlib.Path, text: str, known: dict[str, str]
 ) -> Iterable[Problem]:
-    """Report an API named in prose that is not linked where it first appears."""
+    """Report an API named in a section's prose that is not linked there first."""
     unfenced, prose = split_fences(text)
     links = links_in(unfenced)
-    first: dict[str, int] = {}
+    starts = [match.start() for match in SECTION.finditer(unfenced)]
+    first: dict[tuple[int, str], int] = {}
     for span in CODE_SPAN.finditer(prose):
         head = LEADING_NAME.match(span.group("code").strip())
         if head is None or head.group("name") not in known:
             continue
-        first.setdefault(head.group("name"), span.start())
+        section = bisect.bisect_right(starts, span.start())
+        first.setdefault((section, head.group("name")), span.start())
 
-    for name, offset in first.items():
+    for (_, name), offset in first.items():
         linked = any(link.start <= offset < link.end for link in links)
         line = prose.count("\n", 0, offset) + 1
         if not linked:
             yield Problem(
                 readme,
-                f"line {line}: the first prose mention of `{name}` is not a link; "
-                f"point it at {REFERENCE}{known[name]}/",
+                f"line {line}: the first mention of `{name}` in its section is "
+                f"not a link; point it at {REFERENCE}{known[name]}/",
             )
+    for name in sorted({name for _, name in first}):
         wanted = f"{REFERENCE}{known[name]}"
         if not any(
             link.target.startswith((wanted + "/", wanted + "-")) for link in links
@@ -267,6 +283,51 @@ def check_introductions(
             yield Problem(
                 readme, f"`{name}` is named in prose but {wanted}/ is never linked"
             )
+
+
+def rendered_length(lines: list[str]) -> int:
+    """Count the characters a reader sees in a block: link text, not targets."""
+    text = " ".join(line.strip() for line in lines)
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
+    text = re.sub(r"\[([^\]]*)\]\[[^\]]*\]", r"\1", text)
+    return len(re.sub(r"\s+", " ", text.replace("`", "")))
+
+
+def check_paragraphs(readme: pathlib.Path, text: str) -> Iterable[Problem]:
+    """Report a paragraph or list item too long to scan at a glance.
+
+    Tables, headings, code, HTML, alerts, link definitions and a block of
+    links that each end in `·` are indexes or markup, not prose.
+    """
+    unfenced, _ = split_fences(text)
+    lines = unfenced.split("\n")
+    index = 0
+    while index < len(lines):
+        if not lines[index].strip():
+            index += 1
+            continue
+        start = index
+        while index < len(lines) and lines[index].strip():
+            index += 1
+        block = lines[start:index]
+        first = block[0].lstrip()
+        if first.startswith(("|", "#", "<", ">")) or DEFINITION_LINE.match(first):
+            continue
+        if sum(line.rstrip().endswith("·") for line in block) >= 2:
+            continue
+        items: list[tuple[int, list[str]]] = []
+        for offset, line in enumerate(block):
+            if LIST_ITEM.match(line.lstrip()) or not items:
+                items.append((start + offset, []))
+            items[-1][1].append(line)
+        for line_number, item in items:
+            length = rendered_length(item)
+            if length > WALL_CHARACTERS:
+                yield Problem(
+                    readme,
+                    f"line {line_number + 1}: a paragraph or list item of "
+                    f"{length} characters; split it, or move the detail to docs/",
+                )
 
 
 def check_tool_links(readme: pathlib.Path, text: str) -> Iterable[Problem]:
@@ -349,6 +410,7 @@ def check_readme(
     *,
     introductions: bool,
     logo: bool = False,
+    paragraphs: bool = False,
 ) -> list[Problem]:
     """Every problem one README has."""
     text = readme.read_text(encoding="utf-8")
@@ -361,6 +423,8 @@ def check_readme(
     problems.extend(check_tool_links(readme, text))
     if logo:
         problems.extend(check_logo(readme, text))
+    if paragraphs:
+        problems.extend(check_paragraphs(readme, text))
     if introductions:
         problems.extend(check_introductions(readme, text, known))
     return problems
@@ -400,6 +464,17 @@ def check_online(
     ]
 
 
+# Pages that hold what the READMEs moved out, held to the same links and commands.
+EXTRA_PAGES = (
+    "docs/runtime.md",
+    "docs/windows.md",
+    "docs/compatibility.md",
+    "docs/mcp-server.md",
+    "docs/workspace-cli.md",
+    "docs/design/commitments.md",
+)
+
+
 def tracked_readmes(root: pathlib.Path) -> list[pathlib.Path]:
     """Every README the repository tracks, or those under it without a checkout."""
     try:
@@ -411,12 +486,14 @@ def tracked_readmes(root: pathlib.Path) -> list[pathlib.Path]:
         )
     except (OSError, subprocess.CalledProcessError):
         skipped = {"build", ".git", "_deps"}
-        return sorted(
+        found = sorted(
             path
             for path in root.rglob("README.md")
             if not skipped.intersection(path.relative_to(root).parts)
         )
-    return [root / name for name in listing.stdout.split()]
+        return found + [root / name for name in EXTRA_PAGES if (root / name).is_file()]
+    pages = [root / name for name in EXTRA_PAGES if (root / name).is_file()]
+    return [root / name for name in listing.stdout.split()] + pages
 
 
 def main() -> int:
@@ -449,6 +526,7 @@ def main() -> int:
                 known,
                 introductions=readme in held,
                 logo=readme in logos,
+                paragraphs=readme in held,
             )
         )
     if arguments.online:
