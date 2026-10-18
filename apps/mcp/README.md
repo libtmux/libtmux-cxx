@@ -21,7 +21,7 @@ ships as one native executable.
 - An alpha interface. The same startup-frozen 45-tool manifest is advertised on
   POSIX and native Windows.
 - On Windows, psmux support is command-dependent: unsupported operations fail
-  explicitly at dispatch rather than disappearing from the manifest.
+  at dispatch, and every tool stays in the manifest.
 - Full contract: the [C++ MCP overview][mcp-index], the [tool pages][mcp-tools]
   and the [topics][mcp-topics]; the protocol, failure semantics and Windows
   wrapper are in [`docs/mcp-server.md`](../../docs/mcp-server.md).
@@ -312,8 +312,9 @@ For Claude Desktop, the equivalent entry carries the same variables in `env`:
   of order, and JSON-RPC IDs correlate them.
 - A bad argument is a completed result with `isError: true` on `2025-11-25` and
   `2026-07-28`, and `-32602` on the older revisions.
-- tmux refusing a well-formed call is a tool result with `isError: true`; no
-  exception crosses the protocol boundary.
+- tmux refusing a well-formed call is a tool result with `isError: true`. An
+  unexpected C++ failure becomes a generic internal JSON-RPC error, and the
+  detail goes to stderr.
 - The [protocol](../../docs/mcp-server.md#protocol-and-lifecycle) and
   [failure semantics](../../docs/mcp-server.md#failure-semantics) pages have the
   details.

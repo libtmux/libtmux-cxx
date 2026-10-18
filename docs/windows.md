@@ -120,8 +120,8 @@ boundary.
 ## Trust
 
 Typed method names and MCP `readOnlyHint` annotations describe the command the
-library requests, not a sandbox against hostile server configuration. Tmux and
-psmux both expand server-side `command-alias` entries before built-in lookup,
+library requests; they do not stop a hostile server configuration from changing
+what it does. Tmux and psmux both expand server-side `command-alias` entries before built-in lookup,
 so an administrator can redefine an apparent read. Use only servers and
 configurations you trust. `PSMUX_CONFIG_FILE` controls a server created with
 it; it does not attest an already-running server's live alias map.
@@ -165,8 +165,8 @@ $ .\build\windows-consume\Debug\consume.exe
 
 ## What the preview does not build
 
-This is subprocess compatibility, not transport equivalence. Windows builds
-the dedicated psmux example and the capability-aware MCP server, but not the
+Windows runs each call as a `tmux.exe` subprocess and has no control-mode
+transport. It builds the dedicated psmux example and the capability-aware MCP server, but not the
 POSIX examples, fuzzers, or `libtmux::testing` fixture. Asking CMake for either
 of the latter two fails during configuration. The Windows MCP catalog exposes
 the same 45 names listed in the MCP guide; the native smoke records which of
@@ -174,8 +174,8 @@ those operations psmux 3.3.7 actually supports and requires unsupported
 commands to fail explicitly.
 
 Psmux reports a tmux-shaped version but does not promise every command has
-identical behavior. The native smoke is pinned by behavior, not by a claimed
-compatibility level, and has been exercised against psmux 3.3.7. See its
+identical behavior. The native smoke checks behavior and claims no compatibility
+level; it has run only against psmux 3.3.7. See its
 [integration guide][psmux-integration] and
 [compatibility notes][psmux-compatibility], and test the operations your program
 depends on against the installed psmux release.

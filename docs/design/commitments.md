@@ -14,7 +14,7 @@ separator. A command that creates something returns it; a command that changes
 something returns nothing, so nothing is re-read that the caller did not ask
 for.
 
-**Filters are values, not expression templates.** A `FilterExpr` owns every
+**A filter is a value.** A `FilterExpr` owns every
 operand it compares against, so an expression built from a local string still
 works after that string dies.
 

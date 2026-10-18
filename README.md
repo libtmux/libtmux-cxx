@@ -27,8 +27,8 @@
 
 A C++ port of [libtmux], the Python library behind [tmuxp]. Work with
 [`Server`][ref-server], [`Session`][ref-session], [`Window`][ref-window] and
-[`Pane`][ref-pane] as ordinary C++ values, rather than shelling out to
-`tmux ls` and parsing the result.
+[`Pane`][ref-pane] as ordinary C++ values, instead of running `tmux ls` and
+parsing its output.
 
 - **Failure is a value.** No tmux or transport error is thrown; a call returns
   the answer or a [`CommandFailure`][ref-commandfailure] saying why not.
@@ -55,7 +55,7 @@ tmux, and agents.
 | **tmux** | 3.3a or newer, through `master` — [with these exceptions](#compatibility) |
 | **C++** | C++23 (clang 17+, GCC 13+, Visual Studio 2022 17.3+), or C++20 with `LIBTMUX_CXX_STANDARD=20` |
 | **CMake** | 3.25 |
-| **Platforms** | Linux, macOS; experimental x64 desktop Windows support with Visual Studio 2022 through [psmux] |
+| **Platforms** | Linux, including WSL; macOS; experimental x64 desktop Windows support with Visual Studio 2022 through [psmux] |
 | **Dependencies** | None for the library |
 
 - tmux releases below 3.3a are refused with
@@ -217,9 +217,9 @@ for (const libtmux::Session& session : *sessions) {
 }
 ```
 
-This runs against a private server and prints one line per session. What comes
-back is a record, not a live handle: see
-[`Window::refresh`](#windowrefresh-a-record-is-a-moment-not-a-handle).
+This runs against a private server and prints one line per session. A
+[`Session`][ref-session] holds what tmux said when you listed it;
+[`Window::refresh`](#windowrefresh-read-an-entity-again) reads it again.
 
 ### [`Pane::window`][ref-pane-window]: walk up and down
 
@@ -242,17 +242,17 @@ if (window.has_value() && owner.has_value()) {
 This prints which window and session a pane is in. Each relation call is a new
 read; the entity you started from still holds its earlier snapshot.
 
-### [`Window::refresh`][ref-window-refresh]: a record is a moment, not a handle
+### [`Window::refresh`][ref-window-refresh]: read an entity again
 
 An entity is one row of the listing that produced it, so reading a field costs
-nothing and never fails, but it answers about the moment it was listed.
-[`Window::refresh`][ref-window-refresh] returns a new value rather than
-mutating the old one:
+nothing and never fails, and answers for the moment it was listed.
+[`Window::refresh`][ref-window-refresh] returns a new value and leaves the old
+one as it was:
 
 ```cpp
 // Given: const libtmux::Session& session
-// An entity is one row of the listing that produced it: a moment, not a
-// live handle. Ask again for the present.
+// An entity holds the row its listing returned. Ask again to read the
+// present.
 const auto editor = session.new_window({.name = "editor"});
 if (!editor.has_value()) {
   std::cerr << std::format("{}\n", editor.error());
@@ -273,9 +273,9 @@ to surprise.
 
 ## Query with typed filters
 
-A [`FilterExpr`][ref-filterexpr] is a value built from typed fields, not a
-string tmux parses. Fields compose with `&&`, `||` and `!`, and
-[`matching`][ref-matching] turns an expression into a standard range.
+A [`FilterExpr`][ref-filterexpr] is built from typed fields. Fields compose
+with `&&`, `||` and `!`, and [`matching`][ref-matching] applies an expression to
+a listing you hold, as a standard range.
 [Concepts][topic-queries] explains how a query narrows from a server to a pane.
 
 ### [`matching`][ref-matching]: find the pane you mean
@@ -309,8 +309,8 @@ built from a local string still works after that string has gone:
 
 ```cpp
 // Given: const libtmux::Server& server
-// A filter is a value built from typed fields, not a string tmux parses.
-// They compose with `&&`, `||` and `!`, and the result is a standard range.
+// A filter is built from typed fields. Filters compose with `&&`, `||` and
+// `!`, and applying one gives a standard range.
 {
   const auto panes = server.panes();
   if (!panes.has_value()) {
@@ -379,8 +379,7 @@ around `.size() == 1`; [`first`][ref-first] is its lenient sibling:
 
 ```cpp
 // Given: const libtmux::Server& server
-// "Exactly one, or say why not" is a question the library answers directly,
-// rather than one every caller reimplements around `.size() == 1`.
+// `exactly_one` replaces a `.size() == 1` check, and says why it failed.
 const auto panes = server.panes();
 if (!panes.has_value()) {
   std::cerr << std::format("{}\n", panes.error());
@@ -402,8 +401,10 @@ if (const auto none = libtmux::exactly_one(absent); !none.has_value()) {
 ```
 
 This prints `exactly one:` with the pane, then `not one:` with the reason.
-[`first`][ref-first] and `exactly_one` return a reference into the range you
-gave them, so they refuse a temporary rather than dangle at the semicolon.
+[`first`][ref-first] and `exactly_one` take a named range and return a reference
+into it, so a temporary range does not compile.
+[`first_owned`][ref-first_owned] and [`exactly_one_owned`][ref-exactly_one_owned]
+take ownership instead.
 
 ### Fields refuse the wrong question
 
@@ -499,9 +500,9 @@ if (history.has_value()) {
 }
 ```
 
-A capture that does not fit is reported, not truncated:
-[`CaptureOptions::output_limit`][ref-captureoptions] says how much you are
-prepared to hold.
+A capture larger than [`CaptureOptions::output_limit`][ref-captureoptions]
+fails with [`FailureKind::truncated`][ref-failurekind]; it never returns shortened
+text.
 
 ## When things fail
 
@@ -570,9 +571,9 @@ when the last one answered, and the first failure is what comes out:
 
 ```cpp
 // Given: const libtmux::Server& server; const libtmux::Session& session
-// One failure type covers the whole surface, so calls compose rather than
-// nest: each step runs only when the last one answered, and the first
-// failure is what comes out.
+// One failure type covers the whole surface, so calls chain without nesting:
+// each step runs only when the last one answered, and the first failure is
+// what comes out.
 const auto columns =
     server.session(session.name())
         .and_then([](const libtmux::Session& found) { return found.active_pane(); })
@@ -583,7 +584,8 @@ std::cout << std::format("the active pane is {} columns wide\n",
 
 A caller who wants an exception at a boundary asks for one: `.value()` throws
 [`bad_expected_access`][ref-bad_expected_access] of
-[`CommandFailure`][ref-commandfailure], the same type in both builds. Nothing in the library throws it for them.
+[`CommandFailure`][ref-commandfailure], the same type in both builds. The library
+never throws it itself.
 
 ### [`Server::run`][ref-server-run]: anything tmux can do
 
@@ -700,7 +702,7 @@ std::cout << std::format("window added: {}\n", added);
 This prints `window added:` and the id tmux gave the new window.
 
 - A `Server` runs ordinary tmux client processes, which return tmux's final exit
-  status; use a `Connection` for notification streams, not as a faster executor.
+  status; use a `Connection` for notification streams and protocol tooling.
 - `take_notifications` is a single draining cursor. For two independent
   consumers, open a [`NotificationWatch`][ref-notificationwatch].
 - The [control transport design](docs/design/control-transport.md) has the
@@ -922,8 +924,8 @@ find_package(libtmux CONFIG REQUIRED)
 target_link_libraries(your_target PRIVATE libtmux::libtmux)
 ```
 
-The [MCP server](#libtmux-mcp-server) is a feature rather than a second package,
-because it ships from this same source. Ask for it by name:
+The [MCP server](#libtmux-mcp-server) is a vcpkg feature of `libtmux`, since it
+ships from this same source. Ask for it by name:
 
 ```json
 {
@@ -946,8 +948,8 @@ the program installs, its socket options, and the Windows triplets.
 | `LIBTMUX_BUILD_FUZZERS` | off | Build the POSIX parser fuzzers |
 | `LIBTMUX_FETCH_DEPS` | off | Download what is missing instead of failing |
 
-- `LIBTMUX_FETCH_DEPS` is off on purpose: a build that would reach the network
-  says so and stops, rather than downloading quietly.
+- `LIBTMUX_FETCH_DEPS` is off by default: a build that needs the network says so
+  and stops.
 - It covers every dependency, the C++20 lane's `tl::expected` included: the
   build looks for an installed one first, and says what to install when there is
   none.
@@ -1123,8 +1125,8 @@ release that provides it:
 | tmux 3.6 | The created-window report when breaking a window's only pane |
 | tmux 3.8-rc2 | JSON saved layouts, `{"V":2,...`; `3.8-rc` is below the gate |
 
-Two are defects rather than missing features — tmux answered wrongly and a later
-release fixed it, so the affected window is closed at both ends:
+Two are tmux defects that a later release fixed, so the affected window is
+closed at both ends:
 
 | Broken on | What tmux does |
 |---|---|
@@ -1143,7 +1145,8 @@ release fixed it, so the affected window is closed at both ends:
 
 An experimental x64 desktop preview, built with Visual Studio 2022, reaching a
 Windows terminal through [psmux]. It serves what it can prove and refuses the
-rest; [`docs/windows.md`](docs/windows.md) is the full boundary.
+rest; [`docs/windows.md`](docs/windows.md) lists what it serves and what fails
+before dispatch.
 
 - Install psmux with its `tmux.exe` alias, and use
   [`Server::at_default()`][ref-server-at_default] or
@@ -1159,8 +1162,9 @@ rest; [`docs/windows.md`](docs/windows.md) is the full boundary.
 - [`Server::run`][ref-server-run], batches and chains stay raw escape hatches;
   psmux joins raw argv into a line protocol, so a semicolon can start another
   command.
-- Typed names and MCP `readOnlyHint` describe the command requested, not a
-  sandbox against hostile `command-alias` configuration.
+- A server-side `command-alias` can redefine a command, so `readOnlyHint` and a
+  typed method name do not guarantee a read is a read; use only servers you
+  trust.
 
 The native smoke needs the Visual Studio 2022 C++ workload and a psmux
 `tmux.exe` on `PATH`. Run the preset with Windows CMake from a Developer
@@ -1200,8 +1204,10 @@ $ ctest --preset windows-psmux --no-tests=error
 
 - Alpha: any release may change or remove exported identifiers without a
   deprecation period. Pin an exact version.
-- tmux 3.3a through `master`, on Linux and macOS; experimental x64 desktop
-  Windows through psmux.
+- tmux 3.3a through `master`, on Linux (including WSL) and macOS; experimental
+  x64 desktop Windows through psmux.
+- CI runs Linux on `ubuntu-latest`, macOS on `macos-latest` and the Windows
+  preview on `windows-2022`.
 - C++23 (clang 17+, GCC 13+, Visual Studio 2022 17.3+), or C++20 with
   `LIBTMUX_CXX_STANDARD=20`. The core links nothing.
 - Every pull request runs against real tmux under clang with libc++, GCC with

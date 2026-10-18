@@ -24,7 +24,7 @@ is what a consumer may depend on.
 ```
 
 - One include is enough: [`libtmux.hpp`](libtmux.hpp) pulls in the rest. The
-  headers below are listed for reading, not because you have to pick among them.
+  tables below say what each header holds.
 - The [generated API reference](../../docs/api.md) has every public type and
   call with the prose from its header, and CI fails when it drifts. The same
   pages are on [libtmux.org][ref-index].
@@ -53,7 +53,7 @@ for (const libtmux::Session& session : *sessions) {
 ```
 
 This prints one line per session. If tmux cannot answer, the call returns a
-[`CommandFailure`][ref-commandfailure] rather than throwing.
+[`CommandFailure`][ref-commandfailure]; nothing is thrown.
 
 ## What is where
 
@@ -108,8 +108,8 @@ This prints one line per session. If tmux cannot answer, the call returns a
   per call.
 - Persistent control connections and `libtmux::testing` are unavailable, and
   unsafe creation and mutation fail before dispatch.
-- The [Windows compatibility boundary][windows-boundary] lists the supported
-  surface and the raw-command hazards.
+- The [Windows preview details][windows-boundary] list the supported surface and
+  the raw-command hazards.
 - Typed safety assumes a trusted server configuration: tmux and psmux both let a
   server-side `command-alias` redefine a built-in command.
 
@@ -128,9 +128,9 @@ This prints one line per session. If tmux cannot answer, the call returns a
   as a number, so those mistakes are build errors on a
   [`FilterExpr`][ref-filterexpr]; [`tests/compile/`](../../tests/compile/)
   proves each refusal stays one.
-- **Two ABIs, on purpose.** The C++23 and C++20 builds live in different inline
-  namespaces, so mixing them fails at the link step instead of corrupting
-  memory at run time.
+- **Two ABIs.** The C++23 and C++20 builds live in different inline namespaces,
+  so mixing them fails at the link step instead of corrupting memory at run
+  time.
 
 ## Testing against it
 

@@ -121,8 +121,8 @@ $ tmux-workspace load \
     example
 ```
 
-A session already running under the name a document asks for is compared against
-that document rather than rebuilt. [Current commands][docs-current] has the
+A session already running under the name a document asks for is compared with
+the document and left as found; one missing a described window stops the load. [Current commands][docs-current] has the
 rules for attaching, appending and scripts.
 
 ## Capture, convert and import

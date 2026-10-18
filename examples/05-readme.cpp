@@ -136,8 +136,8 @@ int main() {
 
   // #region query
   // Given: const libtmux::Server& server
-  // A filter is a value built from typed fields, not a string tmux parses.
-  // They compose with `&&`, `||` and `!`, and the result is a standard range.
+  // A filter is built from typed fields. Filters compose with `&&`, `||` and
+  // `!`, and applying one gives a standard range.
   {
     const auto panes = server.panes();
     if (!panes.has_value()) {
@@ -188,8 +188,7 @@ int main() {
 
   // #region cardinality
   // Given: const libtmux::Server& server
-  // "Exactly one, or say why not" is a question the library answers directly,
-  // rather than one every caller reimplements around `.size() == 1`.
+  // `exactly_one` replaces a `.size() == 1` check, and says why it failed.
   const auto panes = server.panes();
   if (!panes.has_value()) {
     std::cerr << std::format("{}\n", panes.error());
@@ -245,8 +244,8 @@ int main() {
 
   // #region snapshot
   // Given: const libtmux::Session& session
-  // An entity is one row of the listing that produced it: a moment, not a
-  // live handle. Ask again for the present.
+  // An entity holds the row its listing returned. Ask again to read the
+  // present.
   const auto editor = session.new_window({.name = "editor"});
   if (!editor.has_value()) {
     std::cerr << std::format("{}\n", editor.error());
@@ -290,9 +289,9 @@ int main() {
 
   // #region compose
   // Given: const libtmux::Server& server; const libtmux::Session& session
-  // One failure type covers the whole surface, so calls compose rather than
-  // nest: each step runs only when the last one answered, and the first
-  // failure is what comes out.
+  // One failure type covers the whole surface, so calls chain without nesting:
+  // each step runs only when the last one answered, and the first failure is
+  // what comes out.
   const auto columns =
       server.session(session.name())
           .and_then([](const libtmux::Session& found) { return found.active_pane(); })

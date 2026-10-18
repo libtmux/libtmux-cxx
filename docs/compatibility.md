@@ -13,7 +13,7 @@ tmux 3.3a and newer. The floor is the complete release: tmux 3.3 is below it.
 
 ## How a release is refused
 
-The daemon a command reaches decides, not the executable that launches it. The
+A command is checked against the version of the daemon it reaches. The
 first command to a server asks the daemon for its version without running a
 hook, and a release below the floor, an unreadable version, `next-3.3a` and an
 undated `master` are refused with `FailureKind::unsupported` before the command

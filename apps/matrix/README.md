@@ -54,8 +54,8 @@ as integer nanoseconds, or `--check` to assert the claims the table makes.
 - **The last column checks equivalence.** Every measured row queries the same
   six-pane topology, so only cost should differ. That is what makes the timings
   comparable against the other libtmux ports.
-- **Count invocations, not milliseconds.** Wall clock moves with the machine;
-  the process column does not.
+- **Compare the process column.** Wall clock moves with the machine; the number
+  of tmux processes does not.
 
 ### [`Server::over_control`][ref-server-over_control]: the connection lanes
 
