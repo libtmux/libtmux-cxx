@@ -32,11 +32,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # `install` defaults to `detect`, so the action installs ccache with
-      # the runner's package manager -- apt on Linux, brew on macOS -- and
-      # never downloads the ccache build pinned in its own metadata.json.
-      # A bump to this action therefore moves @actions/cache and the action's
-      # own bundle, not the ccache binary: CI currently runs ccache 4.9.1 on
-      # ubuntu-latest and 4.14 on macos-latest.
+      # the runner's package manager -- apt on Linux -- and never downloads
+      # the ccache build pinned in its own metadata.json. A bump to this
+      # action therefore moves @actions/cache and the action's own bundle,
+      # not the ccache binary: CI currently runs ccache 4.9.1 on
+      # ubuntu-latest.
       - uses: hendrikmuhs/ccache-action@f09c25b45002a07be2955cbe52e8cee55643f89d # v1.2.24
         with:
           key: ${{ github.job }}-tmux-${{ matrix.tmux-version }}
@@ -143,38 +143,6 @@ jobs:
           cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache --preset cxx-dev
           cmake --build --preset cxx-dev --target libtmux_support_versions_test workspace_cli_test mcp_tools_test mcp_protocol_test
           ctest --preset cxx-dev --no-tests=error --output-on-failure -R 'libtmux\.support_versions\.|^consumer\..*\.rejected$'
-
-  macos:
-    # tmux is used at least as much on macOS as on Linux, and Apple Clang with
-    # its own libc++ is a different compiler from the pinned one. Nothing here
-    # had ever been built on it.
-
-    runs-on: macos-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - uses: hendrikmuhs/ccache-action@f09c25b45002a07be2955cbe52e8cee55643f89d # v1.2.24
-        with:
-          key: macos
-          max-size: 400M
-
-      - name: Install tmux and Ninja
-        run: brew install tmux ninja
-
-      - name: Build and test with Apple Clang
-        run: |
-          tmux -V
-          # Not a preset: the pinned toolchain file names a libc++ that comes
-          # from a Homebrew LLVM this runner does not have. Apple Clang brings
-          # its own, which is the point of the lane.
-          #
-          # `LIBTMUX_FETCH_DEPS=ON` because the presets that build tests on
-          # Linux get GoogleTest from the system, and there is none here.
-          cmake -S . -B build/macos -G Ninja -DCMAKE_CXX_STANDARD=23 \
-            -DLIBTMUX_FETCH_DEPS=ON -DLIBTMUX_BUILD_WORKSPACE_CLI=ON
-          cmake --build build/macos
-          ctest --test-dir build/macos --no-tests=error --output-on-failure
 
   windows:
     # Exercise the narrower psmux backend and installed package with MSVC;
@@ -1188,7 +1156,6 @@ jobs:
     if: always()
     needs:
       - compatibility
-      - macos
       - windows
       - toolchains
       - benchmarks

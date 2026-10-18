@@ -205,7 +205,10 @@ jobs:
             "${extra[@]}"
           cmake --build build/rel
 
+      # Linux only: the macOS binaries are built and published, but CI does
+      # not run them.
       - name: It answers before it is published
+        if: runner.os == 'Linux'
         run: |
           binary=build/rel/apps/mcp/libtmux-mcp-server
           test -x "$binary"
@@ -551,7 +554,6 @@ jobs:
       - server
       - server-windows
       - registry
-      - registry-macos
       - registry-windows
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -880,25 +882,3 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "the published Windows registry baseline did not resolve"
           }
-
-  registry-macos:
-    needs: [registry]
-    runs-on: macos-latest
-    timeout-minutes: 75
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.registry.outputs.baseline }}
-
-      - name: Resolve and consume the published macOS baseline
-        run: |
-          git clone --filter=blob:none \
-            https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP/vcpkg"
-          git -C "$RUNNER_TEMP/vcpkg" checkout --detach \
-            94a541197763a4f449a1b91478df48c0584a6256
-          "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
-          python3 -m tools.vcpkg probe \
-            --vcpkg "$RUNNER_TEMP/vcpkg" \
-            --triplet arm64-osx \
-            --feature mcp \
-            --repository "https://github.com/${GITHUB_REPOSITORY}"

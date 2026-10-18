@@ -184,9 +184,10 @@ when shutdown or module-unload status matters.
 ## Where it runs
 
 The ordinary Linux test presets execute this runtime. Project CI also runs the
-POSIX path with Apple Clang on macOS and the C++20/C++23 experimental Windows
-path against pinned psmux. Windows retains the narrower typed-operation limits
-described in [Windows through psmux](windows.md).
+C++20/C++23 experimental Windows path against pinned psmux. macOS is supported
+on a best-effort basis, and CI coverage for it is highly limited. Windows
+retains the narrower typed-operation limits described in
+[Windows through psmux](windows.md).
 
 ## Child process descriptors
 

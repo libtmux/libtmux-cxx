@@ -98,8 +98,8 @@ locally — same contents, different gzip. So the order is fixed:
 5. The port's `version-semver` and `SHA512` are updated, a previous
    `port-version` is reset, the audited Windows policy is enabled explicitly,
    and `x-add-version` records the new git-tree.
-6. Linux resolves the exact local and pushed registry baseline; fresh macOS
-   and Windows consumers then resolve that pushed baseline before the draft
+6. Linux resolves the exact local and pushed registry baseline; a fresh
+   Windows consumer then resolves that pushed baseline before the draft
    release is created.
 
 Step 5 therefore lands on a commit *after* the tag it describes. That is

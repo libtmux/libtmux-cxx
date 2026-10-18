@@ -314,7 +314,9 @@ handful of capabilities that need a later tmux are covered by tests that skip
 below the release providing them — [the README](../README.md#compatibility)
 lists them.
 
-Linux and macOS are the supported platforms. Windows is an experimental x64
+Linux and macOS are the supported platforms. macOS is supported on a
+best-effort basis, and CI coverage for it is highly limited: CI runs no macOS
+job. Windows is an experimental x64
 desktop preview built with Visual Studio 2022 against a pinned
 [psmux](../README.md#windows-through-psmux), and it is deliberately narrower:
 it serves exact read-only entity queries and refuses what it cannot do safely
