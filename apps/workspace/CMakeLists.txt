@@ -45,6 +45,29 @@ if(LIBTMUX_BUILD_TESTS AND NOT WIN32)
   # fail, and a sanitizer or coverage runtime writes its own files from inside
   # that same process, so it dies under the cap instead of the log failing.
   find_package(Python3 COMPONENTS Interpreter QUIET)
+
+  # The commands the READMEs tell a reader to run, walked through the command
+  # tree this binary prints. Run again over a README holding a flag the command
+  # lacks, so the gate is shown able to fail.
+  if(Python3_Interpreter_FOUND)
+    set(_readme_commands
+        "${PROJECT_SOURCE_DIR}/tools/docs/check_readme_commands.py")
+    add_test(NAME consumer.workspace.readme_commands
+      COMMAND Python3::Interpreter "${_readme_commands}"
+        --root "${PROJECT_SOURCE_DIR}"
+        --workspace "$<TARGET_FILE:tmux-workspace>")
+    add_test(NAME consumer.workspace.readme_commands.refuses
+      COMMAND Python3::Interpreter "${_readme_commands}"
+        --root "${PROJECT_SOURCE_DIR}"
+        --workspace "$<TARGET_FILE:tmux-workspace>"
+        "${PROJECT_SOURCE_DIR}/tools/docs/fixtures/readme_commands_refused.md")
+    set_tests_properties(consumer.workspace.readme_commands PROPERTIES
+      LABELS "consumer;contract" TIMEOUT 60)
+    set_tests_properties(consumer.workspace.readme_commands.refuses PROPERTIES
+      LABELS "consumer;contract" TIMEOUT 60
+      PASS_REGULAR_EXPRESSION "has no option --no-such-flag")
+  endif()
+
   if(Python3_Interpreter_FOUND
      AND NOT LIBTMUX_ENABLE_SANITIZERS
      AND NOT LIBTMUX_ENABLE_THREAD_SANITIZER
