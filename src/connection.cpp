@@ -4,6 +4,8 @@
 #include "notification_stream.hpp"
 #include "spawn_descriptors.hpp"
 #include "spawn_signals.hpp"
+#include "support_capabilities.hpp"
+#include "support_commands.hpp"
 #include "support_versions.hpp"
 #include <algorithm>
 #include <array>
@@ -948,6 +950,9 @@ struct Connection::State {
   }
 
   ConnectionOptions options;
+  /// The release of the daemon this client attached to, which the literal
+  /// command gates are read against.
+  Version daemon_version{};
   pid_t pid{-1};
   int input{-1};
   int output{-1};
@@ -1050,10 +1055,12 @@ expected<Connection, ProtocolError> Connection::connect(ConnectionOptions option
   // detaches early, and a fallback after the attach cannot undo that, so the
   // release decides here, before any client exists. A daemon that is absent
   // has nothing to crash and is left to the attach to report.
-  if (endpoint->live && endpoint->version < Version{.major = 3, .minor = 7}) {
+  const auto& control = support::capabilities::capability(
+      support::capabilities::CapabilityId::control_mode);
+  if (endpoint->live && endpoint->version < control.since.version) {
     return unexpected(not_started_error(
-        "library-managed control mode needs tmux 3.7 or newer; the daemon reports " +
-        endpoint->token));
+        "library-managed control mode needs tmux " + std::string{control.since.text} +
+        " or newer; the daemon reports " + endpoint->token));
   }
   const std::string fence_marker = support::versions::version_marker();
 
@@ -1071,6 +1078,7 @@ expected<Connection, ProtocolError> Connection::connect(ConnectionOptions option
     return unexpected(std::move(failure));
   }
   auto state = std::make_unique<State>(std::move(options), *spawned, std::move(*seed));
+  state->daemon_version = endpoint->version;
   try {
     state->waiter =
         std::thread{[raw_state = state.get()] { raw_state->waiter_main(); }};
@@ -1160,6 +1168,25 @@ expected<Connection, ProtocolError> Connection::connect(ConnectionOptions option
 ControlRequestResult Connection::execute(ControlRequest request,
                                          Clock::time_point deadline) {
   ControlRequestResult failed;
+  // Every command a caller writes meets the gates the typed calls meet, before
+  // anything is written: this channel is tmux's own, so a refusal here is the
+  // only thing between a command that ends the daemon and the daemon. Each
+  // element is one command, so a trailing `;` in an argument is data.
+  if (state_) {
+    for (const ControlCommand& each : request.group) {
+      std::vector<std::string> argv = each.argv;
+      for (std::string& argument : argv) {
+        if (!argument.empty() && argument.back() == ';') {
+          argument.insert(argument.size() - 1U, 1U, '\\');
+        }
+      }
+      if (auto refusal =
+              support::commands::refuse_literal(argv, state_->daemon_version, true)) {
+        failed.connection_error = not_started_error(std::move(refusal->diagnostic));
+        return failed;
+      }
+    }
+  }
   auto rendered = render_request(std::move(request));
   if (!rendered) {
     failed.connection_error = rendered.error();

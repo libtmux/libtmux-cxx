@@ -12,6 +12,8 @@
 #include "process.hpp"
 #include "psmux.hpp"
 #include "socket_identity.hpp"
+#include "support_capabilities.hpp"
+#include "support_commands.hpp"
 
 // The ABI macros, not `namespace libtmux::detail`: that spelling opens a
 // namespace beside the inline ABI one. A member definition still resolves
@@ -917,13 +919,11 @@ SubprocessBackend::check_command(
   if (!checked.has_value()) {
     return unexpected(std::move(checked.error()));
   }
-  // Raw tmux 3.7 crashes an unnamed break-pane. Refused here, before the call,
-  // so the typed repair is the only way to break a pane out on that release.
-  if (checked->live && checked->version == Version{.major = 3, .minor = 7} &&
-      has_unnamed_break_pane(command.argv())) {
-    return unexpected(version_check_failure(
-        FailureKind::validation,
-        "tmux 3.7 crashes on a break-pane that names no window; use Pane::break_out"));
+  // A command written by hand meets the gates the typed calls meet, before the
+  // call, and in whatever spelling and position tmux would accept it.
+  if (auto refusal = support::commands::refuse_literal(command.argv(), checked->version,
+                                                       checked->live)) {
+    return unexpected(std::move(*refusal));
   }
   return std::optional<EndpointVersion>{*std::move(checked)};
 #endif

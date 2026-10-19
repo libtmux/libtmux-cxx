@@ -6637,7 +6637,7 @@ Connection& operator=(const Connection&) = delete;
 ```cpp
 ControlRequestResult execute(ControlRequest request, std::chrono::steady_clock::time_point deadline);
 ```
-Completes at this request's private protocol boundary and preserves every guarded block before it. This is wire evidence, not a final command result: tmux may end a block before a waiting job or file operation later reports unguarded output or failure. Use `Server::run` when final success or failure is required.
+Completes at this request's private protocol boundary and preserves every guarded block before it. This is wire evidence, not a final command result: tmux may end a block before a waiting job or file operation later reports unguarded output or failure. Use `Server::run` when final success or failure is required.  Each command is held to the checks `Server::run` applies to a literal command, under its alias or any unique prefix, before anything is written. A refusal comes back as a `connection_error` with `DeliveryStatus::not_started` and leaves the connection usable. A command held in a string tmux parses later is not read; see the README.
 
 <a id="libtmux-control-hpp-connection-take-notifications"></a>
 #### `Connection::take_notifications`

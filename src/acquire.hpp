@@ -24,6 +24,8 @@
 #include "libtmux/snapshot.hpp"
 
 #include "backend.hpp"
+#include "support_capabilities.hpp"
+#include "support_commands.hpp"
 
 LIBTMUX_NAMESPACE_BEGIN
 namespace detail {
@@ -408,12 +410,7 @@ refuse_before(const Backend& backend, const Version& needed, std::string_view op
   if (*running >= needed) {
     return std::nullopt;
   }
-  return CommandFailure{.kind = FailureKind::unsupported,
-                        .delivery = DeliveryStatus::not_started,
-                        .exit_code = 0,
-                        .diagnostic = std::string{operation} + " needs tmux " +
-                                      std::string{needed_text} +
-                                      " or newer; the daemon is older"};
+  return support::commands::older_daemon(operation, needed_text);
 }
 
 // tmux 3.7, and only 3.7, refuses a session or window name holding `:` or `.`.
@@ -429,14 +426,11 @@ refuse_name_on_exact_37(const Backend& backend, std::string_view name,
   if (!running.has_value()) {
     return running.error();
   }
-  if (*running != Version{.major = 3, .minor = 7}) {
+  if (!support::capabilities::affects(
+          support::capabilities::WorkaroundId::name_separators_rejected, *running)) {
     return std::nullopt;
   }
-  return CommandFailure{.kind = FailureKind::validation,
-                        .delivery = DeliveryStatus::not_started,
-                        .exit_code = 0,
-                        .diagnostic = "tmux 3.7 refuses a " + std::string{what} +
-                                      " name containing ':' or '.'"};
+  return support::commands::separator_in_name(what);
 }
 
 } // namespace detail

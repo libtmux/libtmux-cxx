@@ -15,6 +15,8 @@
 #include <vector>
 
 #include "libtmux/abi.hpp"
+#include "libtmux/command.hpp"
+#include "libtmux/version.hpp"
 
 LIBTMUX_NAMESPACE_BEGIN
 namespace support::commands {
@@ -56,6 +58,26 @@ struct Flags {
 /// `valued` lists the flags of the command that take a value.
 [[nodiscard]] Flags parse_flags(std::span<const std::string> arguments,
                                 std::string_view valued);
+
+/// The refusal for an operation that a daemon older than `needed_text` cannot do
+/// safely. The typed calls and the literal check word it the same way.
+[[nodiscard]] CommandFailure older_daemon(std::string_view operation,
+                                          std::string_view needed_text);
+
+/// The refusal for a session or window name that tmux 3.7 would reject after
+/// the command had partly run. `what` is "session" or "window".
+[[nodiscard]] CommandFailure separator_in_name(std::string_view what);
+
+/// Why a literal command list must not be sent to a daemon running `running`,
+/// or nothing when every command in it may be.
+///
+/// This is the check the typed calls get from their own gates, applied to what
+/// a caller writes by hand. Each command is read as tmux reads it, under its
+/// alias or any unique prefix, and each is held to every gate the registry
+/// lists it under. `live` says the version came from a daemon rather than from
+/// the executable that would start one.
+[[nodiscard]] std::optional<CommandFailure>
+refuse_literal(const std::vector<std::string>& argv, const Version& running, bool live);
 
 } // namespace support::commands
 LIBTMUX_NAMESPACE_END

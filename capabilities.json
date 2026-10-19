@@ -1,0 +1,160 @@
+{
+  "capabilities": [
+    {
+      "apis": [
+        "libtmux::Connection::connect",
+        "libtmux::Server::control",
+        "libtmux::Server::control_with_options",
+        "libtmux::Server::over_control"
+      ],
+      "commands": [
+        {
+          "command": "attach-session"
+        }
+      ],
+      "error": "libtmux::ProtocolError",
+      "handling": "refuse",
+      "id": "control-mode",
+      "name": "Control mode",
+      "since": "3.7",
+      "summary": "Attach a library-managed control client and stream events."
+    },
+    {
+      "apis": [
+        "libtmux::Buffer::remove"
+      ],
+      "commands": [
+        {
+          "command": "delete-buffer",
+          "flags": [
+            "-b"
+          ]
+        },
+        {
+          "command": "set-buffer",
+          "flags": [
+            "-b",
+            "-n"
+          ]
+        }
+      ],
+      "error": "libtmux::CommandFailure",
+      "handling": "refuse",
+      "id": "buffer-delete-named",
+      "name": "Named buffer deletion",
+      "since": "3.4",
+      "summary": "Delete or rename one paste buffer by name without risking another buffer."
+    },
+    {
+      "apis": [
+        "libtmux::Server::validate_layouts",
+        "libtmux::Window::select_layout"
+      ],
+      "commands": [
+        {
+          "command": "select-layout"
+        }
+      ],
+      "error": "libtmux::CommandFailure",
+      "handling": "refuse",
+      "id": "layout-mirrored-main",
+      "name": "Mirrored main layouts",
+      "since": "3.5",
+      "summary": "Apply main-horizontal-mirrored and main-vertical-mirrored."
+    },
+    {
+      "apis": [
+        "libtmux::Server::validate_layouts",
+        "libtmux::Window::select_layout"
+      ],
+      "commands": [
+        {
+          "command": "select-layout"
+        }
+      ],
+      "error": "libtmux::CommandFailure",
+      "handling": "refuse",
+      "id": "layout-json",
+      "name": "JSON layout strings",
+      "since": "3.8-rc2",
+      "summary": "Apply a layout saved in the JSON form tmux reports."
+    },
+    {
+      "apis": [],
+      "commands": [
+        {
+          "command": "refresh-client",
+          "flags": [
+            "-l"
+          ]
+        }
+      ],
+      "error": "libtmux::CommandFailure",
+      "handling": "refuse",
+      "id": "clipboard-query",
+      "name": "Clipboard query",
+      "since": "3.4",
+      "summary": "Ask an attached client for its clipboard with refresh-client -l."
+    }
+  ],
+  "floor": {
+    "minimum": "3.3a"
+  },
+  "port": "cxx",
+  "schema": "libtmux-capabilities/1",
+  "workarounds": [
+    {
+      "apis": [
+        "libtmux::Pane::break_out"
+      ],
+      "commands": [
+        {
+          "command": "break-pane"
+        }
+      ],
+      "handling": "repair",
+      "id": "break-pane-misnames-windows",
+      "name": "break-pane window naming",
+      "releases": [
+        "3.7"
+      ],
+      "summary": "break-pane gets the new window wrong on exactly tmux 3.7; Pane::break_out names the window and repairs it."
+    },
+    {
+      "apis": [
+        "libtmux::Server::new_session",
+        "libtmux::Session::new_window",
+        "libtmux::Session::rename",
+        "libtmux::Window::rename"
+      ],
+      "commands": [
+        {
+          "command": "new-session",
+          "flags": [
+            "-s",
+            "-n"
+          ]
+        },
+        {
+          "command": "new-window",
+          "flags": [
+            "-n"
+          ]
+        },
+        {
+          "command": "rename-session"
+        },
+        {
+          "command": "rename-window"
+        }
+      ],
+      "handling": "refuse",
+      "id": "name-separators-rejected",
+      "name": "Colon and dot in names",
+      "releases": [
+        "3.7"
+      ],
+      "summary": "tmux 3.7 rejects ':' and '.' in session and window names after partly running."
+    }
+  ]
+}

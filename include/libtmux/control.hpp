@@ -267,6 +267,12 @@ public:
   /// result: tmux may end a block before a waiting job or file operation later
   /// reports unguarded output or failure. Use `Server::run` when final success
   /// or failure is required.
+  ///
+  /// Each command is held to the checks `Server::run` applies to a literal
+  /// command, under its alias or any unique prefix, before anything is written.
+  /// A refusal comes back as a `connection_error` with
+  /// `DeliveryStatus::not_started` and leaves the connection usable. A command
+  /// held in a string tmux parses later is not read; see the README.
   ControlRequestResult execute(ControlRequest request,
                                std::chrono::steady_clock::time_point deadline);
   /// Every outside-block event tmux has written since the last call.

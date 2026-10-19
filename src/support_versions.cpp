@@ -7,7 +7,6 @@
 #include <string_view>
 
 #include "process.hpp"
-#include "support_commands.hpp"
 
 LIBTMUX_NAMESPACE_BEGIN
 namespace support::versions {
@@ -275,20 +274,6 @@ query_endpoint(const std::filesystem::path& binary,
     detail = "tmux did not report a daemon version";
   }
   return unexpected(version_check_failure(FailureKind::refused, std::move(detail)));
-}
-
-bool has_unnamed_break_pane(const std::vector<std::string>& argv) {
-  for (const auto& command : support::commands::invocations(argv)) {
-    if (command.name != "break-pane") {
-      continue;
-    }
-    // `break-pane` takes no operands, so its flags run to the end.
-    const auto flags = support::commands::parse_flags(command.arguments, "FnstxXyY");
-    if (!flags.has('n')) {
-      return true;
-    }
-  }
-  return false;
 }
 
 std::vector<Argument> version_fence(std::string_view token, std::string_view marker) {

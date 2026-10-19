@@ -7,7 +7,7 @@ add_library(
                    src/tool_model.cpp src/wait_for_text.cpp)
 target_include_directories(
   mcp_tools PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
-            PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+            PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(
   mcp_tools PUBLIC libtmux::libtmux PRIVATE libtmux_build_options)
 

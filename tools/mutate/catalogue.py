@@ -94,8 +94,18 @@ CATALOGUE: t.Final = (
     Mutation(
         mutation_id="tmux37-unnamed-break-guard",
         path="src/entities.cpp",
-        find=(" " * 30) + "\" '#{==:#{version},3.7}' { \" + native +",
-        replace=(" " * 30) + "\" '#{==:#{version},3.7a}' { \" + native +",
+        find=(
+            "      on_release_of(support::capabilities::WorkaroundId::"
+            "break_pane_misnames_windows,\n"
+            "                    true) +\n"
+            '      "\' { " + native + " -n libtmux } { " + native + " }";'
+        ),
+        replace=(
+            "      on_release_of(support::capabilities::WorkaroundId::"
+            "break_pane_misnames_windows,\n"
+            "                    false) +\n"
+            '      "\' { " + native + " -n libtmux } { " + native + " }";'
+        ),
         target="libtmux_backend_seam_test",
         test_regex=r"^libtmux[.]backend_seam$",
         guards="raw tmux 3.7 receives a name before an unnamed multi-pane "
@@ -164,12 +174,14 @@ CATALOGUE: t.Final = (
         mutation_id="tmux37-named-break-repair",
         path="src/entities.cpp",
         find=(
-            "  const bool raw_tmux_37 = "
-            "created->version == Version{.major = 3, .minor = 7};"
+            "  const bool raw_tmux_37 = support::capabilities::affects(\n"
+            "      support::capabilities::WorkaroundId::break_pane_misnames_windows,\n"
+            "      created->version);"
         ),
         replace=(
-            "  const bool raw_tmux_37 = "
-            "created->version == Version{.major = 3, .minor = 8};"
+            "  const bool raw_tmux_37 = support::capabilities::affects(\n"
+            "      support::capabilities::WorkaroundId::break_pane_misnames_windows,\n"
+            "      Version{.major = 3, .minor = 8});"
         ),
         target="libtmux_backend_seam_test",
         test_regex=r"^libtmux[.]backend_seam$",
@@ -823,11 +835,12 @@ CATALOGUE: t.Final = (
     ),
     Mutation(
         mutation_id="select-layout-rejects-unrecognised-value",
-        path="src/entities.cpp",
-        find="  if (auto checked = detail::validate_layouts(*backend(), "
-        "requests); !checked)\n"
-        "    return unexpected(std::move(checked.error().cause));",
-        replace="  static_cast<void>(detail::validate_layouts(*backend(), requests));",
+        path="src/layout.cpp",
+        find="  if (auto error = layout_error(layout, minimum_panes))\n"
+        "    return unexpected(invalid_layout(std::move(*error)));",
+        replace="  if (auto error = layout_error(layout, minimum_panes);\n"
+        "      error && minimum_panes == 987654321U)\n"
+        "    return unexpected(invalid_layout(std::move(*error)));",
         target="libtmux_entity_test",
         test_regex=(
             r"^libtmux[.]entity[.]Entity[.]"

@@ -21,6 +21,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -176,6 +177,44 @@ TEST(ExecutorSeam, ABatchArrivesAsOneRequestCarryingItsSeparators) {
   ASSERT_GE(argv.size(), 5U);
   EXPECT_EQ(argv.front(), "rename-window");
   EXPECT_EQ(argv.at(4), std::string{libtmux::kCommandSeparator});
+}
+
+// A command written by hand meets the gates its typed counterpart meets, on a
+// transport the library did not launch as on one it did: the executor is told
+// nothing of a command the declared release cannot take safely.
+TEST(ExecutorSeam, ALiteralCommandMeetsTheGatesOfTheDeclaredRelease) {
+  const auto over = [](Version version) {
+    auto executor = std::make_shared<ScriptedExecutor>("");
+    auto server =
+        Server::over(executor, {.implementation = libtmux::ServerImplementation::tmux,
+                                .version = version});
+    EXPECT_TRUE(server.has_value());
+    return std::pair{executor, *std::move(server)};
+  };
+
+  const auto [old_executor, old_server] =
+      over(Version{.major = 3, .minor = 3, .revision = 1});
+  for (const std::vector<std::string>& argv :
+       {std::vector<std::string>{"delete-b", "-b", "missing"},
+        std::vector<std::string>{"setb", "-b", "missing", "-n", "renamed"},
+        std::vector<std::string>{"selectl", "main-vertical-mirrored"}}) {
+    const auto refused = old_server.run(argv);
+    ASSERT_FALSE(refused.has_value()) << argv.front();
+    EXPECT_EQ(refused.error().delivery, libtmux::DeliveryStatus::not_started)
+        << argv.front();
+  }
+  EXPECT_TRUE(old_executor->seen().empty()) << "a refused command is never sent";
+  EXPECT_TRUE(old_server.run({"rename-window", "-t", "@1", "a.b"}).has_value());
+
+  const auto [new_executor, new_server] = over(Version{.major = 3, .minor = 7});
+  for (const std::vector<std::string>& argv :
+       {std::vector<std::string>{"renamew", "-t", "@1", "a.b"},
+        std::vector<std::string>{"break-p", "-d"}}) {
+    const auto refused = new_server.run(argv);
+    ASSERT_FALSE(refused.has_value()) << argv.front();
+    EXPECT_EQ(refused.error().kind, FailureKind::validation) << argv.front();
+  }
+  EXPECT_TRUE(new_server.run({"delete-buffer", "-b", "missing"}).has_value());
 }
 
 // An attach needs a route back to this exact server, and a caller-supplied

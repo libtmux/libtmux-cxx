@@ -19,6 +19,7 @@
 
 #include "acquire.hpp"
 #include "psmux.hpp"
+#include "support_capabilities.hpp"
 
 LIBTMUX_NAMESPACE_BEGIN
 
@@ -1004,15 +1005,35 @@ named_break_report(const std::shared_ptr<const detail::Backend>& backend,
                           .automatic_rename = automatic_rename == "1"};
 }
 
+// A format that is true on exactly the releases the workaround affects, or on
+// every other release when `affected` is false.
+std::string on_release_of(support::capabilities::WorkaroundId id, bool affected) {
+  const auto releases = support::capabilities::workaround(id).releases;
+  std::string condition;
+  for (std::size_t index = releases.size(); index > 0U; --index) {
+    const std::string term = std::string{"#{"} + (affected ? "==" : "!=") +
+                             ":#{version}," + std::string{releases[index - 1U].text} +
+                             "}";
+    condition = condition.empty() ? term
+                                  : std::string{"#{"} + (affected ? "||" : "&&") + ":" +
+                                        term + ',' + std::move(condition) + '}';
+  }
+  return condition;
+}
+
 std::string named_repair_guard(std::string_view window_id,
                                std::string_view session_id) {
   const auto differs = [](std::string_view field, std::string_view value) {
     return "#{!=:#{" + std::string{field} + "}," + std::string{value} + "}";
   };
   std::array terms{
-      differs("version", "3.7"),         differs("window_id", window_id),
-      differs("session_id", session_id), differs("after-rename-window", ""),
-      differs("window-renamed", ""),     differs("after-display-message", ""),
+      on_release_of(support::capabilities::WorkaroundId::break_pane_misnames_windows,
+                    false),
+      differs("window_id", window_id),
+      differs("session_id", session_id),
+      differs("after-rename-window", ""),
+      differs("window-renamed", ""),
+      differs("after-display-message", ""),
   };
   std::string condition = std::move(terms.back());
   for (std::size_t index = terms.size() - 1U; index > 0U; --index) {
@@ -1296,9 +1317,11 @@ namespace {
                              ": -P -F '" + format_request(Window::kFields) + "'";
   const std::string current = "display-message -p -t " + owner + ":" + home + " '" +
                               format_request(Window::kFields) + "'";
-  const std::string guarded = "if-shell -F -t " + target +
-                              " '#{==:#{version},3.7}' { " + native +
-                              " -n libtmux } { " + native + " }";
+  const std::string guarded =
+      "if-shell -F -t " + target + " '" +
+      on_release_of(support::capabilities::WorkaroundId::break_pane_misnames_windows,
+                    true) +
+      "' { " + native + " -n libtmux } { " + native + " }";
   const std::vector<std::string> command{
       "if-shell", "-F", "-t", target, "#{==:#{window_panes},1}", current, guarded};
   const auto break_policy = remaining_execution_policy(policy, started);
@@ -1396,7 +1419,9 @@ break_out_named(const Pane& pane, std::string_view name,
     return unexpected(created.error());
   }
 
-  const bool raw_tmux_37 = created->version == Version{.major = 3, .minor = 7};
+  const bool raw_tmux_37 = support::capabilities::affects(
+      support::capabilities::WorkaroundId::break_pane_misnames_windows,
+      created->version);
   const bool retained_window = created->window.id().value() == pane.window_id().value();
   if (!raw_tmux_37 || (retained_window && !created->automatic_rename)) {
     return std::move(created->window);
@@ -1437,7 +1462,10 @@ break_out_named(const Pane& pane, std::string_view name,
   if (!final.has_value()) {
     return unexpected(final.error());
   }
-  if (final->version != Version{.major = 3, .minor = 7} || final->automatic_rename) {
+  if (!support::capabilities::affects(
+          support::capabilities::WorkaroundId::break_pane_misnames_windows,
+          final->version) ||
+      final->automatic_rename) {
     return unexpected(CommandFailure{
         .kind = FailureKind::refused,
         .delivery = DeliveryStatus::replied,
@@ -1675,8 +1703,11 @@ expected<void, CommandFailure> Buffer::remove() const {
   // Before 3.4 a missing explicit name makes delete-buffer act on the top
   // buffer, which may be somebody else's, and checking first is not atomic.
   if (backend() != nullptr) {
-    if (auto early = detail::refuse_before(*backend(), Version{.major = 3, .minor = 4},
-                                           "deleting a named buffer", "3.4")) {
+    const auto& named = support::capabilities::capability(
+        support::capabilities::CapabilityId::buffer_delete_named);
+    if (auto early =
+            detail::refuse_before(*backend(), named.since.version,
+                                  "deleting a named buffer", named.since.text)) {
       return unexpected(std::move(*early));
     }
   }

@@ -35,6 +35,7 @@
 #include "libtmux/version.hpp"
 #include "pane_echo.hpp"
 #include "pane_input.hpp"
+#include "support_capabilities.hpp"
 #include "wait_for_text.hpp"
 
 #if !defined(_WIN32)
@@ -3064,10 +3065,13 @@ resolve_session(const Server& server, std::string_view target) {
         if (!running.has_value()) {
           return libtmux::unexpected(detail::tmux_error(running.error()));
         }
-        if (*running < libtmux::Version{.major = 3, .minor = 4}) {
+        const auto& named = libtmux::support::capabilities::capability(
+            libtmux::support::capabilities::CapabilityId::buffer_delete_named);
+        if (*running < named.since.version) {
           return libtmux::unexpected(ToolError{
               false, "paste_text stages a private buffer and removes it by name, which "
-                     "needs tmux 3.4 or newer"});
+                     "needs tmux " +
+                         std::string{named.since.text} + " or newer"});
         }
         const auto name = private_paste_buffer_name(server);
         if (!name.has_value()) {
