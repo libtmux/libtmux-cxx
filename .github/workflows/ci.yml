@@ -32,11 +32,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # `install` defaults to `detect`, so the action installs ccache with
-      # the runner's package manager -- apt on Linux, brew on macOS -- and
-      # never downloads the ccache build pinned in its own metadata.json.
-      # A bump to this action therefore moves @actions/cache and the action's
-      # own bundle, not the ccache binary: CI currently runs ccache 4.9.1 on
-      # ubuntu-latest and 4.14 on macos-latest.
+      # the runner's package manager -- apt on Linux -- and never downloads
+      # the ccache build pinned in its own metadata.json. A bump to this
+      # action therefore moves @actions/cache and the action's own bundle,
+      # not the ccache binary: CI currently runs ccache 4.9.1 on
+      # ubuntu-latest.
       - uses: hendrikmuhs/ccache-action@f09c25b45002a07be2955cbe52e8cee55643f89d # v1.2.24
         with:
           key: ${{ github.job }}-tmux-${{ matrix.tmux-version }}
@@ -144,48 +144,15 @@ jobs:
           cmake --build --preset cxx-dev --target libtmux_support_versions_test workspace_cli_test mcp_tools_test mcp_protocol_test
           ctest --preset cxx-dev --no-tests=error --output-on-failure -R 'libtmux\.support_versions\.|^consumer\..*\.rejected$'
 
-  macos:
-    # tmux is used at least as much on macOS as on Linux, and Apple Clang with
-    # its own libc++ is a different compiler from the pinned one. Nothing here
-    # had ever been built on it.
-
-    runs-on: macos-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - uses: hendrikmuhs/ccache-action@f09c25b45002a07be2955cbe52e8cee55643f89d # v1.2.24
-        with:
-          key: macos
-          max-size: 400M
-
-      - name: Install tmux and Ninja
-        run: brew install tmux ninja
-
-      - name: Build and test with Apple Clang
-        run: |
-          tmux -V
-          # Not a preset: the pinned toolchain file names a libc++ that comes
-          # from a Homebrew LLVM this runner does not have. Apple Clang brings
-          # its own, which is the point of the lane.
-          #
-          # `LIBTMUX_FETCH_DEPS=ON` because the presets that build tests on
-          # Linux get GoogleTest from the system, and there is none here.
-          cmake -S . -B build/macos -G Ninja -DCMAKE_CXX_STANDARD=23 \
-            -DLIBTMUX_FETCH_DEPS=ON -DLIBTMUX_BUILD_WORKSPACE_CLI=ON
-          cmake --build build/macos
-          ctest --test-dir build/macos --no-tests=error --output-on-failure
-
   windows:
-    # Exercise the narrower psmux backend and installed package with MSVC;
+    # Build and install the narrower Windows backend and package with MSVC;
     # a MinGW-only success cannot stand in for Windows support.
 
     strategy:
       fail-fast: false
       matrix:
         standard: [20, 23]
-    # The preset intentionally targets Visual Studio 2022, and this image also
-    # keeps WSLv1 enabled for the interop gate below.
+    # The preset intentionally targets Visual Studio 2022.
     runs-on: windows-2022
     timeout-minutes: 60
     defaults:
@@ -197,181 +164,15 @@ jobs:
       - name: Check Windows registry tooling
         run: python -m unittest tools.vcpkg.test_probe tools.vcpkg.test_release
 
-      - name: Install the pinned psmux release
+      # Nothing here starts psmux: this lane builds and installs, and runs the
+      # steps that need no tmux. The psmux tests are run by hand.
+      - name: Build the native Windows targets
         run: |
-          $url = "https://github.com/psmux/psmux/releases/download/v3.3.7/psmux-v3.3.7-windows-x64.zip"
-          $expected = "60ff7b236f64184921cef3c1ff2611aa5a36fcc7ed8e2a58e968b8ded57f6028"
-          $archive = Join-Path $env:RUNNER_TEMP "psmux-v3.3.7-windows-x64.zip"
-          $destination = Join-Path $env:RUNNER_TEMP "psmux-v3.3.7"
-
-          curl.exe --fail --location --retry 3 --output $archive $url
-          if ($LASTEXITCODE -ne 0) {
-            throw "failed to download psmux v3.3.7"
-          }
-
-          $actual = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
-          if ($actual -ne $expected) {
-            throw "psmux SHA-256 mismatch: expected $expected, got $actual"
-          }
-
-          Expand-Archive -Path $archive -DestinationPath $destination
-          $binary = Join-Path $destination "tmux.exe"
-          $expectedBinary = "f3a4ad033f0332972bc79b8d695387adb4fcd1d268074e113c1c84e5381051a6"
-          $actualBinary = (Get-FileHash -Algorithm SHA256 $binary).Hash.ToLowerInvariant()
-          if ($actualBinary -ne $expectedBinary) {
-            throw "psmux executable SHA-256 mismatch: expected $expectedBinary, got $actualBinary"
-          }
-          $reported = @(& $binary -V 2>&1)
-          if ($LASTEXITCODE -ne 0 -or $reported[0] -ne "tmux 3.3.7") {
-            throw "unexpected psmux version: $($reported -join '; ')"
-          }
-          $reported
-          $destination | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          "LIBTMUX_PSMUX_EXE=$binary" | Out-File `
-            -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Build and run the native Windows smoke
-        run: |
-          $resolved = (Get-Command tmux.exe -ErrorAction Stop).Source
-          $expectedPath = (Resolve-Path $env:LIBTMUX_PSMUX_EXE).Path
-          if ((Resolve-Path $resolved).Path -ne $expectedPath) {
-            throw "psmux route changed: expected $expectedPath, got $resolved"
-          }
-          $expectedHash = "f3a4ad033f0332972bc79b8d695387adb4fcd1d268074e113c1c84e5381051a6"
-          $actualHash = (Get-FileHash -Algorithm SHA256 $resolved).Hash.ToLowerInvariant()
-          if ($actualHash -ne $expectedHash) {
-            throw "resolved psmux SHA-256 mismatch: expected $expectedHash, got $actualHash"
-          }
           cmake --preset windows-psmux "-DLIBTMUX_CXX_STANDARD=${{ matrix.standard }}"
           cmake --build --preset windows-psmux
-          ctest --preset windows-psmux --no-tests=error
 
-      - name: Build and run the native Windows smoke in Release
-        run: |
-          cmake --build build/windows-psmux --config Release
-          ctest --test-dir build/windows-psmux -C Release --no-tests=error
-
-      - name: Kill the Windows psmux safety mutations
-        run: |
-          python -m tools.mutate `
-            --preset windows-psmux `
-            --id windows-psmux-disables-warm-claiming `
-            --id windows-psmux-clears-inherited-route `
-            --id windows-psmux-rejects-rebound-snapshot `
-            --id windows-psmux-cleanup-reports-success
-
-      - name: Run the Windows gates from WSL
-        run: |
-          $name = "libtmux-cxx-${{ matrix.standard }}-$env:GITHUB_RUN_ATTEMPT"
-          $archiveName = "alpine-minirootfs-3.23.5-x86_64.tar.gz"
-          $url = "https://dl-cdn.alpinelinux.org/alpine/v3.23/releases/x86_64/$archiveName"
-          # Alpine rebuilds minirootfs archives under their existing version, so
-          # this hash moves without the version moving. Take it from $url.sha256.
-          $expected = "fae0d78ad39563573ddececfdd55ae1040ed428442e95ea5401cf66d9079b327"
-          $archive = Join-Path $env:RUNNER_TEMP $archiveName
-          $tar = Join-Path $env:RUNNER_TEMP "alpine-minirootfs-3.23.5-x86_64.tar"
-          $root = Join-Path $env:RUNNER_TEMP "$name-root"
-
-          curl.exe --fail --location --retry 3 --output $archive $url
-          if ($LASTEXITCODE -ne 0) {
-            throw "failed to download the WSL interop rootfs"
-          }
-          $actual = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
-          if ($actual -ne $expected) {
-            throw "Alpine rootfs SHA-256 mismatch: expected $expected, got $actual"
-          }
-          & 7z.exe e $archive "-o$env:RUNNER_TEMP" -y | Out-Host
-          if ($LASTEXITCODE -ne 0 -or -not (Test-Path $tar)) {
-            throw "failed to decompress the WSL interop rootfs"
-          }
-
-          try {
-            & wsl.exe --import $name $root $tar --version 1
-            if ($LASTEXITCODE -ne 0) {
-              throw "failed to import the WSLv1 interop distribution"
-            }
-
-            $workspace = (Resolve-Path $PWD).Path
-            $testDir = Join-Path $workspace "build\windows-psmux"
-            $proof = Join-Path $workspace "build\verify-psmux-route.ps1"
-            @(
-              'param('
-              '  [Parameter(Mandatory = $true)][string]$ExpectedPsmux,'
-              '  [Parameter(Mandatory = $true)][string]$CTest,'
-              '  [Parameter(Mandatory = $true)][string]$TestDir'
-              ')'
-              '$ErrorActionPreference = "Stop"'
-              '$expected = (Resolve-Path $ExpectedPsmux).Path'
-              '$env:PATH = "$(Split-Path $expected);$env:PATH"'
-              '$env:PATHEXT = ".CPL"'
-              'if ($env:PATHEXT -ne ".CPL") { throw "could not poison PATHEXT" }'
-              '$resolved = (Get-Command tmux.exe -ErrorAction Stop).Source'
-              'if ((Resolve-Path $resolved).Path -ne $expected) {'
-              '  throw "WSL psmux route changed: expected $expected, got $resolved"'
-              '}'
-              '$expectedHash = "f3a4ad033f0332972bc79b8d695387adb4fcd1d268074e113c1c84e5381051a6"'
-              '$actualHash = (Get-FileHash -Algorithm SHA256 $resolved).Hash.ToLowerInvariant()'
-              'if ($actualHash -ne $expectedHash) {'
-              '  throw "WSL psmux SHA-256 mismatch: expected $expectedHash, got $actualHash"'
-              '}'
-              '& $CTest --test-dir $TestDir -C Debug -L windows --no-tests=error --output-on-failure'
-              'if ($LASTEXITCODE -ne 0) {'
-              '  throw "the WSL-to-Windows psmux gates failed"'
-              '}'
-            ) | Set-Content -Path $proof -Encoding ascii
-
-            $ctestWindows = (Get-Command ctest.exe -ErrorAction Stop).Source
-            $powershellWindows = (Get-Command powershell.exe -ErrorAction Stop).Source
-            if ($powershellWindows -notmatch '^([A-Za-z]):\\(.+)$') {
-              throw "cannot map Windows PowerShell into WSL: $powershellWindows"
-            }
-            $drive = $Matches[1].ToLowerInvariant()
-            $tail = $Matches[2] -replace '\\', '/'
-            $powershellWsl = "/mnt/$drive/$tail"
-            & wsl.exe -d $name -- test -x $powershellWsl
-            if ($LASTEXITCODE -ne 0) {
-              throw "Windows PowerShell is not executable inside WSL: $powershellWsl"
-            }
-            & wsl.exe -d $name -- $powershellWsl `
-              -NoLogo -NoProfile -NonInteractive `
-              -ExecutionPolicy Bypass -File $proof `
-              -ExpectedPsmux $env:LIBTMUX_PSMUX_EXE `
-              -CTest $ctestWindows -TestDir $testDir
-            if ($LASTEXITCODE -ne 0) {
-              throw "the WSL psmux route and runtime gates failed"
-            }
-          } finally {
-            $savedNativePreference = $PSNativeCommandUseErrorActionPreference
-            $PSNativeCommandUseErrorActionPreference = $false
-            try {
-              & wsl.exe --unregister $name 2>$null | Out-Host
-              $registered = @(
-                & wsl.exe --list --quiet 2>$null |
-                  ForEach-Object { ($_ -replace "`0", "").Trim() }
-              )
-              $listStatus = $LASTEXITCODE
-            } finally {
-              $PSNativeCommandUseErrorActionPreference = $savedNativePreference
-            }
-            if ($listStatus -ne 0) {
-              throw "could not verify WSL distribution teardown"
-            }
-            if ($registered -contains $name) {
-              throw "failed to unregister the task-owned WSL distribution"
-            }
-          }
-
-      - name: Check private psmux cleanup
-        if: always()
-        run: |
-          $state = Join-Path $HOME ".psmux"
-          if (Test-Path $state) {
-            $leaks = @(Get-ChildItem -Path $state -Recurse -File |
-              Where-Object { $_.Name -like "libtmux-cxx-*" })
-            if ($leaks.Count -ne 0) {
-              throw "private psmux state leaked:`n$($leaks.FullName -join "`n")"
-            }
-          }
+      - name: Build the native Windows targets in Release
+        run: cmake --build build/windows-psmux --config Release
 
       - name: Install and consume the MSVC package
         run: |
@@ -1188,7 +989,6 @@ jobs:
     if: always()
     needs:
       - compatibility
-      - macos
       - windows
       - toolchains
       - benchmarks

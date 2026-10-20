@@ -17,10 +17,10 @@ psmux gives it the same environment identity as its unselected default.
 ## The pinned target
 
 The verified preview target is psmux 3.3.7 at commit
-`05cc5d4cded047bd3f3d1955299fd0bd259f2d81`. CI downloads the official
-`psmux-v3.3.7-windows-x64.zip`, requires SHA-256
+`05cc5d4cded047bd3f3d1955299fd0bd259f2d81`. It is the official
+`psmux-v3.3.7-windows-x64.zip`, whose SHA-256 is
 `60ff7b236f64184921cef3c1ff2611aa5a36fcc7ed8e2a58e968b8ded57f6028`,
-and runs its `tmux.exe`, whose SHA-256 is
+and its `tmux.exe` has SHA-256
 `f3a4ad033f0332972bc79b8d695387adb4fcd1d268074e113c1c84e5381051a6`.
 Treat any other binary as a new compatibility target until the native smoke
 passes against it.
@@ -37,11 +37,14 @@ It also disables psmux's warm-claim path for every child: psmux 3.3.7
 reserializes the caller's working directory through a command-line protocol,
 where a standalone semicolon can become another command.
 
-## How CI checks it
+## How it is checked
 
-The Windows workflow runs the native MSVC gates in C++20 and C++23, then
-repeats every Windows-labeled CTest from a task-owned Alpine WSLv1 import. The
-rootfs and psmux archive and executable are all pinned by SHA-256.
+psmux is supported on a best-effort basis, and CI coverage for it is highly
+limited: CI builds and installs the Windows preview with MSVC but runs no psmux
+test, and the release builds the Windows binary and the vcpkg port without
+running them against psmux. To check a build, run the `windows-psmux` preset as
+the README describes, in C++20 and C++23, and repeat every Windows-labeled
+CTest from a WSL import.
 
 ## The typed surface
 

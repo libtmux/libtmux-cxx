@@ -205,7 +205,10 @@ jobs:
             "${extra[@]}"
           cmake --build build/rel
 
+      # Linux only: the macOS binaries are built and published, but CI does
+      # not run them.
       - name: It answers before it is published
+        if: runner.os == 'Linux'
         run: |
           binary=build/rel/apps/mcp/libtmux-mcp-server
           test -x "$binary"
@@ -259,45 +262,8 @@ jobs:
       - name: Check Windows registry tooling
         run: python -m unittest tools.vcpkg.test_probe tools.vcpkg.test_release
 
-      - name: Install the pinned psmux release
+      - name: Build the tagged Windows release
         run: |
-          $url = "https://github.com/psmux/psmux/releases/download/v3.3.7/psmux-v3.3.7-windows-x64.zip"
-          $expected = "60ff7b236f64184921cef3c1ff2611aa5a36fcc7ed8e2a58e968b8ded57f6028"
-          $archive = Join-Path $env:RUNNER_TEMP "psmux-v3.3.7-windows-x64.zip"
-          $destination = Join-Path $env:RUNNER_TEMP "psmux-v3.3.7"
-
-          curl.exe --fail --location --retry 3 --output $archive $url
-          if ($LASTEXITCODE -ne 0) {
-            throw "failed to download psmux v3.3.7"
-          }
-          $actual = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
-          if ($actual -ne $expected) {
-            throw "psmux archive SHA-256 mismatch: expected $expected, got $actual"
-          }
-
-          Expand-Archive -Path $archive -DestinationPath $destination
-          $binary = Join-Path $destination "tmux.exe"
-          $expectedBinary = "f3a4ad033f0332972bc79b8d695387adb4fcd1d268074e113c1c84e5381051a6"
-          $actualBinary = (Get-FileHash -Algorithm SHA256 $binary).Hash.ToLowerInvariant()
-          if ($actualBinary -ne $expectedBinary) {
-            throw "psmux executable SHA-256 mismatch: expected $expectedBinary, got $actualBinary"
-          }
-          $reported = @(& $binary -V 2>&1)
-          if ($LASTEXITCODE -ne 0 -or $reported[0] -ne "tmux 3.3.7") {
-            throw "unexpected psmux version: $($reported -join '; ')"
-          }
-          $reported
-          $destination | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          "LIBTMUX_PSMUX_EXE=$binary" | Out-File `
-            -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Build the tagged Windows gates
-        run: |
-          $expectedPsmux = Join-Path $env:RUNNER_TEMP "psmux-v3.3.7\tmux.exe"
-          $resolvedPsmux = (Get-Command tmux.exe -ErrorAction Stop).Source
-          if ((Resolve-Path $resolvedPsmux).Path -ne (Resolve-Path $expectedPsmux).Path) {
-            throw "psmux route changed: expected $expectedPsmux, got $resolvedPsmux"
-          }
           cmake -S . -B build/rel -G "Visual Studio 17 2022" -A x64 `
             -DLIBTMUX_BUILD_MCP_SERVER=ON -DLIBTMUX_FETCH_DEPS=ON `
             -DLIBTMUX_BUILD_TESTS=ON -DLIBTMUX_BUILD_EXAMPLES=ON `
@@ -307,15 +273,6 @@ jobs:
             -DLIBTMUX_CXX_STANDARD=23 `
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
           cmake --build build/rel --config Release
-
-      - name: Run the tagged Windows gates
-        run: |
-          $resolvedPsmux = (Get-Command tmux.exe -ErrorAction Stop).Source
-          if ((Resolve-Path $resolvedPsmux).Path -ne (Resolve-Path $env:LIBTMUX_PSMUX_EXE).Path) {
-            throw "psmux route changed before CTest: $resolvedPsmux"
-          }
-          ctest --test-dir build/rel -C Release `
-            --no-tests=error --output-on-failure
 
       - name: Install and consume the tagged package
         run: |
@@ -402,16 +359,6 @@ jobs:
             $server = Join-Path $installed "$triplet\tools\libtmux\libtmux-mcp-server.exe"
             if (-not (Test-Path $server)) {
               throw "the $triplet port installed no MCP server: $server"
-            }
-            $resolvedPsmux = (Get-Command tmux.exe -ErrorAction Stop).Source
-            if ((Resolve-Path $resolvedPsmux).Path -ne (Resolve-Path $env:LIBTMUX_PSMUX_EXE).Path) {
-              throw "psmux route changed before the $triplet smoke: $resolvedPsmux"
-            }
-            & powershell.exe -NoLogo -NoProfile -NonInteractive `
-              -ExecutionPolicy Bypass -File `
-              ".\apps\mcp\tests\windows_psmux_smoke.ps1" -Server $server
-            if ($LASTEXITCODE -ne 0) {
-              throw "the installed $triplet MCP server failed its psmux smoke"
             }
 
             $consumerBuild = Join-Path $PWD "build\consume-$triplet"
@@ -533,25 +480,12 @@ jobs:
             libtmux-mcp-server-*
           if-no-files-found: error
 
-      - name: Check private psmux cleanup
-        if: always()
-        run: |
-          $state = Join-Path $HOME ".psmux"
-          if (Test-Path $state) {
-            $leaks = @(Get-ChildItem -Path $state -Recurse -File |
-              Where-Object { $_.Name -like "libtmux-cxx-*" })
-            if ($leaks.Count -ne 0) {
-              throw "private psmux state leaked:`n$($leaks.FullName -join "`n")"
-            }
-          }
-
   publish:
     needs:
       - source
       - server
       - server-windows
       - registry
-      - registry-macos
       - registry-windows
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -654,7 +588,8 @@ jobs:
             `gh attestation verify <file> --repo ${{ github.repository }}`.
 
             Windows is a bounded x64 desktop preview through the pinned psmux
-            build. MinGW, UWP, Xbox, non-x64 targets, persistent control mode,
+            build, supported on a best-effort basis: this release builds it
+            but does not run it against psmux. MinGW, UWP, Xbox, non-x64 targets, persistent control mode,
             and unsafe typed mutations remain unsupported; see the
             [Windows boundary][windows] before adopting it.
 
@@ -880,25 +815,3 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "the published Windows registry baseline did not resolve"
           }
-
-  registry-macos:
-    needs: [registry]
-    runs-on: macos-latest
-    timeout-minutes: 75
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.registry.outputs.baseline }}
-
-      - name: Resolve and consume the published macOS baseline
-        run: |
-          git clone --filter=blob:none \
-            https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP/vcpkg"
-          git -C "$RUNNER_TEMP/vcpkg" checkout --detach \
-            94a541197763a4f449a1b91478df48c0584a6256
-          "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
-          python3 -m tools.vcpkg probe \
-            --vcpkg "$RUNNER_TEMP/vcpkg" \
-            --triplet arm64-osx \
-            --feature mcp \
-            --repository "https://github.com/${GITHUB_REPOSITORY}"

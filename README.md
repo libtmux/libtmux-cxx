@@ -1168,9 +1168,12 @@ before dispatch.
   typed method name do not guarantee a read is a read; use only servers you
   trust.
 
-The native smoke needs the Visual Studio 2022 C++ workload and a psmux
-`tmux.exe` on `PATH`. Run the preset with Windows CMake from a Developer
-PowerShell in a Windows-path checkout:
+psmux is supported on a best-effort basis, and CI coverage for it is highly
+limited: CI builds the Windows preview but runs no psmux test.
+
+To check a build, run the native smoke. It needs the Visual Studio 2022 C++
+workload and a psmux `tmux.exe` on `PATH`. Run the preset with Windows CMake
+from a Developer PowerShell in a Windows-path checkout:
 
 ```console
 $ cmake --preset windows-psmux
@@ -1208,8 +1211,9 @@ $ ctest --preset windows-psmux --no-tests=error
   deprecation period. Pin an exact version.
 - tmux 3.3a through `master`, on Linux (including WSL) and macOS; experimental
   x64 desktop Windows through psmux.
-- CI runs Linux on `ubuntu-latest`, macOS on `macos-latest` and the Windows
-  preview on `windows-2022`.
+- CI runs Linux on `ubuntu-latest` and builds the Windows preview with MSVC on
+  `windows-2022` without starting psmux. macOS and psmux are supported on a
+  best-effort basis, and CI coverage for them is highly limited.
 - C++23 (clang 17+, GCC 13+, Visual Studio 2022 17.3+), or C++20 with
   `LIBTMUX_CXX_STANDARD=20`. The core links nothing.
 - Every pull request runs against real tmux under clang with libc++, GCC with
