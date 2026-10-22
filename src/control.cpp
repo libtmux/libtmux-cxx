@@ -13,6 +13,11 @@
 #include <tuple>
 #include <utility>
 #include <vector>
+#include <version>
+
+#if defined(__cpp_lib_inplace_vector) && __cpp_lib_inplace_vector >= 202406L
+#include <inplace_vector>
+#endif
 
 LIBTMUX_NAMESPACE_BEGIN
 namespace {
@@ -338,10 +343,24 @@ constexpr auto kNotificationNames = std::to_array<KindName>({
 // The arguments before any free text or payload, split on single spaces. Only
 // the leading region is tokenised: an output payload is already unescaped, so
 // it may hold spaces and newlines that are data rather than separators.
-std::vector<std::string_view> leading_fields(std::string_view line, std::size_t limit) {
-  std::vector<std::string_view> fields;
+#if defined(__cpp_lib_inplace_vector) && __cpp_lib_inplace_vector >= 202406L
+template <std::size_t Limit>
+using LeadingFields = std::inplace_vector<std::string_view, Limit>;
+#else
+template <std::size_t Limit> struct LeadingFields {
+  std::array<std::string_view, Limit> values{};
+  std::size_t count{};
+  std::size_t size() const { return count; }
+  std::string_view operator[](std::size_t index) const { return values[index]; }
+  void push_back(std::string_view value) { values[count++] = value; }
+};
+#endif
+
+template <std::size_t Limit>
+LeadingFields<Limit> leading_fields(std::string_view line) {
+  LeadingFields<Limit> fields;
   std::size_t index = 0;
-  while (index < line.size() && fields.size() < limit) {
+  while (index < line.size() && fields.size() < Limit) {
     const auto space = line.find(' ', index);
     if (space == std::string_view::npos) {
       fields.push_back(line.substr(index));
@@ -392,7 +411,7 @@ ParsedNotification parse(const Notification& notification) {
   // `%output` has one field before its byte payload.
   if (parsed.kind == NotificationKind::output) {
     constexpr std::size_t argument_count = 2U;
-    const auto fields = leading_fields(line, argument_count);
+    const auto fields = leading_fields<argument_count>(line);
     if (fields.size() < argument_count) {
       return parsed;
     }
@@ -409,7 +428,7 @@ ParsedNotification parse(const Notification& notification) {
   // Extended output may grow fields before the delimiter; tmux requires
   // callers to ignore them.
   if (parsed.kind == NotificationKind::extended_output) {
-    const auto fields = leading_fields(line, 3U);
+    const auto fields = leading_fields<3U>(line);
     if (fields.size() < 3U) {
       return parsed;
     }
@@ -436,7 +455,7 @@ ParsedNotification parse(const Notification& notification) {
   // and never reach the ids that follow it.
   if (parsed.kind == NotificationKind::subscription_changed) {
     constexpr std::size_t argument_count = 6U;
-    const auto fields = leading_fields(line, argument_count);
+    const auto fields = leading_fields<argument_count>(line);
     if (fields.size() < argument_count) {
       return parsed;
     }
@@ -449,7 +468,7 @@ ParsedNotification parse(const Notification& notification) {
 
   // Everything else is `%name` then space-separated arguments, with any free
   // text — a session or window or buffer name — last.
-  const auto fields = leading_fields(line, 8U);
+  const auto fields = leading_fields<8U>(line);
   std::size_t placed = 0;
   for (std::size_t index = 1; index < fields.size(); ++index) {
     const auto before = std::tuple{parsed.session, parsed.window, parsed.pane};
