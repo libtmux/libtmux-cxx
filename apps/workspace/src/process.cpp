@@ -207,7 +207,7 @@ void require_terminal() {
     throw Failure{2, "usage",
                   "load requires a foreground controlling terminal; use -d"};
 }
-Execution with_interrupts(const std::function<Execution()>& operation) {
+Execution with_interrupts(ImmediateOperation operation) {
   SignalGuard signals;
   return operation();
 }
