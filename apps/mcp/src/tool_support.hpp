@@ -269,7 +269,8 @@ preflight_pane_input(const Server& server, std::string_view source_pane_id,
                      PaneInputScope scope);
 [[nodiscard]] bool same_pane_input_route(const PaneInputPreflight& initial,
                                          const PaneInputPreflight& final);
-[[nodiscard]] StructuredValue session_value(const Session& session);
+[[nodiscard]] StructuredValue session_value(const Server& server,
+                                            const Session& session);
 [[nodiscard]] StructuredValue window_value(const Window& window);
 [[nodiscard]] StructuredValue pane_value(const Pane& pane);
 

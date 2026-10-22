@@ -17,6 +17,7 @@
 #include "libtmux/server.hpp"
 #include "libtmux/testing/scoped_server.hpp"
 #include "libtmux_consumers/mcp.hpp"
+#include "output_records.generated.hpp"
 #include "schema.hpp"
 
 namespace {
@@ -119,6 +120,150 @@ private:
       {{"target", "mcp"}, {"text", "never appears"}, {"timeout_ms", "1"}});
   EXPECT_TRUE(waited.has_value()) << waited.error().message;
   return waited.value_or(ToolOutput{});
+}
+
+[[nodiscard]] json closed_object(json properties, json required) {
+  return {{"type", "object"},
+          {"properties", std::move(properties)},
+          {"required", std::move(required)},
+          {"additionalProperties", false}};
+}
+
+[[nodiscard]] json expected_session_schema() {
+  return closed_object(
+      {{"attached", {{"type", "boolean"}}},
+       {"client_count", {{"type", "integer"}, {"minimum", 0}}},
+       {"id", {{"type", "string"}, {"pattern", R"(^\$[0-9]+$)"}}},
+       {"name", {{"type", "string"}}},
+       {"path", {{"type", "string"}}},
+       {"window_count", {{"type", "integer"}, {"minimum", 0}}}},
+      {"attached", "client_count", "id", "name", "path", "window_count"});
+}
+
+[[nodiscard]] json expected_window_schema() {
+  return closed_object(
+      {{"active", {{"type", "boolean"}}},
+       {"height", {{"type", "integer"}, {"minimum", 0}}},
+       {"id", {{"type", "string"}, {"pattern", R"(^@[0-9]+$)"}}},
+       {"index", {{"type", "integer"}}},
+       {"layout", {{"type", "string"}}},
+       {"name", {{"type", "string"}}},
+       {"pane_count", {{"type", "integer"}, {"minimum", 0}}},
+       {"session_id", {{"type", "string"}, {"pattern", R"(^\$[0-9]+$)"}}},
+       {"width", {{"type", "integer"}, {"minimum", 0}}}},
+      {"active", "height", "id", "index", "layout", "name", "pane_count", "session_id",
+       "width"});
+}
+
+[[nodiscard]] json expected_pane_schema() {
+  return closed_object(
+      {{"active", {{"type", "boolean"}}},
+       {"command", {{"type", "string"}}},
+       {"dead", {{"type", "boolean"}}},
+       {"height", {{"type", "integer"}, {"minimum", 0}}},
+       {"id", {{"type", "string"}, {"pattern", R"(^%[0-9]+$)"}}},
+       {"index", {{"type", "integer"}, {"minimum", 0}}},
+       {"path", {{"type", "string"}}},
+       {"pid", {{"type", "integer"}, {"minimum", 0}}},
+       {"session_id", {{"type", "string"}, {"pattern", R"(^\$[0-9]+$)"}}},
+       {"title", {{"type", "string"}}},
+       {"width", {{"type", "integer"}, {"minimum", 0}}},
+       {"window_id", {{"type", "string"}, {"pattern", R"(^@[0-9]+$)"}}}},
+      {"active", "command", "dead", "height", "id", "index", "path", "pid",
+       "session_id", "title", "width", "window_id"});
+}
+
+TEST(McpProtocolSchema, EncodedEntityStringsOutliveTheRecord) {
+  StructuredValue encoded;
+  {
+    const std::string name = "quoted\"back\\slash\tcontrol";
+    encoded = libtmux::mcp::wire::encode_record(
+        libtmux::mcp::wire::SessionOutput{false, 0, "$1", name, "", 1});
+  }
+  const ToolOutput answer{.structured = {{"session", std::move(encoded)}}};
+  EXPECT_EQ(published_output(answer).at("session").at("name"),
+            "quoted\"back\\slash\tcontrol");
+}
+
+TEST(McpProtocolSchema, PreservesCompleteEntitySchemas) {
+  const auto schemas = published_schemas();
+  EXPECT_EQ(schemas.at("list_sessions").at("properties").at("sessions").at("items"),
+            expected_session_schema());
+  EXPECT_EQ(schemas.at("list_windows").at("properties").at("windows").at("items"),
+            expected_window_schema());
+  EXPECT_EQ(schemas.at("list_panes").at("properties").at("panes").at("items"),
+            expected_pane_schema());
+}
+
+TEST(McpProtocolSchemaTmux, PreservesCompleteEntityEncodingAndEscaping) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  auto opened = Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(opened.has_value());
+  const Server server = *opened;
+  ASSERT_TRUE(server.run({"set-window-option", "automatic-rename", "off"}));
+  const std::string escaped = "quoted\"back\\slash";
+  ASSERT_TRUE(server.run({"rename-window", escaped}));
+  ASSERT_TRUE(server.run({"select-pane", "-T", escaped}));
+  const auto tools = all_tools();
+  const auto sessions = server.sessions();
+  const auto windows = server.windows();
+  const auto panes = server.panes();
+  ASSERT_TRUE(sessions && windows && panes);
+  ASSERT_FALSE(sessions->empty());
+  ASSERT_FALSE(windows->empty());
+  ASSERT_FALSE(panes->empty());
+  for (const auto& session : *sessions) {
+    const auto answer = tools.call(server, "get_session_info",
+                                   {{"session", std::string{session.id().value()}}});
+    ASSERT_TRUE(answer.has_value()) << answer.error().message;
+    EXPECT_EQ(published_output(*answer).at("session"),
+              json({{"attached", false},
+                    {"client_count", 0},
+                    {"id", session.id().value()},
+                    {"name", session.name()},
+                    {"path", session.path()},
+                    {"window_count", session.window_count()}}));
+  }
+  for (const auto& window : *windows) {
+    EXPECT_NE(window.name().find('"'), std::string_view::npos);
+    EXPECT_NE(window.name().find('\\'), std::string_view::npos);
+    const auto answer = tools.call(server, "get_window_info",
+                                   {{"windowId", std::string{window.id().value()}}});
+    ASSERT_TRUE(answer.has_value()) << answer.error().message;
+    const json actual = published_output(*answer).at("window");
+    EXPECT_EQ(actual, json({{"active", window.active()},
+                            {"height", window.height()},
+                            {"id", window.id().value()},
+                            {"index", window.index()},
+                            {"layout", window.layout()},
+                            {"name", window.name()},
+                            {"pane_count", window.pane_count()},
+                            {"session_id", window.session_id().value()},
+                            {"width", window.width()}}));
+    EXPECT_EQ(json::parse(actual.dump()), actual);
+  }
+  for (const auto& pane : *panes) {
+    EXPECT_NE(pane.title().find('"'), std::string_view::npos);
+    EXPECT_NE(pane.title().find('\\'), std::string_view::npos);
+    const auto answer = tools.call(server, "get_pane_info",
+                                   {{"paneId", std::string{pane.id().value()}}});
+    ASSERT_TRUE(answer.has_value()) << answer.error().message;
+    const json actual = published_output(*answer).at("pane");
+    EXPECT_EQ(actual, json({{"active", pane.active()},
+                            {"command", pane.command()},
+                            {"dead", pane.dead()},
+                            {"height", pane.height()},
+                            {"id", pane.id().value()},
+                            {"index", pane.index()},
+                            {"path", pane.path()},
+                            {"pid", pane.pid()},
+                            {"session_id", pane.session_id().value()},
+                            {"title", pane.title()},
+                            {"width", pane.width()},
+                            {"window_id", pane.window_id().value()}}));
+    EXPECT_EQ(json::parse(actual.dump()), actual);
+  }
 }
 
 TEST(McpProtocolSchema, InvalidLayoutIsRefusedBeforeTargetLookup) {
