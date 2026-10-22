@@ -52,6 +52,10 @@ void uses() {
   const auto windows_of = libtmux::children_of<libtmux::Session, libtmux::Window>(
       rows, libtmux::window::session_id, libtmux::session::id);
   (void)windows_of;
+  (void)libtmux::parent_of<libtmux::Pane, libtmux::Window>(
+      rows, libtmux::pane::window_id, libtmux::window::id);
+  const libtmux::Notification notification;
+  (void)libtmux::parse(notification);
 
   auto named = rows | libtmux::matching(libtmux::window::name == "editor");
   (void)libtmux::exactly_one(named);

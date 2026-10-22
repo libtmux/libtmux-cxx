@@ -47,6 +47,10 @@ struct Options {
 struct Waiter {
   void wait_ready(std::chrono::steady_clock::time_point deadline =
                       std::chrono::steady_clock::time_point::max());
+  /// The input must outlive the borrowed view.
+#if defined(__cpp_deleted_function)
+  void borrow(int&&) = delete("keep the input alive");
+#endif
 };
 
 /// A templated public value wrapper.

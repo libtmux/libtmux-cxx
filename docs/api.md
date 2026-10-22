@@ -5154,6 +5154,7 @@ Relation quantifiers over to-many and to-one links.  The quantifier is named rat
 - [`Free symbols`](#libtmux-relations-hpp-free-symbols)
   - [`children_of`](#libtmux-relations-hpp-free-symbols-children-of)
   - [`children_of`](#libtmux-relations-hpp-free-symbols-children-of-2)
+  - [`children_of`](#libtmux-relations-hpp-free-symbols-children-of-3)
   - [`parent_of`](#libtmux-relations-hpp-free-symbols-parent-of)
   - [`RelatedMany`](#libtmux-relations-hpp-free-symbols-relatedmany)
   - [`RelatedOne`](#libtmux-relations-hpp-free-symbols-relatedone)
@@ -5163,6 +5164,7 @@ Relation quantifiers over to-many and to-one links.  The quantifier is named rat
   - [`none_of`](#libtmux-relations-hpp-free-symbols-none-of)
   - [`is`](#libtmux-relations-hpp-free-symbols-is)
   - [`parent_of`](#libtmux-relations-hpp-free-symbols-parent-of-2)
+  - [`parent_of`](#libtmux-relations-hpp-free-symbols-parent-of-3)
 
 <a id="libtmux-relations-hpp-quantifier"></a>
 ### `Quantifier`
@@ -5200,9 +5202,18 @@ Join two listings on the id one of them carries.  A relation predicate has to re
 #### `children_of`
 
 ```cpp
+template <typename Parent, typename Child> auto children_of(const std::vector<Child>&&, StringFieldHandle<Child>, StringFieldHandle<Parent>) = delete ("children_of borrows its rows; keep the listing alive");
+```
+Available when `defined(__cpp_deleted_function) && __cpp_deleted_function >= 202403L`.
+The rows are borrowed, so a listing that dies at the semicolon is refused here rather than dangling inside the predicate later.
+
+<a id="libtmux-relations-hpp-free-symbols-children-of-3"></a>
+#### `children_of`
+
+```cpp
 template <typename Parent, typename Child> auto children_of(const std::vector<Child>&&, StringFieldHandle<Child>, StringFieldHandle<Parent>) = delete;
 ```
-The rows are borrowed, so a listing that dies at the semicolon is refused here rather than dangling inside the predicate later.
+Available when `!(defined(__cpp_deleted_function) && __cpp_deleted_function >= 202403L)`.
 
 <a id="libtmux-relations-hpp-free-symbols-parent-of"></a>
 #### `parent_of`
@@ -5268,8 +5279,17 @@ An absent to-one link never satisfies `is`: a window with no active pane is not 
 #### `parent_of`
 
 ```cpp
+template <typename Child, typename Parent> auto parent_of(const std::vector<Parent>&&, StringFieldHandle<Child>, StringFieldHandle<Parent>) = delete ("parent_of borrows its rows; keep the listing alive");
+```
+Available when `defined(__cpp_deleted_function) && __cpp_deleted_function >= 202403L`.
+
+<a id="libtmux-relations-hpp-free-symbols-parent-of-3"></a>
+#### `parent_of`
+
+```cpp
 template <typename Child, typename Parent> auto parent_of(const std::vector<Parent>&&, StringFieldHandle<Child>, StringFieldHandle<Parent>) = delete;
 ```
+Available when `!(defined(__cpp_deleted_function) && __cpp_deleted_function >= 202403L)`.
 
 <a id="libtmux-cardinality-hpp"></a>
 ## `libtmux/cardinality.hpp`
@@ -6810,6 +6830,7 @@ Events tmux emits outside guarded control reply blocks.  Most are protocol notif
   - [`to_string`](#libtmux-notification-hpp-free-symbols-to-string)
   - [`parse`](#libtmux-notification-hpp-free-symbols-parse)
   - [`parse`](#libtmux-notification-hpp-free-symbols-parse-2)
+  - [`parse`](#libtmux-notification-hpp-free-symbols-parse-3)
   - [`layout_contains_pane`](#libtmux-notification-hpp-free-symbols-layout-contains-pane)
 
 <a id="libtmux-notification-hpp-notification"></a>
@@ -7086,8 +7107,17 @@ Events evicted before this watch took them, excluding events consumed by other c
 #### `parse`
 
 ```cpp
+ParsedNotification parse(Notification&&) = delete ("parse borrows notification bytes; keep the notification alive");
+```
+Available when `defined(__cpp_deleted_function) && __cpp_deleted_function >= 202403L`.
+
+<a id="libtmux-notification-hpp-free-symbols-parse-3"></a>
+#### `parse`
+
+```cpp
 ParsedNotification parse(Notification&&) = delete;
 ```
+Available when `!(defined(__cpp_deleted_function) && __cpp_deleted_function >= 202403L)`.
 
 <a id="libtmux-notification-hpp-free-symbols-layout-contains-pane"></a>
 #### `layout_contains_pane`
@@ -7352,6 +7382,7 @@ Split `capture-pane -p` output into lines.  Every captured line is newline-termi
 - [`Free symbols`](#libtmux-capture-hpp-free-symbols)
   - [`capture_lines`](#libtmux-capture-hpp-free-symbols-capture-lines)
   - [`capture_lines`](#libtmux-capture-hpp-free-symbols-capture-lines-2)
+  - [`capture_lines`](#libtmux-capture-hpp-free-symbols-capture-lines-3)
   - [`without_trailing_blanks`](#libtmux-capture-hpp-free-symbols-without-trailing-blanks)
   - [`output_confirms`](#libtmux-capture-hpp-free-symbols-output-confirms)
 
@@ -7362,11 +7393,20 @@ Split `capture-pane -p` output into lines.  Every captured line is newline-termi
 #### `capture_lines`
 
 ```cpp
-template <typename Text> requires std::same_as<std::remove_cvref_t<Text>, std::string> && (!std::is_lvalue_reference_v<Text>) std::vector<std::string_view> capture_lines(Text&&) = delete;
+template <typename Text> requires std::same_as<std::remove_cvref_t<Text>, std::string> && (!std::is_lvalue_reference_v<Text>) std::vector<std::string_view> capture_lines(Text&&) = delete ("capture_lines borrows its string; keep the input alive");
 ```
+Available when `defined(__cpp_deleted_function) && __cpp_deleted_function >= 202403L`.
 The lines are views into the text, so text that dies at the semicolon takes them with it — and `pane.capture()` returns its output by value, which makes `capture_lines(*pane.capture())` the natural thing to write and a use-after-free to run. Deleted for an rvalue string only: an lvalue string converts as before, and so does a literal.
 
 <a id="libtmux-capture-hpp-free-symbols-capture-lines-2"></a>
+#### `capture_lines`
+
+```cpp
+template <typename Text> requires std::same_as<std::remove_cvref_t<Text>, std::string> && (!std::is_lvalue_reference_v<Text>) std::vector<std::string_view> capture_lines(Text&&) = delete;
+```
+Available when `!(defined(__cpp_deleted_function) && __cpp_deleted_function >= 202403L)`.
+
+<a id="libtmux-capture-hpp-free-symbols-capture-lines-3"></a>
 #### `capture_lines`
 
 ```cpp
@@ -8438,6 +8478,7 @@ The error side of `expected`, named for the rare declaration that has to spell i
 template <typename Error> using bad_expected_access = tl::bad_expected_access<Error>;
 ```
 Available when `defined(LIBTMUX_USE_TL_EXPECTED)`.
+What `value()` throws when there is none. Named here so a caller who wants an exception at a boundary can catch it in either standard's build.
 
 <a id="libtmux-expected-hpp-free-symbols-bad-expected-access-2"></a>
 #### `bad_expected_access`

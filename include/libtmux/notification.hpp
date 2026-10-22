@@ -95,7 +95,12 @@ struct ParsedNotification {
 };
 
 [[nodiscard]] ParsedNotification parse(const Notification& notification);
+#if defined(__cpp_deleted_function) && __cpp_deleted_function >= 202403L
+ParsedNotification parse(Notification&&) =
+    delete ("parse borrows notification bytes; keep the notification alive");
+#else
 ParsedNotification parse(Notification&&) = delete;
+#endif
 
 /// Whether `pane_id` (<code>\%N</code>) is still part of a window's arrangement,
 /// reading a `layout_change` notification's own `text` — `window_layout` followed by
