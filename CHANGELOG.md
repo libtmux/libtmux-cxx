@@ -9,6 +9,13 @@ was recorded as it landed.
 
 ## Unreleased
 
+### Documentation
+
+- Split the README capability table into short rows with the crash causes in
+  `docs/compatibility.md`, state the nested-command limit with its releases and
+  effects, and repeat it in the `run_shell_command` and `send_keys` tool
+  descriptions. (#98)
+
 ## 0.1.0-alpha.13 (2026-10-24)
 
 This alpha makes the tmux 3.3a floor safe to run on. Commands that crash or
@@ -26,7 +33,8 @@ still builds.
   unchanged. (#69)
 
   Before: `auto connection = *server.control("work");`
-  After:  `auto waited = pane.wait_for_text("done");`
+  After:  `if (*server.tmux_version() >= Version{3, 7}) { auto connection = *server.control("work"); }`
+          and `pane.wait_for_text("done")` as the polling fallback below 3.7.
 
 - `Buffer::remove` returns `FailureKind::unsupported` with
   `DeliveryStatus::not_started` on a daemon older than tmux 3.4, where
@@ -34,7 +42,8 @@ still builds.
   Behaviour-breaking. (#69)
 
   Before: `auto removed = buffer.remove();`
-  After:  `auto pasted = pane.paste(buffer, true);`
+  After:  `if (*server.tmux_version() >= Version{3, 4}) { auto removed = buffer.remove(); }`
+          and `pane.paste(buffer, true)`, which stays available below 3.4.
 
 - The MCP `paste_text` tool is refused before it stages a buffer on a daemon
   older than tmux 3.4. Behaviour-breaking. (#69)
@@ -89,7 +98,8 @@ still builds.
 - The literal-command checks do not read a command inside a string tmux parses
   itself: an `if-shell` body, `run-shell -C`, a brace block, a hook, a key
   binding or a sourced file. Do not put a refused command in one, because the
-  daemon will run it. (#69)
+  daemon will run it. The README and `docs/compatibility.md` list the commands,
+  releases and effects. (#69)
 
 ### Support
 

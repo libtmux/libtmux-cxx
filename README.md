@@ -1154,13 +1154,18 @@ for anything else. The daemon decides, not the client executable.
 
 | Feature | Daemon | Below it | State |
 |---|---|---|---|
-| Control mode: `Server::control`, `control_with_options`, `over_control`, `Connection::connect` | 3.7 | Refused with a message naming 3.7, before any client attaches. Short-lived control attaches crash 3.2a and 3.6b servers | Refusal qualified on the lanes below 3.7; attach qualified on 3.7 and newer for idle attachment only |
+| Control mode: `Server::control`, `control_with_options`, `over_control`, `Connection::connect` | 3.7 | Refused, naming 3.7, before any client attaches ([why](docs/compatibility.md#control-mode)) | Qualified; attach on 3.7 and newer, idle only |
 | `wait_for_text` streaming | 3.7 | Polls the pane; control mode is never tried | Operative with synchronization |
-| `Buffer::remove`, a literal `delete-buffer -b` or `set-buffer -b -n`, and the MCP `paste_text` staging buffer | 3.4 | Refused with `FailureKind::unsupported` before any buffer is touched: both commands act on an unrelated buffer when the name is missing. `Pane::paste` with `consume` stays available | Qualified |
-| Names containing `:` or `.` for sessions and windows, typed or in a literal `new-session`, `new-window` or rename | not exactly 3.7 | tmux 3.7 refuses them after partly running; refused first with `FailureKind::validation` | Qualified |
-| Mirrored `main-*` presets (3.5) and JSON layouts (3.8-rc2), typed or in a literal `select-layout` | 3.5 and 3.8-rc2 | Refused with `FailureKind::validation` before dispatch, as is any layout tmux cannot read: tmux 3.3 and 3.3a end their server on one | Qualified |
-| A literal `refresh-client -l` (clipboard query), under its alias or any unique prefix | 3.6a | Refused with `FailureKind::unsupported` before dispatch: with a client attached it ends a tmux 3.3a server, and a 3.4 through 3.6 server when that client leaves before answering. There is no typed call for it | Qualified |
-| `break-pane` through `Server::run`, a batch or `Connection::execute` | not exactly 3.7 | tmux 3.7 crashes on a `break-pane` that names no window, so an unnamed raw one is refused with `FailureKind::validation`, under its alias, any unique prefix, and in a `;` list; `Pane::break_out` stays the route and names the window itself | Qualified on 3.7 |
+| `Buffer::remove`, a literal `delete-buffer -b` or `set-buffer -b -n`, the MCP `paste_text` staging buffer | 3.4 | `FailureKind::unsupported`, before any buffer is touched ([why](docs/compatibility.md#named-buffers)) | Qualified |
+| `:` or `.` in session and window names, typed or literal | not exactly 3.7 | `FailureKind::validation`, before dispatch ([why](docs/compatibility.md#names-with-a-colon-or-a-period)) | Qualified |
+| Mirrored `main-*` presets, typed or in a literal `select-layout` | 3.5 | `FailureKind::validation`, before dispatch | Qualified |
+| JSON layouts, typed or in a literal `select-layout` | 3.8-rc2 | `FailureKind::validation`, before dispatch | Qualified |
+| A layout string tmux cannot read, typed or literal | never sent | `FailureKind::validation` on every release, before dispatch ([why](docs/compatibility.md#unreadable-layout-strings)) | Qualified |
+| A literal `refresh-client -l`, under any alias or unique prefix | 3.6a | `FailureKind::unsupported`, before dispatch; no typed call ([why](docs/compatibility.md#clipboard-query)) | Qualified |
+| A literal `break-pane` without `-n`, through `Server::run`, a batch or `Connection::execute` | not exactly 3.7 | `FailureKind::validation`, in any spelling and in a `;` list; `Pane::break_out` names the window itself ([why](docs/compatibility.md#break-pane)) | Qualified on 3.7 |
+
+The gates that have a machine-readable entry are in
+[`capabilities.json`](capabilities.json).
 
 A literal command is read the way tmux reads it: under its alias or any unique
 prefix, and in each position of a `;` list. That holds for
@@ -1168,13 +1173,33 @@ prefix, and in each position of a `;` list. That holds for
 [`Server::over_control`][ref-server-over_control] and
 [`Connection::execute`][ref-connection-execute].
 
-A command that sits inside a string tmux parses itself is not read:
+A command carried inside a string that tmux parses itself is sent as written.
+That covers:
 
-- the body of an `if-shell`, the argument of `run-shell -C`, and a brace block;
+- the body of `if-shell`, the argument of `run-shell -C`, and a brace block;
 - a command stored in a hook, a key binding or a sourced file.
 
-Do not put a command this library refuses inside such a string. The daemon will
-run it.
+These are the refused commands, the releases they affect, and what happens:
+
+- `break-pane` without `-n`: exact tmux 3.7 only. The server exits. 3.7a fixes
+  it ([`CHANGES`](https://github.com/tmux/tmux/blob/3.7a/CHANGES#L3), [the
+  inverted name test in 3.7](https://github.com/tmux/tmux/blob/3.7/cmd-break-pane.c#L117-L124)).
+- `select-layout` with a string tmux cannot parse: tmux 3.3 and 3.3a. The
+  server exits. 3.4 answers "invalid layout".
+- `refresh-client -l`: below 3.6a, and only with an attached client. The server
+  exits on 3.3a when the client's terminal does not answer, and on 3.4 to 3.6
+  when the client leaves before it answers.
+- `delete-buffer -b NAME`, and `set-buffer -b NAME -n`: below 3.4. No crash; a
+  name that does not exist acts on the newest buffer instead, so the wrong
+  buffer is deleted or renamed.
+- `split-window -p`: exactly 3.4. tmux answers "size missing" and changes
+  nothing. This port does not refuse a raw `-p`; typed splits send `-l N%`.
+- Names containing `:` or `.`: exactly 3.7. tmux answers "invalid window name"
+  and changes nothing.
+
+On exact tmux 3.7, name every `break-pane`, nested or not, and upgrade to 3.7a.
+The [default `prefix !` binding](https://github.com/tmux/tmux/blob/3.7/key-bindings.c#L358)
+is itself a nameless `break-pane`, which no library check can reach.
 
 [`Server`][ref-server]`::run_shell` does not capture the job's output, so the
 3.3 to 3.4 `run-shell` stdout defect does not reach it. Percentage splits are

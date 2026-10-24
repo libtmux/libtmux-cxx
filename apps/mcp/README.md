@@ -18,7 +18,7 @@ ships as one native executable.
 
 </div>
 
-- An alpha interface. The same startup-frozen 45-tool manifest is advertised on
+- An alpha interface. The same startup-frozen tool manifest is advertised on
   POSIX and native Windows.
 - On Windows, psmux support is command-dependent: unsupported operations fail
   at dispatch, and every tool stays in the manifest.
@@ -65,7 +65,7 @@ $ claude mcp add tmux -- ~/.local/bin/libtmux-mcp-server
 
 ## Tools
 
-The server registers 45 tools in four toolsets. Each name links to its page,
+The server registers its tools in four toolsets. Each name links to its page,
 with the arguments and results:
 
 <!-- BEGIN GENERATED TOOL INVENTORY -->
@@ -289,7 +289,7 @@ For Claude Desktop, the equivalent entry carries the same variables in `env`:
 
 ## Native Windows with psmux
 
-- Windows MCP uses the same 45-name manifest through a trusted psmux route;
+- Windows MCP uses the same tool manifest through a trusted psmux route;
   unsupported psmux commands fail explicitly.
 - Build the `windows-psmux` preset with the audited psmux version in
   [the library README](../../README.md#windows-through-psmux).

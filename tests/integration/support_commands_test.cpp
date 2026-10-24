@@ -123,6 +123,14 @@ TEST(LiteralBreakPane, ANamedOneAndAWordTmuxRejectsAreNotRefused) {
   EXPECT_TRUE(refusal("3.7", {"break-pane", "--", "-n"}));
 }
 
+TEST(LiteralBreakPane, ACommandNestedInAnIfShellBodyIsNotRead) {
+  // Documented limit: text tmux parses itself is sent as written. The case
+  // stays at the check, because the nested form ends a real 3.7 server.
+  EXPECT_FALSE(refusal("3.7", {"if-shell", "-F", "1", "break-pane -d"}));
+  // Control: the same command as a top-level word is refused.
+  EXPECT_TRUE(refusal("3.7", {"break-pane", "-d"}));
+}
+
 TEST(LiteralNamedBuffer, DeletionByNameIsRefusedBelow34InEverySpelling) {
   for (const Argv& argv :
        {Argv{"delete-buffer", "-b", "x"}, Argv{"deleteb", "-bx"},
