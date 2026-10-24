@@ -8,7 +8,7 @@ client configuration; the pages for each tool are in the [tool reference][mcp-to
 
 ## The tool catalog
 
-One native registry owns the 45 public tools and their names, titles,
+One native registry owns the public tools and their names, titles,
 controlled descriptions, toolsets, capability claims, conservative
 annotations, schemas, internal input-sink tables, nested authority, and
 handlers. Its startup-filtered definitions govern both listing and calls:
@@ -280,7 +280,7 @@ tokens are errors. `LIBTMUX_TOOLS` adds exact names, then
 
 ## Native Windows with psmux
 
-Windows MCP uses the same 45-name manifest through a trusted psmux route.
+Windows MCP uses the same tool manifest through a trusted psmux route.
 Unsupported psmux commands fail explicitly. The audited example below
 pre-creates an isolated fixture so its exact selector and configuration are
 known before an agent connects. Run it once from native PowerShell outside
