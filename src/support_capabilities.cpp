@@ -19,6 +19,7 @@ constexpr std::string_view kCommandFailure{"libtmux::CommandFailure"};
 
 constexpr Release kTmux34{Version{.major = 3, .minor = 4}, "3.4"};
 constexpr Release kTmux35{Version{.major = 3, .minor = 5}, "3.5"};
+constexpr Release kTmux36a{Version{.major = 3, .minor = 6, .revision = 1}, "3.6a"};
 constexpr Release kTmux37{Version{.major = 3, .minor = 7}, "3.7"};
 constexpr Release kTmux38Rc2{Version{.major = 3, .minor = 8, .candidate = 2},
                              "3.8-rc2"};
@@ -94,7 +95,7 @@ constexpr std::array kCapabilities{
         .id = "clipboard-query",
         .name = "Clipboard query",
         .summary = "Ask an attached client for its clipboard with refresh-client -l.",
-        .since = kTmux34,
+        .since = kTmux36a,
         .handling = Handling::refuse,
         .error = kCommandFailure,
         .apis = {},

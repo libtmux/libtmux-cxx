@@ -174,7 +174,8 @@ clipboard_query(const Invocation& command, const Flags& flags, const Version& ru
       !flags.has('l')) {
     return std::nullopt;
   }
-  // Before 3.4 the query ends a server that has a client attached.
+  // On 3.3a the query ends a server that has a client attached, and on 3.4
+  // through 3.6 it ends the server when that client leaves before answering.
   return older_daemon("a clipboard query", query.since.text);
 }
 
