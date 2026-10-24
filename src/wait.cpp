@@ -1,5 +1,6 @@
 #include "libtmux/wait.hpp"
 
+#include "support_versions.hpp"
 #include "wait_capture.hpp"
 
 #include "libtmux/capture.hpp"
@@ -273,6 +274,12 @@ void report(const Wait& wait, WaitPath path) {
   return text != wait.pane_id;
 }
 
+// Whether a command's own diagnostic proves there is no server to ask.
+[[nodiscard]] bool server_gone(std::string_view diagnostic) {
+  return support::versions::endpoint_is_absent(diagnostic) ||
+         diagnostic.find("server exited unexpectedly") != std::string_view::npos;
+}
+
 [[nodiscard]] WaitResult pane_died(const Wait& wait, WaitPath path, std::string last,
                                    std::string reason) {
   return WaitResult{.matched_at_entry = wait.matched_at_entry,
@@ -290,8 +297,13 @@ void report(const Wait& wait, WaitPath path) {
 [[nodiscard]] expected<WaitResult, CommandFailure>
 capture_failed(const Wait& wait, WaitPath path, CommandFailure failure,
                std::string last) {
-  if (failure.kind == FailureKind::cancelled || failure.kind == FailureKind::timeout ||
-      !pane_gone(wait)) {
+  if (failure.kind == FailureKind::cancelled || failure.kind == FailureKind::timeout) {
+    return unexpected(std::move(failure));
+  }
+  // A capture that says the server is gone has already answered. The probe
+  // would ask the same dying server, and a probe that times out reads as "not
+  // gone", which let the raw failure through.
+  if (!server_gone(failure.diagnostic) && !pane_gone(wait)) {
     return unexpected(std::move(failure));
   }
   return pane_died(wait, path, std::move(last), std::move(failure.diagnostic));

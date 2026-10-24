@@ -33,6 +33,7 @@
 #include "libtmux/snapshot.hpp"
 #include "libtmux/testing/capabilities.hpp"
 #include "libtmux/testing/scoped_server.hpp"
+#include "libtmux/wait.hpp"
 
 namespace {
 
@@ -241,6 +242,109 @@ TEST(ExecutorSeam, AttachIsRefusedRatherThanGuessedAt) {
   ASSERT_FALSE(attach.has_value()) << "an executor cannot promise an attach route";
   EXPECT_EQ(attach.error().kind, FailureKind::unsupported);
   EXPECT_EQ(attach.error().delivery, libtmux::DeliveryStatus::not_started);
+}
+
+// A server that dies mid-wait answers the capture with "no server running" and
+// is too slow to answer the liveness probe. The capture's own words are the
+// proof; waiting on a probe that times out would hand the raw failure back.
+//
+// The same executor also fails the capture with a diagnostic that does not name
+// the server, to show the probe still decides for those.
+class DyingServerExecutor final : public libtmux::CommandExecutor {
+public:
+  DyingServerExecutor() = default;
+  DyingServerExecutor(std::string capture_diagnostic, std::string probe_answer)
+      : capture_diagnostic_{std::move(capture_diagnostic)},
+        probe_answer_{std::move(probe_answer)} {}
+
+  [[nodiscard]] libtmux::expected<std::string, CommandFailure>
+  run(const CommandRequest& command, std::optional<std::chrono::milliseconds>,
+      std::optional<std::size_t>) const override {
+    const std::lock_guard held{mutex_};
+    const auto argv = command.argv();
+    if (argv.front() == "capture-pane") {
+      if (captures_++ == 0) {
+        return std::string{"booting\n"};
+      }
+      return libtmux::unexpected(
+          CommandFailure{.kind = FailureKind::refused,
+                         .delivery = libtmux::DeliveryStatus::replied,
+                         .exit_code = 1,
+                         .diagnostic = capture_diagnostic_});
+    }
+    if (argv.back() == "#{pane_id}") {
+      ++probes_;
+      if (probe_answer_) {
+        return *probe_answer_ + "\n";
+      }
+      return libtmux::unexpected(CommandFailure{.kind = FailureKind::timeout,
+                                                .diagnostic = "probe timed out"});
+    }
+    if (argv.back() == "#{cursor_y} #{pane_height}") {
+      return std::string{"0 24\n"};
+    }
+    std::string row;
+    for (const std::string_view value : {"%1", "work"}) {
+      row += value;
+      row += libtmux::kFormatSeparator;
+    }
+    return row + "\n";
+  }
+
+  [[nodiscard]] int probes() const {
+    const std::lock_guard held{mutex_};
+    return probes_;
+  }
+
+private:
+  std::string capture_diagnostic_{
+      "no server running on /tmp/gone/socket (running: capture-pane)"};
+  std::optional<std::string> probe_answer_;
+  mutable std::mutex mutex_;
+  mutable int captures_{};
+  mutable int probes_{};
+};
+
+TEST(ExecutorSeam, AWaitEndsAsPaneDiedWhenTheCaptureFindsNoServer) {
+  auto executor = std::make_shared<DyingServerExecutor>();
+  auto server =
+      Server::over(executor, {.implementation = libtmux::ServerImplementation::tmux,
+                              .version = libtmux::Version{.major = 3, .minor = 7}});
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+
+  libtmux::WaitOptions options;
+  options.timeout = std::chrono::seconds{20};
+  options.poll_interval = std::chrono::milliseconds{5};
+  const auto waited = server->wait_for_text("%1", "never printed", options);
+
+  ASSERT_TRUE(waited.has_value()) << waited.error().diagnostic;
+  EXPECT_TRUE(waited->pane_died);
+  EXPECT_FALSE(waited->timed_out);
+  EXPECT_EQ(waited->text, "booting\n");
+  EXPECT_NE(waited->reason.find("no server running"), std::string::npos);
+  EXPECT_EQ(executor->probes(), 0) << "the capture's own words were proof enough";
+}
+
+// A capture that fails without naming the server says nothing about the server.
+// When the probe shows the pane is alive, the failure is the caller's to see.
+TEST(ExecutorSeam, AWaitKeepsACaptureFailureThatDoesNotNameTheServer) {
+  auto executor =
+      std::make_shared<DyingServerExecutor>("can't find pane: %1", std::string{"%1"});
+  auto server =
+      Server::over(executor, {.implementation = libtmux::ServerImplementation::tmux,
+                              .version = libtmux::Version{.major = 3, .minor = 7}});
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+
+  libtmux::WaitOptions options;
+  options.timeout = std::chrono::seconds{20};
+  options.poll_interval = std::chrono::milliseconds{5};
+  const auto waited = server->wait_for_text("%1", "never printed", options);
+
+  ASSERT_FALSE(waited.has_value())
+      << "a live server's capture failure is not pane_died";
+  EXPECT_EQ(waited.error().kind, FailureKind::refused);
+  EXPECT_NE(waited.error().diagnostic.find("can't find pane"), std::string::npos);
+  EXPECT_EQ(executor->probes(), 1) << "only the probe can say whether the pane is gone";
 }
 
 TEST(ExecutorSeam, NoExecutorIsRefusedRatherThanDereferenced) {
