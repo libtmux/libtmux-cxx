@@ -15,6 +15,14 @@ was recorded as it landed.
   `docs/compatibility.md`, state the nested-command limit with its releases and
   effects, and repeat it in the `run_shell_command` and `send_keys` tool
   descriptions. (#98)
+- Record in `docs/compatibility.md` that exact tmux 3.7 answers a name with `:`
+  or `.` with "invalid ... name" and creates nothing, link the clipboard cause
+  from the nested-command table, and state the wrong-buffer effect once. (#99)
+
+### Testing
+
+- Cover a wait whose capture fails with "server exited unexpectedly", so the
+  wait ends as `pane_died` without a liveness probe. (#99)
 
 ## 0.1.0-alpha.13 (2026-10-24)
 
