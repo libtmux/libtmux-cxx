@@ -53,8 +53,11 @@ deleted or renamed.
 
 ### Names with a colon or a period
 
-Exactly 3.7 refuses `:` and `.` in session and window names, after the command
-has partly run. The library refuses them first.
+Exactly 3.7 refuses `:` and `.` in session and window names. On a private 3.7
+socket, `new-session -d -s a.b` and `new-window -n a.b` answer "invalid session
+name: a.b" and "invalid window name: a.b" and create nothing; `rename-window`
+answers the same and changes nothing. The library refuses such a name first,
+before dispatch.
 
 ### Unreadable layout strings
 
@@ -88,13 +91,13 @@ unchanged. The affected commands:
 |---|---|---|
 | `break-pane` without `-n` | exactly 3.7 | The server exits; 3.7a fixes it |
 | `select-layout` with an unparseable string | 3.3, 3.3a | The server exits; 3.4 answers "invalid layout" |
-| `refresh-client -l` | below 3.6a, with an attached client | The server exits (see above) |
-| `delete-buffer -b NAME`, `set-buffer -b NAME -n` | below 3.4 | The newest buffer is deleted or renamed |
+| `refresh-client -l` | below 3.6a, with an attached client | The server exits ([why](#clipboard-query)) |
+| `delete-buffer -b NAME`, `set-buffer -b NAME -n` | below 3.4 | The wrong buffer is changed ([why](#named-buffers)) |
 | `split-window -p` | exactly 3.4 | tmux answers "size missing"; nothing changes |
-| `:` or `.` in a name | exactly 3.7 | tmux answers "invalid window name"; nothing changes |
+| `:` or `.` in a name | exactly 3.7 | tmux answers "invalid session name" or "invalid window name"; nothing changes |
 
 The library does not refuse a raw `split-window -p`; typed splits send
-`-l N%`. On exact 3.7, name every `break-pane`, nested or not, and upgrade to
+`-l N%`. On exact 3.7, name every `break-pane`, nested or not, or upgrade to
 3.7a. The [default `prefix !` binding](https://github.com/tmux/tmux/blob/3.7/key-bindings.c#L358)
 is itself a nameless `break-pane`, which no library check can reach.
 
