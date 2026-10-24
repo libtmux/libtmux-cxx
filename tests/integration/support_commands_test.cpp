@@ -163,15 +163,19 @@ TEST(LiteralNamedBuffer, RenamingByNameIsRefusedBelow34) {
   EXPECT_FALSE(refusal("3.3a", {"set-buffer", "-n", "y"}));
 }
 
-TEST(LiteralClipboardQuery, AQueryIsRefusedBelow34InEverySpelling) {
+TEST(LiteralClipboardQuery, AQueryIsRefusedBelow36aInEverySpelling) {
   for (const Argv& argv :
        {Argv{"refresh-client", "-l"}, Argv{"refresh", "-t", "c", "-l"},
         Argv{"refresh-c", "-lt", "c"},
         Argv{"list-sessions", ";", "refresh-client", "-l"}}) {
-    const auto failure = refusal("3.3a", argv);
-    ASSERT_TRUE(failure.has_value()) << argv.front();
-    EXPECT_EQ(failure->kind, libtmux::FailureKind::unsupported) << argv.front();
-    EXPECT_FALSE(refusal("3.4", argv)) << argv.front();
+    for (const char* tmux : {"3.3a", "3.4", "3.5", "3.5a", "3.6"}) {
+      const auto failure = refusal(tmux, argv);
+      ASSERT_TRUE(failure.has_value()) << argv.front() << " on " << tmux;
+      EXPECT_EQ(failure->kind, libtmux::FailureKind::unsupported) << argv.front();
+    }
+    for (const char* tmux : {"3.6a", "3.6b", "3.8"}) {
+      EXPECT_FALSE(refusal(tmux, argv)) << argv.front() << " on " << tmux;
+    }
   }
 }
 

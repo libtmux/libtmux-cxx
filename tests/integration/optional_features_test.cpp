@@ -364,9 +364,10 @@ private:
   int master_{-1};
 };
 
-// Below 3.4 `refresh-client -l` ends a server that has a client attached, so a
+// `refresh-client -l` ends a 3.3a server that has a client attached, and a 3.4
+// through 3.6 server when that client leaves before answering, so below 3.6a a
 // literal one is refused first under every spelling tmux accepts for it.
-TEST(OptionalFeatures, ARawClipboardQueryIsRefusedBelow34WithAClientAttached) {
+TEST(OptionalFeatures, ARawClipboardQueryIsRefusedBelow36aWithAClientAttached) {
   Lane lane = start_lane();
   TerminalClient terminal{lane.fixture.socket_path(), lane.fixture.session_name()};
   std::string client;
@@ -391,20 +392,20 @@ TEST(OptionalFeatures, ARawClipboardQueryIsRefusedBelow34WithAClientAttached) {
       {"refresh-c", "-lt", client},
       {"list-sessions", ";", "refresh-client", "-t", client, "-l"},
   };
-  const bool gated = lane.running < Version{.major = 3, .minor = 4};
+  const bool gated = lane.running < Version{.major = 3, .minor = 6, .revision = 1};
   for (const auto& spelling : spellings) {
     const auto raw = lane.server.run(spelling);
     if (!gated) {
       // Other releases are not this library's to refuse.
       if (!raw.has_value()) {
-        EXPECT_EQ(raw.error().diagnostic.find("needs tmux 3.4"), std::string::npos);
+        EXPECT_EQ(raw.error().diagnostic.find("needs tmux 3.6a"), std::string::npos);
       }
       return;
     }
     ASSERT_FALSE(raw.has_value()) << spelling.front();
     EXPECT_EQ(raw.error().kind, FailureKind::unsupported) << spelling.front();
     EXPECT_EQ(raw.error().delivery, DeliveryStatus::not_started) << spelling.front();
-    EXPECT_NE(raw.error().diagnostic.find("3.4"), std::string::npos);
+    EXPECT_NE(raw.error().diagnostic.find("3.6a"), std::string::npos);
     terminal.drain();
     EXPECT_TRUE(lane.server.sessions().has_value())
         << spelling.front() << ": the server must survive";
