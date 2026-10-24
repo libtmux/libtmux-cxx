@@ -35,4 +35,66 @@ This assumes tmux's built-in commands keep their meaning: a `command-alias`
 that redefines one of the commands the library uses to ask is outside what is
 qualified.
 
+## Why a feature is refused
+
+The README lists each optional feature and the release it needs. The causes
+sit here, one per section.
+
+### Control mode
+
+Short-lived control attaches crash 3.2a and 3.6b servers. Control mode is
+refused below 3.7, so no such attach is made, and `wait_for_text` polls there.
+
+### Named buffers
+
+Below 3.4, `delete-buffer -b NAME` and `set-buffer -b NAME -n` act on the
+newest buffer when `NAME` does not exist. Nothing crashes; the wrong buffer is
+deleted or renamed.
+
+### Names with a colon or a period
+
+Exactly 3.7 refuses `:` and `.` in session and window names, after the command
+has partly run. The library refuses them first.
+
+### Unreadable layout strings
+
+On tmux 3.3 and 3.3a, a layout string tmux cannot parse ends the server. 3.4
+answers "invalid layout". The library validates layout strings before dispatch.
+
+### Clipboard query
+
+`refresh-client -l` with an attached client ends a 3.3a server when the
+client's terminal does not answer, and a 3.4 to 3.6 server when the client
+leaves before it answers. 3.6a is the first release without the crash.
+
+### Break pane
+
+Exact tmux 3.7 tests the window name inverted, so a `break-pane` without `-n`
+on a window with more than one pane ends the server, and a given name is
+ignored. 3.7a fixes both ([`CHANGES`](https://github.com/tmux/tmux/blob/3.7a/CHANGES#L3),
+[3.7 source](https://github.com/tmux/tmux/blob/3.7/cmd-break-pane.c#L117-L124)).
+`Pane::break_out` names the window itself.
+
+## Commands the checks do not read
+
+The literal-command checks read a command's own words. A command carried inside
+a string that tmux parses itself is sent as written: the body of `if-shell`,
+the argument of `run-shell -C`, a brace block, a hook, a key binding or a
+sourced file. For example, `if-shell -F 1 'break-pane -d'` passes the checks
+unchanged. The affected commands:
+
+| Command | Releases | What happens |
+|---|---|---|
+| `break-pane` without `-n` | exactly 3.7 | The server exits; 3.7a fixes it |
+| `select-layout` with an unparseable string | 3.3, 3.3a | The server exits; 3.4 answers "invalid layout" |
+| `refresh-client -l` | below 3.6a, with an attached client | The server exits (see above) |
+| `delete-buffer -b NAME`, `set-buffer -b NAME -n` | below 3.4 | The newest buffer is deleted or renamed |
+| `split-window -p` | exactly 3.4 | tmux answers "size missing"; nothing changes |
+| `:` or `.` in a name | exactly 3.7 | tmux answers "invalid window name"; nothing changes |
+
+The library does not refuse a raw `split-window -p`; typed splits send
+`-l N%`. On exact 3.7, name every `break-pane`, nested or not, and upgrade to
+3.7a. The [default `prefix !` binding](https://github.com/tmux/tmux/blob/3.7/key-bindings.c#L358)
+is itself a nameless `break-pane`, which no library check can reach.
+
 [ref-version]: https://libtmux.org/en/cxx/latest/reference/libtmux-version/

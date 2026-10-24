@@ -2813,7 +2813,9 @@ resolve_session(const Server& server, std::string_view target) {
       },
       "Require one live configured pane, outside human-owned mode and running a "
       "supported POSIX foreground shell, then send one command and return output "
-      "after its private completion boundary."));
+      "after its private completion boundary. The library's literal-command checks "
+      "do not read a command nested in a string tmux parses itself, such as an "
+      "if-shell body."));
 
   add(make_tool(
       "send_keys", "Send keys to a tmux pane", Toolset::execute,
@@ -2886,7 +2888,9 @@ resolve_session(const Server& server, std::string_view target) {
               StructuredValue{pane_target_ids(preflight->configured_pane_ids)}}});
       },
       "Require every configured synchronized pane to be live and outside "
-      "human-owned mode, then send one validated tmux key name."));
+      "human-owned mode, then send one validated tmux key name. The library's "
+      "literal-command checks do not read a command nested in a string tmux parses "
+      "itself, such as an if-shell body."));
 
   add(make_tool(
       "send_keys_batch", "Send a key sequence to a tmux pane", Toolset::execute,
