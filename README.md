@@ -1155,12 +1155,12 @@ for anything else. The daemon decides, not the client executable.
 | Feature | Daemon | Below it | State |
 |---|---|---|---|
 | Control mode: `Server::control`, `control_with_options`, `over_control`, `Connection::connect` | 3.7 | Refused, naming 3.7, before any client attaches ([why](docs/compatibility.md#control-mode)) | Qualified; attach on 3.7 and newer, idle only |
-| `wait_for_text` streaming | 3.7 | Polls the pane; control mode is never tried | Operative |
+| `wait_for_text` streaming | 3.7 | Polls the pane; control mode is never tried | Operative with synchronization |
 | `Buffer::remove`, a literal `delete-buffer -b` or `set-buffer -b -n`, the MCP `paste_text` staging buffer | 3.4 | `FailureKind::unsupported`, before any buffer is touched ([why](docs/compatibility.md#named-buffers)) | Qualified |
 | `:` or `.` in session and window names, typed or literal | not exactly 3.7 | `FailureKind::validation`, before dispatch ([why](docs/compatibility.md#names-with-a-colon-or-a-period)) | Qualified |
 | Mirrored `main-*` presets, typed or in a literal `select-layout` | 3.5 | `FailureKind::validation`, before dispatch | Qualified |
 | JSON layouts, typed or in a literal `select-layout` | 3.8-rc2 | `FailureKind::validation`, before dispatch | Qualified |
-| Any layout string tmux cannot read | 3.4 | `FailureKind::validation`, before dispatch ([why](docs/compatibility.md#unreadable-layout-strings)) | Qualified |
+| A layout string tmux cannot read, typed or literal | never sent | `FailureKind::validation` on every release, before dispatch ([why](docs/compatibility.md#unreadable-layout-strings)) | Qualified |
 | A literal `refresh-client -l`, under any alias or unique prefix | 3.6a | `FailureKind::unsupported`, before dispatch; no typed call ([why](docs/compatibility.md#clipboard-query)) | Qualified |
 | A literal `break-pane` without `-n`, through `Server::run`, a batch or `Connection::execute` | not exactly 3.7 | `FailureKind::validation`, in any spelling and in a `;` list; `Pane::break_out` names the window itself ([why](docs/compatibility.md#break-pane)) | Qualified on 3.7 |
 

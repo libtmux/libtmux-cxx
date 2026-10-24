@@ -59,7 +59,8 @@ has partly run. The library refuses them first.
 ### Unreadable layout strings
 
 On tmux 3.3 and 3.3a, a layout string tmux cannot parse ends the server. 3.4
-answers "invalid layout". The library validates layout strings before dispatch.
+answers "invalid layout". The library refuses such a string before dispatch on
+every release.
 
 ### Clipboard query
 
