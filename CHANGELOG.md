@@ -39,6 +39,9 @@ was recorded as it landed.
   when the pane or its server goes away mid-wait. The control path and the
   polling path answer the same, and a control stream that drops while the pane
   lives keeps waiting by polling. (#69)
+- `Pane::wait_for_text` and `Server::wait_for_text` return a `WaitResult` with
+  `pane_died` set and the output so far in `text` when the server is killed
+  mid-wait, instead of a raw transport error. (#69, #94)
 - `Connection::execute` refuses a command that `Server::run` refuses, such as
   an unnamed `break-pane` on exactly tmux 3.7, which ends the server. The
   refusal is a `connection_error` with `DeliveryStatus::not_started`, and the
@@ -69,8 +72,9 @@ was recorded as it landed.
   `new-window`, `rename-session` or `rename-window` that names a session or
   window with `:` or `.` on exactly tmux 3.7. (#69)
 - `Server::run` and batches refuse a `refresh-client -l` clipboard query on a
-  daemon older than tmux 3.4, under any alias or unique prefix and anywhere in
-  a `;` list, since it ends a tmux 3.3a server that has a client attached. (#69)
+  daemon older than tmux 3.6a, under any alias or unique prefix and anywhere in
+  a `;` list, since it ends a tmux 3.3a server that has a client attached, and
+  a 3.4 through 3.6 server when that client leaves before answering. (#69, #94)
 - A `CommandExecutor` transport meets the same literal-command checks as a
   launched command. (#69)
 - The literal-command checks do not read a command inside a string tmux parses
