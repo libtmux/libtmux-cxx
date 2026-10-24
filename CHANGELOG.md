@@ -9,6 +9,15 @@ was recorded as it landed.
 
 ## Unreleased
 
+## 0.1.0-alpha.13 (2026-10-24)
+
+This alpha makes the tmux 3.3a floor safe to run on. Commands that crash or
+mis-run older daemons are refused before dispatch, with the release that fixes
+them named. Control mode is never attached below tmux 3.7, and
+`wait_for_text` polls there and reports a pane or server that goes away
+instead of failing raw. CI no longer runs macOS or psmux, which the release
+still builds.
+
 ### Breaking
 
 - `Server::control`, `control_with_options`, `over_control` and
