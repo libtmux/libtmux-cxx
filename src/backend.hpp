@@ -203,6 +203,11 @@ private:
 [[nodiscard]] expected<void, LayoutFailure>
 validate_layouts(const Backend& backend, std::span<const LayoutRequest> layouts);
 
+// Why `layout` must not be sent to a daemon running `running`, by the same
+// rules `validate_layouts` applies, for a layout in a command written by hand.
+[[nodiscard]] std::optional<CommandFailure> layout_refusal(const Version& running,
+                                                           std::string_view layout);
+
 // Do two backends talk to one tmux?
 //
 // The pointer first, because a value and its refresh share a backend and that

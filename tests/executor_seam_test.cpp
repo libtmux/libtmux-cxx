@@ -21,6 +21,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -30,6 +31,7 @@
 #include "libtmux/entities.hpp"
 #include "libtmux/server.hpp"
 #include "libtmux/snapshot.hpp"
+#include "libtmux/testing/capabilities.hpp"
 #include "libtmux/testing/scoped_server.hpp"
 
 namespace {
@@ -177,6 +179,44 @@ TEST(ExecutorSeam, ABatchArrivesAsOneRequestCarryingItsSeparators) {
   EXPECT_EQ(argv.at(4), std::string{libtmux::kCommandSeparator});
 }
 
+// A command written by hand meets the gates its typed counterpart meets, on a
+// transport the library did not launch as on one it did: the executor is told
+// nothing of a command the declared release cannot take safely.
+TEST(ExecutorSeam, ALiteralCommandMeetsTheGatesOfTheDeclaredRelease) {
+  const auto over = [](Version version) {
+    auto executor = std::make_shared<ScriptedExecutor>("");
+    auto server =
+        Server::over(executor, {.implementation = libtmux::ServerImplementation::tmux,
+                                .version = version});
+    EXPECT_TRUE(server.has_value());
+    return std::pair{executor, *std::move(server)};
+  };
+
+  const auto [old_executor, old_server] =
+      over(Version{.major = 3, .minor = 3, .revision = 1});
+  for (const std::vector<std::string>& argv :
+       {std::vector<std::string>{"delete-b", "-b", "missing"},
+        std::vector<std::string>{"setb", "-b", "missing", "-n", "renamed"},
+        std::vector<std::string>{"selectl", "main-vertical-mirrored"}}) {
+    const auto refused = old_server.run(argv);
+    ASSERT_FALSE(refused.has_value()) << argv.front();
+    EXPECT_EQ(refused.error().delivery, libtmux::DeliveryStatus::not_started)
+        << argv.front();
+  }
+  EXPECT_TRUE(old_executor->seen().empty()) << "a refused command is never sent";
+  EXPECT_TRUE(old_server.run({"rename-window", "-t", "@1", "a.b"}).has_value());
+
+  const auto [new_executor, new_server] = over(Version{.major = 3, .minor = 7});
+  for (const std::vector<std::string>& argv :
+       {std::vector<std::string>{"renamew", "-t", "@1", "a.b"},
+        std::vector<std::string>{"break-p", "-d"}}) {
+    const auto refused = new_server.run(argv);
+    ASSERT_FALSE(refused.has_value()) << argv.front();
+    EXPECT_EQ(refused.error().kind, FailureKind::validation) << argv.front();
+  }
+  EXPECT_TRUE(new_server.run({"delete-buffer", "-b", "missing"}).has_value());
+}
+
 // An attach needs a route back to this exact server, and a caller-supplied
 // transport has not given one. Refusing says so; building an argv from the
 // empty selector this backend reports would attach to whatever tmux finds.
@@ -211,6 +251,7 @@ TEST(ExecutorSeam, NoExecutorIsRefusedRatherThanDereferenced) {
 }
 
 TEST(ExecutorSeam, ListingsOverAControlConnectionMatchTheLaunchingPath) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const std::string socket = fixture->socket_path().string();
@@ -297,6 +338,7 @@ CountedTmux counted_tmux(const std::filesystem::path& directory) {
 // the same answers as launching. Counted, because a timing proves nothing
 // about which path ran.
 TEST(ControlBackedServer, BuildsAWindowWithoutLaunchingTmux) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const CountedTmux tmux = counted_tmux(fixture->socket_path().parent_path());
@@ -341,6 +383,7 @@ TEST(ControlBackedServer, BuildsAWindowWithoutLaunchingTmux) {
 // answer is the finished one. Over the wire this would read as done while the
 // shell was still running.
 TEST(ControlBackedServer, LaunchesWhatTmuxMayLeaveRunning) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const CountedTmux tmux = counted_tmux(fixture->socket_path().parent_path());
@@ -376,6 +419,7 @@ TEST(ControlBackedServer, LaunchesWhatTmuxMayLeaveRunning) {
 // A failure reads as the one a launch gives, so the typed layer classifies it
 // the same way whichever path answered.
 TEST(ControlBackedServer, RefusesInTheShapeALaunchDoes) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   auto launching = Server::at_socket_path(fixture->socket_path().string());
@@ -396,6 +440,7 @@ TEST(ControlBackedServer, RefusesInTheShapeALaunchDoes) {
 
 // Each client is attached, so a caller counting clients sees them.
 TEST(ControlBackedServer, SpreadsCommandsOverTheClientsItWasAskedFor) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   auto launching = Server::at_socket_path(fixture->socket_path().string());

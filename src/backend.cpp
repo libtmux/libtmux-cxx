@@ -12,6 +12,8 @@
 #include "process.hpp"
 #include "psmux.hpp"
 #include "socket_identity.hpp"
+#include "support_capabilities.hpp"
+#include "support_commands.hpp"
 
 // The ABI macros, not `namespace libtmux::detail`: that spelling opens a
 // namespace beside the inline ABI one. A member definition still resolves
@@ -916,6 +918,12 @@ SubprocessBackend::check_command(
   auto checked = check_version(timeout);
   if (!checked.has_value()) {
     return unexpected(std::move(checked.error()));
+  }
+  // A command written by hand meets the gates the typed calls meet, before the
+  // call, and in whatever spelling and position tmux would accept it.
+  if (auto refusal = support::commands::refuse_literal(command.argv(), checked->version,
+                                                       checked->live)) {
+    return unexpected(std::move(*refusal));
   }
   return std::optional<EndpointVersion>{*std::move(checked)};
 #endif

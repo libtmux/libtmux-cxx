@@ -703,6 +703,9 @@ std::cout << std::format("window added: {}\n", added);
 
 This prints `window added:` and the id tmux gave the new window.
 
+- Library-managed control mode needs tmux 3.7. An older daemon is refused
+  before any client attaches; see
+  [optional features by release](#optional-features-by-release).
 - A `Server` runs ordinary tmux client processes, which return tmux's final exit
   status; use a `Connection` for notification streams and protocol tooling.
 - `take_notifications` is a single draining cursor. For two independent
@@ -1143,6 +1146,40 @@ closed at both ends:
   that tmux 3.4 removed, so it works on every supported release. Python libtmux
   still emits `-p`.
 
+### Optional features by release
+
+The floor above is for ordinary commands. A feature that needs a newer daemon
+says so itself, is refused before it has an effect, and does not raise the floor
+for anything else. The daemon decides, not the client executable.
+
+| Feature | Daemon | Below it | State |
+|---|---|---|---|
+| Control mode: `Server::control`, `control_with_options`, `over_control`, `Connection::connect` | 3.7 | Refused with a message naming 3.7, before any client attaches. Short-lived control attaches crash 3.2a and 3.6b servers | Refusal qualified on the lanes below 3.7; attach qualified on 3.7 and newer for idle attachment only |
+| `wait_for_text` streaming | 3.7 | Polls the pane; control mode is never tried | Operative with synchronization |
+| `Buffer::remove`, a literal `delete-buffer -b` or `set-buffer -b -n`, and the MCP `paste_text` staging buffer | 3.4 | Refused with `FailureKind::unsupported` before any buffer is touched: both commands act on an unrelated buffer when the name is missing. `Pane::paste` with `consume` stays available | Qualified |
+| Names containing `:` or `.` for sessions and windows, typed or in a literal `new-session`, `new-window` or rename | not exactly 3.7 | tmux 3.7 refuses them after partly running; refused first with `FailureKind::validation` | Qualified |
+| Mirrored `main-*` presets (3.5) and JSON layouts (3.8-rc2), typed or in a literal `select-layout` | 3.5 and 3.8-rc2 | Refused with `FailureKind::validation` before dispatch, as is any layout tmux cannot read: tmux 3.3 and 3.3a end their server on one | Qualified |
+| A literal `refresh-client -l` (clipboard query), under its alias or any unique prefix | 3.4 | Refused with `FailureKind::unsupported` before dispatch: with a client attached it ends a tmux 3.3a server. There is no typed call for it | Qualified |
+| `break-pane` through `Server::run`, a batch or `Connection::execute` | not exactly 3.7 | tmux 3.7 crashes on a `break-pane` that names no window, so an unnamed raw one is refused with `FailureKind::validation`, under its alias, any unique prefix, and in a `;` list; `Pane::break_out` stays the route and names the window itself | Qualified on 3.7 |
+
+A literal command is read the way tmux reads it: under its alias or any unique
+prefix, and in each position of a `;` list. That holds for
+[`Server::run`][ref-server-run], batches and chains, asynchronous submissions,
+[`Server::over_control`][ref-server-over_control] and
+[`Connection::execute`][ref-connection-execute].
+
+A command that sits inside a string tmux parses itself is not read:
+
+- the body of an `if-shell`, the argument of `run-shell -C`, and a brace block;
+- a command stored in a hook, a key binding or a sourced file.
+
+Do not put a command this library refuses inside such a string. The daemon will
+run it.
+
+[`Server`][ref-server]`::run_shell` does not capture the job's output, so the
+3.3 to 3.4 `run-shell` stdout defect does not reach it. Percentage splits are
+always `-l N%`, and layout strings are validated before dispatch.
+
 ### Windows through psmux
 
 An experimental x64 desktop preview, built with Visual Studio 2022, reaching a
@@ -1334,6 +1371,7 @@ MIT. See [LICENSE](LICENSE).
 [ref-commandruntime-dispatch_ready]: https://libtmux.org/en/cxx/latest/reference/libtmux-commandruntime-dispatch_ready/
 [ref-commandruntime]: https://libtmux.org/en/cxx/latest/reference/libtmux-commandruntime/
 [ref-connection-events]: https://libtmux.org/en/cxx/latest/reference/libtmux-connection-events/
+[ref-connection-execute]: https://libtmux.org/en/cxx/latest/reference/libtmux-connection-execute/
 [ref-connection]: https://libtmux.org/en/cxx/latest/reference/libtmux-connection/
 [ref-deliverystatus]: https://libtmux.org/en/cxx/latest/reference/libtmux-deliverystatus/
 [ref-exactly_one]: https://libtmux.org/en/cxx/latest/reference/libtmux-exactly_one/
@@ -1362,6 +1400,7 @@ MIT. See [LICENSE](LICENSE).
 [ref-server-control]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-control/
 [ref-server-from_env]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-from_env/
 [ref-server-new_session]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-new_session/
+[ref-server-over_control]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-over_control/
 [ref-server-panes]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-panes/
 [ref-server-run]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-run/
 [ref-server-sessions]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-sessions/

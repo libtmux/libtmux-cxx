@@ -9,6 +9,81 @@ was recorded as it landed.
 
 ## Unreleased
 
+### Breaking
+
+- `Server::control`, `control_with_options`, `over_control` and
+  `Connection::connect` return a `ProtocolError` naming tmux 3.7, before any
+  client attaches, on an older daemon. Behaviour-breaking; the 3.3a floor is
+  unchanged. (#69)
+
+  Before: `auto connection = *server.control("work");`
+  After:  `auto waited = pane.wait_for_text("done");`
+
+- `Buffer::remove` returns `FailureKind::unsupported` with
+  `DeliveryStatus::not_started` on a daemon older than tmux 3.4, where
+  `delete-buffer -b` deletes the top buffer if the name is missing.
+  Behaviour-breaking. (#69)
+
+  Before: `auto removed = buffer.remove();`
+  After:  `auto pasted = pane.paste(buffer, true);`
+
+- The MCP `paste_text` tool is refused before it stages a buffer on a daemon
+  older than tmux 3.4. Behaviour-breaking. (#69)
+
+### Control mode
+
+- `Pane::wait_for_text` polls the pane on a daemon older than tmux 3.7 and
+  never attaches a control client there. (#69)
+- `Pane::wait_for_text` and `Server::wait_for_text` return a `WaitResult` with
+  `pane_died` set, tmux's words in `reason` and the last capture in `text`,
+  when the pane or its server goes away mid-wait. The control path and the
+  polling path answer the same, and a control stream that drops while the pane
+  lives keeps waiting by polling. (#69)
+- `Connection::execute` refuses a command that `Server::run` refuses, such as
+  an unnamed `break-pane` on exactly tmux 3.7, which ends the server. The
+  refusal is a `connection_error` with `DeliveryStatus::not_started`, and the
+  connection stays usable. (#69)
+
+### MCP server
+
+- `wait_for_text` fails with the output so far when the pane or its server
+  goes away mid-wait, instead of timing out. (#69)
+
+### Server
+
+- `Server::run` and batches refuse `delete-buffer -b` and
+  `set-buffer -b -n` on a daemon older than tmux 3.4, under any alias or
+  unique prefix and anywhere in a `;` list. (#69)
+- `Server::run` and batches refuse a `select-layout` whose layout the
+  daemon cannot read, including the mirrored presets before tmux 3.5 and JSON
+  layouts before 3.8-rc2. tmux 3.3 and 3.3a end their server on such a
+  layout. (#69)
+- `Server::run` and batches refuse a `break-pane` that names no window
+  on exactly tmux 3.7, under any alias or unique prefix and anywhere in a `;`
+  list, since that shape crashes the server. `Pane::break_out` is the
+  route. (#69)
+- Session and window names holding `:` or `.` are rejected with
+  `FailureKind::validation` before dispatch on exactly tmux 3.7, which refuses
+  them itself after partly running. (#69)
+- `Server::run` and batches refuse a literal `new-session`,
+  `new-window`, `rename-session` or `rename-window` that names a session or
+  window with `:` or `.` on exactly tmux 3.7. (#69)
+- `Server::run` and batches refuse a `refresh-client -l` clipboard query on a
+  daemon older than tmux 3.4, under any alias or unique prefix and anywhere in
+  a `;` list, since it ends a tmux 3.3a server that has a client attached. (#69)
+- A `CommandExecutor` transport meets the same literal-command checks as a
+  launched command. (#69)
+- The literal-command checks do not read a command inside a string tmux parses
+  itself: an `if-shell` body, `run-shell -C`, a brace block, a hook, a key
+  binding or a sourced file. Do not put a refused command in one, because the
+  daemon will run it. (#69)
+
+### Support
+
+- Add `capabilities.json`, which lists each optional feature's first tmux
+  release, its APIs and the error type they return, for the documentation
+  site's capability pages. (#69)
+
 ### Testing
 
 - CI no longer runs macOS or psmux. The `macos` job leaves `ci.yml`, the

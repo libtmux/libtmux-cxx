@@ -3,9 +3,10 @@
 include(GNUInstallDirs)
 
 set(LIBTMUX_SOURCES
-    version.cpp support_versions.cpp server.cpp backend.cpp snapshot.cpp entities.cpp layout.cpp
+    version.cpp support_versions.cpp support_capabilities.cpp server.cpp backend.cpp snapshot.cpp entities.cpp layout.cpp
     socket_identity.cpp control.cpp completion_queue.cpp command_engine.cpp async.cpp
     process_validation.cpp wait.cpp)
+list(APPEND LIBTMUX_SOURCES support_commands.cpp)
 if(WIN32)
   list(APPEND LIBTMUX_SOURCES process_windows.cpp connection_windows.cpp)
 else()

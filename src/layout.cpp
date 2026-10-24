@@ -11,6 +11,7 @@
 #include <string_view>
 
 #include "backend.hpp"
+#include "support_capabilities.hpp"
 
 LIBTMUX_NAMESPACE_BEGIN
 
@@ -363,6 +364,24 @@ CommandFailure invalid_layout(std::string reason) {
           .diagnostic = std::move(reason)};
 }
 
+// What the daemon's release adds to the syntax check: JSON layouts and the
+// mirrored presets exist only on the releases the registry names.
+std::optional<CommandFailure> version_refusal(const Version& version,
+                                              const LayoutRequest& request) {
+  using support::capabilities::CapabilityId;
+  const bool mirrored =
+      version >= support::capabilities::capability(CapabilityId::layout_mirrored_main)
+                     .since.version;
+  const auto& json = support::capabilities::capability(CapabilityId::layout_json);
+  if (json_layout(request.layout) && version < json.since.version)
+    return invalid_layout("JSON saved layouts require tmux " +
+                          std::string{json.since.text} + " or newer");
+  if (layout_needs_version(request.layout))
+    if (auto error = layout_error(request.layout, request.minimum_panes, mirrored))
+      return invalid_layout(std::move(*error));
+  return std::nullopt;
+}
+
 } // namespace
 
 expected<void, CommandFailure> validate_layout(std::string_view layout,
@@ -370,6 +389,14 @@ expected<void, CommandFailure> validate_layout(std::string_view layout,
   if (auto error = layout_error(layout, minimum_panes))
     return unexpected(invalid_layout(std::move(*error)));
   return {};
+}
+
+std::optional<CommandFailure> detail::layout_refusal(const Version& running,
+                                                     std::string_view layout) {
+  const LayoutRequest request{layout};
+  if (auto checked = validate_layout(layout, request.minimum_panes); !checked)
+    return std::move(checked.error());
+  return version_refusal(running, request);
 }
 
 expected<void, LayoutFailure>
@@ -392,17 +419,9 @@ detail::validate_layouts(const Backend& backend,
   if (!running) {
     return unexpected(LayoutFailure{*sensitive, running.error()});
   }
-  const Version version = *running;
-  const bool mirrored = version >= Version{.major = 3, .minor = 5};
   for (std::size_t index = 0; index < layouts.size(); ++index) {
-    const auto& request = layouts[index];
-    if (json_layout(request.layout) &&
-        version < Version{.major = 3, .minor = 8, .candidate = 2})
-      return unexpected(LayoutFailure{
-          index, invalid_layout("JSON saved layouts require tmux 3.8-rc2 or newer")});
-    if (layout_needs_version(request.layout))
-      if (auto error = layout_error(request.layout, request.minimum_panes, mirrored))
-        return unexpected(LayoutFailure{index, invalid_layout(std::move(*error))});
+    if (auto refused = version_refusal(*running, layouts[index]))
+      return unexpected(LayoutFailure{index, std::move(*refused)});
   }
   return {};
 }

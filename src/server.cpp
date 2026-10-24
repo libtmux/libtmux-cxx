@@ -18,6 +18,8 @@
 #include "environment.hpp"
 #include "path.hpp"
 #include "psmux.hpp"
+#include "support_capabilities.hpp"
+#include "support_commands.hpp"
 #include "support_versions.hpp"
 
 LIBTMUX_NAMESPACE_BEGIN
@@ -230,6 +232,17 @@ public:
       if (!diagnostic) {
         if (auto checked = check_version(timeout); !checked.has_value()) {
           return report_failure(command, std::move(checked.error()));
+        }
+        // The executor reaches a daemon the library did not launch, and a
+        // literal command meets the same gates there as on a launched one.
+        Version known;
+        {
+          const std::lock_guard guard{version_cache_mutex_};
+          known = checked_version_;
+        }
+        if (auto refusal =
+                support::commands::refuse_literal(command.argv(), known, true)) {
+          return report_failure(command, std::move(*refusal));
         }
       }
     }
@@ -1347,6 +1360,12 @@ expected<Session, CommandFailure> Server::new_session(NewSessionOptions options)
                                      .delivery = DeliveryStatus::not_started,
                                      .exit_code = 0,
                                      .diagnostic = std::move(*invalid)});
+  }
+  for (const auto* name : {&options.name, &options.first_window_name}) {
+    if (auto invalid = detail::refuse_name_on_exact_37(
+            *backend_, *name, name == &options.name ? "session" : "window")) {
+      return unexpected(std::move(*invalid));
+    }
   }
   if (refuses(ServerFeature::session_creation)) {
     return unexpected(CommandFailure{

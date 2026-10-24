@@ -256,6 +256,47 @@ void report(const Wait& wait, WaitPath path) {
   }
 }
 
+// Whether the pane or its server is gone. tmux answers a format query for a
+// missing pane with success and an empty line, so the answer has to be the id.
+[[nodiscard]] bool pane_gone(const Wait& wait) {
+  const auto probe =
+      wait.server.run({"display-message", "-p", "-t", wait.pane_id, "--", "#{pane_id}"},
+                      std::chrono::milliseconds{2000});
+  if (!probe.has_value()) {
+    return probe.error().kind != FailureKind::timeout &&
+           probe.error().kind != FailureKind::cancelled;
+  }
+  std::string_view text = *probe;
+  while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) {
+    text.remove_suffix(1);
+  }
+  return text != wait.pane_id;
+}
+
+[[nodiscard]] WaitResult pane_died(const Wait& wait, WaitPath path, std::string last,
+                                   std::string reason) {
+  return WaitResult{.matched_at_entry = wait.matched_at_entry,
+                    .elapsed = wait.deadline.elapsed(),
+                    .path = path,
+                    .pane_id = wait.pane_id,
+                    .pane_died = true,
+                    .reason = std::move(reason),
+                    .text = std::move(last)};
+}
+
+// A capture that failed because the pane or its server is gone ends the wait
+// as a failed one that keeps what was read, whichever path was waiting. Any
+// other failure, a cancellation included, is the caller's to see unchanged.
+[[nodiscard]] expected<WaitResult, CommandFailure>
+capture_failed(const Wait& wait, WaitPath path, CommandFailure failure,
+               std::string last) {
+  if (failure.kind == FailureKind::cancelled || failure.kind == FailureKind::timeout ||
+      !pane_gone(wait)) {
+    return unexpected(std::move(failure));
+  }
+  return pane_died(wait, path, std::move(last), std::move(failure.diagnostic));
+}
+
 [[nodiscard]] expected<WaitResult, CommandFailure>
 poll_for_text(Wait& wait, WaitPath path, std::string last) {
   std::optional<PaneCursor> last_cursor;
@@ -266,7 +307,7 @@ poll_for_text(Wait& wait, WaitPath path, std::string last) {
     }
     auto captured = grid_before_deadline(wait);
     if (!captured.has_value()) {
-      return unexpected(std::move(captured.error()));
+      return capture_failed(wait, path, std::move(captured.error()), std::move(last));
     }
     if (!captured->has_value()) {
       return timed_out(wait, path, std::move(last), last_cursor);
@@ -343,7 +384,8 @@ stream_for_text(Wait& wait, std::string_view session_name, std::string screen) {
   // would not appear on the wire and would not have been on screen yet.
   auto after_connect = grid_before_deadline(wait);
   if (!after_connect.has_value()) {
-    return unexpected(std::move(after_connect.error()));
+    return capture_failed(wait, WaitPath::capture_after_control_connect,
+                          std::move(after_connect.error()), std::move(screen));
   }
   if (!after_connect->has_value()) {
     return timed_out(wait, WaitPath::capture_after_control_connect, std::move(screen));
@@ -365,6 +407,8 @@ stream_for_text(Wait& wait, std::string_view session_name, std::string screen) {
   }
 
   auto next_progress = wait.deadline.started();
+  auto next_liveness =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds{500};
   while (!wait.deadline.expired()) {
     if (gave_up(wait.options)) {
       return unexpected(cancelled_failure());
@@ -385,6 +429,15 @@ stream_for_text(Wait& wait, std::string_view session_name, std::string screen) {
             slice_deadline) {
       return poll_for_text(wait, WaitPath::capture_polling, std::move(screen));
     }
+    // A pane that dies, or a server that is killed, may send nothing this wait
+    // reads, so a quiet stream is checked against the pane itself.
+    if (std::chrono::steady_clock::now() >= next_liveness) {
+      next_liveness = std::chrono::steady_clock::now() + std::chrono::milliseconds{500};
+      if (pane_gone(wait)) {
+        return pane_died(wait, WaitPath::control_output, std::move(screen),
+                         "tmux has no pane " + wait.pane_id);
+      }
+    }
     for (const Notification& notification : notifications) {
       const ParsedNotification parsed = parse(notification);
       if ((parsed.kind != NotificationKind::output &&
@@ -397,7 +450,8 @@ stream_for_text(Wait& wait, std::string_view session_name, std::string screen) {
       // wrap or a clear can place anywhere. The capture is what gets searched.
       auto captured = grid_before_deadline(wait);
       if (!captured.has_value()) {
-        return unexpected(std::move(captured.error()));
+        return capture_failed(wait, WaitPath::control_output,
+                              std::move(captured.error()), std::move(screen));
       }
       if (!captured->has_value()) {
         return timed_out(wait, WaitPath::control_output, std::move(screen), cursor);
@@ -430,7 +484,8 @@ stream_for_text(Wait& wait, std::string_view session_name, std::string screen) {
 [[nodiscard]] expected<WaitResult, CommandFailure> perform(Wait& wait) {
   auto captured = grid_before_deadline(wait);
   if (!captured.has_value()) {
-    return unexpected(std::move(captured.error()));
+    return capture_failed(wait, WaitPath::capture_at_entry, std::move(captured.error()),
+                          {});
   }
   if (!captured->has_value()) {
     return timed_out(wait, WaitPath::capture_at_entry, {});

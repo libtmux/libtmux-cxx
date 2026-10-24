@@ -36,7 +36,9 @@ enum class WaitPath : std::uint8_t {
   capture_before_control,
   /// A `%output` notification for this pane prompted the capture that matched.
   control_output,
-  /// No connection could be opened, so the screen was re-read on a timer.
+  /// No connection could be opened, or the one that was open stopped delivering
+  /// while the pane lived, so the screen was re-read on a timer. A wait that
+  /// lost its stream keeps waiting here rather than ending.
   capture_polling,
 };
 
@@ -57,6 +59,14 @@ struct WaitResult {
   /// The pane that was waited on. Empty only when the target never resolved,
   /// which the schema of a caller reporting this must allow for.
   std::string pane_id{};
+  /// The pane, or the server it lived on, went away while the wait ran. The
+  /// wait failed, and `text` is the last capture taken before that. Reported
+  /// the same way on every path and for a killed server as for a killed pane:
+  /// a wait whose pane is gone has nothing to start again on.
+  bool pane_died{};
+  /// Why the pane could not be read, in tmux's own words. Empty unless
+  /// `pane_died`.
+  std::string reason{};
   /// The last capture taken, matched or not.
   std::string text{};
 };

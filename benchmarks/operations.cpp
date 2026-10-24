@@ -22,6 +22,8 @@
 #include <libtmux/libtmux.hpp>
 #include <libtmux/testing/scoped_server.hpp>
 
+#include "support_capabilities.hpp"
+
 namespace {
 
 using Clock = std::chrono::steady_clock;
@@ -144,6 +146,17 @@ bool bench_listing_depth(const libtmux::Server& server) {
 bool bench_control_throughput(const libtmux::test::ScopedTmuxServer& fixture,
                               const libtmux::Server& server) {
   std::puts("\ncontrol-mode notification throughput");
+
+  // Control mode is refused before a client attaches on an older daemon, so
+  // there is nothing to measure there and the section says why.
+  const auto& control = libtmux::support::capabilities::capability(
+      libtmux::support::capabilities::CapabilityId::control_mode);
+  if (const auto version = server.tmux_version();
+      version.has_value() && *version < control.since.version) {
+    std::printf("unsupported: library-managed control mode needs tmux %.*s or newer\n",
+                static_cast<int>(control.since.text.size()), control.since.text.data());
+    return true;
+  }
 
   // The client this connection opens attaches to one session, and tmux scopes
   // pane-output delivery to what that client can see: a pane picked from

@@ -155,7 +155,7 @@ TEST(Expand, LiteralTextIsTheCallersToEscape) {
 }
 
 TEST(ShowMessage, AMessageReachesAnAttachedControlClient) {
-  LIBTMUX_REQUIRES_TMUX(3, 4, "delivery of %message to an attached control client");
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode for %message delivery");
 
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
@@ -185,7 +185,7 @@ TEST(ShowMessage, AMessageReachesAnAttachedControlClient) {
 }
 
 TEST(ShowMessage, TheTargetIsTheContextTheTextExpandsIn) {
-  LIBTMUX_REQUIRES_TMUX(3, 4, "delivery of %message to an attached control client");
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode for %message delivery");
 
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
@@ -227,7 +227,7 @@ TEST(ShowMessage, TheTargetIsTheContextTheTextExpandsIn) {
 }
 
 TEST(ShowMessage, APaneNamesItselfRatherThanTheActiveOne) {
-  LIBTMUX_REQUIRES_TMUX(3, 4, "delivery of %message to an attached control client");
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode for %message delivery");
 
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();

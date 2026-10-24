@@ -23,6 +23,8 @@
 #include <libtmux/libtmux.hpp>
 #include <libtmux/testing/scoped_server.hpp>
 
+#include "support_capabilities.hpp"
+
 namespace {
 
 // Balances matrix runtime against visible per-command costs.
@@ -161,6 +163,23 @@ std::optional<Row> measure(const std::string& mode, const std::string& real_tmux
   // Opening the clients is setup, as starting the server is: only the build
   // below is measured, and it must launch nothing.
   if (connections > 0U) {
+    // Control mode is refused before a client attaches on an older daemon, so
+    // there is nothing to measure there and the row says why.
+    const auto& control = libtmux::support::capabilities::capability(
+        libtmux::support::capabilities::CapabilityId::control_mode);
+    if (const auto version = opened->tmux_version();
+        version.has_value() && *version < control.since.version) {
+      std::error_code removal;
+      std::filesystem::remove_all(directory, removal);
+      return Row{mode,
+                 "unsupported",
+                 std::nullopt,
+                 std::nullopt,
+                 std::nullopt,
+                 std::nullopt,
+                 "library-managed control mode needs tmux " +
+                     std::string{control.since.text} + " or newer"};
+    }
     auto controlled = opened->over_control("bench", connections);
     if (!controlled.has_value()) {
       std::fprintf(stderr, "benchmarks: %s\n", controlled.error().message.c_str());
@@ -309,6 +328,9 @@ int main(int argc, char** argv) {
     // Every command in the workload is one tmux answers inside its guarded
     // block, so a control lane that launches anything has fallen back.
     for (std::size_t index = 2; index < rows.size(); ++index) {
+      if (rows[index].state != "supported") {
+        continue;
+      }
       if (rows[index].processes.value_or(-1) != 0) {
         failures.push_back(rows[index].mode + " made " +
                            std::to_string(rows[index].processes.value_or(-1)) +

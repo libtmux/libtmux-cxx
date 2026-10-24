@@ -24,6 +24,8 @@
 #include "libtmux/snapshot.hpp"
 
 #include "backend.hpp"
+#include "support_capabilities.hpp"
+#include "support_commands.hpp"
 
 LIBTMUX_NAMESPACE_BEGIN
 namespace detail {
@@ -393,6 +395,42 @@ describe(const std::shared_ptr<const Backend>& backend, std::string_view target,
                             {"display-message", "-p", "-t", std::string{target}},
                             FormatArgument::message, target, expected_identity, route,
                             std::move(call_policy));
+}
+
+// An operation that one release range cannot do safely is refused before it
+// has an effect, naming the release it needs. The daemon is asked, so a client
+// newer than the daemon does not qualify it.
+[[nodiscard]] inline std::optional<CommandFailure>
+refuse_before(const Backend& backend, const Version& needed, std::string_view operation,
+              std::string_view needed_text) {
+  const auto running = backend.version();
+  if (!running.has_value()) {
+    return running.error();
+  }
+  if (*running >= needed) {
+    return std::nullopt;
+  }
+  return support::commands::older_daemon(operation, needed_text);
+}
+
+// tmux 3.7, and only 3.7, refuses a session or window name holding `:` or `.`.
+// The refusal is checked here so it is a typed one before dispatch rather than
+// an error from the middle of a command list.
+[[nodiscard]] inline std::optional<CommandFailure>
+refuse_name_on_exact_37(const Backend& backend, std::string_view name,
+                        std::string_view what) {
+  if (name.find_first_of(".:") == std::string_view::npos) {
+    return std::nullopt;
+  }
+  const auto running = backend.version();
+  if (!running.has_value()) {
+    return running.error();
+  }
+  if (!support::capabilities::affects(
+          support::capabilities::WorkaroundId::name_separators_rejected, *running)) {
+    return std::nullopt;
+  }
+  return support::commands::separator_in_name(what);
 }
 
 } // namespace detail

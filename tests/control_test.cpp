@@ -1,4 +1,5 @@
 #include "libtmux/control.hpp"
+#include "libtmux/testing/capabilities.hpp"
 
 #include <string>
 #include <vector>
@@ -94,6 +95,7 @@ TEST(ControlParser, RefusesToEndInsideAnUnterminatedBlock) {
 }
 
 TEST(ControlConnection, GivesEachCommandItsOwnReplyBlock) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
   const auto server = libtmux::Server::at_socket_path(fixture->socket_path().string());
