@@ -270,7 +270,7 @@ TEST(Entity, AnAnswerThatDoesNotFitIsReportedNotCut) {
   // Wait for the shell to actually produce the scrollback. How long three
   // thousand lines take to render is a property of the machine, not of the
   // library: a fixed budget generous on a workstation expires on a loaded
-  // continuous integration runner, and reports 1978 lines as a library bug.
+  // continuous integration runner, and reports a slow render as a library bug.
   //
   // So this waits for progress to stop rather than for a clock to run out —
   // slow is tolerated, stalled is not, and the two are told apart.
