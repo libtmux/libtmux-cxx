@@ -30,6 +30,7 @@ Both are run from the repository root.
 | [`docs/`](docs/) | `python3 -m tools.docs.check_example_isolation` | Whether each quoted region compiles as the only code in its own file, the way a reader pastes it |
 | [`mcp/`](mcp/) | `./build/cxx-dev/tools/mcp/mcp-swap` | Points POSIX agent CLI configs at a chosen build of [the MCP server](../apps/mcp/README.md), and puts them back |
 | [`vcpkg/`](vcpkg/) | `python3 -m tools.vcpkg check` | Whether [the registry](../docs/vcpkg-registry.md) still publishes the ports beside it |
+| [`schema/`](schema/) | `python3 tools/schema/generate_records.py --check` | Whether the committed MCP entity records match their generation digests |
 | [`coverage/`](coverage/) | — | How much of the shipped surface the tests reach |
 | [`differential/`](differential/) | — | The same question asked of this library and of Python libtmux, compared |
 | [`bakeoff/`](bakeoff/) | — | The transport measurements behind [`docs/bakeoffs/`](../docs/bakeoffs/) |
@@ -93,6 +94,47 @@ requesting one from an incompatible build is an error rather than a skip.
 >
 > It rebuilds once on the way out, so a `ctest` straight afterwards runs the
 > code that is in the tree rather than the last mutation's binary.
+
+## MCP entity records
+
+[`schema/generate_records.cpp`](schema/generate_records.cpp) owns the annotated
+session, window and pane wire fields. Reflection emits
+[`output_records.generated.hpp`](../apps/mcp/src/output_records.generated.hpp):
+C++20 records, field visitors and a semantic encoder. `schema.cpp` alone builds
+JSON schemas from those visitors. Normal builds and installed packages use the
+committed output and require neither `<meta>` nor a reflection compiler.
+
+Regenerate with GCC 16.1, `-std=c++26 -freflection`, and clang-format 18:
+
+```console
+$ python3 tools/schema/generate_records.py \
+    --compiler g++-16
+```
+
+Check actual compiler output without writing:
+
+```console
+$ python3 tools/schema/generate_records.py \
+    --compiler g++-16 \
+    --check
+```
+
+The normal CI check needs only Python:
+
+```console
+$ python3 tools/schema/generate_records.py --check
+```
+
+It checks SHA-256 digests of the generator, generation script, formatting policy
+and generated header. It detects edits after generation; it does not execute a
+compiler or independently prove the transformation. Commit the updated header
+and digest file together after running the compiler check. The generator has
+also run on the experimental Clang P2996 fork with `-freflection-latest`;
+upstream Clang releases are not a regeneration toolchain.
+
+Record strings borrow their entity snapshot only during synchronous encoding.
+The returned `StructuredValue` owns its strings. Complete schema and real-tmux
+encoder comparisons live in `apps/mcp/tests/schema_test.cpp`.
 
 ## Related
 
