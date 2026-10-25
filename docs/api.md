@@ -6810,6 +6810,7 @@ Events tmux emits outside guarded control reply blocks.  Most are protocol notif
   - [`to_string`](#libtmux-notification-hpp-free-symbols-to-string)
   - [`parse`](#libtmux-notification-hpp-free-symbols-parse)
   - [`parse`](#libtmux-notification-hpp-free-symbols-parse-2)
+  - [`parse`](#libtmux-notification-hpp-free-symbols-parse-3)
   - [`layout_contains_pane`](#libtmux-notification-hpp-free-symbols-layout-contains-pane)
 
 <a id="libtmux-notification-hpp-notification"></a>
@@ -7087,6 +7088,13 @@ Events evicted before this watch took them, excluding events consumed by other c
 
 ```cpp
 ParsedNotification parse(Notification&&) = delete;
+```
+
+<a id="libtmux-notification-hpp-free-symbols-parse-3"></a>
+#### `parse`
+
+```cpp
+ParsedNotification parse(const Notification&&) = delete;
 ```
 
 <a id="libtmux-notification-hpp-free-symbols-layout-contains-pane"></a>

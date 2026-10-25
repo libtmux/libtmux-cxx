@@ -12,6 +12,15 @@
 
 #include <libtmux/libtmux.hpp>
 
+template <typename T>
+concept ParsesNotification =
+    requires(T&& notification) { libtmux::parse(std::forward<T>(notification)); };
+
+static_assert(ParsesNotification<libtmux::Notification&>);
+static_assert(ParsesNotification<const libtmux::Notification&>);
+static_assert(!ParsesNotification<libtmux::Notification>);
+static_assert(!ParsesNotification<const libtmux::Notification>);
+
 static_assert(std::is_nothrow_copy_constructible_v<libtmux::AttachCommand>);
 static_assert(std::is_nothrow_move_constructible_v<libtmux::AttachCommand>);
 static_assert(std::is_nothrow_copy_assignable_v<libtmux::AttachCommand>);
