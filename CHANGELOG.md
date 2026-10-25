@@ -20,7 +20,7 @@ was recorded as it landed.
 - `ReferenceRange`, `first` and `exactly_one` now require forward ranges that
   yield lvalue references; the borrowing helpers also reject const temporaries.
   Source-breaking; ABI-compatible. Keep a named forward range alive for
-  borrowing, or select an owned result from a single-pass range.
+  borrowing, or select an owned result from a single-pass range. (#106)
 
   Before: `auto result = first(input);`
   After: `auto result = first_owned(input);` (likewise `exactly_one_owned`)
