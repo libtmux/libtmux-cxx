@@ -199,6 +199,8 @@ Parser::feed(std::span<const std::byte> input) {
         block_->body.insert(block_->body.end(), view.begin(), view.end());
         block_->body.push_back(std::byte{0x0a});
       } else if (!block_->body_truncated) {
+        const auto prefix = view.first(retained_reply_bytes_ - block_->body.size());
+        block_->body.insert(block_->body.end(), prefix.begin(), prefix.end());
         block_->body_truncated = true;
         // Nothing more will be added, so the held bytes are all that is ever
         // needed. Without this the vector keeps whatever growth reserved.
