@@ -42,6 +42,9 @@ was recorded as it landed.
 
 ### Testing
 
+- The control fuzzer now instruments its compiled parser for coverage, ASan
+  and UBSan. A test rejects builds missing that instrumentation. (#108)
+
 - Cover a wait whose capture fails with "server exited unexpectedly", so the
   wait ends as `pane_died` without a liveness probe. (#99)
 

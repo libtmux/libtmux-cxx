@@ -32,3 +32,15 @@ foreach(parser row option version control)
       -max_total_time=20 -max_len=4096 -print_final_stats=1)
   set_tests_properties(fuzz.${parser} PROPERTIES LABELS "fuzz" TIMEOUT 120)
 endforeach()
+
+# The driver's flags cannot instrument the separately built library.
+target_sources(
+  libtmux_fuzz_control PRIVATE "${PROJECT_SOURCE_DIR}/src/control.cpp")
+
+add_test(
+  NAME fuzz.instrumentation
+  COMMAND
+    "${CMAKE_COMMAND}" "-DNM=${CMAKE_NM}"
+    "-DOBJECTS=$<TARGET_OBJECTS:libtmux_fuzz_control>" -P
+    "${CMAKE_CURRENT_SOURCE_DIR}/instrumentation.cmake")
+set_tests_properties(fuzz.instrumentation PROPERTIES LABELS "fuzz")
