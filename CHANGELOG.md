@@ -42,6 +42,9 @@ was recorded as it landed.
 
 ### Testing
 
+- MCP echo tests now write foreign output when their wait reports progress.
+  Writer failures stop the test before it checks echo matching.
+
 - The control fuzzer now instruments its compiled parser for coverage, ASan
   and UBSan. A test rejects builds missing that instrumentation. (#108)
 

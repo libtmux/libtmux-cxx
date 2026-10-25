@@ -4,10 +4,10 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <fstream>
 #include <optional>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -22,8 +22,10 @@ namespace {
 using libtmux::Server;
 using libtmux::mcp::Arguments;
 using libtmux::mcp::StructuredValue;
+using libtmux::mcp::ToolError;
 using libtmux::mcp::ToolOutput;
 using libtmux::mcp::ToolRegistry;
+using libtmux::mcp::ToolResult;
 
 Server connect(const libtmux::test::ScopedTmuxServer& fixture) {
   auto server = Server::at_socket_path(fixture.socket_path().string());
@@ -282,28 +284,48 @@ TEST(McpTools, PaneEchoEditRollbackRestoresThePriorLineNotAnEmptyOne) {
 
 namespace echo_contract_test {
 
-void inject_foreign_output(const Server& server, const ToolRegistry& tools,
-                           std::string_view writer_pane_id,
-                           std::string_view target_pane_id, std::string_view line,
-                           double delay_seconds) {
-  const auto pane = server.pane(std::string{target_pane_id});
-  ASSERT_TRUE(pane.has_value()) << pane.error().diagnostic;
+ToolResult wait_for_foreign_output(const Server& server, const ToolRegistry& tools,
+                                   std::string_view target_pane_id,
+                                   std::string_view line) {
   const auto tty = server.run(
       {"display-message", "-p", "-t", std::string{target_pane_id}, "#{pane_tty}"});
-  ASSERT_TRUE(tty.has_value()) << tty.error().diagnostic;
+  if (!tty.has_value()) {
+    return libtmux::unexpected(ToolError{false, tty.error().diagnostic});
+  }
   std::string tty_path = *tty;
   while (!tty_path.empty() && (tty_path.back() == '\n' || tty_path.back() == '\r')) {
     tty_path.pop_back();
   }
-  ASSERT_FALSE(tty_path.empty());
-  const auto answer =
-      tools.call(server, "run_shell_command",
-                 Arguments{{"paneId", std::string{writer_pane_id}},
-                           {"command", "sleep " + std::to_string(delay_seconds) +
-                                           " && printf '%s\\n' '" + std::string{line} +
-                                           "' > " + tty_path},
-                           {"timeoutMs", "3000"}});
-  ASSERT_TRUE(answer.has_value()) << answer.error().message;
+  std::fstream writer{tty_path, std::ios::in | std::ios::out};
+  if (!writer.is_open()) {
+    return libtmux::unexpected(
+        ToolError{false, "could not open the pane tty for foreign output"});
+  }
+  bool dispatched = false;
+  libtmux::mcp::CallContext context;
+  context.progress = [&](double, std::optional<double>, std::string) {
+    if (dispatched) {
+      return;
+    }
+    dispatched = true;
+    writer << '\n' << line << '\n' << std::flush;
+  };
+  context.is_cancelled = [&] { return !writer; };
+  auto waited = tools.call(server, "wait_for_text",
+                           Arguments{{"target", std::string{target_pane_id}},
+                                     {"text", std::string{line}},
+                                     {"timeout_ms", "1000"}},
+                           context);
+  writer.close();
+  if (!writer) {
+    return libtmux::unexpected(
+        ToolError{false, "could not write foreign output to the pane tty"});
+  }
+  if (!dispatched && waited.has_value()) {
+    return libtmux::unexpected(
+        ToolError{false, "wait completed before foreign output was written"});
+  }
+  return waited;
 }
 
 } // namespace echo_contract_test
@@ -321,24 +343,15 @@ TEST(McpToolsTmux, EchoShortUnsubmittedAnswerDoesNotMaskLongerRealOutput) {
   const std::string pane_id{panes->front().id().value()};
   const auto tools = all_tools();
 
-  const auto split = tools.call(server, "split_window", Arguments{{"paneId", pane_id}});
-  ASSERT_TRUE(split.has_value()) << split.error().message;
-  const std::string writer_pane_id = string_field(*split, "pane_id");
-
   const auto typed =
       tools.call(server, "send_keys", Arguments{{"paneId", pane_id}, {"keys", "y"}});
   ASSERT_TRUE(typed.has_value()) << typed.error().message;
 
-  std::thread injector{[&] {
-    echo_contract_test::inject_foreign_output(server, tools, writer_pane_id, pane_id,
-                                              "ready", 0.3);
-  }};
-  const auto waited = tools.call(
-      server, "wait_for_text",
-      Arguments{{"target", pane_id}, {"text", "ready"}, {"timeout_ms", "1000"}});
-  injector.join();
+  const auto waited =
+      echo_contract_test::wait_for_foreign_output(server, tools, pane_id, "ready");
 
   ASSERT_TRUE(waited.has_value()) << waited.error().message;
+  EXPECT_TRUE(has_output_line(*waited, "ready")) << string_field(*waited, "text");
   EXPECT_TRUE(std::get<bool>(waited->structured.at("matched").value))
       << "the typed \"y\" masked real output \"ready\" that merely contains it; text=\""
       << string_field(*waited, "text") << "\"";
@@ -546,10 +559,6 @@ TEST(McpToolsTmux, EchoUnknownKeyFailsOpenRatherThanHidingRealOutput) {
   const std::string pane_id{panes->front().id().value()};
   const auto tools = all_tools();
 
-  const auto split = tools.call(server, "split_window", Arguments{{"paneId", pane_id}});
-  ASSERT_TRUE(split.has_value()) << split.error().message;
-  const std::string writer_pane_id = string_field(*split, "pane_id");
-
   const auto typed = tools.call(server, "paste_text",
                                 Arguments{{"paneId", pane_id}, {"text", "xMARKER"}});
   ASSERT_TRUE(typed.has_value()) << typed.error().message;
@@ -557,19 +566,14 @@ TEST(McpToolsTmux, EchoUnknownKeyFailsOpenRatherThanHidingRealOutput) {
       tools.call(server, "send_keys", Arguments{{"paneId", pane_id}, {"keys", "Left"}});
   ASSERT_TRUE(left.has_value()) << left.error().message;
 
-  std::thread injector{[&] {
-    echo_contract_test::inject_foreign_output(server, tools, writer_pane_id, pane_id,
-                                              "xMARKER", 0.3);
-  }};
-  const auto waited = tools.call(
-      server, "wait_for_text",
-      Arguments{{"target", pane_id}, {"text", "xMARKER"}, {"timeout_ms", "1000"}});
-  injector.join();
+  const auto waited = echo_contract_test::wait_for_foreign_output(
+      server, tools, pane_id, "foreign xMARKER");
 
   ASSERT_TRUE(waited.has_value()) << waited.error().message;
+  EXPECT_TRUE(has_output_line(*waited, "foreign xMARKER"))
+      << string_field(*waited, "text");
   EXPECT_TRUE(std::get<bool>(waited->structured.at("matched").value))
-      << "the abandoned typing still masked a later, genuine line that "
-         "happens to repeat it; text=\""
+      << "the abandoned typing still masked a later line containing it; text=\""
       << string_field(*waited, "text") << "\"";
 }
 
@@ -586,10 +590,6 @@ TEST(McpToolsTmux, EchoResizeControlStillMatchesRealOutputAfterReflow) {
   const std::string pane_id{panes->front().id().value()};
   const auto tools = all_tools();
 
-  const auto split = tools.call(server, "split_window", Arguments{{"paneId", pane_id}});
-  ASSERT_TRUE(split.has_value()) << split.error().message;
-  const std::string writer_pane_id = string_field(*split, "pane_id");
-
   const auto typed =
       tools.call(server, "send_keys", Arguments{{"paneId", pane_id}, {"keys", "y"}});
   ASSERT_TRUE(typed.has_value()) << typed.error().message;
@@ -599,16 +599,11 @@ TEST(McpToolsTmux, EchoResizeControlStillMatchesRealOutputAfterReflow) {
   const auto resized = window->resize(100, 40);
   ASSERT_TRUE(resized.has_value()) << resized.error().diagnostic;
 
-  std::thread injector{[&] {
-    echo_contract_test::inject_foreign_output(server, tools, writer_pane_id, pane_id,
-                                              "ready", 0.3);
-  }};
-  const auto waited = tools.call(
-      server, "wait_for_text",
-      Arguments{{"target", pane_id}, {"text", "ready"}, {"timeout_ms", "1000"}});
-  injector.join();
+  const auto waited =
+      echo_contract_test::wait_for_foreign_output(server, tools, pane_id, "ready");
 
   ASSERT_TRUE(waited.has_value()) << waited.error().message;
+  EXPECT_TRUE(has_output_line(*waited, "ready")) << string_field(*waited, "text");
   EXPECT_TRUE(std::get<bool>(waited->structured.at("matched").value))
       << "a window resize between send and match hid real output; text=\""
       << string_field(*waited, "text") << "\"";
