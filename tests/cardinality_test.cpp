@@ -7,6 +7,7 @@
 
 #include "libtmux/cardinality.hpp"
 
+#include <iterator>
 #include <ranges>
 #include <sstream>
 #include <string>
@@ -154,6 +155,16 @@ TEST(Cardinality, OwnedSelectionCopiesBorrowedElementsAndAcceptsTemporaries) {
 }
 
 TEST(Cardinality, OwnedSelectionMaterializesBeforeAdvancingSinglePassRanges) {
+  std::istringstream first_input{"73"};
+  auto first_range = std::ranges::subrange(std::istream_iterator<int>{first_input},
+                                           std::istream_iterator<int>{});
+  EXPECT_EQ(libtmux::first_owned(first_range).value_or(0), 73);
+
+  std::istringstream only_input{"73"};
+  auto only_range = std::ranges::subrange(std::istream_iterator<int>{only_input},
+                                          std::istream_iterator<int>{});
+  EXPECT_EQ(libtmux::exactly_one_owned(only_range).value_or(0), 73);
+
   std::istringstream input{"42"};
   const auto selected =
       libtmux::exactly_one_owned(std::ranges::istream_view<int>{input});

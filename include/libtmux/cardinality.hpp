@@ -47,12 +47,11 @@ using Referenced = std::reference_wrapper<const std::ranges::range_value_t<Range
 // list returned by value — leaves that reference dangling at the semicolon.
 // Requiring a name makes the storage the caller must keep alive visible.
 
-/// Both also require the range to yield references. A range whose elements are
-/// produced on demand — a transform that returns by value, say — has nothing
-/// for the answer to refer to, and the temporary dies with the call.
+/// A forward range yielding lvalue references. Iterator copies and advancement
+/// must preserve the referenced elements for a borrowed lookup.
 template <typename Range>
 concept ReferenceRange =
-    std::ranges::input_range<Range> &&
+    std::ranges::forward_range<Range> &&
     std::is_lvalue_reference_v<std::ranges::range_reference_t<Range>>;
 
 /// `first` states that a caller tolerates extras; it never reports several.
@@ -64,6 +63,8 @@ template <ReferenceRange Range>
   }
   return std::cref(*iterator);
 }
+
+template <typename Range> auto first(const Range&&) = delete;
 
 /// `exactly_one` states that several is a caller error, and says which one.
 template <ReferenceRange Range>
@@ -83,6 +84,8 @@ template <ReferenceRange Range>
   }
   return std::cref(*only);
 }
+
+template <typename Range> auto exactly_one(const Range&&) = delete;
 
 /// Copies referenced elements; moves when an iterator yields an rvalue. A
 /// temporary view over an lvalue container therefore leaves that container intact.

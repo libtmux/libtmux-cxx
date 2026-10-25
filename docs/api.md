@@ -5286,7 +5286,9 @@ Exception-free cardinality over snapshot views.  Callers ask for one entity far 
   - [`Referenced`](#libtmux-cardinality-hpp-free-symbols-referenced)
   - [`ReferenceRange`](#libtmux-cardinality-hpp-free-symbols-referencerange)
   - [`first`](#libtmux-cardinality-hpp-free-symbols-first)
+  - [`first`](#libtmux-cardinality-hpp-free-symbols-first-2)
   - [`exactly_one`](#libtmux-cardinality-hpp-free-symbols-exactly-one)
+  - [`exactly_one`](#libtmux-cardinality-hpp-free-symbols-exactly-one-2)
   - [`first_owned`](#libtmux-cardinality-hpp-free-symbols-first-owned)
   - [`exactly_one_owned`](#libtmux-cardinality-hpp-free-symbols-exactly-one-owned)
 
@@ -5326,9 +5328,9 @@ template <std::ranges::input_range Range> using Referenced = std::reference_wrap
 #### `ReferenceRange`
 
 ```cpp
-template <typename Range> concept ReferenceRange = std::ranges::input_range<Range> && std::is_lvalue_reference_v<std::ranges::range_reference_t<Range>>;
+template <typename Range> concept ReferenceRange = std::ranges::forward_range<Range> && std::is_lvalue_reference_v<std::ranges::range_reference_t<Range>>;
 ```
-Both also require the range to yield references. A range whose elements are produced on demand — a transform that returns by value, say — has nothing for the answer to refer to, and the temporary dies with the call.
+A forward range yielding lvalue references. Iterator copies and advancement must preserve the referenced elements for a borrowed lookup.
 
 <a id="libtmux-cardinality-hpp-free-symbols-first"></a>
 #### `first`
@@ -5338,6 +5340,13 @@ template <ReferenceRange Range> [[nodiscard]] std::optional<Referenced<Range>> f
 ```
 `first` states that a caller tolerates extras; it never reports several.
 
+<a id="libtmux-cardinality-hpp-free-symbols-first-2"></a>
+#### `first`
+
+```cpp
+template <typename Range> auto first(const Range&&) = delete;
+```
+
 <a id="libtmux-cardinality-hpp-free-symbols-exactly-one"></a>
 #### `exactly_one`
 
@@ -5345,6 +5354,13 @@ template <ReferenceRange Range> [[nodiscard]] std::optional<Referenced<Range>> f
 template <ReferenceRange Range> [[nodiscard]] expected<Referenced<Range>, CardinalityError> exactly_one(Range& range);
 ```
 `exactly_one` states that several is a caller error, and says which one.
+
+<a id="libtmux-cardinality-hpp-free-symbols-exactly-one-2"></a>
+#### `exactly_one`
+
+```cpp
+template <typename Range> auto exactly_one(const Range&&) = delete;
+```
 
 <a id="libtmux-cardinality-hpp-free-symbols-first-owned"></a>
 #### `first_owned`

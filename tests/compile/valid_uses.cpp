@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <chrono>
 #include <format>
+#include <iterator>
 #include <ranges>
 #include <string>
 #include <type_traits>
@@ -20,6 +21,46 @@ static_assert(ParsesNotification<libtmux::Notification&>);
 static_assert(ParsesNotification<const libtmux::Notification&>);
 static_assert(!ParsesNotification<libtmux::Notification>);
 static_assert(!ParsesNotification<const libtmux::Notification>);
+
+template <typename Range>
+concept BorrowsFirst =
+    requires(Range&& range) { libtmux::first(std::forward<Range>(range)); };
+
+template <typename Range>
+concept BorrowsExactlyOne =
+    requires(Range&& range) { libtmux::exactly_one(std::forward<Range>(range)); };
+
+using StreamInts = std::ranges::subrange<std::istream_iterator<int>>;
+using ProducedInts = decltype(std::declval<std::vector<int>&>() |
+                              std::views::transform([](int value) { return value; }));
+
+struct ConstReference {
+  int operator()(int& value) { return value; }
+  const int& operator()(const int& value) const { return value; }
+};
+
+using OwnedTransform = decltype(std::views::all(std::vector<int>{73}) |
+                                std::views::transform(ConstReference{}));
+static_assert(!libtmux::ReferenceRange<OwnedTransform>);
+static_assert(libtmux::ReferenceRange<const OwnedTransform>);
+
+static_assert(BorrowsFirst<std::vector<int>&>);
+static_assert(BorrowsFirst<const std::vector<int>&>);
+static_assert(BorrowsFirst<const OwnedTransform&>);
+static_assert(!BorrowsFirst<std::vector<int>>);
+static_assert(!BorrowsFirst<const std::vector<int>>);
+static_assert(!BorrowsFirst<StreamInts&>);
+static_assert(!BorrowsFirst<ProducedInts&>);
+static_assert(!BorrowsFirst<const OwnedTransform>);
+
+static_assert(BorrowsExactlyOne<std::vector<int>&>);
+static_assert(BorrowsExactlyOne<const std::vector<int>&>);
+static_assert(BorrowsExactlyOne<const OwnedTransform&>);
+static_assert(!BorrowsExactlyOne<std::vector<int>>);
+static_assert(!BorrowsExactlyOne<const std::vector<int>>);
+static_assert(!BorrowsExactlyOne<StreamInts&>);
+static_assert(!BorrowsExactlyOne<ProducedInts&>);
+static_assert(!BorrowsExactlyOne<const OwnedTransform>);
 
 static_assert(std::is_nothrow_copy_constructible_v<libtmux::AttachCommand>);
 static_assert(std::is_nothrow_move_constructible_v<libtmux::AttachCommand>);
