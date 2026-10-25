@@ -28,7 +28,7 @@ was recorded as it landed.
 ### Control mode
 
 - `Parser` retains the exact reply prefix when its byte limit cuts a line,
-  instead of skipping that line and retaining later output.
+  instead of skipping that line and retaining later output. (#107)
 
 ### Documentation
 
