@@ -253,7 +253,8 @@ TEST(ExecutorSeam, AttachIsRefusedRatherThanGuessedAt) {
 class DyingServerExecutor final : public libtmux::CommandExecutor {
 public:
   DyingServerExecutor() = default;
-  DyingServerExecutor(std::string capture_diagnostic, std::string probe_answer)
+  DyingServerExecutor(std::string capture_diagnostic,
+                      std::optional<std::string> probe_answer)
       : capture_diagnostic_{std::move(capture_diagnostic)},
         probe_answer_{std::move(probe_answer)} {}
 
@@ -322,6 +323,27 @@ TEST(ExecutorSeam, AWaitEndsAsPaneDiedWhenTheCaptureFindsNoServer) {
   EXPECT_FALSE(waited->timed_out);
   EXPECT_EQ(waited->text, "booting\n");
   EXPECT_NE(waited->reason.find("no server running"), std::string::npos);
+  EXPECT_EQ(executor->probes(), 0) << "the capture's own words were proof enough";
+}
+
+// tmux words a server that died under a command as "server exited
+// unexpectedly" and names no socket, so it is a second spelling of "gone".
+TEST(ExecutorSeam, AWaitEndsAsPaneDiedWhenTheServerExitedUnderTheCapture) {
+  auto executor =
+      std::make_shared<DyingServerExecutor>("server exited unexpectedly", std::nullopt);
+  auto server =
+      Server::over(executor, {.implementation = libtmux::ServerImplementation::tmux,
+                              .version = libtmux::Version{.major = 3, .minor = 7}});
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+
+  libtmux::WaitOptions options;
+  options.timeout = std::chrono::seconds{20};
+  options.poll_interval = std::chrono::milliseconds{5};
+  const auto waited = server->wait_for_text("%1", "never printed", options);
+
+  ASSERT_TRUE(waited.has_value()) << waited.error().diagnostic;
+  EXPECT_TRUE(waited->pane_died);
+  EXPECT_EQ(waited->reason, "server exited unexpectedly");
   EXPECT_EQ(executor->probes(), 0) << "the capture's own words were proof enough";
 }
 

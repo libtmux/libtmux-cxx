@@ -1189,15 +1189,14 @@ These are the refused commands, the releases they affect, and what happens:
 - `refresh-client -l`: below 3.6a, and only with an attached client. The server
   exits on 3.3a when the client's terminal does not answer, and on 3.4 to 3.6
   when the client leaves before it answers.
-- `delete-buffer -b NAME`, and `set-buffer -b NAME -n`: below 3.4. No crash; a
-  name that does not exist acts on the newest buffer instead, so the wrong
-  buffer is deleted or renamed.
+- `delete-buffer -b NAME`, and `set-buffer -b NAME -n`: below 3.4. No crash;
+  the wrong buffer is changed ([why](docs/compatibility.md#named-buffers)).
 - `split-window -p`: exactly 3.4. tmux answers "size missing" and changes
   nothing. This port does not refuse a raw `-p`; typed splits send `-l N%`.
-- Names containing `:` or `.`: exactly 3.7. tmux answers "invalid window name"
-  and changes nothing.
+- Names containing `:` or `.`: exactly 3.7. tmux answers "invalid session name"
+  or "invalid window name" and changes nothing.
 
-On exact tmux 3.7, name every `break-pane`, nested or not, and upgrade to 3.7a.
+On exact tmux 3.7, name every `break-pane`, nested or not, or upgrade to 3.7a.
 The [default `prefix !` binding](https://github.com/tmux/tmux/blob/3.7/key-bindings.c#L358)
 is itself a nameless `break-pane`, which no library check can reach.
 

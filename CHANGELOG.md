@@ -15,6 +15,14 @@ was recorded as it landed.
   `docs/compatibility.md`, state the nested-command limit with its releases and
   effects, and repeat it in the `run_shell_command` and `send_keys` tool
   descriptions. (#98)
+- Record in `docs/compatibility.md` that exact tmux 3.7 answers a name with `:`
+  or `.` with "invalid ... name" and creates nothing, link the clipboard cause
+  from the nested-command table, and state the wrong-buffer effect once. (#99)
+
+### Testing
+
+- Cover a wait whose capture fails with "server exited unexpectedly", so the
+  wait ends as `pane_died` without a liveness probe. (#99)
 
 ## 0.1.0-alpha.13 (2026-10-24)
 
@@ -33,8 +41,7 @@ still builds.
   unchanged. (#69)
 
   Before: `auto connection = *server.control("work");`
-  After:  `if (*server.tmux_version() >= Version{3, 7}) { auto connection = *server.control("work"); }`
-          and `pane.wait_for_text("done")` as the polling fallback below 3.7.
+  After:  `if (*server.tmux_version() >= Version{3, 7}) { auto connection = *server.control("work"); } else { pane.wait_for_text("done"); }`
 
 - `Buffer::remove` returns `FailureKind::unsupported` with
   `DeliveryStatus::not_started` on a daemon older than tmux 3.4, where
@@ -42,8 +49,7 @@ still builds.
   Behaviour-breaking. (#69)
 
   Before: `auto removed = buffer.remove();`
-  After:  `if (*server.tmux_version() >= Version{3, 4}) { auto removed = buffer.remove(); }`
-          and `pane.paste(buffer, true)`, which stays available below 3.4.
+  After:  `if (*server.tmux_version() >= Version{3, 4}) { auto removed = buffer.remove(); } else { pane.paste(buffer, true); }`
 
 - The MCP `paste_text` tool is refused before it stages a buffer on a daemon
   older than tmux 3.4. Behaviour-breaking. (#69)
@@ -85,7 +91,7 @@ still builds.
   route. (#69)
 - Session and window names holding `:` or `.` are rejected with
   `FailureKind::validation` before dispatch on exactly tmux 3.7, which refuses
-  them itself after partly running. (#69)
+  them itself and creates nothing. (#69)
 - `Server::run` and batches refuse a literal `new-session`,
   `new-window`, `rename-session` or `rename-window` that names a session or
   window with `:` or `.` on exactly tmux 3.7. (#69)
