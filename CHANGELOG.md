@@ -12,7 +12,7 @@ was recorded as it landed.
 ### Breaking
 
 - `parse` now rejects const notification temporaries. Source-breaking;
-  ABI-compatible. Keep the notification alive while using the parsed views.
+  ABI-compatible. Keep the notification alive while using the parsed views. (#105)
 
   Before: `auto parsed = parse(make_const_notification());`
   After: `const auto held = make_const_notification(); auto parsed = parse(held);`
