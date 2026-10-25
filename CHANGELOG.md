@@ -17,6 +17,14 @@ was recorded as it landed.
   Before: `auto parsed = parse(make_const_notification());`
   After: `const auto held = make_const_notification(); auto parsed = parse(held);`
 
+- `ReferenceRange`, `first` and `exactly_one` now require forward ranges that
+  yield lvalue references; the borrowing helpers also reject const temporaries.
+  Source-breaking; ABI-compatible. Keep a named forward range alive for
+  borrowing, or select an owned result from a single-pass range.
+
+  Before: `auto result = first(input);`
+  After: `auto result = first_owned(input);` (likewise `exactly_one_owned`)
+
 ### Documentation
 
 - Split the README capability table into short rows with the crash causes in
