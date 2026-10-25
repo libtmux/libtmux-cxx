@@ -96,6 +96,7 @@ struct ParsedNotification {
 
 [[nodiscard]] ParsedNotification parse(const Notification& notification);
 ParsedNotification parse(Notification&&) = delete;
+ParsedNotification parse(const Notification&&) = delete;
 
 /// Whether `pane_id` (<code>\%N</code>) is still part of a window's arrangement,
 /// reading a `layout_change` notification's own `text` — `window_layout` followed by
