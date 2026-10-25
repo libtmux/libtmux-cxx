@@ -267,12 +267,50 @@ TEST(ControlModeParser, RetainsBoundedBodyAndKeepsTheStreamAttributable) {
   const auto& oversized = std::get<ControlBlock>(events->front());
   EXPECT_TRUE(oversized.body_truncated);
   EXPECT_EQ(oversized.body_bytes, 64U * 17U);
-  EXPECT_LE(oversized.body.size(), 16U);
+  EXPECT_EQ(hex(oversized.body), hex(bytes("0123456789abcdef")));
 
   const auto& following = std::get<ControlBlock>(events->back());
   EXPECT_FALSE(following.body_truncated);
   EXPECT_EQ(following.body_bytes, 5U);
   EXPECT_EQ(hex(following.body), hex(bytes("kept\n")));
+}
+
+TEST(ControlModeParser, RetainsExactPrefixesAcrossLimitsAndChunks) {
+  const std::array bodies{std::string_view{"abc\n123456789\nz\r\n"},
+                          std::string_view{"kept\n"}};
+  Bytes stream = bytes("%begin 1 2 1\n");
+  append(stream, bodies[0]);
+  append(stream, "%error 1 2 1\n%begin 3 4 1\n");
+  append(stream, bodies[1]);
+  append(stream, "%end 3 4 1\n");
+  const std::span<const std::byte> wire{stream};
+
+  for (std::size_t limit = 0U; limit <= bodies[0].size() + 1U; ++limit) {
+    const auto retained = limit == 0U ? std::string_view::npos : limit;
+    const std::vector<Event> expected{block(1U, 2U, ControlTerminal::error, "1 2 1",
+                                            bytes(bodies[0].substr(0U, retained))),
+                                      block(3U, 4U, ControlTerminal::end, "3 4 1",
+                                            bytes(bodies[1].substr(0U, retained)))};
+    for (const auto chunk : std::array{wire.size(), std::size_t{1U}}) {
+      SCOPED_TRACE(testing::Message{} << "limit " << limit << " chunk " << chunk);
+      Parser parser{limit, 1024U};
+      std::vector<Event> events;
+      for (std::size_t offset = 0U; offset < wire.size(); offset += chunk) {
+        ASSERT_TRUE(feed(parser,
+                         wire.subspan(offset, std::min(chunk, wire.size() - offset)),
+                         events));
+      }
+      ASSERT_TRUE(parser.finish().has_value());
+      ASSERT_EQ(events.size(), bodies.size());
+      expect_events(events, expected);
+      for (std::size_t index = 0U; index < bodies.size(); ++index) {
+        const auto* reply = std::get_if<ControlBlock>(&events[index]);
+        ASSERT_NE(reply, nullptr);
+        EXPECT_EQ(reply->body_bytes, bodies[index].size());
+        EXPECT_EQ(reply->body_truncated, limit != 0U && bodies[index].size() > limit);
+      }
+    }
+  }
 }
 
 // A line is bounded separately, because a body arrives as many lines and no

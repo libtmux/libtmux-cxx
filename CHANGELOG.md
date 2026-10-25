@@ -25,6 +25,11 @@ was recorded as it landed.
   Before: `auto result = first(input);`
   After: `auto result = first_owned(input);` (likewise `exactly_one_owned`)
 
+### Control mode
+
+- `Parser` retains the exact reply prefix when its byte limit cuts a line,
+  instead of skipping that line and retaining later output. (#107)
+
 ### Documentation
 
 - Split the README capability table into short rows with the crash causes in
