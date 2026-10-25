@@ -1186,9 +1186,9 @@ These are the refused commands, the releases they affect, and what happens:
   inverted name test in 3.7](https://github.com/tmux/tmux/blob/3.7/cmd-break-pane.c#L117-L124)).
 - `select-layout` with a string tmux cannot parse: tmux 3.3 and 3.3a. The
   server exits. 3.4 answers "invalid layout".
-- `refresh-client -l`: below 3.6a, and only with an attached client. The server
-  exits on 3.3a when the client's terminal does not answer, and on 3.4 to 3.6
-  when the client leaves before it answers.
+- `refresh-client -l`: below 3.6a, with an attached client. The server exits at
+  once on 3.3a, and on 3.4 to 3.6 when the client leaves before its terminal
+  answers ([why](docs/compatibility.md#clipboard-query)).
 - `delete-buffer -b NAME`, and `set-buffer -b NAME -n`: below 3.4. No crash;
   the wrong buffer is changed ([why](docs/compatibility.md#named-buffers)).
 - `split-window -p`: exactly 3.4. tmux answers "size missing" and changes
