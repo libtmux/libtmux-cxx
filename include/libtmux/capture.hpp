@@ -25,10 +25,18 @@ LIBTMUX_NAMESPACE_BEGIN
 /// `capture_lines(*pane.capture())` the natural thing to write and a
 /// use-after-free to run. Deleted for an rvalue string only: an lvalue string
 /// converts as before, and so does a literal.
+#if defined(__cpp_deleted_function) && __cpp_deleted_function >= 202403L
+template <typename Text>
+  requires std::same_as<std::remove_cvref_t<Text>, std::string> &&
+               (!std::is_lvalue_reference_v<Text>)
+std::vector<std::string_view> capture_lines(Text&&) =
+    delete ("capture_lines borrows its string; keep the input alive");
+#else
 template <typename Text>
   requires std::same_as<std::remove_cvref_t<Text>, std::string> &&
                (!std::is_lvalue_reference_v<Text>)
 std::vector<std::string_view> capture_lines(Text&&) = delete;
+#endif
 
 [[nodiscard]] inline std::vector<std::string_view>
 capture_lines(std::string_view output) {

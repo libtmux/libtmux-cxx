@@ -868,9 +868,17 @@ foreach(
   capture_lines_refuses_a_temporary
   parse_refuses_a_temporary
   relation_join_refuses_a_temporary
+  parent_join_refuses_a_temporary
   entity_ids_do_not_mix
   no_implicit_submit)
-  add_library(libtmux_compile_${probe} OBJECT EXCLUDE_FROM_ALL compile/${probe}.cpp)
+  if(probe STREQUAL "parent_join_refuses_a_temporary")
+    add_library(libtmux_compile_${probe} OBJECT EXCLUDE_FROM_ALL
+      compile/relation_join_refuses_a_temporary.cpp)
+    target_compile_definitions(
+      libtmux_compile_${probe} PRIVATE LIBTMUX_TEST_PARENT_JOIN)
+  else()
+    add_library(libtmux_compile_${probe} OBJECT EXCLUDE_FROM_ALL compile/${probe}.cpp)
+  endif()
   target_link_libraries(
     libtmux_compile_${probe} PRIVATE libtmux_build_options libtmux::libtmux)
 
