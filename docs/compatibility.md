@@ -67,9 +67,10 @@ every release.
 
 ### Clipboard query
 
-`refresh-client -l` with an attached client ends a 3.3a server when the
-client's terminal does not answer, and a 3.4 to 3.6 server when the client
-leaves before it answers. 3.6a is the first release without the crash.
+`refresh-client -l` with an attached client ends a 3.3a server at once when the
+client's terminal has the `Ms` clipboard capability, such as `xterm-256color` or
+`tmux-256color`, and a 3.4 to 3.6 server when the client leaves before its
+terminal answers. 3.6a is the first release without the crash.
 
 ### Break pane
 
