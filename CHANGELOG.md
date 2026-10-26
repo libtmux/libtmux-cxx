@@ -28,7 +28,8 @@ was recorded as it landed.
 ### Querying
 
 - Boolean fields compose directly with `&&` and `||`; string and boolean
-  fields accept `!=`. Additive API; expression storage and lowering are unchanged.
+  fields accept `!=`. Additive API; expression storage and lowering are
+  unchanged. (#110)
 
 ### Control mode
 
