@@ -44,6 +44,12 @@ exact output prefix when a line exceeds the byte limit.
 - `Parser` retains the exact reply prefix when its byte limit cuts a line,
   instead of skipping that line and retaining later output. (#107)
 
+### Pane
+
+- `wait_for_text` retains its last capture when tmux exits successfully without
+  capture output during shutdown. A blank pane still replaces the previous
+  output.
+
 ### Documentation
 
 - Split the README capability table into short rows with the crash causes in

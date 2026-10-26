@@ -129,7 +129,18 @@ using BoundedOutput = expected<std::optional<std::string>, CommandFailure>;
 // one. Not `Pane::capture`, which cannot be given the remaining budget: a
 // capture that outlives the deadline would turn a timeout into a hang.
 [[nodiscard]] BoundedOutput capture_before_deadline(const Wait& wait) {
-  return run_before_deadline(wait, {"capture-pane", "-p", "-J", "-t", wait.pane_id});
+  auto captured =
+      run_before_deadline(wait, {"capture-pane", "-p", "-J", "-t", wait.pane_id});
+  // A blank pane still has row terminators. Shutdown can instead end the
+  // command with exit zero and no bytes; keep that out of the saved capture.
+  // https://github.com/tmux/tmux/blob/3.4/client.c (client_dispatch_wait)
+  if (captured.has_value() && captured->has_value() && (**captured).empty()) {
+    return unexpected(CommandFailure{.kind = FailureKind::pipe,
+                                     .delivery = DeliveryStatus::replied,
+                                     .exit_code = 0,
+                                     .diagnostic = "capture-pane returned no output"});
+  }
+  return captured;
 }
 
 // A failed position lookup uses the capture-only fallback.

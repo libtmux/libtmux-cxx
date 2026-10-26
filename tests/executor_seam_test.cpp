@@ -254,9 +254,11 @@ class DyingServerExecutor final : public libtmux::CommandExecutor {
 public:
   DyingServerExecutor() = default;
   DyingServerExecutor(std::string capture_diagnostic,
-                      std::optional<std::string> probe_answer)
+                      std::optional<std::string> probe_answer,
+                      std::optional<std::string> final_capture = std::nullopt)
       : capture_diagnostic_{std::move(capture_diagnostic)},
-        probe_answer_{std::move(probe_answer)} {}
+        probe_answer_{std::move(probe_answer)},
+        final_capture_{std::move(final_capture)} {}
 
   [[nodiscard]] libtmux::expected<std::string, CommandFailure>
   run(const CommandRequest& command, std::optional<std::chrono::milliseconds>,
@@ -266,6 +268,9 @@ public:
     if (argv.front() == "capture-pane") {
       if (captures_++ == 0) {
         return std::string{"booting\n"};
+      }
+      if (captures_ == 2 && final_capture_) {
+        return *final_capture_;
       }
       return libtmux::unexpected(
           CommandFailure{.kind = FailureKind::refused,
@@ -301,6 +306,7 @@ private:
   std::string capture_diagnostic_{
       "no server running on /tmp/gone/socket (running: capture-pane)"};
   std::optional<std::string> probe_answer_;
+  std::optional<std::string> final_capture_;
   mutable std::mutex mutex_;
   mutable int captures_{};
   mutable int probes_{};
@@ -345,6 +351,27 @@ TEST(ExecutorSeam, AWaitEndsAsPaneDiedWhenTheServerExitedUnderTheCapture) {
   EXPECT_TRUE(waited->pane_died);
   EXPECT_EQ(waited->reason, "server exited unexpectedly");
   EXPECT_EQ(executor->probes(), 0) << "the capture's own words were proof enough";
+}
+
+TEST(ExecutorSeam, AWaitDistinguishesAnInterruptedCaptureFromABlankPane) {
+  for (const std::string& reply : {std::string{}, std::string{"\n"}}) {
+    SCOPED_TRACE(reply.empty() ? "interrupted command" : "blank pane");
+    auto executor = std::make_shared<DyingServerExecutor>("server exited unexpectedly",
+                                                          std::string{}, reply);
+    auto server =
+        Server::over(executor, {.implementation = libtmux::ServerImplementation::tmux,
+                                .version = libtmux::Version{.major = 3, .minor = 4}});
+    ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+
+    libtmux::WaitOptions options;
+    options.poll_interval = std::chrono::milliseconds{0};
+    const auto waited = server->wait_for_text("%1", "never printed", options);
+
+    ASSERT_TRUE(waited.has_value()) << waited.error().diagnostic;
+    EXPECT_TRUE(waited->pane_died);
+    EXPECT_FALSE(waited->timed_out);
+    EXPECT_EQ(waited->text, reply.empty() ? "booting\n" : "\n");
+  }
 }
 
 // A capture that fails without naming the server says nothing about the server.
