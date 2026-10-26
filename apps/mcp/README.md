@@ -11,6 +11,8 @@
 
 # libtmux-mcp-server
 
+[![libtmux.org](https://img.shields.io/badge/docs-libtmux.org-0b7285)](https://libtmux.org/en/cxx/)
+
 A [Model Context Protocol](https://modelcontextprotocol.io) server for
 [tmux](https://github.com/tmux/tmux), built on the C++
 [libtmux](../../README.md). It speaks newline-delimited JSON-RPC over stdio and

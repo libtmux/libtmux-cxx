@@ -11,6 +11,8 @@
 
 # tmux-workspace
 
+[![libtmux.org](https://img.shields.io/badge/docs-libtmux.org-0b7285)](https://libtmux.org/en/cxx/)
+
 Load, capture and convert tmuxp-style workspace files from the command line.
 
 </div>

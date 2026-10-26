@@ -11,6 +11,7 @@
   <h1>libtmux for C++</h1>
   <p><strong>Drive tmux from C++: typed, value-semantic control over servers, sessions, windows, and panes.</strong></p>
   <p>
+    <a href="https://libtmux.org/en/cxx/"><img src="https://img.shields.io/badge/docs-libtmux.org-0b7285" alt="libtmux.org"></a>
     <a href="https://github.com/libtmux/libtmux-cxx/actions/workflows/ci.yml"><img src="https://github.com/libtmux/libtmux-cxx/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
     <a href="#requirements--support"><img src="https://img.shields.io/badge/C%2B%2B-23%20%7C%2020-blue.svg" alt="C++23 or C++20"></a>
     <a href="#compatibility"><img src="https://img.shields.io/badge/tmux-3.3a%20%E2%80%93%20master-1BB91F.svg" alt="tmux 3.3a and newer"></a>
