@@ -823,7 +823,7 @@ include(FetchContent)
 FetchContent_Declare(
   libtmux
   GIT_REPOSITORY https://github.com/libtmux/libtmux-cxx.git
-  GIT_TAG        v0.1.0-alpha.13  # or a commit; never a moving branch
+  GIT_TAG        v0.1.0-alpha.14  # or a commit; never a moving branch
 )
 FetchContent_MakeAvailable(libtmux)
 target_link_libraries(your_target PRIVATE libtmux::libtmux)
@@ -831,7 +831,7 @@ target_link_libraries(your_target PRIVATE libtmux::libtmux)
 
 - Embedded this way the library builds alone: its tests, examples and the MCP
   server all default off when it is not the top-level project.
-- `v0.1.0-alpha.13` requires tmux 3.3a and carries the optional `tmux-workspace`
+- `v0.1.0-alpha.14` requires tmux 3.3a and carries the optional `tmux-workspace`
   CLI and saved-layout validation.
 - It also carries the experimental x64 desktop Windows preview for Visual Studio
   2022 and the audited psmux build in its source.

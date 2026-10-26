@@ -9,6 +9,14 @@ was recorded as it landed.
 
 ## Unreleased
 
+## 0.1.0-alpha.14 (2026-10-25)
+
+This alpha rejects borrowing from const temporaries and single-pass ranges.
+These are source-breaking, ABI-compatible changes: keep a named owner alive
+or select an owned result. Boolean fields compose directly with `&&` and `||`,
+and string and boolean fields accept `!=`. Bounded control replies retain the
+exact output prefix when a line exceeds the byte limit.
+
 ### Breaking
 
 - `parse` now rejects const notification temporaries. Source-breaking;
