@@ -978,10 +978,8 @@ CATALOGUE: t.Final = (
     Mutation(
         mutation_id="wait-for-text-capture-joins-wrapped-lines",
         path="src/wait.cpp",
-        find='  return run_before_deadline(wait, {"capture-pane", "-p", "-J", "-t", '
-        "wait.pane_id});",
-        replace='  return run_before_deadline(wait, {"capture-pane", "-p", "-t", '
-        "wait.pane_id});",
+        find='{"capture-pane", "-p", "-J", "-t", wait.pane_id}',
+        replace='{"capture-pane", "-p", "-t", wait.pane_id}',
         target="libtmux_pane_io_test",
         test_regex=r"^libtmux[.]pane[.]io[.]",
         guards="wait_for_text's capture rejoins a line tmux only wrapped for "
