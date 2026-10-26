@@ -346,6 +346,18 @@ TEST(Entity, ListedEntitiesFilterWithoutReachingTmuxAgain) {
   const auto found = first(editors);
   ASSERT_TRUE(found.has_value());
   EXPECT_EQ(found->get().name(), "editor");
+
+  std::string excluded = "editor";
+  const auto others = window::name != excluded;
+  const auto copied = others;
+  excluded[0] = 'x';
+  EXPECT_FALSE(others(found->get()));
+  EXPECT_FALSE(copied(found->get()));
+  EXPECT_EQ(std::ranges::count_if(*windows, others), windows->size() - 1);
+  EXPECT_EQ(std::ranges::count_if(*windows, copied), windows->size() - 1);
+  EXPECT_EQ(std::ranges::count_if(*windows, window::active && window::zoomed), 0);
+  EXPECT_EQ(std::ranges::count_if(*windows, window::active || window::zoomed), 1);
+  EXPECT_EQ(std::ranges::count_if(*windows, window::active != false), 1);
 }
 
 TEST(Entity, PanesAreArrangedByLayoutAndSize) {

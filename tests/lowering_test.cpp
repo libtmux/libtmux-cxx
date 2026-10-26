@@ -62,6 +62,48 @@ TEST(Lowering, BracketsNegationSoASinkNeverCountsOperands) {
   EXPECT_EQ(sink.out, "(not pane_active:true ) ");
 }
 
+TEST(Lowering, BooleanFieldOperatorsKeepTheirTruthTables) {
+  struct Flags {
+    bool active;
+    bool dead;
+  };
+  const libtmux::BoolFieldHandle<Flags> active{
+      {"active", [](const Flags& row) { return row.active; }}};
+  const libtmux::BoolFieldHandle<Flags> dead{
+      {"dead", [](const Flags& row) { return row.dead; }}};
+
+  for (const bool left : {false, true}) {
+    for (const bool right : {false, true}) {
+      const Flags row{left, right};
+      EXPECT_EQ((active && dead)(row), left && right);
+      EXPECT_EQ((active || dead)(row), left || right);
+      EXPECT_EQ((active != false)(row), left);
+      EXPECT_EQ((active != true)(row), !left);
+    }
+  }
+}
+
+TEST(Lowering, FieldOperatorsReuseNodesAndOwnStringOperands) {
+  const auto rendered = [](const libtmux::FilterExpr<Pane>& expr) {
+    TextSink sink;
+    lower(expr, sink);
+    return sink.out;
+  };
+  EXPECT_EQ(rendered(pane::active && pane::dead),
+            "(and pane_active:true pane_dead:true ) ");
+  EXPECT_EQ(rendered(pane::active || pane::dead),
+            "(or pane_active:true pane_dead:true ) ");
+  EXPECT_EQ(rendered(pane::active != false), "pane_active:true ");
+  EXPECT_EQ(rendered(pane::active != true), "pane_active:false ");
+
+  std::string operand = "editor";
+  const auto different = pane::title != operand;
+  const auto copied = different;
+  operand[0] = 'x';
+  EXPECT_EQ(rendered(different), "(not pane_title:eq=editor ) ");
+  EXPECT_EQ(rendered(copied), "(not pane_title:eq=editor ) ");
+}
+
 TEST(Lowering, ARelationCarriesItsChildRatherThanHidingIt) {
   const auto expr =
       libtmux::any_of<Holder>("panes", read_panes, pane::command == "nvim");

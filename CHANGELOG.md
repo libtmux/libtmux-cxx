@@ -25,6 +25,12 @@ was recorded as it landed.
   Before: `auto result = first(input);`
   After: `auto result = first_owned(input);` (likewise `exactly_one_owned`)
 
+### Querying
+
+- Boolean fields compose directly with `&&` and `||`; string and boolean
+  fields accept `!=`. Additive API; expression storage and lowering are
+  unchanged. (#110)
+
 ### Control mode
 
 - `Parser` retains the exact reply prefix when its byte limit cuts a line,

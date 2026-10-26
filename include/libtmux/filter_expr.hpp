@@ -247,6 +247,9 @@ template <typename Entity> struct StringFieldHandle {
   [[nodiscard]] FilterExpr<Entity> operator==(std::string_view operand) const {
     return make(StringOp::equals, operand);
   }
+  [[nodiscard]] FilterExpr<Entity> operator!=(std::string_view operand) const {
+    return !(*this == operand);
+  }
   [[nodiscard]] FilterExpr<Entity> iequals(std::string_view operand) const {
     return make(StringOp::iequals, operand);
   }
@@ -315,6 +318,9 @@ template <typename Entity> struct BoolFieldHandle {
   [[nodiscard]] FilterExpr<Entity> operator==(bool expected) const {
     return FilterExpr<Entity>{typename FilterExpr<Entity>::BoolTest{field, expected}};
   }
+  [[nodiscard]] FilterExpr<Entity> operator!=(bool expected) const {
+    return *this == !expected;
+  }
 };
 
 template <typename Entity>
@@ -372,6 +378,18 @@ template <typename Entity>
 template <typename Entity>
 [[nodiscard]] FilterExpr<Entity> operator!(BoolFieldHandle<Entity> operand) {
   return !FilterExpr<Entity>{operand};
+}
+
+template <typename Entity>
+[[nodiscard]] FilterExpr<Entity> operator&&(BoolFieldHandle<Entity> left,
+                                            BoolFieldHandle<Entity> right) {
+  return FilterExpr<Entity>{left} && FilterExpr<Entity>{right};
+}
+
+template <typename Entity>
+[[nodiscard]] FilterExpr<Entity> operator||(BoolFieldHandle<Entity> left,
+                                            BoolFieldHandle<Entity> right) {
+  return FilterExpr<Entity>{left} || FilterExpr<Entity>{right};
 }
 
 /// The query vocabulary has a namespace of its own, so a caller composing views
