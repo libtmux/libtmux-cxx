@@ -62,6 +62,27 @@ static_assert(!BorrowsExactlyOne<StreamInts&>);
 static_assert(!BorrowsExactlyOne<ProducedInts&>);
 static_assert(!BorrowsExactlyOne<const OwnedTransform>);
 
+template <typename Left, typename Right>
+concept Conjoins = requires(Left left, Right right) { left&& right; };
+
+template <typename Left, typename Right>
+concept Disjoins = requires(Left left, Right right) { left || right; };
+
+template <typename Left, typename Right>
+concept ComparesUnequal = requires(Left left, Right right) { left != right; };
+
+using PaneFlag = decltype(libtmux::pane::active);
+using WindowFlag = decltype(libtmux::window::active);
+
+static_assert(Conjoins<PaneFlag, PaneFlag>);
+static_assert(Disjoins<PaneFlag, PaneFlag>);
+static_assert(!Conjoins<PaneFlag, WindowFlag>);
+static_assert(!Disjoins<PaneFlag, WindowFlag>);
+static_assert(!ComparesUnequal<decltype(libtmux::pane::title), int>);
+static_assert(!ComparesUnequal<PaneFlag, std::string>);
+static_assert(!std::is_convertible_v<PaneFlag, bool>);
+static_assert(!std::is_convertible_v<libtmux::FilterExpr<libtmux::Pane>, bool>);
+
 static_assert(std::is_nothrow_copy_constructible_v<libtmux::AttachCommand>);
 static_assert(std::is_nothrow_move_constructible_v<libtmux::AttachCommand>);
 static_assert(std::is_nothrow_copy_assignable_v<libtmux::AttachCommand>);
@@ -121,6 +142,16 @@ void uses() {
       std::is_same_v<decltype(qualified),
                      decltype(rows | libtmux::matching(libtmux::window::active))>);
   (void)(libtmux::window::active == false);
+  (void)(libtmux::pane::active && libtmux::pane::dead);
+  (void)(libtmux::pane::active || libtmux::pane::dead);
+  (void)(libtmux::pane::title != "editor");
+  (void)(libtmux::pane::active != false);
+  (void)(libtmux::pane::active && (libtmux::pane::title != "editor"));
+  (void)((libtmux::pane::title != "editor") && libtmux::pane::active);
+  (void)(libtmux::pane::active || (libtmux::pane::title != "editor"));
+  (void)((libtmux::pane::title != "editor") || libtmux::pane::active);
+  (void)((libtmux::pane::active && libtmux::pane::dead) ||
+         libtmux::pane::title != "editor");
   // A string field offers string operations.
   (void)libtmux::window::name.starts_with("ed");
   // Framing a named string is fine; only a value that dies at the semicolon

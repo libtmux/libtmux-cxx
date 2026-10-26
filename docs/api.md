@@ -4499,6 +4499,7 @@ Value-semantic filter expressions over explicit snapshots.  An expression owns e
   - [`StringFieldHandle::field`](#libtmux-filter-expr-hpp-stringfieldhandle-field)
   - [`StringFieldHandle::operator()`](#libtmux-filter-expr-hpp-stringfieldhandle-operator)
   - [`StringFieldHandle::operator==`](#libtmux-filter-expr-hpp-stringfieldhandle-operator-2)
+  - [`StringFieldHandle::operator!=`](#libtmux-filter-expr-hpp-stringfieldhandle-operator-3)
   - [`StringFieldHandle::iequals`](#libtmux-filter-expr-hpp-stringfieldhandle-iequals)
   - [`StringFieldHandle::contains`](#libtmux-filter-expr-hpp-stringfieldhandle-contains)
   - [`StringFieldHandle::starts_with`](#libtmux-filter-expr-hpp-stringfieldhandle-starts-with)
@@ -4517,6 +4518,7 @@ Value-semantic filter expressions over explicit snapshots.  An expression owns e
   - [`BoolFieldHandle::operator()`](#libtmux-filter-expr-hpp-boolfieldhandle-operator)
   - [`BoolFieldHandle::operatorFilterExpr<Entity>`](#libtmux-filter-expr-hpp-boolfieldhandle-operatorfilterexpr-entity)
   - [`BoolFieldHandle::operator==`](#libtmux-filter-expr-hpp-boolfieldhandle-operator-2)
+  - [`BoolFieldHandle::operator!=`](#libtmux-filter-expr-hpp-boolfieldhandle-operator-3)
 - [`Free symbols`](#libtmux-filter-expr-hpp-free-symbols)
   - [`operator&&`](#libtmux-filter-expr-hpp-free-symbols-operator)
   - [`operator||`](#libtmux-filter-expr-hpp-free-symbols-operator-2)
@@ -4526,6 +4528,8 @@ Value-semantic filter expressions over explicit snapshots.  An expression owns e
   - [`operator||`](#libtmux-filter-expr-hpp-free-symbols-operator-6)
   - [`operator||`](#libtmux-filter-expr-hpp-free-symbols-operator-7)
   - [`operator!`](#libtmux-filter-expr-hpp-free-symbols-operator-8)
+  - [`operator&&`](#libtmux-filter-expr-hpp-free-symbols-operator-9)
+  - [`operator||`](#libtmux-filter-expr-hpp-free-symbols-operator-10)
   - [`tmuxq::matching`](#libtmux-filter-expr-hpp-free-symbols-tmuxq-matching)
   - [`tmuxq::matching`](#libtmux-filter-expr-hpp-free-symbols-tmuxq-matching-2)
   - [`matching`](#libtmux-filter-expr-hpp-free-symbols-matching)
@@ -4927,6 +4931,13 @@ StringField<Entity> field;
 [[nodiscard]] FilterExpr<Entity> operator==(std::string_view operand) const;
 ```
 
+<a id="libtmux-filter-expr-hpp-stringfieldhandle-operator-3"></a>
+#### `StringFieldHandle::operator!=`
+
+```cpp
+[[nodiscard]] FilterExpr<Entity> operator!=(std::string_view operand) const;
+```
+
 <a id="libtmux-filter-expr-hpp-stringfieldhandle-iequals"></a>
 #### `StringFieldHandle::iequals`
 
@@ -5057,6 +5068,13 @@ BoolField<Entity> field;
 [[nodiscard]] FilterExpr<Entity> operator==(bool expected) const;
 ```
 
+<a id="libtmux-filter-expr-hpp-boolfieldhandle-operator-3"></a>
+#### `BoolFieldHandle::operator!=`
+
+```cpp
+[[nodiscard]] FilterExpr<Entity> operator!=(bool expected) const;
+```
+
 <a id="libtmux-filter-expr-hpp-free-symbols"></a>
 ### `Free symbols`
 
@@ -5114,6 +5132,20 @@ template <typename Entity> [[nodiscard]] FilterExpr<Entity> operator||(BoolField
 
 ```cpp
 template <typename Entity> [[nodiscard]] FilterExpr<Entity> operator!(BoolFieldHandle<Entity> operand);
+```
+
+<a id="libtmux-filter-expr-hpp-free-symbols-operator-9"></a>
+#### `operator&&`
+
+```cpp
+template <typename Entity> [[nodiscard]] FilterExpr<Entity> operator&&(BoolFieldHandle<Entity> left, BoolFieldHandle<Entity> right);
+```
+
+<a id="libtmux-filter-expr-hpp-free-symbols-operator-10"></a>
+#### `operator||`
+
+```cpp
+template <typename Entity> [[nodiscard]] FilterExpr<Entity> operator||(BoolFieldHandle<Entity> left, BoolFieldHandle<Entity> right);
 ```
 
 <a id="libtmux-filter-expr-hpp-free-symbols-tmuxq-matching"></a>
