@@ -32,9 +32,7 @@ enum class VersionError { missing_prefix, malformed };
 /// A tmux version, ordered so a feature gate can compare against a literal.
 ///
 /// A `next-` build and a release candidate order before the release they lead
-/// to, so a gate written against `3.8` does not accept `3.8-rc2`. A behaviour
-/// that candidates already have is gated at the earliest build measured to
-/// have it, as `{.major = 3, .minor = 8, .candidate = 2}` for JSON layouts.
+/// to, so a gate written against `3.8` does not accept `3.8-rc2`.
 struct Version {
   std::uint32_t major{};
   std::uint32_t minor{};

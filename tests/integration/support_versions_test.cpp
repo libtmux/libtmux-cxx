@@ -86,27 +86,8 @@ TEST(SupportVersions, DevelopmentBuildsOrderBelowTheReleaseTheyLeadTo) {
   EXPECT_LT(parsed("next-3.8"), parsed("3.8-rc"));
   EXPECT_GT(parsed("3.8-rc"), parsed("3.7c"));
   EXPECT_TRUE(libtmux::is_supported(parsed("3.4-rc")));
-  // The JSON layout gate is the earliest candidate measured to send it.
-  const Version json_layouts{.major = 3, .minor = 8, .candidate = 2};
-  EXPECT_TRUE(parsed("3.8-rc2") >= json_layouts);
-  EXPECT_TRUE(parsed("3.8-rc3") >= json_layouts);
-  EXPECT_TRUE(parsed("3.8") >= json_layouts);
-  EXPECT_FALSE(parsed("3.8-rc") >= json_layouts);
-  EXPECT_FALSE(parsed("next-3.8") >= json_layouts);
-  EXPECT_FALSE(parsed("3.7c") >= json_layouts);
-}
-
-TEST(SupportVersions, ACandidateSkipAdmitsTheEarliestBuildThatHasTheCapability) {
-  using libtmux::test::lacks_tmux;
-  EXPECT_FALSE(lacks_tmux(parsed("3.8-rc2"), 3, 8, 2));
-  EXPECT_FALSE(lacks_tmux(parsed("3.8-rc3"), 3, 8, 2));
-  EXPECT_FALSE(lacks_tmux(parsed("3.8"), 3, 8, 2));
-  EXPECT_TRUE(lacks_tmux(parsed("3.8-rc"), 3, 8, 2));
-  EXPECT_TRUE(lacks_tmux(parsed("next-3.8"), 3, 8, 2));
-  EXPECT_TRUE(lacks_tmux(parsed("3.7c"), 3, 8, 2));
-  // Without a candidate the gate is the release, and a candidate ranks below it.
-  EXPECT_TRUE(lacks_tmux(parsed("3.8-rc2"), 3, 8));
-  EXPECT_FALSE(lacks_tmux(parsed("3.8"), 3, 8));
+  EXPECT_TRUE(libtmux::test::lacks_tmux(parsed("next-3.9"), 3, 9));
+  EXPECT_FALSE(libtmux::test::lacks_tmux(parsed("3.9"), 3, 9));
 }
 
 TEST(SupportVersions, TheCanonicalOrderingHoldsFromDevelopmentBuildToPatchLetter) {

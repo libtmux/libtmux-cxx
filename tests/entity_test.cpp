@@ -473,7 +473,7 @@ TEST(Entity, SelectLayoutGatesMirroredPresetsAndJsonByVersion) {
 
   const auto json_attempt =
       window->select_layout(R"({"V":2,"L":{"t":"p","w":1,"h":1,"x":0,"y":0,"i":0}})");
-  if (*version < libtmux::Version{.major = 3, .minor = 8, .candidate = 2}) {
+  if (*version < libtmux::Version{.major = 3, .minor = 8}) {
     ASSERT_FALSE(json_attempt.has_value());
     EXPECT_EQ(json_attempt.error().kind, FailureKind::validation);
   } else if (!json_attempt.has_value()) {

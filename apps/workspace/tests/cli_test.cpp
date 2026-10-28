@@ -1253,7 +1253,7 @@ TEST(WorkspaceCliTmux, ErrorCodesMatchTheSharedLowerSnakeCaseVocabulary) {
   const auto version = server->tmux_version();
   ASSERT_TRUE(version.has_value());
   const auto saved = invoke({"load", "v2.yaml", "-d", "-S", socket, "--json"});
-  if (*version < libtmux::Version{.major = 3, .minor = 8, .candidate = 2}) {
+  if (*version < libtmux::Version{.major = 3, .minor = 8}) {
     EXPECT_NE(saved.code, 0) << saved.out;
     record = Json::parse(saved.err);
     EXPECT_EQ(record.at("code"), "tmux_failed") << record.dump();

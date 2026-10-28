@@ -181,6 +181,12 @@ TEST(CapabilitiesRegistry, ReleasesAreSpelledTheWayTmuxPrintsThem) {
   }
 }
 
+TEST(CapabilitiesRegistry, JsonLayoutsStartAtTheFirstReleaseThatAcceptsThem) {
+  const auto& json = caps::capability(caps::CapabilityId::layout_json);
+  EXPECT_EQ(json.since.version, (libtmux::Version{.major = 3, .minor = 8}));
+  EXPECT_EQ(json.since.text, "3.8");
+}
+
 TEST(CapabilitiesRegistry, ARefusalNamesItsError) {
   for (const auto& entry : caps::all_capabilities()) {
     EXPECT_EQ(entry.handling == caps::Handling::refuse, !entry.error.empty())

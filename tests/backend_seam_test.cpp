@@ -308,8 +308,7 @@ constexpr std::string_view json_pane =
     R"({"V":2,"L":{"t":"p","w":80,"h":24,"x":0,"y":0,"i":0}})";
 
 TEST(BackendSeam, JsonLayoutsKeepTheirPayloadAndUseTheSelectedDaemonVersion) {
-  for (const auto* version :
-       {"3.7c", "next-3.8", "3.8-rc", "3.8-rc2", "3.8", "next-3.9", "3.9"}) {
+  for (const auto* version : {"3.7c", "next-3.8", "3.8", "next-3.9", "3.9"}) {
     SCOPED_TRACE(version);
     auto backend = std::make_shared<ScriptedBackend>(
         std::vector<std::string>{window_row("@3", "work", "$2"), ""},
@@ -318,10 +317,9 @@ TEST(BackendSeam, JsonLayoutsKeepTheirPayloadAndUseTheSelectedDaemonVersion) {
     ASSERT_TRUE(windows.has_value());
     backend->issued.clear();
     const auto selected = windows->front().select_layout(json_pane);
-    // 3.8-rc2 is the earliest build that sends JSON layouts.
-    const bool supported = std::string_view{version} != "3.7c" &&
-                           std::string_view{version} != "next-3.8" &&
-                           std::string_view{version} != "3.8-rc";
+    // 3.8 is the first release that sends JSON layouts.
+    const std::string_view named{version};
+    const bool supported = named != "3.7c" && named != "next-3.8";
     ASSERT_EQ(selected.has_value(), supported);
     // The daemon is asked for its version, never with a command that fires a
     // user's hooks.
@@ -329,8 +327,12 @@ TEST(BackendSeam, JsonLayoutsKeepTheirPayloadAndUseTheSelectedDaemonVersion) {
     ASSERT_EQ(backend->issued.size(), supported ? 1U : 0U);
     if (supported)
       EXPECT_EQ(backend->issued.back().back(), json_pane);
-    else
+    else {
       EXPECT_EQ(selected.error().delivery, libtmux::DeliveryStatus::not_started);
+      EXPECT_NE(selected.error().diagnostic.find("tmux 3.8 or newer"),
+                std::string::npos)
+          << selected.error().diagnostic;
+    }
   }
 }
 
@@ -351,20 +353,18 @@ TEST(BackendSeam, JsonLayoutBatchKeepsTheIndexAndTransportFailure) {
   const std::array requests{libtmux::LayoutRequest{"tiled"},
                             libtmux::LayoutRequest{json_pane},
                             libtmux::LayoutRequest{"even-h"}};
-  for (const auto* version :
-       {"3.7c", "next-3.8", "3.8-rc", "3.8-rc2", "3.8", "next-3.9"}) {
+  for (const auto* version : {"3.7c", "next-3.8", "3.8", "next-3.9", "3.9"}) {
     SCOPED_TRACE(version);
     auto backend = std::make_shared<ScriptedBackend>(std::vector<std::string>{},
                                                      version_of(version));
     const auto checked =
         libtmux::detail::server_over(backend).validate_layouts(requests);
-    const bool supported = std::string_view{version} == "3.8-rc2" ||
-                           std::string_view{version} == "3.8" ||
-                           std::string_view{version} == "next-3.9";
+    const std::string_view named{version};
+    const bool supported = named == "3.8" || named == "next-3.9" || named == "3.9";
     EXPECT_EQ(checked.has_value(), supported);
     if (!checked) {
       EXPECT_EQ(checked.error().index, 1U);
-      EXPECT_NE(checked.error().cause.diagnostic.find("tmux 3.8-rc2 or newer"),
+      EXPECT_NE(checked.error().cause.diagnostic.find("tmux 3.8 or newer"),
                 std::string::npos)
           << checked.error().cause.diagnostic;
     }

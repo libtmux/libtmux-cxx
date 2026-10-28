@@ -341,14 +341,13 @@ Whether two paths name the same socket.  Not `std::filesystem::equivalent`: [fs.
 <a id="libtmux-testing-capabilities-hpp"></a>
 ## `libtmux/testing/capabilities.hpp`
 
-GoogleTest skips for behaviour that belongs to tmux rather than to this library, so a release that cannot provide a capability is reported as skipped rather than failing or going untested.  `LIBTMUX_REQUIRES_TMUX` is for a capability present from some release onwards, and `LIBTMUX_REQUIRES_TMUX_CANDIDATE` for one a release candidate already has. `LIBTMUX_SKIP_TMUX_DEFECT` is for a defect fixed in a later release, where a minimum would wrongly excuse everything above it — tmux 3.4 escapes a round-tripped option that 3.3a and 3.5 both get right.  The only header here that names a test framework. Suites using another one take `tmux_version.hpp` and write their own skip.
+GoogleTest skips for behaviour that belongs to tmux rather than to this library, so a release that cannot provide a capability is reported as skipped rather than failing or going untested.  `LIBTMUX_REQUIRES_TMUX` is for a capability present from some release onwards. `LIBTMUX_SKIP_TMUX_DEFECT` is for a defect fixed in a later release, where a minimum would wrongly excuse everything above it — tmux 3.4 escapes a round-tripped option that 3.3a and 3.5 both get right.  The only header here that names a test framework. Suites using another one take `tmux_version.hpp` and write their own skip.
 
 **Symbols:**
 
 - [`Free symbols`](#libtmux-testing-capabilities-hpp-free-symbols)
   - [`lacks_tmux`](#libtmux-testing-capabilities-hpp-free-symbols-lacks-tmux)
   - [`LIBTMUX_REQUIRES_TMUX`](#libtmux-testing-capabilities-hpp-free-symbols-libtmux-requires-tmux)
-  - [`LIBTMUX_REQUIRES_TMUX_CANDIDATE`](#libtmux-testing-capabilities-hpp-free-symbols-libtmux-requires-tmux-candidate)
   - [`LIBTMUX_SKIP_TMUX_DEFECT`](#libtmux-testing-capabilities-hpp-free-symbols-libtmux-skip-tmux-defect)
 
 <a id="libtmux-testing-capabilities-hpp-free-symbols"></a>
@@ -358,9 +357,9 @@ GoogleTest skips for behaviour that belongs to tmux rather than to this library,
 #### `lacks_tmux`
 
 ```cpp
-[[nodiscard]] constexpr bool lacks_tmux(const Version& running, std::uint32_t major, std::uint32_t minor, std::uint16_t candidate = 0) noexcept;
+[[nodiscard]] constexpr bool lacks_tmux(const Version& running, std::uint32_t major, std::uint32_t minor) noexcept;
 ```
-Whether `running` ranks below `major.minor`, or below its candidate number `candidate` when that is not 0. A `next-` build and a release candidate rank below the release they lead to.
+Whether `running` ranks below the release `major.minor`. A `next-` build ranks below the release it leads to.
 
 <a id="libtmux-testing-capabilities-hpp-free-symbols-libtmux-requires-tmux"></a>
 #### `LIBTMUX_REQUIRES_TMUX`
@@ -368,15 +367,7 @@ Whether `running` ranks below `major.minor`, or below its candidate number `cand
 ```cpp
 #define LIBTMUX_REQUIRES_TMUX(major_version, minor_version, capability) /* implementation omitted */
 ```
-Skip unless tmux is at least the release `major.minor`, naming what is missing below it. A release candidate or `next-` build of `major.minor` ranks below it and is skipped; use `LIBTMUX_REQUIRES_TMUX_CANDIDATE` for a capability that candidates already have.
-
-<a id="libtmux-testing-capabilities-hpp-free-symbols-libtmux-requires-tmux-candidate"></a>
-#### `LIBTMUX_REQUIRES_TMUX_CANDIDATE`
-
-```cpp
-#define LIBTMUX_REQUIRES_TMUX_CANDIDATE(major_version, minor_version, candidate_number, capability) /* implementation omitted */
-```
-Skip unless tmux is at least `major.minor-rc<candidate>`, the earliest build measured to have the capability. Earlier candidates and `next-` builds are skipped, and every later candidate and the release run.
+Skip unless tmux is at least the release `major.minor`, naming what is missing below it. A `next-` build of `major.minor` ranks below it and is skipped.
 
 <a id="libtmux-testing-capabilities-hpp-free-symbols-libtmux-skip-tmux-defect"></a>
 #### `LIBTMUX_SKIP_TMUX_DEFECT`

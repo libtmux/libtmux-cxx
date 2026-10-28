@@ -219,7 +219,14 @@ TEST(LiteralLayout, ABadLayoutIsRefusedOnEveryRelease) {
 TEST(LiteralLayout, AJsonLayoutNeedsTheReleaseThatReadsIt) {
   const std::string json = R"({"V":2,"L":{"t":"p","w":80,"h":24,"x":0,"y":0,"i":0}})";
   EXPECT_TRUE(refusal("3.7", {"select-layout", json}));
-  EXPECT_FALSE(refusal("3.8-rc2", {"select-layout", json}));
+  const auto refused = refusal("3.7c", {"select-layout", json});
+  ASSERT_TRUE(refused.has_value());
+  EXPECT_EQ(refused->kind, libtmux::FailureKind::validation);
+  EXPECT_EQ(refused->delivery, libtmux::DeliveryStatus::not_started);
+  EXPECT_NE(refused->diagnostic.find("tmux 3.8 or newer"), std::string::npos)
+      << refused->diagnostic;
+  EXPECT_FALSE(refusal("3.8", {"select-layout", json}));
+  EXPECT_FALSE(refusal("3.9", {"select-layout", json}));
 }
 
 TEST(LiteralNames, SeparatorsAreRefusedOnExactly37InEveryCommand) {

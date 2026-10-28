@@ -9,6 +9,20 @@ was recorded as it landed.
 
 ## Unreleased
 
+### Window
+
+- `Window::select_layout`, a literal `select-layout`,
+  `Server::validate_layouts` and the MCP `select_layout` tool need tmux 3.8
+  for a JSON layout, the first release that accepts one. An older server is
+  refused with `FailureKind::validation` before dispatch, saying "JSON saved
+  layouts require tmux 3.8 or newer"; upgrade to tmux 3.8 to apply one.
+  Installed releases behave as before; only the refusal text changes, and
+  it now names 3.8. (#116)
+
+  Testing, source-breaking: `libtmux::test::lacks_tmux` no longer takes a
+  fourth argument, and the second skip macro beside `LIBTMUX_REQUIRES_TMUX`
+  is removed; gate a test on the release with `LIBTMUX_REQUIRES_TMUX`.
+
 ## 0.1.0-alpha.14 (2026-10-25)
 
 This alpha rejects borrowing from const temporaries and single-pass ranges.

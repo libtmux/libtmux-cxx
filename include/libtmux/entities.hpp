@@ -613,7 +613,7 @@ public:
   /// JSON and carries each pane's id. On tmux 3.7 and earlier the classic
   /// layout string restores the shape but can rotate which pane lands in
   /// which cell (measured against raw tmux; not a choice this library
-  /// makes). A JSON layout is refused before 3.8-rc2, the first build that
+  /// makes). A JSON layout is refused before 3.8, the first release that
   /// sends one, and a mirrored preset before 3.5.
   ///
   /// Anything not shaped like one of those — a leading `-`, a name tmux

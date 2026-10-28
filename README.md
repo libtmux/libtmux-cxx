@@ -1128,7 +1128,7 @@ release that provides it:
 | tmux 3.4 | `%message` delivered to an attached control client |
 | tmux 3.4 | notification-shaped command output kept in the block body |
 | tmux 3.6 | The created-window report when breaking a window's only pane |
-| tmux 3.8-rc2 | JSON saved layouts, `{"V":2,...`; `3.8-rc` is below the gate |
+| tmux 3.8 | JSON saved layouts, `{"V":2,...` |
 
 Two are tmux defects that a later release fixed, so the affected window is
 closed at both ends:
@@ -1159,7 +1159,7 @@ for anything else. The daemon decides, not the client executable.
 | `Buffer::remove`, a literal `delete-buffer -b` or `set-buffer -b -n`, the MCP `paste_text` staging buffer | 3.4 | `FailureKind::unsupported`, before any buffer is touched ([why](docs/compatibility.md#named-buffers)) | Qualified |
 | `:` or `.` in session and window names, typed or literal | not exactly 3.7 | `FailureKind::validation`, before dispatch ([why](docs/compatibility.md#names-with-a-colon-or-a-period)) | Qualified |
 | Mirrored `main-*` presets, typed or in a literal `select-layout` | 3.5 | `FailureKind::validation`, before dispatch | Qualified |
-| JSON layouts, typed or in a literal `select-layout` | 3.8-rc2 | `FailureKind::validation`, before dispatch | Qualified |
+| JSON layouts, typed or in a literal `select-layout` | 3.8 | `FailureKind::validation`, before dispatch | Qualified |
 | A layout string tmux cannot read, typed or literal | never sent | `FailureKind::validation` on every release, before dispatch ([why](docs/compatibility.md#unreadable-layout-strings)) | Qualified |
 | A literal `refresh-client -l`, under any alias or unique prefix | 3.6a | `FailureKind::unsupported`, before dispatch; no typed call ([why](docs/compatibility.md#clipboard-query)) | Qualified |
 | A literal `break-pane` without `-n`, through `Server::run`, a batch or `Connection::execute` | not exactly 3.7 | `FailureKind::validation`, in any spelling and in a `;` list; `Pane::break_out` names the window itself ([why](docs/compatibility.md#break-pane)) | Qualified on 3.7 |
