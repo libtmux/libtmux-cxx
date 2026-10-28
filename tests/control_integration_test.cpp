@@ -3,6 +3,7 @@
 #include "libtmux/server.hpp"
 
 #include "spawn_descriptors.hpp"
+#include "support_capabilities.hpp"
 
 #include "libtmux/testing/capabilities.hpp"
 #include "libtmux/testing/scoped_server.hpp"
@@ -52,6 +53,13 @@
 namespace {
 
 using namespace std::chrono_literals;
+
+/// The first release whose layout strings may be JSON, from the registry.
+[[nodiscard]] libtmux::Version json_layout_floor() {
+  return libtmux::support::capabilities::capability(
+             libtmux::support::capabilities::CapabilityId::layout_json)
+      .since.version;
+}
 using libtmux::Connection;
 using libtmux::ConnectionOptions;
 using libtmux::ControlCommand;
@@ -663,7 +671,7 @@ TEST(ControlModeConnection, LayoutChangePayloadAgreesWithAPlainSnapshotOn38Plus)
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
   const auto version = server->tmux_version();
   ASSERT_TRUE(version.has_value()) << version.error().diagnostic;
-  if (*version < libtmux::Version{.major = 3, .minor = 8, .candidate = 2}) {
+  if (*version < json_layout_floor()) {
     GTEST_SKIP() << "the JSON layout form this compares needs tmux 3.8+";
   }
 
@@ -718,7 +726,7 @@ TEST(ControlModeConnection, LayoutContainsPaneAnswersAfterTheObservedPaneIsKille
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
   const auto version = server->tmux_version();
   ASSERT_TRUE(version.has_value()) << version.error().diagnostic;
-  if (*version < libtmux::Version{.major = 3, .minor = 8, .candidate = 2}) {
+  if (*version < json_layout_floor()) {
     GTEST_SKIP() << "the JSON layout this answers from needs tmux 3.8+";
   }
 

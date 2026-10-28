@@ -2351,6 +2351,16 @@ resolve_session(const Server& server, std::string_view target) {
       },
       "Make one pane active.");
 
+  // The tool table keeps views of its descriptions, so this one outlives it.
+  static const std::string select_layout_description =
+      "Replace the pane layout of one window. Names and mirrored layouts follow "
+      "the selected daemon version. Saved layouts accept v1 checksums and v2 JSON; "
+      "v2 requires tmux " +
+      std::string{libtmux::support::capabilities::capability(
+                      libtmux::support::capabilities::CapabilityId::layout_json)
+                      .since.text} +
+      " or newer.";
+
   manage(
       "select_layout", "Select a tmux layout",
       {field("windowId", "Stable window ID.", InputSink::tmux_lookup, true,
@@ -2370,9 +2380,7 @@ resolve_session(const Server& server, std::string_view target) {
         return answer.has_value() ? changed("window_id", window->id().value())
                                   : failure(answer.error());
       },
-      "Replace the pane layout of one window. Names and mirrored layouts follow "
-      "the selected daemon version. Saved layouts accept v1 checksums and v2 JSON; "
-      "v2 requires tmux 3.8-rc2 or newer.");
+      select_layout_description);
 
   manage(
       "resize_window", "Resize a tmux window",

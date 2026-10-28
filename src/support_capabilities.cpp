@@ -21,8 +21,7 @@ constexpr Release kTmux34{Version{.major = 3, .minor = 4}, "3.4"};
 constexpr Release kTmux35{Version{.major = 3, .minor = 5}, "3.5"};
 constexpr Release kTmux36a{Version{.major = 3, .minor = 6, .revision = 1}, "3.6a"};
 constexpr Release kTmux37{Version{.major = 3, .minor = 7}, "3.7"};
-constexpr Release kTmux38Rc2{Version{.major = 3, .minor = 8, .candidate = 2},
-                             "3.8-rc2"};
+constexpr Release kTmux38{Version{.major = 3, .minor = 8}, "3.8"};
 
 constexpr std::array<std::string_view, 4> kControlApis{
     "libtmux::Connection::connect", "libtmux::Server::control",
@@ -84,7 +83,7 @@ constexpr std::array kCapabilities{
         .id = "layout-json",
         .name = "JSON layout strings",
         .summary = "Apply a layout saved in the JSON form tmux reports.",
-        .since = kTmux38Rc2,
+        .since = kTmux38,
         .handling = Handling::refuse,
         .error = kCommandFailure,
         .apis = kLayoutApis,

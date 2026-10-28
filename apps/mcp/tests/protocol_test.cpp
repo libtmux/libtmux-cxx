@@ -800,7 +800,7 @@ TEST_F(McpProtocol, JsonLayoutSelectionPreservesFloatingPanesAndKeeperState) {
   const auto server = connect_server();
   const auto version = server.tmux_version();
   ASSERT_TRUE(version.has_value());
-  if (*version < libtmux::Version{.major = 3, .minor = 8, .candidate = 2})
+  if (*version < libtmux::Version{.major = 3, .minor = 8})
     GTEST_SKIP() << "v2 layouts and floating panes require tmux 3.8";
   const auto session = server.session("mcp");
   ASSERT_TRUE(session.has_value());
@@ -838,6 +838,50 @@ TEST_F(McpProtocol, JsonLayoutSelectionPreservesFloatingPanesAndKeeperState) {
   ASSERT_TRUE(retained.has_value());
   EXPECT_EQ(retained->layout(), keeper_window->layout());
   EXPECT_EQ(retained->id(), keeper_window->id());
+}
+
+TEST_F(McpProtocol, SelectLayoutRefusesAJsonLayoutBelowTheReleaseThatReadsIt) {
+  const auto server = connect_server();
+  const auto version = server.tmux_version();
+  ASSERT_TRUE(version.has_value());
+  if (*version >= libtmux::Version{.major = 3, .minor = 8})
+    GTEST_SKIP() << "tmux 3.8 or newer accepts a JSON layout";
+  const auto session = server.session("mcp");
+  ASSERT_TRUE(session.has_value());
+  const auto window = session->active_window();
+  ASSERT_TRUE(window.has_value());
+  const std::string before{window->layout()};
+  const auto messages = converse_ready(
+      socket(),
+      {call("select_layout",
+            {{"windowId", window->id().value()},
+             {"layout", R"({"V":2,"L":{"t":"p","w":80,"h":24,"x":0,"y":0,"i":0}})"}},
+            1)});
+  const auto answer = require_response(messages, 1);
+  ASSERT_TRUE(answer.contains("result")) << answer.dump();
+  EXPECT_TRUE(answer["result"]["isError"].get<bool>()) << answer.dump();
+  EXPECT_NE(answer["result"]["content"][0]["text"].get<std::string>().find(
+                "tmux 3.8 or newer"),
+            std::string::npos)
+      << answer.dump();
+  const auto after = window->refresh();
+  ASSERT_TRUE(after.has_value());
+  EXPECT_EQ(after->layout(), before);
+}
+
+TEST_F(McpProtocol, SelectLayoutDescriptionNamesTheJsonLayoutFloor) {
+  const auto messages = converse_ready(
+      socket(), {json{{"jsonrpc", "2.0"}, {"id", 1}, {"method", "tools/list"}}});
+  const json* listed = response(messages, 1);
+  ASSERT_NE(listed, nullptr);
+  const json* described = nullptr;
+  for (const auto& tool : (*listed)["result"]["tools"])
+    if (tool["name"] == "select_layout")
+      described = &tool;
+  ASSERT_NE(described, nullptr);
+  EXPECT_NE((*described)["description"].get<std::string>().find("tmux 3.8 or newer"),
+            std::string::npos)
+      << (*described)["description"];
 }
 
 TEST_F(McpProtocol, PublishesTheEffectiveCrossPortCatalog) {

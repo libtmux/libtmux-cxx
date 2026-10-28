@@ -703,7 +703,7 @@ CommandFailure cause;
 ```cpp
 [[nodiscard]] expected<void, CommandFailure> validate_layout(std::string_view layout, std::size_t minimum_panes = 1);
 ```
-Check names, v1 saved-layout checksum, v1/v2 tree grammar and minimum cell count without I/O. Names must be valid on at least one supported tmux version; Server::validate_layouts resolves version-dependent names and requires tmux 3.8-rc2 or newer for v2 JSON layouts. Saved input, including floating-pane metadata, is retained unchanged. The v2 reader follows tmux's restricted JSON syntax. Geometry and resizing remain tmux's responsibility. Empty layouts are invalid.
+Check names, v1 saved-layout checksum, v1/v2 tree grammar and minimum cell count without I/O. Names must be valid on at least one supported tmux version; Server::validate_layouts resolves version-dependent names and requires tmux 3.8 or newer for v2 JSON layouts. Saved input, including floating-pane metadata, is retained unchanged. The v2 reader follows tmux's restricted JSON syntax. Geometry and resizing remain tmux's responsibility. Empty layouts are invalid.
 
 <a id="libtmux-async-hpp"></a>
 ## `libtmux/async.hpp`
@@ -2596,7 +2596,7 @@ How to address this window, and the reason a window id alone will not do.  The s
 ```cpp
 [[nodiscard]] expected<void, CommandFailure> select_layout(std::string_view layout) const;
 ```
-Rearrange the panes. tmux names five layouts, plus two mirrored ones on tmux 3.5+, and also accepts the layout description `layout()` returns.  Restoring one exactly — the same pane back at the same position, not only the same shape — holds on tmux 3.8+, where the saved string is JSON and carries each pane's id. On tmux 3.7 and earlier the classic layout string restores the shape but can rotate which pane lands in which cell (measured against raw tmux; not a choice this library makes). A JSON layout is refused before 3.8-rc2, the first build that sends one, and a mirrored preset before 3.5.  Anything not shaped like one of those — a leading `-`, a name tmux does not know, or an incomplete layout string — is refused before reaching tmux rather than passed through: on tmux 3.3 and 3.3a, that shape crashes the server outright rather than being refused.
+Rearrange the panes. tmux names five layouts, plus two mirrored ones on tmux 3.5+, and also accepts the layout description `layout()` returns.  Restoring one exactly — the same pane back at the same position, not only the same shape — holds on tmux 3.8+, where the saved string is JSON and carries each pane's id. On tmux 3.7 and earlier the classic layout string restores the shape but can rotate which pane lands in which cell (measured against raw tmux; not a choice this library makes). A JSON layout is refused before 3.8, the first release that sends one, and a mirrored preset before 3.5.  Anything not shaped like one of those — a leading `-`, a name tmux does not know, or an incomplete layout string — is refused before reaching tmux rather than passed through: on tmux 3.3 and 3.3a, that shape crashes the server outright rather than being refused.
 
 <a id="libtmux-entities-hpp-window-resize"></a>
 #### `Window::resize`
@@ -7969,7 +7969,7 @@ enum class VersionError;
 <a id="libtmux-version-hpp-version"></a>
 ### `Version`
 
-A tmux version, ordered so a feature gate can compare against a literal.  A `next-` build and a release candidate order before the release they lead to, so a gate written against `3.8` does not accept `3.8-rc2`. A behaviour that candidates already have is gated at the earliest build measured to have it, as `{.major = 3, .minor = 8, .candidate = 2}` for JSON layouts.
+A tmux version, ordered so a feature gate can compare against a literal.  A `next-` build and a release candidate order before the release they lead to, so a gate written against `3.8` does not accept `3.8-rc2`.
 
 ```cpp
 struct Version;

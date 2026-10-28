@@ -135,7 +135,7 @@ TEST(WindowLayout, MalformedLayoutsLeaveTheRetainedServerUnchanged) {
 TEST(WindowLayout, JsonSavedLayoutsPreserveFloatingPanesAndRetainedSessions) {
   auto fixture = libtmux::test::ScopedTmuxServer::start();
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
-  LIBTMUX_REQUIRES_TMUX_CANDIDATE(3, 8, 2, "v2 layouts and floating panes");
+  LIBTMUX_REQUIRES_TMUX(3, 8, "v2 layouts and floating panes");
   const Server server = connect(*fixture);
   const auto session = server.session(fixture->session_name());
   ASSERT_TRUE(session.has_value());
@@ -186,7 +186,7 @@ TEST(WindowLayout, JsonSavedLayoutsRefuseOlderDaemonsBeforeMutation) {
   ASSERT_TRUE(server.has_value());
   const auto version = server->tmux_version();
   ASSERT_TRUE(version.has_value());
-  if (*version >= libtmux::Version{.major = 3, .minor = 8, .candidate = 2})
+  if (*version >= libtmux::Version{.major = 3, .minor = 8})
     GTEST_SKIP() << "requires a daemon without v2 layouts";
   const auto session = server->session(fixture->session_name());
   ASSERT_TRUE(session.has_value());

@@ -23,7 +23,7 @@ struct LayoutFailure {
 /// Check names, v1 saved-layout checksum, v1/v2 tree grammar and minimum cell count
 /// without I/O. Names must be valid on at least one supported tmux version;
 /// Server::validate_layouts resolves version-dependent names and requires tmux
-/// 3.8-rc2 or newer for v2 JSON layouts. Saved input, including
+/// 3.8 or newer for v2 JSON layouts. Saved input, including
 /// floating-pane metadata, is retained unchanged. The v2 reader follows tmux's
 /// restricted JSON syntax. Geometry and resizing remain tmux's responsibility. Empty
 /// layouts are invalid.
