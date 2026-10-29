@@ -60,6 +60,10 @@ tmux, and agents.
 
 - tmux releases below 3.3a are refused with
   [`FailureKind::unsupported`][ref-failurekind] before a command has any effect.
+- tmux release candidates are not supported: a feature can require one only
+  until its release ships, and a candidate such as `X.Y-rcN` parses and ranks
+  below `X.Y`. See
+  [Release candidates](https://libtmux.org/en/tmux/guides/tmux-support/#release-candidates).
 - The library and its examples need POSIX tmux; the
   [Windows preview](#windows-through-psmux) is read-mostly.
 - Child launches do not inherit unrelated descriptors; the

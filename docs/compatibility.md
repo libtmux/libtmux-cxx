@@ -11,6 +11,11 @@ tmux 3.3a and newer. The floor is the complete release: tmux 3.3 is below it.
 `3.8-rc2` precede `3.8`. CI builds and tests pinned compatibility cells from
 3.3a through 3.8, plus `master`, on every pull request and master change.
 
+tmux release candidates are not supported: a feature can require one only until
+its release ships, and a candidate such as `X.Y-rcN` parses and ranks below
+`X.Y`. See
+[Release candidates](https://libtmux.org/en/tmux/guides/tmux-support/#release-candidates).
+
 ## How a release is refused
 
 A command is checked against the version of the daemon it reaches. The
