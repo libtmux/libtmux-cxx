@@ -24,9 +24,10 @@ $ ctest --preset cxx-dev -R consumer.workspace --output-on-failure
 | [`tests/`](tests/) | Against real tmux, run as `consumer.workspace` |
 | [`tools/corpus_probe.cpp`](tools/corpus_probe.cpp) | Runs a directory of tmuxp documents through the builder and reports what it could not express |
 
-The YAML parser is linked **here and nowhere else**. The library depends on
-nothing, and a consumer's parser choice is not the library's business — which
-is the point of keeping this in its own directory with its own dependency.
+The YAML parser is linked by this consumer and the optional
+[`tmux-workspace`](../../apps/workspace/README.md) CLI, not the core library.
+A consumer's parser choice is not the library's business, which is the point
+of keeping this in its own directory with its own dependency.
 
 ## Running the corpus probe
 
