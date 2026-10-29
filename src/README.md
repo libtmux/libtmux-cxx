@@ -10,9 +10,9 @@ $ cmake --build --preset cxx-dev --target libtmux
 
 ## The transport seam
 
-The one structural idea worth knowing before reading any of it: **no public
-header names a process.** Everything that reaches tmux goes through one private
-interface, and the rest of the library is written against that.
+Concrete process and pipe ownership stays private. Everything that reaches
+tmux goes through the backend interface, and the rest of the library is written
+against that.
 
 | File | Does |
 |---|---|
@@ -23,10 +23,9 @@ interface, and the rest of the library is written against that.
 | [`connection.cpp`](connection.cpp) | The control client lifecycle, request writes, and reply ownership |
 | [`notification_stream.cpp`](notification_stream.cpp) | One bounded notification log with independent consumer cursors |
 
-That seam is why the suite can run the entire public surface with **no tmux
-present**, against a scripted executor — and why the argv each operation sends
-can be pinned exactly. It is also how control mode arrived as a second
-implementation rather than a rewrite.
+Contract tests use a scripted executor to pin the argv an operation sends
+without running tmux. Integration tests check behaviour against private real
+servers. The seam also lets control mode supply a second implementation.
 
 ## The rest
 
@@ -41,10 +40,10 @@ implementation rather than a rewrite.
 
 ## Things that look wrong and are not
 
-**`snapshot.cpp` parses on a separator you will not recognise.** tmux formats
-are joined with `␞` (U+241E), because it is the one character a pane title, a
-command line or a path will not contain. A tab or a comma would be a bug
-waiting for the first person with an unusual window name.
+**`snapshot.cpp` splits before decoding.** tmux formats are joined with `␞`
+(U+241E), which can also appear in a value. Live listings escape that separator
+and the escape marker before joining fields, then decode each field after
+splitting, so a literal `␞` in a window name survives the round trip.
 
 **Every command carries `-u`.** tmux decides whether to emit UTF-8 from the
 locale, so without it a machine with a non-UTF-8 locale gets different bytes

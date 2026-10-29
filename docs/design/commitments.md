@@ -24,10 +24,9 @@ follows a rule worth stating: a call reports the failure type its *result*
 speaks, so `Server::control` — which hands back a `Connection` — reports
 [`ProtocolError`][ref-protocolerror] like the `Connection` does.
 
-**The transport is private, and replaceable.** No process type appears in any
-installed header. The suite substitutes a scripted executor and runs the whole
-public surface with no tmux present, which is also how the argv each operation
-sends is pinned.
+**The transport is private, and replaceable.** Concrete process ownership stays
+out of installed headers. Contract tests substitute a scripted executor to pin
+the argv an operation sends; integration tests check behaviour against real tmux.
 
 
 [ref-protocolerror]: https://libtmux.org/en/cxx/latest/reference/libtmux-protocolerror/

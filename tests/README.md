@@ -1,6 +1,7 @@
 # Tests
 
-Against a real tmux, on every build. `ctest -N` counts them.
+Behaviour tests against a real tmux, plus contract and parser checks.
+`ctest -N` lists the configured tests.
 
 ```console
 $ ctest --preset cxx-dev --no-tests=error
@@ -10,10 +11,10 @@ $ ctest --preset cxx-dev --no-tests=error
 $ ctest --preset cxx-dev -R libtmux.buffer --output-on-failure
 ```
 
-Nothing here mocks tmux. A test that says a pane received text starts a tmux
-server, sends the text, and reads the pane back. The cost is that the suite
-needs tmux on `$PATH`; the benefit is that a passing test means the thing
-works against the program people actually run.
+A test that says a pane received text starts a tmux server, sends the text,
+and reads the pane back. Contract tests use scripted executors to check argv,
+and parser tests also use recorded output. The full suite needs tmux on
+`$PATH`; scripted and recorded inputs do not establish real-tmux behaviour.
 
 ## Every server is private, and it ships
 
