@@ -7,8 +7,8 @@ capability table and the known defects; this page is the rest of the contract.
 ## The floor
 
 tmux 3.3a and newer. The floor is the complete release: tmux 3.3 is below it.
-[`Version`][ref-version] orders releases correctly: `3.7 < 3.7a < 3.7b`, and `next-3.8` and
-`3.8-rc2` precede `3.8`. CI builds and tests pinned compatibility cells from
+[`Version`][ref-version] orders releases correctly: `3.7 < 3.7a < 3.7b`, and `next-X.Y` and
+`X.Y-rcN` precede `X.Y`. CI builds and tests pinned compatibility cells from
 3.3a through 3.8, plus `master`, on every pull request and master change.
 
 tmux release candidates are not supported: a feature can require one only until

@@ -32,7 +32,7 @@ enum class VersionError { missing_prefix, malformed };
 /// A tmux version, ordered so a feature gate can compare against a literal.
 ///
 /// A `next-` build and a release candidate order before the release they lead
-/// to, so a gate written against `3.8` does not accept `3.8-rc2`.
+/// to, so a gate written against `X.Y` does not accept `X.Y-rcN`.
 struct Version {
   std::uint32_t major{};
   std::uint32_t minor{};
@@ -162,7 +162,8 @@ parse_version(std::string_view output) {
 }
 
 /// The oldest release this library supports: 3.3a. Patch letters count, so
-/// 3.3 is below it, and `next-3.3a` and `3.3a-rc` order before it.
+/// 3.3 is below it, as is every development build or release candidate of
+/// 3.3.
 inline constexpr Version kMinimumSupported{.major = 3, .minor = 3, .revision = 1};
 
 /// The floor as the messages name it; `parse_version` reads it back as

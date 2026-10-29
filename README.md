@@ -1112,7 +1112,7 @@ $ claude mcp add tmux \
 tmux 3.3a and newer. The floor is the complete release: tmux 3.3 is below it.
 
 - [`Version`][ref-version] orders releases correctly: `3.7 < 3.7a < 3.7b`, and
-  `next-3.8` and `3.8-rc2` precede `3.8`.
+  `next-X.Y` and `X.Y-rcN` precede `X.Y`.
 - CI builds and tests pinned cells from 3.3a through 3.8, plus `master`, on
   every pull request and master change.
 - The daemon a command reaches decides: a release below the floor, an unreadable

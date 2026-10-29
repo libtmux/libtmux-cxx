@@ -359,7 +359,7 @@ private:
   }
 
   // The spelling tmux prints for a declared version, so a refusal names the
-  // build that was declared: `next-3.9` and `3.8-rc2` keep what makes them
+  // build that was declared: `next-X.Y` and `X.Y-rcN` keep what makes them
   // development builds.
   [[nodiscard]] static std::string describe(const Version& version) {
     if (version.unbounded) {
