@@ -121,9 +121,10 @@ This prints one line per session. If tmux cannot answer, the call returns a
 - **Narrower than `noexcept`.** The headers allocate, so `std::bad_alloc` can
   come out of them, and a [`CommandObserver`][ref-commandobserver] a caller
   supplies can throw. The promise is about how failure is reported.
-- **No transport type appears here.** Nothing in this directory names a process,
-  a pipe or a file descriptor, so the implementation can be replaced and the
-  suite can run the whole public surface with no tmux present.
+- **Concrete transports stay private.** A caller can supply a
+  [`CommandExecutor`][ref-commandexecutor] without depending on the subprocess
+  implementation. Control connections and command runtimes expose readiness
+  descriptors for event-loop integration.
 - **Fields are typed.** A flag offers no string operations and a size compares
   as a number, so those mistakes are build errors on a
   [`FilterExpr`][ref-filterexpr]; [`tests/compile/`](../../tests/compile/)
@@ -292,6 +293,7 @@ $ claude mcp add tmux \
 [ref-server-at_socket_path]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-at_socket_path/
 [ref-commandfailure]: https://libtmux.org/en/cxx/latest/reference/libtmux-commandfailure/
 [ref-commandobserver]: https://libtmux.org/en/cxx/latest/reference/libtmux-commandobserver/
+[ref-commandexecutor]: https://libtmux.org/en/cxx/latest/reference/libtmux-commandexecutor/
 [ref-filterexpr]: https://libtmux.org/en/cxx/latest/reference/libtmux-filterexpr/
 [ref-expected]: https://libtmux.org/en/cxx/latest/reference/libtmux-expected/
 [windows-boundary]: https://github.com/libtmux/libtmux-cxx#windows-through-psmux
