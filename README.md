@@ -947,7 +947,7 @@ the program installs, its socket options, and the Windows triplets.
 |---|---|---|
 | `LIBTMUX_CXX_STANDARD` | `23` | `20` uses `tl::expected`: a system one, or the pinned fallback |
 | `LIBTMUX_BUILD_TESTS` | on if top-level | POSIX suite with tmux and GoogleTest; native psmux smoke on Windows |
-| `LIBTMUX_BUILD_EXAMPLES` | on if top-level | Six POSIX programs or the native Windows psmux preview in [`examples/`](examples/README.md) |
+| `LIBTMUX_BUILD_EXAMPLES` | on if top-level | POSIX programs or the native Windows psmux preview in [`examples/`](examples/README.md) |
 | `LIBTMUX_BUILD_TESTING_LIBRARY` | on with tests or examples on POSIX; off on Windows | Install the POSIX private-server fixture |
 | `LIBTMUX_BUILD_MCP_SERVER` | off | Build the [MCP server](#libtmux-mcp-server), which needs a JSON parser; Windows exposes its psmux-safe subset |
 | `LIBTMUX_BUILD_FUZZERS` | off | Build the POSIX parser fuzzers |

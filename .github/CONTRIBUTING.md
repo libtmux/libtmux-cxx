@@ -162,18 +162,25 @@ warning there because a warning always means prose did not survive the parse:
 $ doxygen Doxyfile
 ```
 
-The README's C++ is quoted from `examples/05-readme.cpp`, which is compiled and
-run against real tmux. This checks the quoting; the example lane checks that the
-code still works:
+The README's C++ is quoted from `examples/05-readme.cpp` and
+`examples/08-quickstart.cpp`, both compiled and run against real tmux. This
+checks the quoting; the example lane checks that the code still works:
 
 ```console
-$ python3 tools/docs/check_readme.py
+$ python3 tools/docs/check_readme.py \
+    --readme README.md \
+    --readme include/libtmux/README.md \
+    --readme docs/runtime.md
 ```
 
 Edit the example, never the block in the README, then bring the quote across:
 
 ```console
-$ python3 tools/docs/check_readme.py --fix
+$ python3 tools/docs/check_readme.py \
+    --fix \
+    --readme README.md \
+    --readme include/libtmux/README.md \
+    --readme docs/runtime.md
 ```
 
 Matching the code is not the same as pasting it: a region quoted mid-`main()`
