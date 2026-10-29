@@ -30,8 +30,8 @@ ships as one native executable.
 
 ## Quick start
 
-Build and install the server. It is off by default because it is the only
-component that needs the JSON dependency:
+Build and install the server. It is off by default and needs a JSON parser;
+the core library does not:
 
 ```console
 $ cmake \
@@ -173,9 +173,6 @@ The [full contract](../../docs/mcp-server.md#core-workflow) covers the guards,
 synchronized panes and the response bounds.
 
 ### Moving from the twelve-tool alpha
-
-Eight route names remain, though callers must use their current schemas. The
-other four map as follows:
 
 Eight route names remain, though callers must use their current schemas. The
 other four map as follows:
