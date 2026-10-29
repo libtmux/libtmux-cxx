@@ -63,9 +63,9 @@ One golden path. The preset that works from a clean checkout goes first;
 FetchContent, submodules, vcpkg and build options come after it, in that
 order, and none of them interrupts the first thing a reader needs.
 
-Examples compile, and the README is not trusted to say so. Every `cpp` block
-in it is a named region of `examples/05-readme.cpp`, which builds and runs
-against real tmux in the same CTest run as everything else, and
+Examples compile, and the README is not trusted to say so. Its `cpp` blocks
+quote named regions of `examples/05-readme.cpp` or the complete
+`examples/08-quickstart.cpp`. Both build and run against real tmux, and
 [`tools/docs/check_readme.py`](../tools/docs/check_readme.py) fails the build
 when a block and its region drift apart, or when a region nothing quotes goes
 stale. Never write a signature that does not exist to make a point read better.
