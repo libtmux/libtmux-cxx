@@ -2,11 +2,18 @@ include("${PROJECT_SOURCE_DIR}/cmake/CLI11.cmake")
 include("${PROJECT_SOURCE_DIR}/cmake/NlohmannJson.cmake")
 libtmux_resolve_cli11()
 libtmux_resolve_nlohmann_json()
+include("${PROJECT_SOURCE_DIR}/cmake/TlFunctionRef.cmake")
+libtmux_resolve_tl_function_ref(_function_ref_include _function_ref_source)
 
 add_library(workspace_cli STATIC
   src/cli.cpp src/services.cpp src/process.cpp src/progress.cpp src/completion.cpp)
 target_include_directories(workspace_cli PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_include_directories(workspace_cli PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_include_directories(workspace_cli SYSTEM PRIVATE ${_function_ref_include})
+if(LIBTMUX_INSTALL AND _function_ref_source)
+  install(FILES "${_function_ref_source}/COPYING"
+    DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/licenses/tmux-workspace/function_ref")
+endif()
 target_link_libraries(workspace_cli PRIVATE libtmux_build_options workspace_builder
   CLI11::CLI11 nlohmann_json::nlohmann_json yaml-cpp::yaml-cpp)
 target_compile_definitions(workspace_cli PRIVATE
@@ -22,6 +29,7 @@ endif()
 
 if(LIBTMUX_BUILD_TESTS AND NOT WIN32)
   add_executable(workspace_cli_test tests/cli_test.cpp)
+  target_include_directories(workspace_cli_test SYSTEM PRIVATE ${_function_ref_include})
   target_compile_definitions(workspace_cli_test PRIVATE
     "LIBTMUX_WORKSPACE_BINARY=\"$<TARGET_FILE:tmux-workspace>\"")
   add_dependencies(workspace_cli_test tmux-workspace)
