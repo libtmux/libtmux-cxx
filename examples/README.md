@@ -1,10 +1,9 @@
 # Examples
 
-Programs that read top to bottom, plus two larger consumers. The first six run
-against a real tmux server of their own in every POSIX example build. The
-seventh is the native Windows psmux path and uses only that preview's safe typed
-surface. Each is an executed test on the platform it documents, so nothing here
-can quietly stop compiling or stop being true.
+Programs that read top to bottom, plus larger consumers. The POSIX examples
+run against a real tmux server of their own as CTest cases. The native Windows
+psmux example uses only that preview's safe typed surface and has a separate
+[native runner](windows/README.md).
 [`consume/`](consume/README.md) is the exception, and deliberately never
 contacts tmux; CI builds and runs it against a real install.
 
@@ -66,11 +65,11 @@ in a program than in prose.
 
 ### Quoting code in the README
 
-Every `cpp` block in the top-level README is a region of
-[`05-readme.cpp`](05-readme.cpp), quoted verbatim. A region is a span between
-two markers carrying the same name, unique in the file. It is dedented before
-comparing, so a region nested inside `main` matches the block the README shows
-at column zero:
+The top-level README quotes [`08-quickstart.cpp`](08-quickstart.cpp) whole and
+named regions of [`05-readme.cpp`](05-readme.cpp) verbatim. A region is a span
+between two markers carrying the same name, unique in the file. It is dedented
+before comparing, so a region nested inside `main` matches the block the README
+shows at column zero:
 
 ```cpp
   // #region chain
@@ -89,7 +88,11 @@ that compiles but that no reader ever sees is the other way a sample rots.
 The loop runs one way. Edit the example, run it, then bring the quote across:
 
 ```console
-$ python3 tools/docs/check_readme.py --fix
+$ python3 tools/docs/check_readme.py \
+    --fix \
+    --readme README.md \
+    --readme include/libtmux/README.md \
+    --readme docs/runtime.md
 ```
 
 `--fix` matches a block to a region by its first line, so a block that has
