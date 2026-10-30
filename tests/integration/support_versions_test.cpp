@@ -910,8 +910,8 @@ TEST(VersionCheckExecutor, EveryReportIsAcceptedOrRefusedForItsOwnReason) {
 }
 
 TEST(VersionCheckExecutor, ADeclaredVersionIsNamedAsTmuxSpellsIt) {
-  // A refusal names the build that was declared, so `next-3.3` and `3.3-rc2`
-  // are not reported as the `3.3` that ranks differently.
+  // A refusal names the build that was declared, so `next-X.Y` and `X.Y-rcN`
+  // are not reported as the `X.Y` that ranks differently.
   struct Declared {
     Version version;
     std::string spelling;

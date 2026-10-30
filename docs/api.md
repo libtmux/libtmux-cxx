@@ -7969,7 +7969,7 @@ enum class VersionError;
 <a id="libtmux-version-hpp-version"></a>
 ### `Version`
 
-A tmux version, ordered so a feature gate can compare against a literal.  A `next-` build and a release candidate order before the release they lead to, so a gate written against `3.8` does not accept `3.8-rc2`.
+A tmux version, ordered so a feature gate can compare against a literal.  A `next-` build and a release candidate order before the release they lead to, so a gate written against `X.Y` does not accept `X.Y-rcN`.
 
 ```cpp
 struct Version;
@@ -8059,7 +8059,7 @@ Parse the first line of `tmux -V`, with or without its trailing newline.
 ```cpp
 inline constexpr Version kMinimumSupported{.major = 3, .minor = 3, .revision = 1};
 ```
-The oldest release this library supports: 3.3a. Patch letters count, so 3.3 is below it, and `next-3.3a` and `3.3a-rc` order before it.
+The oldest release this library supports: 3.3a. Patch letters count, so 3.3 is below it, as is every development build or release candidate of 3.3.
 
 <a id="libtmux-version-hpp-free-symbols-kminimumsupportedtext"></a>
 #### `kMinimumSupportedText`

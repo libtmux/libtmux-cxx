@@ -60,6 +60,10 @@ tmux, and agents.
 
 - tmux releases below 3.3a are refused with
   [`FailureKind::unsupported`][ref-failurekind] before a command has any effect.
+- tmux release candidates are not supported: a feature can require one only
+  until its release ships, and a candidate such as `X.Y-rcN` parses and ranks
+  below `X.Y`. See
+  [Release candidates](https://libtmux.org/en/tmux/guides/tmux-support/#release-candidates).
 - The library and its examples need POSIX tmux; the
   [Windows preview](#windows-through-psmux) is read-mostly.
 - Child launches do not inherit unrelated descriptors; the
@@ -1108,7 +1112,7 @@ $ claude mcp add tmux \
 tmux 3.3a and newer. The floor is the complete release: tmux 3.3 is below it.
 
 - [`Version`][ref-version] orders releases correctly: `3.7 < 3.7a < 3.7b`, and
-  `next-3.8` and `3.8-rc2` precede `3.8`.
+  `next-X.Y` and `X.Y-rcN` precede `X.Y`.
 - CI builds and tests pinned cells from 3.3a through 3.8, plus `master`, on
   every pull request and master change.
 - The daemon a command reaches decides: a release below the floor, an unreadable
