@@ -44,6 +44,11 @@ Result invoke(std::vector<std::string> args) {
   return {code, out.str(), err.str()};
 }
 
+// Relative to the directory `Files` makes current, and nothing listens on it. A
+// `shell` run that names no socket asks the default server which tmux release it
+// runs, and the default server is whichever one the environment points at.
+constexpr const char* kAbsentSocket = "no-daemon.sock";
+
 TEST(WorkspaceCli, CompletionUsesCommandAndValueContextWithoutBackend) {
   libtmux::test::EnvironmentGuard path{"PATH", "/nonexistent-workspace-completion"};
   libtmux::test::EnvironmentGuard progress{"TMUXP_PROGRESS_LINES", "invalid"};
@@ -216,7 +221,8 @@ TEST(WorkspaceCli, ShellPreservesArgumentsStreamsAndChildStatus) {
   EXPECT_LT(std::ranges::find(args, "--no-vi-mode"),
             std::ranges::find(args, "--use-vi-mode"));
   EXPECT_EQ(std::ranges::find(args, "--json"), args.end());
-  const auto human = invoke({"--color", "always", "shell", "-c", code});
+  const auto human =
+      invoke({"--color", "always", "shell", "-S", kAbsentSocket, "-c", code});
   EXPECT_EQ(human.code, 7);
   EXPECT_EQ(human.out, "shell output");
   EXPECT_EQ(human.err, "shell diagnostic");
@@ -225,7 +231,7 @@ TEST(WorkspaceCli, ShellPreservesArgumentsStreamsAndChildStatus) {
   for (int index = 0; index < 2; ++index)
     std::getline(human_arguments, argument, '\0');
   EXPECT_EQ(argument, "always");
-  const auto stream = invoke({"shell", "-c", "", "--ndjson"});
+  const auto stream = invoke({"shell", "-S", kAbsentSocket, "-c", "", "--ndjson"});
   ASSERT_EQ(stream.code, 7) << stream.err;
   std::istringstream frames{stream.out};
   std::string stdout_text, stderr_text;
@@ -255,7 +261,8 @@ TEST(WorkspaceCli, ShellRefusesIncompatibleRuntimeBeforeExecution) {
                             "touch executed\n";
   ASSERT_EQ(::chmod(runtime.c_str(), 0700), 0);
   libtmux::test::EnvironmentGuard selected{"TMUX_WORKSPACE_TMUXP", runtime.string()};
-  const auto result = invoke({"shell", "-c", "print(1)", "--json"});
+  const auto result =
+      invoke({"shell", "-S", kAbsentSocket, "-c", "print(1)", "--json"});
   EXPECT_EQ(result.code, 1);
   EXPECT_TRUE(result.out.empty());
   EXPECT_EQ(Json::parse(result.err).at("code"), "compatibility_runtime");
@@ -265,7 +272,8 @@ TEST(WorkspaceCli, ShellRefusesIncompatibleRuntimeBeforeExecution) {
   EXPECT_EQ(Json::parse(interactive.err).at("code"), "usage");
   libtmux::test::EnvironmentGuard missing{"TMUX_WORKSPACE_TMUXP",
                                           (files.directory / "absent").string()};
-  const auto unavailable = invoke({"shell", "-c", "print(1)", "--json"});
+  const auto unavailable =
+      invoke({"shell", "-S", kAbsentSocket, "-c", "print(1)", "--json"});
   EXPECT_EQ(unavailable.code, 1);
   EXPECT_EQ(Json::parse(unavailable.err).at("code"), "compatibility_runtime");
 }
@@ -285,7 +293,8 @@ TEST(WorkspaceCli, ShellHonoursTmuxWorkspacePythonOverTmuxp) {
   // Would fail outright if used, proving the interpreter is what ran.
   libtmux::test::EnvironmentGuard tmuxp{"TMUX_WORKSPACE_TMUXP",
                                         (files.directory / "absent").string()};
-  const auto result = invoke({"shell", "-c", "print(1)", "--json"});
+  const auto result =
+      invoke({"shell", "-S", kAbsentSocket, "-c", "print(1)", "--json"});
   ASSERT_EQ(result.code, 0) << result.err;
   std::ifstream input{"arguments", std::ios::binary};
   std::vector<std::string> args;
@@ -302,7 +311,8 @@ TEST(WorkspaceCli, ShellReportsBothVariablesWhenThePythonInterpreterIsMissing) {
   Files files;
   libtmux::test::EnvironmentGuard python{
       "TMUX_WORKSPACE_PYTHON", (files.directory / "no-such-interpreter").string()};
-  const auto result = invoke({"shell", "-c", "print(1)", "--json"});
+  const auto result =
+      invoke({"shell", "-S", kAbsentSocket, "-c", "print(1)", "--json"});
   EXPECT_EQ(result.code, 1);
   const auto error = Json::parse(result.err);
   EXPECT_EQ(error.at("code"), "compatibility_runtime");
@@ -320,7 +330,7 @@ TEST(WorkspaceCli, ShellRetainsOutputLimitFailure) {
                             "head -c 1048577 /dev/zero | tr '\\000' x\n";
   ASSERT_EQ(::chmod(runtime.c_str(), 0700), 0);
   libtmux::test::EnvironmentGuard selected{"TMUX_WORKSPACE_TMUXP", runtime.string()};
-  const auto result = invoke({"shell", "-c", "", "--ndjson"});
+  const auto result = invoke({"shell", "-S", kAbsentSocket, "-c", "", "--ndjson"});
   ASSERT_EQ(result.code, 1);
   EXPECT_EQ(Json::parse(result.err).at("code"), "output_limit");
   std::istringstream frames{result.out};
