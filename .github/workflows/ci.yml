@@ -5,6 +5,28 @@ on:
     branches: [master]
   pull_request:
   workflow_dispatch:
+    inputs:
+      scope:
+        description: 'edges: the oldest and newest released tmux. full: the whole table, master and the refusal cells. custom: the tmux-ref and cxx-compiler below.'
+        type: choice
+        options: [edges, full, custom]
+        default: edges
+      tmux-ref:
+        description: 'With scope custom: comma-separated tmux releases, tags, branches or 40-hex commits from github.com/tmux/tmux, for example 3.6b,master.'
+        type: string
+        default: ''
+      cxx-compiler:
+        description: 'Comma-separated compilers for the compatibility job, for example clang-19,gcc-14. Empty is the pinned clang.'
+        type: string
+        default: ''
+  # release.yml calls this with `scope: full`, so a release proves the whole
+  # tmux table itself instead of borrowing a push run that covered the edges.
+  workflow_call:
+    inputs:
+      scope:
+        description: 'edges, full or custom'
+        type: string
+        default: edges
 
 permissions:
   contents: read
@@ -21,16 +43,50 @@ defaults:
     shell: bash
 
 jobs:
+  plan:
+    # The tmux axis of the matrix, from tools/ci/tmux_matrix.json and the
+    # event. A push or pull request gets the oldest and newest released tmux;
+    # a release, a schedule and `scope: full` get the whole table. The plan
+    # also fails a dispatch that asks for something CI will not do before any
+    # runner is spent on it.
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      scope: ${{ steps.plan.outputs.scope }}
+      compat: ${{ steps.plan.outputs.compat }}
+      rejection: ${{ steps.plan.outputs.rejection }}
+      rejection_planned: ${{ steps.plan.outputs.rejection_planned }}
+      tmux_jobs: ${{ steps.plan.outputs.tmux_jobs }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Plan the tmux matrix
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          SCOPE: ${{ inputs.scope }}
+          TMUX_REF: ${{ inputs.tmux-ref }}
+          CXX_COMPILER: ${{ inputs.cxx-compiler }}
+        run: |
+          python3 -m tools.ci.plan matrix \
+            --event "$EVENT" --ref-type "$REF_TYPE" --scope "$SCOPE" \
+            --tmux-ref "$TMUX_REF" --cxx-compiler "$CXX_COMPILER" \
+            --github-output "$GITHUB_OUTPUT"
+
   compatibility:
-    # The C++ library claims the same tmux range as the Python one, so it is
-    # tested against the same versions rather than only the newest.
+    # The C++ library claims the same tmux range as the Python one. A push
+    # tests the ends of that range; the plan job says which versions a release
+    # or a dispatch adds.
+    name: compatibility (${{ matrix.slug }}, ${{ matrix.compiler }})
+    needs: plan
 
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      matrix:
-        tmux-version: ['3.3a', '3.4', '3.5', '3.6', '3.7', '3.7a', '3.7b', '3.7c', '3.8', 'master']
+      matrix: ${{ fromJSON(needs.plan.outputs.compat) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -42,75 +98,99 @@ jobs:
       # ubuntu-latest.
       - uses: hendrikmuhs/ccache-action@f09c25b45002a07be2955cbe52e8cee55643f89d # v1.2.24
         with:
-          key: ${{ github.job }}-tmux-${{ matrix.tmux-version }}
+          key: ${{ github.job }}-${{ matrix.compiler }}-tmux-${{ matrix.slug }}
           max-size: 400M
 
-      - name: Install the pinned toolchain
+      - name: Install the toolchain
+        env:
+          FAMILY: ${{ matrix.family }}
+          COMPILER_VERSION: ${{ matrix.version }}
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang-18 libc++-18-dev libc++abi-18-dev ninja-build
-          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
-          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
+          if [ "$FAMILY" = clang ]; then
+            sudo apt-get install -y "clang-$COMPILER_VERSION" \
+              "libc++-$COMPILER_VERSION-dev" "libc++abi-$COMPILER_VERSION-dev" ninja-build
+            sudo update-alternatives --install /usr/bin/clang clang \
+              "/usr/bin/clang-$COMPILER_VERSION" 100
+            sudo update-alternatives --install /usr/bin/clang++ clang++ \
+              "/usr/bin/clang++-$COMPILER_VERSION" 100
+          else
+            sudo apt-get install -y "gcc-$COMPILER_VERSION" "g++-$COMPILER_VERSION" ninja-build
+          fi
 
       - name: Resolve the tmux revision
         id: tmux-ref
-        run: |
-          echo "sha=$(git ls-remote https://github.com/tmux/tmux.git ${{ matrix.tmux-version }} | cut -f1)" >> "$GITHUB_OUTPUT"
+        env:
+          TMUX_REF: ${{ matrix.tmux }}
+        run: python3 -m tools.ci.tmux_ref resolve "$TMUX_REF" --github-output "$GITHUB_OUTPUT"
 
-      - name: Setup tmux build cache for tmux ${{ matrix.tmux-version }}
+      - name: Setup tmux build cache for tmux ${{ matrix.tmux }}
         id: tmux-build-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/tmux-builds/tmux-${{ matrix.tmux-version }}
+          path: ~/tmux-builds/tmux-${{ steps.tmux-ref.outputs.sha }}
           # The commit, not the ref: a key of "tmux-master" would freeze this
           # lane at whatever the first run happened to build, and keep passing.
-          key: tmux-${{ matrix.tmux-version }}-${{ steps.tmux-ref.outputs.sha }}
+          key: tmux-${{ steps.tmux-ref.outputs.sha }}
 
-      - name: Build tmux ${{ matrix.tmux-version }}
+      - name: Build tmux ${{ matrix.tmux }}
         if: steps.tmux-build-cache.outputs.cache-hit != 'true'
+        env:
+          TMUX_SHA: ${{ steps.tmux-ref.outputs.sha }}
         run: |
           sudo apt-get install -y libevent-dev libncurses5-dev libtinfo-dev libutempter-dev bison
-          mkdir -p ~/tmux-builds ~/tmux-src
-          git clone https://github.com/tmux/tmux.git ~/tmux-src/tmux-${{ matrix.tmux-version }}
-          cd ~/tmux-src/tmux-${{ matrix.tmux-version }}
-          git checkout ${{ matrix.tmux-version }}
-          sh autogen.sh
-          ./configure --prefix="$HOME/tmux-builds/tmux-${{ matrix.tmux-version }}" && make && make install
+          python3 -m tools.ci.tmux_ref build "$TMUX_SHA" \
+            --prefix "$HOME/tmux-builds/tmux-$TMUX_SHA" \
+            --source "$HOME/tmux-src/tmux-$TMUX_SHA"
 
-      - name: Build and test against tmux ${{ matrix.tmux-version }}
+      - name: Put tmux ${{ matrix.tmux }} on the path
+        env:
+          TMUX_SHA: ${{ steps.tmux-ref.outputs.sha }}
+        run: echo "$HOME/tmux-builds/tmux-$TMUX_SHA/bin" >> "$GITHUB_PATH"
+
+      - name: Build and test against tmux ${{ matrix.tmux }}
+        env:
+          PRESET: ${{ matrix.preset }}
+          CMAKE_ARGS: ${{ matrix.cmake_args }}
         run: |
-          export PATH=$HOME/tmux-builds/tmux-${{ matrix.tmux-version }}/bin:$PATH
           tmux -V
-          cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache --preset cxx-dev
-          cmake --build --preset cxx-dev
-          ctest --preset cxx-dev --no-tests=error --output-on-failure
+          read -r -a extra <<< "$CMAKE_ARGS"
+          cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache "${extra[@]}" --preset "$PRESET"
+          cmake --build --preset "$PRESET"
+          ctest --preset "$PRESET" --no-tests=error --output-on-failure
 
+      # Runs on the newest released tmux, wherever the plan puts that leg. The
+      # step exercises ctest under a long TMPDIR and needs no particular
+      # release.
       - name: Test with a macOS-length temporary path
-        if: matrix.tmux-version == '3.7b'
+        if: matrix.long_path
+        env:
+          PRESET: ${{ matrix.preset }}
         run: |
-          export PATH=$HOME/tmux-builds/tmux-${{ matrix.tmux-version }}/bin:$PATH
           base="/tmp/$(printf 'm%.0s' $(seq 1 52))"
           mkdir "$base"
           status=0
-          TMPDIR="$base" ctest --preset cxx-dev --no-tests=error \
+          TMPDIR="$base" ctest --preset "$PRESET" --no-tests=error \
             --output-on-failure || status=$?
           rmdir "$base" || status=1
           exit "$status"
 
   rejection:
     # Releases below the floor are not a supported cell. They are run to prove
-    # the refusal: a daemon of each is started, a 3.3a client is pointed at it,
-    # and nothing the library, the workspace CLI or the MCP server sends may
-    # change it. 3.0a and 3.1c answer the probe differently from every later
-    # release and keep a client's stdout open after it exits, so their cells
-    # also hold the refusal to a time bound.
+    # the refusal: a daemon of each is started, a client at the floor is
+    # pointed at it, and nothing the library, the workspace CLI or the MCP
+    # server sends may change it. 3.0a and 3.1c answer the probe differently
+    # from every later release and keep a client's stdout open after it exits,
+    # so their cells also hold the refusal to a time bound. They are part of
+    # the whole table, so only a release and a full-scope dispatch run them.
+    needs: plan
+    if: needs.plan.outputs.rejection_planned == 'true'
 
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      matrix:
-        rejected-tmux: ['3.0a', '3.1c', '3.2a', '3.3']
+      matrix: ${{ fromJSON(needs.plan.outputs.rejection) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -130,7 +210,7 @@ jobs:
         run: |
           sudo apt-get install -y libevent-dev libncurses5-dev libtinfo-dev libutempter-dev bison
           mkdir -p ~/tmux-builds ~/tmux-src
-          for version in 3.3a ${{ matrix.rejected-tmux }}; do
+          for version in ${{ matrix.client-tmux }} ${{ matrix.rejected-tmux }}; do
             git clone --branch "$version" --depth 1 https://github.com/tmux/tmux.git "$HOME/tmux-src/tmux-$version"
             (cd "$HOME/tmux-src/tmux-$version" && sh autogen.sh &&
               ./configure --prefix="$HOME/tmux-builds/tmux-$version" && make && make install)
@@ -138,7 +218,7 @@ jobs:
 
       - name: Refuse tmux ${{ matrix.rejected-tmux }} without effects
         run: |
-          export PATH=$HOME/tmux-builds/tmux-3.3a/bin:$PATH
+          export PATH=$HOME/tmux-builds/tmux-${{ matrix.client-tmux }}/bin:$PATH
           export LIBTMUX_TEST_REJECTED_TMUX=$HOME/tmux-builds/tmux-${{ matrix.rejected-tmux }}/bin/tmux
           export LIBTMUX_REQUIRE_REJECTED_TMUX=1
           tmux -V
@@ -719,7 +799,8 @@ jobs:
             tools.docs.test_check_api_examples \
             tools.mutate.test_main tools.mutate.test_runner \
             tools.vcpkg.test_probe tools.vcpkg.test_release \
-            tools.vcpkg.test_archive
+            tools.vcpkg.test_archive \
+            tools.ci.test_plan tools.ci.test_tmux_ref
 
       # The README's C++ is quoted from an example that is compiled and run.
       # This is the half that checks the quoting; the example lane checks that
@@ -989,9 +1070,14 @@ jobs:
     # instead would mean editing the protection rule whenever a tmux version
     # or a sanitizer is added, and a leg that is renamed and forgotten stops
     # being required without anything saying so.
+    #
+    # Every job below must have succeeded. The one exception is `rejection`,
+    # which the plan skips outside full scope.
     if: always()
     needs:
+      - plan
       - compatibility
+      - rejection
       - windows
       - toolchains
       - benchmarks
@@ -1008,15 +1094,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Every job succeeded
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Every planned job succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          REJECTION_PLANNED: ${{ needs.plan.outputs.rejection_planned }}
         run: |
-          # `needs.*.result` is skipped or cancelled as well as success and
-          # failure, and only success will do.
-          results='${{ join(needs.*.result, ' ') }}'
-          echo "$results"
-          for result in $results; do
-            if [ "$result" != "success" ]; then
-              echo "a required job reported: $result" >&2
-              exit 1
-            fi
-          done
+          python3 -m tools.ci.plan verify \
+            --needs "$NEEDS" --rejection-planned "$REJECTION_PLANNED"
