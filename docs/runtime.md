@@ -9,6 +9,9 @@ and what shutdown promises. The reference pages for each type are on
 
 ## A complete program
 
+The complete program is [`examples/05-readme.cpp`](../examples/05-readme.cpp).
+This excerpt uses the `server` created there:
+
 ```cpp
 // Given: const libtmux::Server& server
 std::size_t observed = 0U;
