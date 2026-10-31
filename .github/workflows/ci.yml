@@ -10,7 +10,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # A dispatch asks for one particular permutation, so it must not cancel the
+  # push run on its branch or another dispatch on it. Pushes still supersede
+  # each other.
+  group: ci-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 defaults:
