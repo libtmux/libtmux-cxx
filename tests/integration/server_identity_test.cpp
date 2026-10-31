@@ -5,8 +5,10 @@
 // resolve — it resolves to something else, and tmux reports success. Every
 // assertion here rests on that: the fixtures deliberately collide.
 
+#include <charconv>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <future>
 #include <string>
 #include <thread>
@@ -14,6 +16,7 @@
 
 #if !defined(_WIN32)
 #include <cerrno>
+#include <csignal>
 #include <cstring>
 // mkdtemp is POSIX and glibc declares it in <stdlib.h>; <cstdlib>
 // promises only the std:: names.
@@ -28,6 +31,7 @@
 #include "libtmux/server.hpp"
 #include "libtmux/testing/environment_guard.hpp"
 #include "libtmux/testing/scoped_server.hpp"
+#include "support/sandbox.hpp"
 
 namespace {
 
@@ -49,6 +53,112 @@ public:
 
 private:
   Server server_;
+};
+
+struct ServerIdentity {
+  std::string pid;
+  std::string socket;
+};
+
+// Which server answers this handle, as that server says.
+std::optional<ServerIdentity> identify(const Server& server) {
+  const auto pid = server.expand("#{pid}");
+  const auto socket = server.expand("#{socket_path}");
+  if (!pid.has_value() || !socket.has_value()) {
+    return std::nullopt;
+  }
+  return ServerIdentity{*pid, *socket};
+}
+
+bool is_under(const std::filesystem::path& path, const std::filesystem::path& tree) {
+  std::error_code failed;
+  const auto resolved = std::filesystem::weakly_canonical(path, failed);
+  const auto root = std::filesystem::canonical(tree, failed);
+  if (failed) {
+    return false;
+  }
+  const auto relative = resolved.lexically_relative(root);
+  return !relative.empty() && *relative.begin() != "..";
+}
+
+bool process_gone(const std::string& text) {
+  long number = 0;
+  if (std::from_chars(text.data(), text.data() + text.size(), number).ec !=
+      std::errc{}) {
+    return false;
+  }
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (::kill(static_cast<pid_t>(number), 0) != 0 && errno == ESRCH) {
+      return true;
+    }
+#if defined(__linux__)
+    // Dead but not yet reaped by whatever adopted the daemon.
+    std::ifstream stat{"/proc/" + text + "/stat"};
+    std::string line;
+    if (std::getline(stat, line) && line.rfind(") Z ") != std::string::npos) {
+      return true;
+    }
+#endif
+    std::this_thread::sleep_for(std::chrono::milliseconds{10});
+  }
+  return false;
+}
+
+// Ends the server a case started, and only that one. A handle that names no
+// socket sends `kill-server` to whichever server tmux resolves for itself,
+// which inside a pane is the server the suite was started from, so the server
+// that answers is identified first and the command is withheld unless it is
+// the one `record()` saw, in the case's private tree.
+class OwnServerCleanup final {
+public:
+  OwnServerCleanup(Server server, std::filesystem::path private_tree)
+      : server_{std::move(server)}, tree_{std::move(private_tree)} {}
+  ~OwnServerCleanup() { finish(); }
+
+  OwnServerCleanup(const OwnServerCleanup&) = delete;
+  OwnServerCleanup& operator=(const OwnServerCleanup&) = delete;
+
+  // Call once the server exists.
+  std::optional<ServerIdentity> record() {
+    started_ = identify(server_);
+    return started_;
+  }
+
+  void finish() {
+    if (finished_) {
+      return;
+    }
+    finished_ = true;
+    const auto answering = identify(server_);
+    if (!answering.has_value()) {
+      // Nothing answers: either the server is gone or its socket is, and a
+      // server whose socket is gone can no longer be told to exit.
+      if (started_.has_value()) {
+        EXPECT_TRUE(process_gone(started_->pid))
+            << "the server this case started no longer answers and is still running";
+      }
+      return;
+    }
+    const bool private_socket = is_under(answering->socket, tree_);
+    const bool started_here = !started_.has_value() || started_->pid == answering->pid;
+    if (!private_socket || !started_here) {
+      ADD_FAILURE() << "kill-server withheld: "
+                    << (private_socket
+                            ? "a server this case did not start answered"
+                            : "a server outside the case's private tree answered");
+      return;
+    }
+    static_cast<void>(server_.kill());
+    EXPECT_TRUE(process_gone(answering->pid))
+        << "the server this case started is still running after kill-server";
+  }
+
+private:
+  Server server_;
+  std::filesystem::path tree_;
+  std::optional<ServerIdentity> started_;
+  bool finished_{false};
 };
 
 class ReplacedSocket final {
@@ -118,6 +228,13 @@ TEST_P(StartableServerIdentity, PublishesTheCreatedServersExactIdentity) {
   ASSERT_TRUE(owner.has_value()) << owner.error();
   const libtmux::test::EnvironmentGuard tmpdir{"TMUX_TMPDIR",
                                                owner->tmux_tmpdir().string()};
+  // `startable_at_default()` names no socket, so tmux chooses the server: the
+  // one TMUX names when it is set, which inside a pane is the server this suite
+  // was started from.
+  const libtmux::test_support::ScopedUnset no_tmux{"TMUX"};
+  const libtmux::test_support::ScopedUnset no_pane{"TMUX_PANE"};
+  const libtmux::test_support::ScopedUnset no_socket_name{"LIBTMUX_SOCKET"};
+  const libtmux::test_support::ScopedUnset no_socket_path{"LIBTMUX_SOCKET_PATH"};
   const std::filesystem::path selected = owner->tmux_tmpdir() / "startable.sock";
   // tmux spends `$TMUX_TMPDIR/tmux-<uid>/` before this name, and macOS gives
   // `sun_path` four fewer bytes than Linux does. `startable-name` overran it by
@@ -139,10 +256,17 @@ TEST_P(StartableServerIdentity, PublishesTheCreatedServersExactIdentity) {
   };
   auto opened = open();
   ASSERT_TRUE(opened.has_value()) << opened.error().diagnostic;
-  ServerCleanup cleanup{*opened};
+  OwnServerCleanup cleanup{*opened, owner->tmux_tmpdir()};
 
   const auto created = opened->new_session("startable-original");
   ASSERT_TRUE(created.has_value()) << created.error().diagnostic;
+  // The server this case started, and what the end of it may kill.
+  const auto started = cleanup.record();
+  ASSERT_TRUE(started.has_value());
+  EXPECT_TRUE(is_under(started->socket, owner->tmux_tmpdir()))
+      << "the server this case started listens outside its private tree";
+  EXPECT_NE(started->pid, std::to_string(owner->server_pid()))
+      << "the case reached the owner's server, not one of its own";
   const auto attach = created->attach_command();
   ASSERT_TRUE(attach.has_value()) << attach.error().diagnostic;
   ASSERT_GE(attach->argv().size(), 5U);
@@ -178,6 +302,9 @@ TEST_P(StartableServerIdentity, PublishesTheCreatedServersExactIdentity) {
   const auto destination = reopened->new_session("startable-cross-handle");
   ASSERT_TRUE(destination.has_value()) << destination.error().diagnostic;
   EXPECT_TRUE(windows->front().link_to(*destination).has_value());
+
+  cleanup.finish();
+  EXPECT_TRUE(owner->is_alive()) << "kill-server reached the owner's server";
 }
 
 INSTANTIATE_TEST_SUITE_P(AllSelectors, StartableServerIdentity,
