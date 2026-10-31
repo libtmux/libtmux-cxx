@@ -27,7 +27,7 @@ if(LIBTMUX_BUILD_TESTS AND NOT WIN32)
   add_dependencies(workspace_cli_test tmux-workspace)
   target_include_directories(workspace_cli_test PRIVATE "${PROJECT_SOURCE_DIR}/tests")
   target_link_libraries(workspace_cli_test PRIVATE libtmux_build_options workspace_cli workspace_builder
-    GTest::gtest_main libtmux::testing nlohmann_json::nlohmann_json)
+    libtmux_test_main libtmux::testing nlohmann_json::nlohmann_json)
   add_test(NAME consumer.workspace.cli COMMAND workspace_cli_test
     "--gtest_filter=WorkspaceCli.*")
   add_test(NAME consumer.workspace.cli.real-tmux COMMAND workspace_cli_test

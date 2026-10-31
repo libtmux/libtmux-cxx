@@ -16,6 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = ROOT / "examples/api/api-examples.json"
+SERVER_SELECTORS = ("TMUX", "TMUX_PANE", "LIBTMUX_SOCKET", "LIBTMUX_SOCKET_PATH")
 
 
 def digest(path: Path) -> str:
@@ -110,8 +111,10 @@ def run_program(program: dict, binary: Path, tmux: Path, failure: bool) -> dict:
         (shim / "tmux").chmod(0o755)
         trace = root / "trace.jsonl"
         env = dict(os.environ)
-        env.pop("TMUX", None)
-        env.pop("TMUX_PANE", None)
+        # Everything that selects a server: the program starts its own, in
+        # TMUX_TMPDIR below.
+        for name in SERVER_SELECTORS:
+            env.pop(name, None)
         env.update(
             PATH=f"{shim}{os.pathsep}{env['PATH']}",
             TMPDIR=str(fixtures),

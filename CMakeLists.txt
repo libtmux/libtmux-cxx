@@ -122,6 +122,12 @@ include(cmake/ProjectOptions.cmake)
 # file that was never written, and anything walking that tree stops there.
 if(LIBTMUX_BUILD_TESTS OR LIBTMUX_BUILD_EXAMPLES OR LIBTMUX_BUILD_FUZZERS)
   enable_testing()
+  # Every test runs with no tmux server selected and a private TMUX_TMPDIR; see
+  # the file for why that is ctest's environment and not a property per test.
+  if(NOT WIN32)
+    include(cmake/LibtmuxTestSandbox.cmake)
+    libtmux_test_sandbox()
+  endif()
 endif()
 
 add_subdirectory(src)
@@ -149,6 +155,7 @@ if((LIBTMUX_BUILD_TESTS AND NOT WIN32) OR LIBTMUX_BUILD_WORKSPACE_CLI)
   if(LIBTMUX_BUILD_TESTS AND NOT WIN32)
     include(cmake/GoogleTest.cmake)
     libtmux_resolve_googletest()
+    libtmux_add_test_main()
   endif()
   add_subdirectory(examples/workspace)
 endif()

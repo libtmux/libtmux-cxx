@@ -50,6 +50,11 @@ uses the same one rather than reinventing it. Pass
 `SocketNamespace::consumer("your-suite")` so a stray directory names who left
 it.
 
+ctest also clears every variable that selects a server and points
+`TMUX_TMPDIR` into the build tree, and a test binary run by hand refuses to
+start until it is set up the same way; [`tests/README.md`](../tests/README.md)
+has the details.
+
 A one-off probe does the same by hand:
 
 ```console
