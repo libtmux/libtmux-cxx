@@ -19,6 +19,11 @@ on:
         description: 'Comma-separated compilers for the compatibility job, for example clang-19,gcc-14. Empty is the pinned clang.'
         type: string
         default: ''
+      tmate:
+        description: 'Open a tmate session on the one compatibility leg. Needs scope custom with a single tmux-ref.'
+        type: choice
+        options: [off, before-tests, on-failure]
+        default: off
   # release.yml calls this with `scope: full`, so a release proves the whole
   # tmux table itself instead of borrowing a push run that covered the edges.
   workflow_call:
@@ -69,11 +74,12 @@ jobs:
           SCOPE: ${{ inputs.scope }}
           TMUX_REF: ${{ inputs.tmux-ref }}
           CXX_COMPILER: ${{ inputs.cxx-compiler }}
+          TMATE: ${{ inputs.tmate }}
         run: |
           python3 -m tools.ci.plan matrix \
             --event "$EVENT" --ref-type "$REF_TYPE" --scope "$SCOPE" \
             --tmux-ref "$TMUX_REF" --cxx-compiler "$CXX_COMPILER" \
-            --github-output "$GITHUB_OUTPUT"
+            --tmate "$TMATE" --github-output "$GITHUB_OUTPUT"
 
   compatibility:
     # The C++ library claims the same tmux range as the Python one. A push
@@ -148,6 +154,15 @@ jobs:
           TMUX_SHA: ${{ steps.tmux-ref.outputs.sha }}
         run: echo "$HOME/tmux-builds/tmux-$TMUX_SHA/bin" >> "$GITHUB_PATH"
 
+      # Pinned by commit: v3.24, https://github.com/mxschmitt/action-tmate/commit/35b54af.
+      # Only a dispatch gets here, and the plan allows one leg to.
+      - name: Debug session before the tests
+        if: github.event_name == 'workflow_dispatch' && matrix.tmate == 'before-tests'
+        uses: mxschmitt/action-tmate@35b54afac29c97fb54faba5b513f8fbd1882f113 # v3.24
+        timeout-minutes: 30
+        with:
+          limit-access-to-actor: true
+
       - name: Build and test against tmux ${{ matrix.tmux }}
         env:
           PRESET: ${{ matrix.preset }}
@@ -174,6 +189,13 @@ jobs:
             --output-on-failure || status=$?
           rmdir "$base" || status=1
           exit "$status"
+
+      - name: Debug session after a failure
+        if: failure() && github.event_name == 'workflow_dispatch' && matrix.tmate == 'on-failure'
+        uses: mxschmitt/action-tmate@35b54afac29c97fb54faba5b513f8fbd1882f113 # v3.24
+        timeout-minutes: 30
+        with:
+          limit-access-to-actor: true
 
   rejection:
     # Releases below the floor are not a supported cell. They are run to prove
