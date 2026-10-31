@@ -10,9 +10,8 @@ from __future__ import annotations
 import json
 import pathlib
 import tempfile
-import unittest
+import unittest.mock
 from typing import ClassVar
-from unittest import mock
 
 from tools.ci import plan
 
@@ -288,7 +287,7 @@ class NegativeTest(unittest.TestCase):
                 continue
             with self.subTest(check=check.__name__, removed=name):
                 with (
-                    mock.patch.object(plan, name, broken),
+                    unittest.mock.patch.object(plan, name, broken),
                     self.assertRaises((AssertionError, plan.PlanError)),
                 ):
                     check()
@@ -297,7 +296,9 @@ class NegativeTest(unittest.TestCase):
     def test_the_edge_rule_fails_without_the_first_release(self) -> None:
         """Taking the second release for the floor breaks the edge check."""
         with (
-            mock.patch.object(plan.Manifest, "oldest", property(without_oldest_edge)),
+            unittest.mock.patch.object(
+                plan.Manifest, "oldest", property(without_oldest_edge)
+            ),
             self.assertRaises(AssertionError),
         ):
             check_push_runs_edges()
@@ -315,7 +316,7 @@ class NegativeTest(unittest.TestCase):
             return leg
 
         with (
-            mock.patch.object(plan, "_leg", wrong),
+            unittest.mock.patch.object(plan, "_leg", wrong),
             self.assertRaises(AssertionError),
         ):
             check_long_path_follows_newest_release()
