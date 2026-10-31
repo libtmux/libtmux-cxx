@@ -161,6 +161,25 @@ private:
   bool finished_{false};
 };
 
+// Removes a case's private tree when the case ends. Declare it before the
+// cleanup of the server inside the tree: destruction runs the other way, so the
+// server is stopped while its socket still exists. Once the directory is gone,
+// nothing can tell the server to exit, and it outlives the suite.
+class RemovedTree final {
+public:
+  explicit RemovedTree(std::filesystem::path tree) : tree_{std::move(tree)} {}
+  ~RemovedTree() {
+    std::error_code ignored;
+    std::filesystem::remove_all(tree_, ignored);
+  }
+
+  RemovedTree(const RemovedTree&) = delete;
+  RemovedTree& operator=(const RemovedTree&) = delete;
+
+private:
+  std::filesystem::path tree_;
+};
+
 class ReplacedSocket final {
 public:
   ReplacedSocket(std::filesystem::path selected, std::filesystem::path retained,
@@ -332,18 +351,22 @@ TEST(ServerIdentity, StartableAtSocketNameSucceedsUnderAFreshTmuxTmpdir) {
   auto pattern = (parent / "libtmux-cxx-fresh-XXXXXX").string();
   ASSERT_NE(::mkdtemp(pattern.data()), nullptr) << std::strerror(errno);
   const std::filesystem::path fresh_tmpdir{pattern};
+  const RemovedTree removal{fresh_tmpdir};
   const libtmux::test::EnvironmentGuard tmpdir{"TMUX_TMPDIR", fresh_tmpdir.string()};
 
   auto opened = Server::startable_at_socket_name("cxx12-fresh",
                                                  std::filesystem::path{"/dev/null"});
   ASSERT_TRUE(opened.has_value()) << opened.error().diagnostic;
-  ServerCleanup cleanup{*opened};
+  OwnServerCleanup cleanup{*opened, fresh_tmpdir};
 
   const auto created = opened->new_session("fresh-tmpdir-session");
   ASSERT_TRUE(created.has_value()) << created.error().diagnostic;
+  ASSERT_TRUE(cleanup.record().has_value());
 
-  std::error_code removed;
-  std::filesystem::remove_all(fresh_tmpdir, removed);
+  // Stopped here, or by `cleanup` on a failure above, and only then is the tree
+  // removed. The server has to be gone, not merely unreachable.
+  cleanup.finish();
+  EXPECT_FALSE(opened->is_alive()) << "a server still answers after kill-server";
 }
 #endif
 
