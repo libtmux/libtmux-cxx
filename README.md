@@ -1113,8 +1113,10 @@ tmux 3.3a and newer. The floor is the complete release: tmux 3.3 is below it.
 
 - [`Version`][ref-version] orders releases correctly: `3.7 < 3.7a < 3.7b`, and
   `next-X.Y` and `X.Y-rcN` precede `X.Y`.
-- CI builds and tests pinned cells from 3.3a through 3.8, plus `master`, on
-  every pull request and master change.
+- CI tests the oldest and newest released tmux, 3.3a and 3.8, on every pull
+  request and master change. A release builds and tests pinned cells from 3.3a
+  through 3.8, plus `master`.
+  [Any tmux can run on demand](.github/CONTRIBUTING.md#running-ci-against-any-tmux).
 - The daemon a command reaches decides: a release below the floor, an unreadable
   version and an undated `master` are refused with
   [`FailureKind::unsupported`][ref-failurekind] before the command has any
@@ -1284,7 +1286,8 @@ $ ctest --preset windows-psmux --no-tests=error
 - Every pull request runs against real tmux under clang with libc++, GCC with
   libstdc++, the C++20 build over `tl::expected`, the sanitizers and a locale
   that is not UTF-8.
-- The tmux matrix spans pinned cells from 3.3a through 3.8, plus `master`, and
+- A pull request runs tmux 3.3a and 3.8. The full tmux matrix, run for a
+  release, spans pinned cells from 3.3a through 3.8, plus `master`, and
   refusal cells for 3.0a, 3.1c, 3.2a and 3.3.
 - Four parsers for tmux-controlled text have fuzz harnesses, and
   [a mutation catalogue](tools/README.md#the-mutation-catalogue) breaks one guard

@@ -9,6 +9,15 @@ was recorded as it landed.
 
 ## Unreleased
 
+### Testing
+
+- CI tests the oldest and newest released tmux, 3.3a and 3.8, on a push and a
+  pull request. A release, which now runs `ci.yml` at full scope itself, and a
+  `workflow_dispatch` with `scope: full` run the whole table, `master` and the
+  refusal cells. A dispatch also takes `tmux-ref` (a release, tag, branch or
+  commit), `cxx-compiler` and `tmate`, and `all-checks-passed` waits for the
+  refusal cells whenever they run. (#123)
+
 ### Window
 
 - `Window::select_layout`, a literal `select-layout`,
