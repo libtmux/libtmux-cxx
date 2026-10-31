@@ -194,6 +194,14 @@ from the ports beside it:
 $ python3 -m tools.vcpkg check
 ```
 
+The tmux versions CI runs come from one manifest,
+[`tools/ci/tmux_matrix.json`](../tools/ci/tmux_matrix.json). Adding a release
+there is the whole change to CI, and this names each page that has to say so:
+
+```console
+$ python3 -m tools.ci.check
+```
+
 ### The parity ledger is read here, not written
 
 The ledger in `tools/parity/data` records what each Python `libtmux` symbol maps
@@ -207,6 +215,47 @@ classification means editing `mapping.json` and `evidence.json` and re-running
 `python3 -m tools.parity sync`. Regenerating from a newer Python release means
 doing it where that release lives. An evidence record cannot cite a test nobody
 wrote — every case is resolved in the file it names.
+
+### Running CI against any tmux
+
+A push and a pull request run the oldest and newest released tmux in
+[the table](#compatibility). Any other tmux runs on demand: dispatch `ci.yml`
+from any branch with `scope=custom` and a comma-separated `tmux-ref`, each item
+a release, a tag, a branch or a 40-hex commit from
+[github.com/tmux/tmux](https://github.com/tmux/tmux).
+
+```console
+$ gh workflow run ci.yml --ref my-branch -f scope=custom -f tmux-ref=3.6b,master
+```
+
+`cxx-compiler` changes the toolchain of that job, as `clang-N` or `gcc-N`, and
+repeats each tmux ref once per compiler. `scope=full` runs the whole table,
+`master` and the refusal cells, as a release does.
+
+```console
+$ gh workflow run ci.yml --ref my-branch -f scope=custom -f tmux-ref=3.8 -f cxx-compiler=gcc-14
+```
+
+`tmate=on-failure` opens an
+[`action-tmate`](https://github.com/mxschmitt/action-tmate) SSH session after a
+failing leg, and `tmate=before-tests` opens one before the tests run. Only the
+account that dispatched the run can connect, so it needs a public SSH key on its
+GitHub profile. The plan accepts a session on exactly one leg, which means one
+`tmux-ref` and at most one `cxx-compiler`.
+
+```console
+$ gh workflow run ci.yml --ref my-branch -f scope=custom -f tmux-ref=3.7b -f tmate=on-failure
+```
+
+The dispatch form is only available once `ci.yml` carries the inputs on the
+default branch. This prints the legs a dispatch would run, without a runner:
+
+```console
+$ python3 -m tools.ci.plan matrix --event workflow_dispatch --scope custom --tmux-ref 3.6b,master
+```
+
+Each dispatch is its own run: it does not cancel the push run on its branch,
+and another dispatch does not cancel it.
 
 ## Pull requests
 
@@ -306,11 +355,11 @@ with a command the notes give them.
 
 ## Compatibility
 
-tmux 3.3a and newer, through `master`. CI builds and tests pinned
-compatibility cells from 3.3a through 3.8, plus `master`, on every pull request
-and every change to master. It also runs tmux 3.0a, 3.1c, 3.2a and 3.3 as
-refusal cells, each a daemon of that release behind a 3.3a client. The
-handful of capabilities that need a later tmux are covered by tests that skip
+tmux 3.3a and newer, through `master`. CI tests the oldest and newest
+released tmux, 3.3a and 3.8, on every pull request and every change to master.
+A release builds and tests pinned compatibility cells from 3.3a through 3.8,
+plus `master`. It also runs tmux 3.0a, 3.1c, 3.2a and 3.3 as refusal cells,
+each a daemon of that release behind a 3.3a client. The handful of capabilities that need a later tmux are covered by tests that skip
 below the release providing them — [the README](../README.md#compatibility)
 lists them.
 

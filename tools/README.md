@@ -29,6 +29,8 @@ Both are run from the repository root.
 | [`docs/`](docs/) | `python3 tools/docs/check_readme.py` | Whether the README's C++ still matches the example it is quoted from |
 | [`docs/`](docs/) | `python3 -m tools.docs.check_example_isolation` | Whether each quoted region compiles as the only code in its own file, the way a reader pastes it |
 | [`mcp/`](mcp/) | `./build/cxx-dev/tools/mcp/mcp-swap` | Points POSIX agent CLI configs at a chosen build of [the MCP server](../apps/mcp/README.md), and puts them back |
+| [`ci/`](ci/) | `python3 -m tools.ci.plan matrix --event push` | Which tmux versions CI runs for an event, from one manifest |
+| [`ci/`](ci/) | `python3 -m tools.ci.check` | Whether the README, the compatibility page, CONTRIBUTING and the workflows still follow that manifest |
 | [`vcpkg/`](vcpkg/) | `python3 -m tools.vcpkg check` | Whether [the registry](../docs/vcpkg-registry.md) still publishes the ports beside it |
 | [`coverage/`](coverage/) | — | How much of the shipped surface the tests reach |
 | [`differential/`](differential/) | — | The same question asked of this library and of Python libtmux, compared |

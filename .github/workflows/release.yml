@@ -5,7 +5,6 @@ on:
     tags: ['v*']
 
 permissions:
-  actions: read
   contents: read
 
 concurrency:
@@ -19,11 +18,21 @@ defaults:
     shell: bash
 
 jobs:
+  ci:
+    # A release proves the whole tmux table, the refusal cells and master. A
+    # push to master runs only the oldest and newest release, so its run
+    # cannot stand in for this one; the tag commit is tested here at full
+    # scope, and everything that publishes waits for it.
+    uses: ./.github/workflows/ci.yml
+    with:
+      scope: full
+
   source:
     # What package managers actually consume. A C++ library has no stable ABI
     # across compiler, standard library, standard version or sanitizer flags,
     # and this one carries two ABI namespaces deliberately — so the artifact
     # that matters is the source, and its hash.
+    needs: [ci]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
@@ -36,9 +45,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: The tag is merged, fixed, and CI-proven
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: The tag is merged and fixed
         run: |
           git fetch --no-tags origin master
           event_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
@@ -55,30 +62,6 @@ jobs:
             echo "tag commit ${event_commit} is not merged into master" >&2
             exit 1
           }
-          export EVENT_COMMIT="$event_commit"
-
-          gh api \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${event_commit}&status=success&per_page=100" \
-            > ci-runs.json
-          python3 - <<'PY'
-          import json
-          import os
-          import pathlib
-          import sys
-
-          sha = os.environ["EVENT_COMMIT"]
-          runs = json.loads(pathlib.Path("ci-runs.json").read_text())["workflow_runs"]
-          proven = [
-              run for run in runs
-              if run.get("head_sha") == sha
-              and run.get("conclusion") == "success"
-              and run.get("event") in {"push", "workflow_dispatch"}
-          ]
-          if not proven:
-              sys.exit(f"no successful ci workflow run attests exact commit {sha}")
-          print("CI run:", proven[0]["html_url"])
-          PY
 
       # The tag names the release; `VERSION` is what the library reports about
       # itself and what CMake writes into the package config. Nothing kept the
