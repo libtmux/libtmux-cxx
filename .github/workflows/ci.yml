@@ -822,7 +822,13 @@ jobs:
             tools.mutate.test_main tools.mutate.test_runner \
             tools.vcpkg.test_probe tools.vcpkg.test_release \
             tools.vcpkg.test_archive \
-            tools.ci.test_plan tools.ci.test_tmux_ref
+            tools.ci.test_plan tools.ci.test_tmux_ref tools.ci.test_check
+
+      # The tmux versions CI runs come from tools/ci/tmux_matrix.json. This
+      # fails when the README, the compatibility page or CONTRIBUTING say
+      # something else, or when this workflow grows a list of its own.
+      - name: Check the CI plan and the docs agree
+        run: python3 -m tools.ci.check
 
       # The README's C++ is quoted from an example that is compiled and run.
       # This is the half that checks the quoting; the example lane checks that
@@ -1094,7 +1100,8 @@ jobs:
     # being required without anything saying so.
     #
     # Every job below must have succeeded. The one exception is `rejection`,
-    # which the plan skips outside full scope.
+    # which the plan skips outside full scope; tools.ci.check fails when a job
+    # in this file is missing from the list.
     if: always()
     needs:
       - plan
