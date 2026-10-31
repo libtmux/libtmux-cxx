@@ -142,6 +142,16 @@ class CheckTest(unittest.TestCase):
         )
         self.assertFlags("splices an input into a script")
 
+    def test_a_bare_off_in_the_tmate_input_is_flagged(self) -> None:
+        """A bare off is false to GitHub, which breaks every default dispatch."""
+        self.edit(".github/workflows/ci.yml", "options: ['off',", "options: [off,")
+        self.assertFlags("must quote 'off'")
+
+    def test_a_bare_off_default_is_flagged(self) -> None:
+        """The default has to be the same string as the option it names."""
+        self.edit(".github/workflows/ci.yml", "default: 'off'", "default: off")
+        self.assertFlags("must quote 'off'")
+
     def test_an_unpinned_tmate_is_flagged(self) -> None:
         """The action is pinned by commit."""
         self.edit(

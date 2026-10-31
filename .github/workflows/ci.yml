@@ -22,8 +22,8 @@ on:
       tmate:
         description: 'Open a tmate session on the one compatibility leg. Needs scope custom with a single tmux-ref.'
         type: choice
-        options: [off, before-tests, on-failure]
-        default: off
+        options: ['off', before-tests, on-failure]
+        default: 'off'
   # release.yml calls this with `scope: full`, so a release proves the whole
   # tmux table itself instead of borrowing a push run that covered the edges.
   workflow_call:
