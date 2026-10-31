@@ -16,7 +16,7 @@ was recorded as it landed.
   `workflow_dispatch` with `scope: full` run the whole table, `master` and the
   refusal cells. A dispatch also takes `tmux-ref` (a release, tag, branch or
   commit), `cxx-compiler` and `tmate`, and `all-checks-passed` waits for the
-  refusal cells whenever they run. (#123)
+  refusal cells whenever they run. (#124)
 
 ### Window
 
