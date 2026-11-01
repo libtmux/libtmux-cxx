@@ -88,31 +88,39 @@ struct ExecutorOptions {
 /// **Connecting.** `at_socket_path()` and `at_socket_name()` choose a socket by
 /// path (`-S`) or by name (`-L`), `at_default()` takes the one tmux picks when
 /// the caller names none, and `from_env()` reads the server this process is
-/// already inside. `startable_at_socket_path()`, `startable_at_socket_name()` and
-/// `startable_at_default()` build handles that may create an absent server, and
-/// `over()` builds a handle over a transport you supply. `is_alive()` and
+/// already inside. `startable_at_socket_path()`, `startable_at_socket_name()`
+/// and `startable_at_default()` build handles that may create an absent server,
+/// and `over()` builds a handle over a transport you supply. `is_alive()` and
 /// `check_alive()` answer whether anything is listening, the second keeping the
-/// reason when nothing is. `capabilities()` says what the handle may rely on and
-/// runs no command; on psmux that is exact inspection and namespace cleanup
+/// reason when nothing is. `capabilities()` says what the handle may rely on
+/// and runs no command; on psmux that is exact inspection and namespace cleanup
 /// only. Most typed calls outside it report `FailureKind::unsupported` there;
 /// `control()` and `over_control()` report a `ProtocolError` instead, and the
-/// environment calls and raw commands are not checked. `tmux_version()`
-/// reports the tmux release, and
-/// `socket_path()` reports the resolved socket. `control()` and
-/// `control_with_options()` open a control-mode connection to one session, and
-/// `over_control()` returns a Server whose commands travel over held-open
-/// control clients.
+/// environment calls and raw commands are not checked. `tmux_version()` reports
+/// the tmux release, and `socket_path()` reports the resolved socket.
+/// `control()` and `control_with_options()` open a control-mode connection to
+/// one session, and `over_control()` returns a Server whose commands travel
+/// over held-open control clients.
 ///
-/// **Finding one thing.** `session()`, `window()` and `pane()` take a target,
-/// such as an id or a `session:window` path, and resolve it the way tmux does:
-/// a session target names that session's active pane and the window that pane
-/// is in. A target tmux cannot resolve comes back as a `FailureKind::missing`
-/// failure.
+/// `at_socket_path()`, `at_socket_name()`, `at_default()`, `from_env()`,
+/// `startable_at_socket_path()`, `startable_at_socket_name()`,
+/// `startable_at_default()`, `over()`, `is_alive()`, `check_alive()`,
+/// `capabilities()`, `control()`, `over_control()`, `tmux_version()`,
+/// `socket_path()` and `control_with_options()`
 ///
-/// **Listing everything.** `sessions()`, `windows()`, `panes()` and `clients()`.
-/// Each is one snapshot: iterating or filtering it never reaches tmux again, and
-/// a current view means calling again. `windows()` and `panes()` span every
-/// session.
+/// **Finding one thing.** Look up a session, window or pane by a target, such
+/// as an id or a `session:window` path. The lookup resolves the target the way
+/// tmux does: a session target names that session's active pane and the window
+/// that pane is in. A target tmux cannot resolve comes back as a
+/// `FailureKind::missing` failure.
+///
+/// `session()`, `window()` and `pane()`
+///
+/// **Listing everything.** Each listing is one snapshot: iterating or filtering
+/// it never reaches tmux again, and a current view needs a fresh call. The
+/// window and pane listings span every session.
+///
+/// `sessions()`, `windows()`, `panes()` and `clients()`
 ///
 /// **Querying things and getting around.** A listing already in memory is
 /// filtered without tmux: `matching()` takes a `FilterExpr` built from an
@@ -127,8 +135,16 @@ struct ExecutorOptions {
 /// `Session::active_window()`, `Session::active_pane()` and
 /// `Window::active_pane()`. Each of those asks tmux, so each can fail.
 ///
+/// `matching()`, `exactly_one()`, `exactly_one_owned()`, `children_of()`,
+/// `parent_of()`, `Session::windows()`, `Session::panes()`, `Window::panes()`,
+/// `Pane::window()`, `Pane::session()`, `Window::session()`,
+/// `Client::session()`, `Session::active_window()`, `Session::active_pane()`
+/// and `Window::active_pane()`
+///
 /// **Changing things.** `new_session()` creates a session detached and returns
 /// it, and `kill()` ends the server and everything in it.
+///
+/// `new_session()` and `kill()`
 ///
 /// **Options and hooks.** `options()`, `server_options()`, `global_options()`,
 /// `hooks()` and `global_hooks()` read them, `global_hooks()` being how a hook
@@ -139,27 +155,41 @@ struct ExecutorOptions {
 /// `unset_environment()` to forget it, and `remove_environment()` to keep the
 /// name but take it out of what a process inherits.
 ///
+/// `options()`, `server_options()`, `global_options()`, `hooks()`,
+/// `global_hooks()`, `set_server_option()`, `set_global_option()`,
+/// `set_global_hook()`, `environment()`, `set_environment()`,
+/// `unset_environment()` and `remove_environment()`
+///
 /// **Everything else tmux keeps.** Paste buffers: `buffers()` lists them,
-/// `set_buffer()` fills one, and `load_buffer()` and `save_buffer()` move one to
-/// and from a file the tmux server reads or writes. Key bindings: `bind_key()`
-/// and `unbind_key()`.
-/// `commands()` lists every command this tmux understands, `expand()` expands a
-/// format against the server alone, `source_file()` runs a configuration file
-/// and `check_file()` reports what tmux would refuse in it without running any,
-/// and `validate_layouts()` checks saved layouts without applying them.
-/// `run_shell()` reports whether a shell command ran, not what it printed, and
-/// `show_message()` puts a message on every attached client's status line.
-/// `wait_for()` blocks until `signal()` releases a channel, and with no timeout
-/// never gives up; `wait_for_text()` waits for the pane a target names to
-/// produce some text.
+/// `set_buffer()` fills one, and `load_buffer()` and `save_buffer()` move one
+/// to and from a file the tmux server reads or writes. Key bindings:
+/// `bind_key()` and `unbind_key()`. `commands()` lists every command this tmux
+/// understands, `expand()` expands a format against the server alone,
+/// `source_file()` runs a configuration file and `check_file()` reports what
+/// tmux would refuse in it without running any, and `validate_layouts()` checks
+/// saved layouts without applying them. `run_shell()` reports whether a shell
+/// command ran, not what it printed, and `show_message()` puts a message on
+/// every attached client's status line. `wait_for()` blocks until `signal()`
+/// releases a channel, and with no timeout never gives up; `wait_for_text()`
+/// waits for the pane a target names to produce some text.
+///
+/// `buffers()`, `set_buffer()`, `load_buffer()`, `save_buffer()`, `bind_key()`,
+/// `unbind_key()`, `commands()`, `expand()`, `source_file()`, `check_file()`,
+/// `validate_layouts()`, `run_shell()`, `show_message()`, `wait_for()`,
+/// `signal()` and `wait_for_text()`
 ///
 /// **Things that need a terminal.** None are here: every command this library
 /// runs talks to tmux through pipes. `Session::attach_command()` returns the
 /// argv for a terminal you own to run.
 ///
-/// Anything tmux can do that is not here is reachable through `run()`, which
-/// runs one command; `run_batch()` and `run_chain()` run several, and
-/// `try_submit()` admits one to a `CommandRuntime` without waiting for it.
+/// `Session::attach_command()`
+///
+/// **Running a command.** Anything tmux can do that is not here is reachable
+/// through `run()`, which runs one command; `run_batch()` and `run_chain()` run
+/// several, and `try_submit()` admits one to a `CommandRuntime` without waiting
+/// for it.
+///
+/// `run()`, `run_batch()`, `run_chain()` and `try_submit()`
 class Server {
 public:
   /// `-S path`: the socket file, used verbatim.
