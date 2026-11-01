@@ -56,6 +56,12 @@ class CheckTest(unittest.TestCase):
         """Return what the guards say about the scratch tree."""
         return check.check(self.root)
 
+    def write(self, name: str, text: str) -> None:
+        """Add a file to the scratch tree."""
+        path = self.root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
     def assertFlags(self, fragment: str) -> None:
         """Assert some problem mentions ``fragment``."""
         problems = self.problems()
@@ -265,6 +271,53 @@ class CheckTest(unittest.TestCase):
         path = self.root / ".github/workflows/release.yml"
         path.write_text(path.read_text() + "# gh api actions/workflows/ci.yml/runs\n")
         self.assertFlags("trusts an earlier ci run")
+
+    def test_a_raw_apt_get_in_a_workflow_is_flagged(self) -> None:
+        """Every call goes through tools/ci/apt-get.sh, however it is spelled."""
+        for call in (
+            "sudo apt-get update",
+            "sudo -E apt-get install -y ninja-build",
+            "apt-get update",
+            "sudo apt install -y ninja-build",
+            "cd build && sudo apt-get update",
+        ):
+            with self.subTest(call=call):
+                self.write(
+                    ".github/workflows/apt.yml",
+                    "jobs:\n  build:\n    steps:\n"
+                    "      - name: Install\n        run: |\n"
+                    f"          {call}\n",
+                )
+                command = "apt" if " apt " in f" {call} " else "apt-get"
+                self.assertFlags(
+                    f'.github/workflows/apt.yml:6 (job build, step "Install") calls '
+                    f"{command} directly; run it through tools/ci/apt-get.sh"
+                )
+
+    def test_a_raw_apt_get_in_a_composite_action_is_flagged(self) -> None:
+        """An action's script is held to the same rule as a workflow's."""
+        self.write(
+            ".github/actions/setup/action.yml",
+            "runs:\n  using: composite\n  steps:\n"
+            "    - run: sudo apt-get update\n      shell: bash\n",
+        )
+        self.assertFlags(
+            ".github/actions/setup/action.yml:4 (an unnamed step) calls apt-get "
+            "directly; run it through tools/ci/apt-get.sh"
+        )
+
+    def test_the_apt_wrapper_and_prose_about_apt_pass(self) -> None:
+        """The wrapper, comments and quoted prose are not raw calls."""
+        self.write(
+            ".github/workflows/apt.yml",
+            "jobs:\n  build:\n    steps:\n"
+            "      - name: Install\n        run: |\n"
+            "          # the runner's package manager -- apt on Linux -- sudo apt-get\n"
+            "          ./tools/ci/apt-get.sh update\n"
+            "          ./tools/ci/apt-get.sh install -y ninja-build\n"
+            '          echo "apt-get is wrapped, apt is not called"\n',
+        )
+        self.assertEqual(self.problems(), [])
 
 
 if __name__ == "__main__":
