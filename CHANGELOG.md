@@ -17,6 +17,12 @@ was recorded as it landed.
   refusal cells. A dispatch also takes `tmux-ref` (a release, tag, branch or
   commit), `cxx-compiler` and `tmate`, and `all-checks-passed` waits for the
   refusal cells whenever they run. (#124)
+- `ctest` runs every test with `TMUX`, `TMUX_PANE`, `LIBTMUX_SOCKET` and
+  `LIBTMUX_SOCKET_PATH` unset and `TMUX_TMPDIR` set to `tmux-sandbox/` in the
+  build tree, so a bare `tmux` command in a test reaches no server outside the
+  run. The run fails, naming the sockets, when a test leaves a tmux server
+  running there. A test binary started by hand refuses to run until it is set
+  up the same way. (#127)
 
 ### Window
 
