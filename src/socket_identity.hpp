@@ -6,7 +6,8 @@
 // `$TMUX_TMPDIR` and `/tmp` that resolves, append `tmux-<uid>`, and put the
 // label under that — "default" when the selector names none. The directory is
 // resolved the way tmux resolves it, with realpath, so two selectors differing
-// only by a symlink name one server.
+// only by a symlink name one server. A selector that names none is first read
+// the way tmux's `main` reads it: a `TMUX` that names a socket is that socket.
 //
 // On Windows, psmux has no public socket path; the selector itself supplies a
 // logical identity instead.

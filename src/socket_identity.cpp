@@ -83,6 +83,18 @@ std::optional<std::filesystem::path> socket_directory() {
   return fallback;
 }
 
+// The socket tmux itself takes from `TMUX` when it is given neither `-S` nor
+// `-L` (tmux.c, `main`): everything before the first comma, ignored when it is
+// empty. The value is `<socket>,<server pid>,<session id>`, and a socket whose
+// path holds a comma is read short, which is what the server reached is.
+std::optional<std::string> inherited_tmux_socket() {
+  const char* const inherited = std::getenv("TMUX");
+  if (inherited == nullptr || *inherited == '\0' || *inherited == ',') {
+    return std::nullopt;
+  }
+  return std::string{inherited, std::strcspn(inherited, ",")};
+}
+
 enum class PinStatus { pinned, missing, retry_elsewhere, failed };
 
 class DirectoryGuard final {
@@ -174,15 +186,19 @@ std::string inode_identity(const struct stat& metadata) {
 std::optional<std::string>
 resolved_socket_path(const std::vector<std::string>& selector) {
   const bool pair = selector.size() == 2U;
-  if (pair && selector.front() == "-S") {
+  // With no selector at all tmux reads `TMUX` before it falls back to the
+  // default socket, so the server it reaches from inside a pane is that pane's.
+  const auto inherited = selector.empty() ? inherited_tmux_socket() : std::nullopt;
+  if ((pair && selector.front() == "-S") || inherited.has_value()) {
     // tmux uses a `-S` path verbatim, so the only question here is whether two
     // spellings name one socket — and they do when they resolve alike, because
     // the kernel resolves the address too. Weakly, because the socket need not
     // exist yet: a server is often addressed before it is started.
+    const std::string& path = inherited.has_value() ? *inherited : selector.back();
     std::error_code failed;
-    auto resolved = std::filesystem::weakly_canonical(selector.back(), failed);
+    auto resolved = std::filesystem::weakly_canonical(path, failed);
     if (failed) {
-      return selector.back();
+      return path;
     }
     return resolved.string();
   }

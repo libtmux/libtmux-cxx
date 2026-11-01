@@ -27,8 +27,10 @@
 
 #include "libtmux/cardinality.hpp"
 #include "libtmux/command.hpp"
+#include "libtmux/control.hpp"
 #include "libtmux/entities.hpp"
 #include "libtmux/server.hpp"
+#include "libtmux/testing/capabilities.hpp"
 #include "libtmux/testing/environment_guard.hpp"
 #include "libtmux/testing/scoped_server.hpp"
 #include "support/sandbox.hpp"
@@ -846,4 +848,102 @@ TEST(ServerFromEnvironment, ReadsASocketPathThatContainsACommaItself) {
   const auto sessions = server->sessions();
   ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
   EXPECT_FALSE(sessions->empty());
+}
+
+// A handle that names no socket reaches what a bare `tmux` does, and inside a
+// pane that is the server `TMUX` names. It used to look at the default socket
+// whatever `TMUX` said, so a pane on another socket drove the wrong server, and
+// the handle said it had reached the default one.
+namespace {
+
+// `TMUX` as tmux writes it for a pane on this server.
+std::string tmux_variable(const libtmux::test::ScopedTmuxServer& pane_server) {
+  return pane_server.socket_path().string() + "," +
+         std::to_string(pane_server.server_pid()) + ",0";
+}
+
+} // namespace
+
+TEST(ServerDefault, InsideTmuxTheServerTmuxNamesIsReachedAndReported) {
+  const libtmux::test_support::ScopedUnset no_socket_name{"LIBTMUX_SOCKET"};
+  const libtmux::test_support::ScopedUnset no_socket_path{"LIBTMUX_SOCKET_PATH"};
+  auto inside = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(inside.has_value()) << inside.error();
+  // The default socket under this directory is another server, or none: a
+  // handle that ignored `TMUX` would look there.
+  const libtmux::test::EnvironmentGuard tmpdir{"TMUX_TMPDIR",
+                                               inside->tmux_tmpdir().string()};
+  const libtmux::test::EnvironmentGuard pane{"TMUX", tmux_variable(*inside)};
+
+  const auto server = Server::at_default();
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+  const auto answering = identify(*server);
+  ASSERT_TRUE(answering.has_value());
+  EXPECT_EQ(answering->pid, std::to_string(inside->server_pid()))
+      << "reached a server other than the one TMUX names";
+  const auto same =
+      libtmux::test::same_socket_inode(server->socket_path(), inside->socket_path());
+  ASSERT_TRUE(same.has_value()) << same.error();
+  EXPECT_TRUE(*same) << "the handle reports a socket other than the one it reached";
+}
+
+TEST(ServerDefault, AControlConnectionAttachesToTheServerTheCommandsReach) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
+  const libtmux::test_support::ScopedUnset no_socket_name{"LIBTMUX_SOCKET"};
+  const libtmux::test_support::ScopedUnset no_socket_path{"LIBTMUX_SOCKET_PATH"};
+  auto inside = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(inside.has_value()) << inside.error();
+  const libtmux::test::EnvironmentGuard tmpdir{"TMUX_TMPDIR",
+                                               inside->tmux_tmpdir().string()};
+  const libtmux::test::EnvironmentGuard pane{"TMUX", tmux_variable(*inside)};
+
+  const auto server = Server::at_default();
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+  const auto control = server->control(inside->session_name());
+  ASSERT_TRUE(control.has_value()) << control.error().message;
+
+  // A control client drops `TMUX`, so it goes where the handle's socket path
+  // says. It is on the server the commands reach only if the two agree.
+  std::size_t attached = 0;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+  while (attached == 0U && std::chrono::steady_clock::now() < deadline) {
+    const auto clients = server->clients();
+    attached = clients.has_value() ? clients->size() : 0U;
+    if (attached == 0U) {
+      std::this_thread::sleep_for(std::chrono::milliseconds{25});
+    }
+  }
+  EXPECT_EQ(attached, 1U) << "no control client is attached to the server that the "
+                             "commands reach";
+}
+
+// A path nothing has created. A socket file that a dead server left behind is
+// pinned like any existing socket, so a server started through it runs on the
+// private alias; that is not covered here.
+TEST(ServerDefault, AnAbsentSocketTmuxNamesIsStartedWhereTmuxNamesIt) {
+  const libtmux::test_support::ScopedUnset no_socket_name{"LIBTMUX_SOCKET"};
+  const libtmux::test_support::ScopedUnset no_socket_path{"LIBTMUX_SOCKET_PATH"};
+  auto owner = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(owner.has_value()) << owner.error();
+  const auto named = owner->tmux_tmpdir() / "absent.sock";
+  const libtmux::test::EnvironmentGuard tmpdir{"TMUX_TMPDIR",
+                                               owner->tmux_tmpdir().string()};
+  const libtmux::test::EnvironmentGuard pane{"TMUX", named.string() + ",1,0"};
+
+  auto opened = Server::startable_at_default(std::filesystem::path{"/dev/null"});
+  ASSERT_TRUE(opened.has_value()) << opened.error().diagnostic;
+  OwnServerCleanup cleanup{*opened, owner->tmux_tmpdir()};
+  EXPECT_TRUE(std::filesystem::weakly_canonical(std::string{opened->socket_path()}) ==
+              std::filesystem::weakly_canonical(named))
+      << "the handle describes a socket other than the one TMUX names";
+
+  ASSERT_TRUE(opened->new_session("again").has_value());
+  const auto started = cleanup.record();
+  ASSERT_TRUE(started.has_value());
+  EXPECT_NE(started->pid, std::to_string(owner->server_pid()));
+  EXPECT_TRUE(is_under(started->socket, owner->tmux_tmpdir()));
+  EXPECT_EQ(std::filesystem::path{started->socket}.filename(), "absent.sock")
+      << "the server was not started where TMUX names it";
+  cleanup.finish();
+  EXPECT_TRUE(owner->is_alive()) << "kill-server reached the owner's server";
 }
