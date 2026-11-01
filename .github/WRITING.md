@@ -79,13 +79,13 @@ them, and do not let a port drift:
 
 The title is **libtmux for C++**.
 
-The alpha warning states these terms:
+The pre-1.0 warning states these terms:
 
 ```markdown
 > [!WARNING]
-> **Alpha.** Releases carry an `-alpha` prerelease tag. The API is not
-> settled, and any release may change or remove exported identifiers without a
-> deprecation period. Pin an exact version. Not recommended for production.
+> **Pre-1.0.** The API is not settled, and any release may change or remove
+> exported identifiers without a deprecation period. Pin an exact version. Not
+> recommended for production.
 ```
 
 ## Changelog
@@ -500,7 +500,7 @@ Say which platform a claim holds on. Since the Windows preview landed, an
 unqualified "supported" reads as all of them, and most of this surface is
 POSIX-only.
 
-While the project is alpha, none of these are promised. Say that plainly where
+While the project is pre-1.0, none of these are promised. Say that plainly where
 a reader would otherwise assume otherwise, rather than implying stability by
 staying quiet.
 
@@ -535,7 +535,7 @@ either to satisfy the margin breaks the thing itself.
 
 GitHub alert blocks — `> [!WARNING]`, `> [!NOTE]` — are allowed here, unlike
 in some sibling ports. This project's readers arrive through GitHub and
-through the vcpkg registry, both of which render them, and the README's alpha
+through the vcpkg registry, both of which render them, and the README's
 warning is one. Do not "fix" them into plain paragraphs.
 
 Links are relative and point at files in the repository. Never a local
