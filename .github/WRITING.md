@@ -113,6 +113,16 @@ Everything else groups by the component affected — `Server`, `Session`,
 by whether something is a feature or a fix. A reader knows which part they use
 and does not know which category you filed it under.
 
+Each package keeps its own `CHANGELOG.md`, and an entry goes in the file of the
+package it changes: `apps/mcp/CHANGELOG.md` for `libtmux-mcp-server`,
+`apps/workspace/CHANGELOG.md` for `tmux-workspace`, and the root `CHANGELOG.md`
+for the library. A change that spans packages, such as documentation, CI or
+release tooling, goes in the root file, and so does an entry that names more
+than one package. The packages share one version, so every file has a heading
+for every release, and a release with nothing for a package says
+``No entries for `tmux-workspace`.`` under it. A `### Breaking` entry goes in
+the file of the package it breaks, with its Before and After lines.
+
 ```markdown
 ### Control mode
 

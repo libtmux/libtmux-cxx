@@ -5,8 +5,8 @@ own package with its own dependencies, and none of them is built by default.
 
 | Application | What it is |
 |---|---|
-| [`mcp/`](mcp/README.md) | A [Model Context Protocol](https://modelcontextprotocol.io) server, so an agent can drive tmux |
-| [`workspace/`](workspace/README.md) | `tmux-workspace`, a command that loads, captures and converts tmuxp-style workspace files |
+| [`mcp/`](mcp/README.md) | A [Model Context Protocol](https://modelcontextprotocol.io) server, so an agent can drive tmux ([changelog](mcp/CHANGELOG.md)) |
+| [`workspace/`](workspace/README.md) | `tmux-workspace`, a command that loads, captures and converts tmuxp-style workspace files ([changelog](workspace/CHANGELOG.md)) |
 | [`matrix/`](matrix/README.md) | `libtmux_matrix`, a benchmark that prints what each way of reaching tmux costs |
 
 They exist for two reasons. The obvious one is that they are useful. The other

@@ -228,6 +228,14 @@ from the ports beside it:
 $ python3 -m tools.vcpkg check
 ```
 
+The library and each program keep a `CHANGELOG.md`, and each program installs
+its own under `share/doc/`. Each one opens with its package's name, holds an
+`## Unreleased` section and lists the same releases as the root file:
+
+```console
+$ python3 -m tools.docs.check_changelogs
+```
+
 The tmux versions CI runs come from one manifest,
 [`tools/ci/tmux_matrix.json`](../tools/ci/tmux_matrix.json). Adding a release
 there is the whole change to CI, and this names each page that has to say so:
@@ -355,7 +363,7 @@ release tarball by hash and that hash cannot exist before the tag does:
    the two disagree.
 2. The maintainer pushes the tag.
    [`release.yml`](workflows/release.yml) refuses a tag that disagrees with
-   `VERSION`.
+   `VERSION`, and one whose packages lack a changelog.
 3. GitHub generates the tarball; only now does its hash exist.
 4. The port's `version-semver` and `SHA512` are updated, and `x-add-version`
    records the new git-tree.
@@ -372,7 +380,8 @@ rather than a file to download. The MCP server is a program, and is published
 as one:
 
 - A `libtmux-mcp-server-<version>-<platform>` binary per platform, each with a
-  `.sha256` beside it.
+  `.sha256` beside it, and the server's changelog as
+  `CHANGELOG-libtmux-mcp-server-<version>.md`.
 - An SPDX SBOM describing what went into the archive.
 - A build provenance attestation, signed with a short-lived workflow identity
   rather than a stored key.

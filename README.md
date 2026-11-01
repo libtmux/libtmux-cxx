@@ -1336,6 +1336,8 @@ installed `libtmux.pc` carries the same answer, including the standard and the
 **Reference:**
 [API](docs/api.md) ·
 [Changelog](CHANGELOG.md) ·
+[MCP server changelog](apps/mcp/CHANGELOG.md) ·
+[tmux-workspace changelog](apps/workspace/CHANGELOG.md) ·
 [Examples](examples/README.md) ·
 [MCP server](apps/mcp/README.md) ·
 [Tests](tests/README.md) ·
