@@ -9,6 +9,18 @@ was recorded as it landed.
 
 ## Unreleased
 
+## 0.1.0 (2026-11-01)
+
+This is the first release without an `-alpha` tag. It ships the C++ library, the
+optional `tmux-workspace` command and `libtmux-mcp-server`, against tmux 3.3a
+through `master`, in C++23 or C++20. Linux, including WSL, and macOS are
+supported, with an experimental x64 desktop Windows preview through psmux. This
+section describes what 0.1.0 ships, and the alpha sections below record each
+alpha. Since `0.1.0-alpha.14` the library, `tmux-workspace` and the MCP server
+pass tmux no socket unless `LIBTMUX_SOCKET_PATH` or `LIBTMUX_SOCKET` names one,
+so a program reaches the server a bare `tmux` command reaches. Breaking lists
+what that changes.
+
 ### Breaking
 
 - `libtmux-mcp-server` with no selector no longer starts a server of its own on
@@ -58,69 +70,444 @@ was recorded as it landed.
 
 ### Server
 
+- `Server` reaches a tmux server by socket path (`at_socket_path`, `-S`), by
+  socket name (`at_socket_name`, `-L`), by the choice tmux makes (`at_default`)
+  or by the server the process runs inside (`from_env`). The `startable_at_*`
+  constructors build handles that may create an absent server, and
+  `Server::over` builds one over a transport the caller supplies.
 - Add `socket_from_environment()`, `EnvironmentSocket` and `SocketSource` in
   `libtmux/socket.hpp`, which report which variable chose the socket. The path
   wins when both variables are set, a variable that is empty or only whitespace
   counts as unset, and a value tmux cannot use fails the default handle naming
   the variable and not its value. (#128)
 - `Server::socket_path()`, the pinned route and a control client from a handle
-  that names no socket now describe the server a bare `tmux` reaches, which
-  inside tmux is the one `TMUX` names. Before, control mode attached to the
-  default socket. (#128)
+  that names no socket describe the server a bare `tmux` reaches, which inside
+  tmux is the one `TMUX` names. Before, control mode attached to the default
+  socket. (#128)
+- `Server::capabilities()` reports the implementation behind a handle, its
+  backend and which `ServerFeature` it serves, and runs no command. (#4)
+- POSIX handles pin the socket incarnation they came from, so a retained
+  handle neither compares equal to nor mutates an object on a replacement
+  server. (#10)
+- `environment()`, `set_environment()`, `unset_environment()` and
+  `remove_environment()` read, bind, forget and withhold the variables new
+  processes inherit. (#18)
+- A wait channel, an option name or a hook name that begins with `-` reaches
+  tmux literally and is never read as a flag. (#18)
+- `Server::run` runs any one tmux command. `run_batch` sends several in one
+  invocation as a fail-fast group that is partially applied and not rolled
+  back, and `run_chain` refuses a target it cannot address before tmux runs.
 
-### Workspace CLI
+### Command execution
 
-- `tmux-workspace load`, `freeze` and `shell` select the server with `-S`, then
-  `-L`, then `LIBTMUX_SOCKET_PATH`, then `LIBTMUX_SOCKET`, and with none of them
-  pass tmux no socket. Before, no flag meant the `TMUX` socket as `-S`, and the
-  variables were not read. Pass `-S "${TMUX%%,*}"` for the earlier choice.
-  `--append` and an attached `load` still require the selected server to be the
-  pane's. (#128)
-- `shell` hands tmuxp the `-S` or `-L` that a flag or a variable chose, since
-  tmuxp reads neither variable. (#128)
+- `ExecutionPolicy` carries a timeout, an output limit and `tmux_binary`, which
+  names the executable for command and control paths alike. A bare name
+  resolves through `PATH`, and a path with a separator is used as given. (#18)
+- POSIX commands drain output fairly across concurrent children, collect output
+  larger than the pipe buffer up to the configured limit, and stop draining
+  after a bounded grace period when a descendant keeps stdout or stderr open
+  past the child's exit. (#10, #11)
+- A child inherits neither unrelated file descriptors nor the caller's blocked
+  or ignored signals. (#10, #11)
+- `CommandObserver` receives a `CommandReport` with the command as tmux received
+  it, its argv, the failure if any and the elapsed time. Typed environment,
+  option, hook and shell values are redacted from reports and from
+  `CommandFailure::diagnostic`; a raw `CommandRequest` marks the same data with
+  `CommandArgument::sensitive` or `sensitive_range`. (#10, #18)
+- A wake, poll, drain, signal or child-status failure is the command's failure
+  and is never reported as success. Later cleanup does not replace the first
+  failure. (#11)
 
-### MCP server
+### Entities
 
-- Both socket variables set no longer stops startup: the path wins. A variable
-  that is empty or only whitespace is unset instead of an error, and a relative
-  `LIBTMUX_SOCKET_PATH` is accepted and reported as an absolute path when that
-  fits a socket address. A variable tmux cannot use stops startup with status 2,
-  naming the variable. (#128)
+- `Session`, `Window`, `Pane` and `Client` copy, compare, hash, print and format
+  with `std::format`. `std::format("{}", window)` writes `Window(@1 2:editor)`,
+  a format spec works, as in `std::format("{:>24}", pane)`, and
+  `libtmux::to_string(entity)` returns the same text.
+- An entity is one row of the listing that produced it. Reading a field costs
+  nothing and never fails, and answers for the moment it was listed;
+  `refresh()` returns a new value and leaves the old one as it was.
+  `Pane::window`, `Pane::session`, `Session::windows` and `Window::panes` each
+  read again.
+- `SessionId`, `WindowId` and `PaneId` are distinct types, so a pane id does
+  not pass where a window id belongs. `.value()` returns the text. (#18)
+- Windows and panes linked into several sessions compare equal across them, and
+  `same_entity_id` compares identity where psmux scopes an id by its session.
+  (#4, #18)
+- `Client` rows carry `pid`, `active_pane_id`, `flags` and `window_id`, so one
+  snapshot gives a client's process, physical window and focus flags. (#17)
+- `Session::attach_command()` returns an `AttachCommand`, which carries the
+  argv and the private route selecting this server incarnation. Keep it alive
+  until the spawned client exits. (#10)
 
-### Documentation
+### Pane
 
-- Describe the socket choice in the README, `docs/workspace-cli.md`,
-  `docs/mcp-server.md` and `docs/windows.md`, and add a `.env` recipe for a
-  program run by hand to CONTRIBUTING. (#128)
+- `Pane::send_text` and `send_key` send literal text and one key. `send_line`
+  sends literal text and then Enter as one tmux invocation; empty text sends
+  Enter alone, which `send_text` refuses.
+- `Pane::capture` reads what a pane shows, and `CaptureOptions` selects a line
+  range or the whole history, joins wrapped lines, and keeps escape sequences
+  or trailing spaces.
+- Add `Pane::exit_status` for a pane retained by `remain-on-exit`,
+  `Pane::left` and `Pane::top` for its coordinates, and `Pane::toggle_zoom`.
+  (#18)
+- `Pane::break_out` keeps a multi-pane break in its source session and returns
+  the existing window when the pane is already alone. On tmux 3.7 it selects
+  the form that does not crash the server and repairs a requested name by
+  stable window ID. (#4, #10)
+
+### Waiting
+
+- `Pane::wait_for_text` and `Server::wait_for_text` wait for output tmux has
+  confirmed, not for the caller's own echo, and answer with a `WaitResult`
+  naming the `WaitPath` that produced the answer. `output_confirms` checks text
+  already captured. (#18)
+- On tmux 3.7 and newer the wait streams control-mode output. On an older
+  daemon it polls and never attaches a control client, and a control stream that
+  drops while the pane lives keeps waiting by polling. (#69)
+- A wait whose pane or server goes away returns `pane_died` with tmux's words in
+  `reason` and the last capture in `text`, on every path. A pane that exits
+  successfully without capture output during shutdown keeps its last capture;
+  a blank pane still replaces the previous output. (#69, #94)
+
+### Queries
+
+- `FilterExpr` is built from typed fields and composes with `&&`, `||` and `!`.
+  A filter that asks a number whether it starts with a string does not compile,
+  and `tests/compile/` holds the programs that prove it. Boolean fields compose
+  directly with `&&` and `||`, and string and boolean fields accept `!=`.
+  (#110)
+- Filters cover every exposed entity field, including command and buffer
+  listings, and `children_of` and `parent_of` join two listings on an id so a
+  filter can ask about related rows. (#18)
+- A field handle is a ranges projection, and a flag handle is a predicate:
+  `std::ranges::sort(windows, {}, libtmux::window::index)` and
+  `std::ranges::count_if(panes, libtmux::pane::active)`.
+- `matching`, `first` and `exactly_one` select from a listing already in
+  memory without reaching tmux, reporting `CardinalityError::none_matched` or
+  `several_matched` otherwise. They require forward ranges that yield lvalue
+  references and reject const temporaries, since the result borrows. Keep a
+  named owner alive, or use `first_owned` and `exactly_one_owned` to keep a
+  selected value after its source is gone. (#18, #106)
+
+### Errors
+
+- Failure is a value. Every call answers `expected<T, CommandFailure>`, and
+  nothing throws to report a tmux or transport failure. `FailureKind` is
+  `validation`, `spawn`, `pre_exec`, `pipe`, `timeout`, `refused`, `missing`,
+  `truncated`, `unsupported`, `overloaded` or `cancelled`; `unsupported` means
+  the backend will not provide the operation rather than approximate it.
+- `CommandFailure::delivery` is a `DeliveryStatus`: `not_started`, `written`,
+  `replied` or `indeterminate`. Only `not_started` is safe to retry without
+  more evidence. (#10)
+- `CommandFailure` formats with `std::format`, naming what happened, what tmux
+  said, the exit code when there is one and how far the command got:
+  `tmux refused the command: can't find session: nope (exit 1, replied)`.
+  `libtmux::to_string(failure)` returns the same line.
+- `libtmux::bad_expected_access<Error>` is what `value()` throws, aliased to the
+  underlying type so a caller catches it in the C++20 build as well as the
+  C++23 one.
+- `as_command_failure` and `as_protocol_error` convert between command and
+  control-mode failures. (#18)
+
+### Asynchronous commands
+
+- `CommandRuntime::start` takes a `CommandRuntimeConfig` with a fixed admission
+  capacity, and owns the transport threads. `Server::try_submit(runtime,
+  command)` returns a move-only `CommandOperation`, so several commands run
+  concurrently, each with its own timeout and output limit. (#10, #11)
+- A refusal before admission, such as a full, stopped or moved-from runtime or
+  an invalid command, is the outer `unexpected`. After admission every failure
+  is the operation's result, and a command whose deadline expires before it
+  starts fails with `not_started` and no side effect. (#11)
+- `CommandOperation::wait` collects the result, `wait_for` and `wait_until`
+  time out without consuming the operation, `request_cancel` asks the transport
+  to withdraw the command, and `detach` releases only the result obligation.
+  Dropping an operation detaches observation without waiting for or cancelling
+  an accepted command. (#10, #11, #18)
+- Accepted commands enter transport in admission order. One runtime slot stays
+  occupied until its transport, result and observer obligations all end, and
+  `snapshot` reports current obligations with cumulative admission and
+  completion counts. (#11)
+- Asynchronous `CommandObserver` callbacks run only on the caller of
+  `CommandRuntime::dispatch_ready`, never under an internal lock or on a
+  transport thread. `discard_ready` releases them without invoking them. (#11)
+- `CommandRuntime::wait_ready` blocks for completed observations and
+  `ready_fd` is a descriptor an event loop can select on. `close` blocks until
+  the threads stop, and `safe_to_unload` is true only once every obligation has
+  ended. (#11, #18)
+
+### Control mode
+
+- `Server::control` and `control_with_options` open a `Connection` to one
+  session, and `Server::over_control` returns a `Server` whose supported
+  commands travel over held-open control clients. `Connection::execute` returns
+  every guarded block in `ControlRequestResult::blocks`. (#10, #18)
+- `Connection::events` waits for what tmux reports. `take_notifications` is one
+  draining cursor, `watch_notifications` returns independent `NotificationWatch`
+  cursors with their own wait, readiness descriptor and dropped-event count,
+  and `notification_fd` lets a program that owns an event loop select on the
+  stream. (#8, #10)
+- `Connection` recognises every notification the supported tmux releases
+  define and decodes extended output without treating later fields as pane
+  data. Subscription-change notifications carry their session, window and pane
+  IDs, and `set_pane_output` restores output after a pane was muted. (#10, #18)
+- Retention is bounded by bytes and record count. An oversized or unterminated
+  line fails without growing memory, and `Parser` retains the exact reply prefix
+  when its byte limit cuts a line. Concurrent calls keep independent deadlines,
+  and notification reads continue while another caller waits to write. (#10,
+  #107)
+- `parse` returns views into a notification and rejects a const temporary, so
+  keep the notification alive while using the parsed views. (#105)
+- Library-managed control mode needs tmux 3.7. On an older daemon
+  `Server::control`, `control_with_options`, `over_control` and
+  `Connection::connect` return a `ProtocolError` naming 3.7 before any client
+  attaches. (#69)
+
+### Layouts
+
+- `validate_layout` checks a saved layout's syntax, and
+  `Server::validate_layouts` checks a batch against the selected daemon.
+  `Window::select_layout` validates before dispatch, as does the MCP
+  `select_layout` tool, which rejects malformed layouts before target lookup.
+  (#17)
+- JSON saved layouts, `{"V":2,...`, need tmux 3.8 and keep floating panes. An
+  older daemon is refused with `FailureKind::validation`, saying "JSON saved
+  layouts require tmux 3.8 or newer". The mirrored `main-*` presets need
+  tmux 3.5, and a string tmux cannot read is never sent. (#17, #69, #116)
+
+### Compatibility
+
+- tmux 3.3a is the oldest supported release. A daemon older than that,
+  including 3.3, and one whose version cannot be read or is an undated
+  `master`, is refused with `FailureKind::unsupported` before the command has
+  any effect, whatever the client executable reports. Release candidates are
+  not supported: `X.Y-rcN` parses and ranks below `X.Y`. (#68, #120)
+- `Server::check_release` refuses a release below the floor as the first
+  command would, and sends nothing. Use it before launching tmux outside the
+  library. (#68)
+- Every command to a live daemon carries `-N` and a check that fails the list
+  unrun if another daemon has replaced it, so a vanished server is not
+  restarted by the client binary. `kill-server` on a server that is already
+  gone succeeds. (#68)
+- A literal command is read the way tmux reads it, under its alias or any
+  unique prefix and in each position of a `;` list, by `Server::run`, batches,
+  chains, asynchronous submissions, `over_control` and `Connection::execute`.
+  These are refused before dispatch: `break-pane` without `-n` on exactly
+  tmux 3.7, which ends the server; `select-layout` with a string tmux cannot
+  read, which ends tmux 3.3 and 3.3a; `refresh-client -l` below 3.6a;
+  `delete-buffer -b` and `set-buffer -b -n` below 3.4; and a session or window
+  name holding `:` or `.` on exactly 3.7. (#69, #94)
+- A command inside a string tmux parses itself is sent as written: the body of
+  `if-shell`, `run-shell -C`, a brace block, a hook, a key binding or a sourced
+  file. Do not put a refused command in one. The README and
+  `docs/compatibility.md` list the commands, releases and effects. (#69)
+- `Buffer::remove` and the MCP `paste_text` staging buffer need tmux 3.4 and
+  return `FailureKind::unsupported` before any buffer is touched. (#69)
+- A split percentage is spelled `-l N%`, which every supported release
+  accepts.
+- `Version` orders `3.7 < 3.7a < 3.7b`, with `next-X.Y` and `X.Y-rcN` before
+  `X.Y`. `parse_version` stops at the first line of `tmux -V` output and
+  refuses a number that would overflow. (#4, #68)
+- `capabilities.json` lists each optional feature's first tmux release, its
+  APIs and the error type they return. (#69)
+
+### Windows preview
+
+- An experimental x64 desktop preview, built with Visual Studio 2022 against
+  psmux 3.3.7 at a pinned commit and archive hash, answers exact read-only
+  entity queries and declines the rest with `FailureKind::unsupported` and
+  `not_started` delivery. `-S` socket paths, persistent control mode, clients,
+  buffers, options and hooks, session and window creation, and pane input and
+  capture are not served. Ask `Server::capabilities()` before choosing a
+  workflow. (#4)
+- `SocketError::path_unsupported` reports a socket path asked of psmux, and
+  `kSocketPathLimit` states the platform's limit, zero where paths do not
+  apply. A psmux session or window name ending in `.<digits>` is rejected so a
+  target-shaped name cannot be misread as `session:window.pane`. (#4, #10)
+- On psmux `Server::try_submit` returns after admission, and cancelling a
+  command proven to have started reports `cancelled` with `indeterminate`
+  delivery. (#10, #11)
+- CI builds the preview with MSVC, installs it and consumes the package, and
+  runs no psmux test; Windows and macOS are supported on a best-effort basis.
+  (#82)
 
 ### Testing
 
-- CI tests the oldest and newest released tmux, 3.3a and 3.8, on a push and a
-  pull request. A release, which now runs `ci.yml` at full scope itself, and a
-  `workflow_dispatch` with `scope: full` run the whole table, `master` and the
-  refusal cells. A dispatch also takes `tmux-ref` (a release, tag, branch or
-  commit), `cxx-compiler` and `tmate`, and `all-checks-passed` waits for the
-  refusal cells whenever they run. (#124)
+- `libtmux::testing` installs behind `find_package(libtmux COMPONENTS testing)`
+  on POSIX. `ScopedTmuxServer::start` gives a suite a private server on its own
+  socket, with `SocketNamespace::consumer` naming whose it is and a
+  `TeardownReport` collecting what teardown could not clean up.
 - `ctest` runs every test with `TMUX`, `TMUX_PANE`, `LIBTMUX_SOCKET` and
   `LIBTMUX_SOCKET_PATH` unset and `TMUX_TMPDIR` set to `tmux-sandbox/` in the
   build tree, so a bare `tmux` command in a test reaches no server outside the
   run. The run fails, naming the sockets, when a test leaves a tmux server
   running there. A test binary started by hand refuses to run until it is set
   up the same way. (#127)
+- CI tests the oldest and newest released tmux, 3.3a and 3.8, on a push and a
+  pull request. A release, which runs `ci.yml` at full scope itself, and a
+  `workflow_dispatch` with `scope: full` run the whole table, `master` and the
+  refusal cells. A dispatch also takes `tmux-ref` (a release, tag, branch or
+  commit), `cxx-compiler` and `tmate`. (#124)
 
-### Window
+### Build
 
-- `Window::select_layout`, a literal `select-layout`,
-  `Server::validate_layouts` and the MCP `select_layout` tool need tmux 3.8
-  for a JSON layout, the first release that accepts one. An older server is
-  refused with `FailureKind::validation` before dispatch, saying "JSON saved
-  layouts require tmux 3.8 or newer"; upgrade to tmux 3.8 to apply one.
-  Installed releases behave as before; only the refusal text changes, and
-  it now names 3.8. (#116)
+- The core has no dependencies. C++23 uses `std::expected`, and C++20 with
+  `LIBTMUX_CXX_STANDARD=20` uses a pinned `tl::expected`. Each lives in its own
+  inline namespace, `v2_cxx23` or `v2_cxx20`, so objects built against one fail
+  to link against the other and name the missing symbol. The toolchains are
+  clang 17+, GCC 13+ and Visual Studio 2022 17.3+, with CMake 3.25.
+- `BUILD_SHARED_LIBS` selects a static or shared library on POSIX, and Windows
+  rejects a shared build at configure time. The install carries
+  `LIBTMUX_VERSION_*` macros in `libtmux/version.hpp`, a CMake package config
+  and a pkg-config file for consumers that do not use CMake. (#18)
 
-  Testing, source-breaking: `libtmux::test::lacks_tmux` no longer takes a
-  fourth argument, and the second skip macro beside `LIBTMUX_REQUIRES_TMUX`
-  is removed; gate a test on the release with `LIBTMUX_REQUIRES_TMUX`.
+### vcpkg
+
+- This repository is a vcpkg git registry, so installing needs neither an
+  overlay port nor a clone. The `libtmux` port has an `mcp` feature, and a
+  release's baseline is the registry commit that follows its tag, which the
+  release notes name. Windows support in the port is an opt-in transition that
+  a release's tagged gates must clear, and the port declares static linkage
+  there, so a dynamic triplet installs the static library. (#4)
+- `python3 -m tools.vcpkg check` fails when the git-tree recorded for a port's
+  declared version is not that port's git-tree at `HEAD`, which `x-add-version`
+  does not report loudly enough to gate on. `probe --repository` resolves the
+  port over the public URL, so the gate catches a commit that was never pushed.
+
+### MCP server
+
+- `libtmux-mcp-server` speaks newline-delimited JSON-RPC over stdio and ships
+  as one native executable, built with `-DLIBTMUX_BUILD_MCP_SERVER=ON`. A
+  native Windows build advertises the same startup-frozen tool manifest, and a
+  command psmux cannot serve fails at dispatch. (#4)
+- One immutable capability registry governs registration, calls, schemas,
+  descriptions, annotations and disclosure, and every tool belongs to one of
+  four toolsets: `inspect`, `manage`, `execute` and `teardown`.
+  `LIBTMUX_TOOLSETS` selects toolsets, `LIBTMUX_TOOLS` adds exact names and
+  `LIBTMUX_EXCLUDE_TOOLS` removes them, all frozen at startup. (#4)
+- Tools publish an `outputSchema` and answer with `structuredContent`. A tool
+  that acts on one pane takes `paneId`, a canonical `%`-prefixed id; only
+  `wait_for_text`, `show_option` and `show_hooks` keep `target`, which is any
+  tmux target expression. A refusal is a tool error result, not a protocol
+  error. (#4, #18)
+- The static `tmux://capabilities` resource reports the startup-frozen
+  effective tool rows, the connection's provenance and the common process
+  boundary, and every tool carries matching
+  `com.git-pull.libtmux-mcp/capability` metadata. (#4)
+- The server supports protocol `2026-07-28` and the `2025-11-25`, `2025-06-18`,
+  `2025-03-26` and `2024-11-05` initialize lifecycles. `server/discover`
+  answers a current client with the capabilities and a public cache lifetime,
+  and JSON-RPC batches are accepted under the versions that allow them and
+  answered in input order. (#4)
+- Tool calls run on four workers with a bounded number in flight, and a call
+  past the bound answers `-32003`. `notifications/progress` follows a
+  `progressToken`, and `notifications/cancelled` cancels a queued or running
+  call. A request that finished before stdin closed is answered. (#4, #6)
+- A server selects its socket once, before protocol startup, and takes no
+  per-call override. `--socket-name`, `--socket-path`, `--socket SELECTOR`
+  (`name:NAME`, `path:/ABSOLUTE/PATH` or `inherit`) and a positional path come
+  first. Otherwise `LIBTMUX_SOCKET_PATH` wins over `LIBTMUX_SOCKET`, and with
+  neither the server passes tmux no socket. Both variables set no longer stops
+  startup, and a variable that is empty or only whitespace is unset instead of
+  an error. A relative `LIBTMUX_SOCKET_PATH` is accepted and reported as an
+  absolute path when that fits a socket address, and a variable tmux cannot use
+  stops startup with status 2, naming the variable. (#128)
+- A server a tool starts, because a session was created on an absent socket,
+  reads your tmux configuration, or the absolute path in `--tmux-config` or
+  `LIBTMUX_TMUX_CONFIG`.
+- Pane-input tools check immediately before dispatch that each configured
+  target is live, input-enabled, outside a human-owned mode and an attached
+  client's current view, and distinct from the caller. `send_keys` and each
+  `send_keys_batch` row check the effective synchronised cohort, and
+  `paste_text` uses one private target-only buffer. Process-wide pane leases
+  keep overlapping input from interleaving. (#4)
+- `run_shell_command` requires one target running a supported POSIX foreground
+  shell and frames completion collision-free in a subshell, keeping Bash and
+  Zsh error and debug traps. A timed-out or cancelled run releases its pane once
+  the command finishes. (#4, #18)
+- `wait_for_text` discounts echoed input from `send_keys`, `paste_text` and
+  `run_shell_command`, including submitted commands and wrapped lines. It uses
+  control-mode events when it can open a connection and falls back to polling,
+  fails with the output so far when the pane or server goes away, and reports
+  the path in `mode`. (#18, #69)
+- A session argument resolves by exact name, so a mistyped name reports no such
+  session instead of acting on a differently named one. (#17)
+- `call_read_tools_batch` runs one through 16 serial inspect calls within a
+  1,000,000-byte JSON-RPC response, `search_panes` is deterministic and
+  bounded, and `set_synchronize_panes` declares that it amplifies later pane
+  input. `get_server_info` reports the configured socket path and refuses a
+  daemon older than 3.3a. (#4, #68)
+
+### Workspace CLI
+
+- `tmux-workspace` is an optional POSIX executable built with
+  `-DLIBTMUX_BUILD_WORKSPACE_CLI=ON`; the option fails CMake configuration on
+  Windows. It links CLI11 2.7, yaml-cpp 0.8 and nlohmann JSON, which the core
+  does not, found with `find_package` or fetched at pinned versions when
+  `LIBTMUX_FETCH_DEPS=ON`. (#17)
+- `load`, `freeze`, `convert`, `import`, `ls`, `search`, `edit`, `shell`,
+  `debug-info` and `--command-tree` cover discovery, loading, capture,
+  conversion and Teamocil and tmuxinator imports. Every command takes `--json`
+  and `--ndjson`, whose results carry `schema_version`, `command` and
+  `status`, and whose streams end with one `completed` or `failed` record. (#17)
+- `load`, `freeze` and `shell` select the server with `-S`, then `-L`, then
+  `LIBTMUX_SOCKET_PATH`, then `LIBTMUX_SOCKET`, and with none of them pass tmux
+  no socket. Before, no flag meant the `TMUX` socket as `-S`, and the variables
+  were not read. Pass `-S "${TMUX%%,*}"` for the earlier choice. `--append` and
+  an attached `load` still require the selected server to be the pane's.
+  `shell` hands tmuxp the `-S` or `-L` that a flag or variable chose, since
+  tmuxp reads neither variable. (#128)
+- Error codes are lower snake_case and share the vocabulary the other libtmux
+  workspace ports use, such as `workspace_not_found`, `invalid_workspace`,
+  `session_not_found`, `tmux_unavailable`, `tmux_unsupported`, `tmux_failed` and
+  `script_failed`. A tmux older than 3.3a is refused as `tmux_unsupported`
+  before `load` goes further, and `shell` refuses before it starts tmuxp.
+  (#17, #68)
+- `load` starts a cold server and verifies it belongs to the command before it
+  creates a workspace window. It resolves YAML merge keys, expands `$VAR`,
+  `${VAR}` and a leading `~` in shell commands the way tmuxp does, validates
+  layout names, checksums, tree syntax and pane counts before any script runs,
+  and sizes a new session to the terminal it runs from. A session that is
+  already running is compared with the document, and one missing a window the
+  document describes is `session_mismatch`, with nothing built. (#17)
+- An interactive `load` asks before moving the current client. An attached
+  `load` resolves the invoking pane's context first and reports every way that
+  context can be unusable as one usage error with exit 2. A load cancelled by
+  a signal keeps what it built and names it under `retained_state`, and a load
+  that fails removes the session it created. (#17)
+- `freeze` writes block-style YAML, quotes every string scalar a YAML 1.1 or
+  1.2 resolver would read back as a boolean, null or number, and refuses a
+  session whose name holds `.` or `:`. `import` refuses unexpanded ERB markup
+  (`<%`) in tmuxinator files before it writes; Teamocil evaluates no
+  templates, so the same markup there is kept literally. (#17)
+- `shell` runs an installed tmuxp 1.74.0 executable, found on `PATH` or at
+  `TMUX_WORKSPACE_TMUXP`, with the console backends and startup flags tmuxp
+  offers; `TMUX_WORKSPACE_PYTHON` names the interpreter it runs under. `edit`
+  opens `VISUAL`, then `EDITOR`, then `vi`. (#17)
+- `load` shows progress on a terminal with presets, templates and a bounded
+  script panel, `--log-file` creates its destination `0600`, and Bash, Zsh and
+  Fish completion scripts come from `--generate-completion`. (#17)
+
+### Examples
+
+- `libtmux::workspace` in `examples/workspace` parses tmuxp documents with
+  `parse_tmuxp` and builds them with `build` and `build_windows`. A
+  `BeforeBuild` or `BuildObserver` callback receives a `BuildEvent` carrying the
+  session, window and pane IDs and may return a `BuildStop` that keeps or rolls
+  back what was built. `tmux-workspace load` builds through it. (#17)
+
+### Documentation
+
+- The public headers render as an API reference through Doxygen and Breathe,
+  one page per header that declares something, and `docs/api.md` is generated
+  from them. Declaration comments are `///`, which Doxygen reads. (#12)
+- The README's C++ is quoted from `examples/05-readme.cpp` and
+  `examples/08-quickstart.cpp`, which the suite compiles and runs against a
+  real tmux.
+- The README, `docs/workspace-cli.md`, `docs/mcp-server.md` and
+  `docs/windows.md` describe the socket choice, and CONTRIBUTING has a `.env`
+  recipe for a program run by hand. (#128)
 
 ## 0.1.0-alpha.14 (2026-10-25)
 

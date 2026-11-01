@@ -8187,7 +8187,7 @@ The same version, available to the preprocessor.  `library_version()` answers wh
 #### `LIBTMUX_VERSION_STRING`
 
 ```cpp
-#define LIBTMUX_VERSION_STRING "0.1.0-alpha.14"
+#define LIBTMUX_VERSION_STRING "0.1.0"
 ```
 
 <a id="libtmux-lowering-hpp"></a>
