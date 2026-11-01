@@ -4,10 +4,10 @@ Thanks for looking. This is a C++ port of
 [libtmux](https://libtmux.git-pull.com), and it is held to the same standard as
 the original: nothing merges that is not proven against a real tmux.
 
-The project is an **alpha prerelease**, which is good news for a contributor:
-the public surface is still open. A change that improves a name or a signature
-does not need a deprecation shim, and "this API is awkward" is a reportable bug
-rather than something to work around. That ends at `0.1.0`.
+The project is **pre-1.0**, which is good news for a contributor: the public
+surface is still open. A change that improves a name or a signature does not
+need a deprecation shim, and "this API is awkward" is a reportable bug rather
+than something to work around.
 
 How this project writes prose — README, changelog, release notes, commit
 messages, API documentation, and source comments — is set out separately in
@@ -413,8 +413,8 @@ Two standards are supported: C++23 over `std::expected`, and C++20 over pinned
 each lives in its own inline namespace and mixing them is a link error rather
 than a program that reads the wrong bytes.
 
-None of this is promised until `0.1.0`. Alpha releases may change or remove
-exported identifiers with no deprecation period.
+None of this is promised yet. Any release may change or remove exported
+identifiers with no deprecation period.
 
 The support policy, stated rather than implied: the newest release is the only
 one that gets fixes, there are no backports, and the tmux range moves only when
