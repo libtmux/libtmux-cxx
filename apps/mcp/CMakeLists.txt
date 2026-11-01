@@ -297,5 +297,8 @@ if(LIBTMUX_BUILD_MCP_SERVER)
     # no target to import.
     install(TARGETS libtmux_mcp_server
             RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+    # The changelog a user of the program reads goes in beside it.
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/CHANGELOG.md"
+            DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/doc/libtmux-mcp-server")
   endif()
 endif()
