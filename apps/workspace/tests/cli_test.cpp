@@ -29,6 +29,7 @@
 #include "libtmux/testing/scoped_server.hpp"
 #include "libtmux_consumers/tmuxp.hpp"
 #include "support/rejected_daemon.hpp"
+#include "support/sandbox.hpp"
 
 namespace {
 using Json = nlohmann::json;
@@ -3882,6 +3883,256 @@ TEST_F(WorkspaceCliRejected, ALoadOnAColdSocketNamesTheOldExecutableAndStartsNot
   const auto machine = invoke({"load", "plain.yaml", "-d", "-S", cold, "--json"});
   expect_refusal_json(machine, true);
   EXPECT_FALSE(std::filesystem::exists(cold)) << "a server was started";
+}
+
+// Which server a command reaches when it is given no -S or -L: what
+// LIBTMUX_SOCKET_PATH or LIBTMUX_SOCKET names, and otherwise whatever tmux
+// picks, which is the server TMUX names inside a pane. The commands read TMUX
+// themselves only when they ask for the pane they run in.
+struct NoSocketSelection {
+  libtmux::test_support::ScopedUnset tmux{"TMUX"};
+  libtmux::test_support::ScopedUnset pane{"TMUX_PANE"};
+  libtmux::test_support::ScopedUnset name{"LIBTMUX_SOCKET"};
+  libtmux::test_support::ScopedUnset path{"LIBTMUX_SOCKET_PATH"};
+};
+
+std::string pane_variable(const libtmux::test::ScopedTmuxServer& server) {
+  return server.socket_path().string() + "," + std::to_string(server.server_pid()) +
+         ",0";
+}
+
+TEST(WorkspaceCli, ShellHandsTmuxpTheSocketAVariableChoseAndNothingElse) {
+  const NoSocketSelection none;
+  Files files;
+  const auto runtime = files.directory / "tmuxp runtime";
+  std::ofstream{runtime} << "#!/bin/sh\n"
+                            "if [ \"$3\" = --version ]; then\n"
+                            "  printf 'tmuxp 1.74.0, libtmux fixture\\n'; exit 0\n"
+                            "fi\n"
+                            "printf '%s\\0' \"$@\" > arguments\n"
+                            "exit 0\n";
+  ASSERT_EQ(::chmod(runtime.c_str(), 0700), 0);
+  const libtmux::test::EnvironmentGuard selected{"TMUX_WORKSPACE_TMUXP",
+                                                 runtime.string()};
+  struct Case {
+    const char* label;
+    std::optional<std::string> path;
+    std::optional<std::string> name;
+    std::optional<std::string> inside;
+    std::vector<std::string> flags;
+    std::vector<std::string> expected;
+  };
+  const std::vector<Case> cases{
+      {"nothing: tmuxp follows TMUX and the default itself",
+       std::nullopt,
+       std::nullopt,
+       std::nullopt,
+       {},
+       {}},
+      {"a path variable",
+       "var.sock",
+       std::nullopt,
+       std::nullopt,
+       {},
+       {"-S", "var.sock"}},
+      {"a name variable",
+       std::nullopt,
+       "var-name",
+       std::nullopt,
+       {},
+       {"-L", "var-name"}},
+      {"both: the path wins",
+       "var.sock",
+       "var-name",
+       std::nullopt,
+       {},
+       {"-S", "var.sock"}},
+      {"a blank path leaves the name",
+       "  ",
+       "var-name",
+       std::nullopt,
+       {},
+       {"-L", "var-name"}},
+      {"-L comes before both variables",
+       "var.sock",
+       "var-name",
+       std::nullopt,
+       {"-L", "flagged"},
+       {"-L", "flagged"}},
+      {"-S comes before both variables",
+       "var.sock",
+       "var-name",
+       std::nullopt,
+       {"-S", "flagged.sock"},
+       {"-S", "flagged.sock"}},
+      {"TMUX alone is left to tmuxp",
+       std::nullopt,
+       std::nullopt,
+       "pane.sock,1,0",
+       {},
+       {}},
+      {"a variable beside TMUX",
+       "var.sock",
+       std::nullopt,
+       "pane.sock,1,0",
+       {},
+       {"-S", "var.sock"}},
+  };
+  for (const Case& item : cases) {
+    SCOPED_TRACE(item.label);
+    std::optional<libtmux::test::EnvironmentGuard> path, name, inside;
+    if (item.path)
+      path.emplace("LIBTMUX_SOCKET_PATH", *item.path);
+    if (item.name)
+      name.emplace("LIBTMUX_SOCKET", *item.name);
+    if (item.inside)
+      inside.emplace("TMUX", *item.inside);
+    std::filesystem::remove("arguments");
+    std::vector<std::string> command{"shell"};
+    command.insert(command.end(), item.flags.begin(), item.flags.end());
+    command.insert(command.end(), {"-c", "print(1)", "--json"});
+    const auto result = invoke(command);
+    ASSERT_EQ(result.code, 0) << result.err;
+    std::ifstream input{"arguments", std::ios::binary};
+    std::vector<std::string> args;
+    for (std::string argument; std::getline(input, argument, '\0');)
+      args.push_back(std::move(argument));
+    const auto shell = std::ranges::find(args, "shell");
+    ASSERT_NE(shell, args.end());
+    std::vector<std::string> selected_socket;
+    for (auto at = shell + 1; at != args.end(); ++at)
+      if (*at == "-S" || *at == "-L") {
+        selected_socket.push_back(*at);
+        ASSERT_NE(at + 1, args.end());
+        selected_socket.push_back(*++at);
+      }
+    EXPECT_EQ(selected_socket, item.expected);
+  }
+}
+
+TEST(WorkspaceCliTmux, FreezeReachesTheServerThatTheFlagThenTheVariablesThenTmuxName) {
+  const NoSocketSelection none;
+  auto first = libtmux::test::ScopedTmuxServer::start(
+      {.session_name = "var-a",
+       .socket_namespace = libtmux::test::SocketNamespace::consumer("ws-sock-a")});
+  ASSERT_TRUE(first.has_value()) << first.error();
+  auto second = libtmux::test::ScopedTmuxServer::start(
+      {.session_name = "var-b",
+       .socket_namespace = libtmux::test::SocketNamespace::consumer("ws-sock-b")});
+  ASSERT_TRUE(second.has_value()) << second.error();
+  const auto freezes = [](std::string_view session, std::vector<std::string> flags) {
+    std::vector<std::string> command{"freeze", std::string{session}};
+    command.insert(command.end(), flags.begin(), flags.end());
+    command.emplace_back("--json");
+    return invoke(command).code == 0;
+  };
+  {
+    // The path variable alone names the first server and not the second.
+    const libtmux::test::EnvironmentGuard path{"LIBTMUX_SOCKET_PATH",
+                                               first->socket_path().string()};
+    EXPECT_TRUE(freezes("var-a", {}));
+    EXPECT_FALSE(freezes("var-b", {}));
+    // -S comes before the variable.
+    EXPECT_TRUE(freezes("var-b", {"-S", second->socket_path().string()}));
+    EXPECT_FALSE(freezes("var-a", {"-S", second->socket_path().string()}));
+    // The path wins over a name nothing listens on.
+    const libtmux::test::EnvironmentGuard name{"LIBTMUX_SOCKET", "no-such-socket"};
+    EXPECT_TRUE(freezes("var-a", {}));
+  }
+  {
+    // A blank path leaves the name in force. The name resolves under
+    // TMUX_TMPDIR, so the variable names the directory too.
+    auto named = libtmux::test::ScopedTmuxServer::start(
+        {.mode = libtmux::test::SocketMode::Name,
+         .session_name = "var-name",
+         .socket_namespace = libtmux::test::SocketNamespace::consumer("ws-sock-n")});
+    ASSERT_TRUE(named.has_value()) << named.error();
+    ASSERT_TRUE(named->socket_name().has_value());
+    const libtmux::test::EnvironmentGuard tmpdir{"TMUX_TMPDIR",
+                                                 named->tmux_tmpdir().string()};
+    const libtmux::test::EnvironmentGuard path{"LIBTMUX_SOCKET_PATH", "  "};
+    const libtmux::test::EnvironmentGuard name{"LIBTMUX_SOCKET", *named->socket_name()};
+    EXPECT_TRUE(freezes("var-name", {}));
+  }
+  {
+    // Inside a pane, tmux picks the server TMUX names; a variable beats it.
+    const libtmux::test::EnvironmentGuard pane{"TMUX", pane_variable(*first)};
+    EXPECT_TRUE(freezes("var-a", {}));
+    EXPECT_FALSE(freezes("var-b", {}));
+    const libtmux::test::EnvironmentGuard path{"LIBTMUX_SOCKET_PATH",
+                                               second->socket_path().string()};
+    EXPECT_TRUE(freezes("var-b", {}));
+    EXPECT_FALSE(freezes("var-a", {}));
+  }
+}
+
+TEST(WorkspaceCliTmux, ALoadStartsTheServerWhereAVariableOrTmuxNamesOne) {
+  const NoSocketSelection none;
+  Files files;
+  auto owner = libtmux::test::ScopedTmuxServer::start(
+      {.mode = libtmux::test::SocketMode::Name,
+       .socket_namespace = libtmux::test::SocketNamespace::consumer("ws-sock-l")});
+  ASSERT_TRUE(owner.has_value()) << owner.error();
+  const libtmux::test::EnvironmentGuard tmpdir{"TMUX_TMPDIR",
+                                               owner->tmux_tmpdir().string()};
+  std::ofstream{"plain.yaml"} << "session_name: started\nwindows: [{}]\n";
+  const auto stops = [](const std::filesystem::path& socket) {
+    const auto server = libtmux::Server::at_socket_path(socket.string());
+    if (server)
+      static_cast<void>(server->kill());
+  };
+  const auto sessions_on = [](const std::filesystem::path& socket) {
+    std::vector<std::string> names;
+    const auto server = libtmux::Server::at_socket_path(socket.string());
+    if (!server)
+      return names;
+    const auto listed = server->sessions();
+    if (listed)
+      for (const auto& session : *listed)
+        names.emplace_back(session.name());
+    return names;
+  };
+  {
+    // A name variable: tmux creates the socket under TMUX_TMPDIR itself.
+    const libtmux::test::EnvironmentGuard name{"LIBTMUX_SOCKET", "ws-boot"};
+    const auto socket =
+        owner->tmux_tmpdir() / ("tmux-" + std::to_string(::getuid())) / "ws-boot";
+    const auto result = invoke({"load", "plain.yaml", "-d", "--json"});
+    EXPECT_EQ(result.code, 0) << result.out << result.err;
+    EXPECT_EQ(sessions_on(socket), std::vector<std::string>{"started"});
+    stops(socket);
+  }
+  {
+    // A path variable.
+    const auto socket = owner->tmux_tmpdir() / "from-variable.sock";
+    const libtmux::test::EnvironmentGuard path{"LIBTMUX_SOCKET_PATH", socket.string()};
+    const auto result = invoke({"load", "plain.yaml", "-d", "--json"});
+    EXPECT_EQ(result.code, 0) << result.out << result.err;
+    EXPECT_EQ(sessions_on(socket), std::vector<std::string>{"started"});
+    stops(socket);
+  }
+  {
+    // TMUX names a socket that does not exist: tmux starts a server there.
+    const auto socket = owner->tmux_tmpdir() / "from-tmux.sock";
+    const libtmux::test::EnvironmentGuard pane{"TMUX", socket.string() + ",1,0"};
+    const auto result = invoke({"load", "plain.yaml", "-d", "--json"});
+    EXPECT_EQ(result.code, 0) << result.out << result.err;
+    EXPECT_EQ(sessions_on(socket), std::vector<std::string>{"started"});
+    stops(socket);
+  }
+}
+
+TEST(WorkspaceCli, AVariableTheLibraryCannotUseIsRefusedWithoutItsValue) {
+  const NoSocketSelection none;
+  const std::string value(300, 'x');
+  const libtmux::test::EnvironmentGuard path{"LIBTMUX_SOCKET_PATH", value};
+  const auto result = invoke({"freeze", "anything", "--json"});
+  EXPECT_EQ(result.code, 2);
+  const auto error = Json::parse(result.err);
+  EXPECT_EQ(error.at("code"), "usage");
+  const auto& message = error.at("message").get_ref<const std::string&>();
+  EXPECT_NE(message.find("LIBTMUX_SOCKET_PATH"), std::string::npos) << message;
+  EXPECT_EQ(message.find(value), std::string::npos) << "the message quotes the value";
 }
 
 } // namespace
