@@ -17,7 +17,12 @@ target_include_directories(workspace_cli SYSTEM PRIVATE ${_cli11_include})
 add_executable(tmux-workspace src/main.cpp)
 target_link_libraries(tmux-workspace PRIVATE libtmux_build_options workspace_cli)
 if(LIBTMUX_INSTALL)
+  include(GNUInstallDirs)
   install(TARGETS tmux-workspace RUNTIME DESTINATION bin COMPONENT workspace-cli)
+  # The changelog a user of the program reads goes in beside it.
+  install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/CHANGELOG.md"
+          DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/doc/tmux-workspace"
+          COMPONENT workspace-cli)
 endif()
 
 if(LIBTMUX_BUILD_TESTS AND NOT WIN32)

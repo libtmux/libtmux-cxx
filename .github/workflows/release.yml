@@ -79,6 +79,17 @@ jobs:
           fi
           echo "both say ${declared}"
 
+      # The MCP server is the one program published compiled, and its users read
+      # its changelog rather than the library's. This stops a release whose
+      # program lost its changelog, then names the file for the release page.
+      - name: Every package has its changelog
+        run: python3 -m tools.docs.check_changelogs
+
+      - name: Name the server's changelog for the release
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          cp apps/mcp/CHANGELOG.md "CHANGELOG-libtmux-mcp-server-${version}.md"
+
       - name: Build the source archive and hash it
         id: archive
         run: |
@@ -140,6 +151,13 @@ jobs:
         with:
           name: source
           path: libtmux-cxx-*.tar.gz
+          if-no-files-found: error
+
+      # Named `server-*` so the publish job downloads it with the binaries.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: server-changelog
+          path: CHANGELOG-libtmux-mcp-server-*.md
           if-no-files-found: error
 
   server:
@@ -569,6 +587,7 @@ jobs:
             The `libtmux-mcp-server-*` binaries below are the exception —
             that is a program, not a library. Verify one with
             `gh attestation verify <file> --repo ${{ github.repository }}`.
+            `CHANGELOG-libtmux-mcp-server-*.md` is that program's changelog.
 
             Windows is a bounded x64 desktop preview through the pinned psmux
             build, supported on a best-effort basis: this release builds it

@@ -352,6 +352,9 @@ For Claude Desktop, the equivalent entry carries the same variables in `env`:
 ## Related
 
 - [libtmux (C++)](../../README.md) — the library and Windows psmux boundary
+- [Changelog](CHANGELOG.md) — what each release changed in the server; a
+  release attaches it beside the binaries, and an install puts it in
+  `share/doc/libtmux-mcp-server/`
 - [libtmux-mcp](https://github.com/tmux-python/libtmux-mcp) — the broader
   Python MCP server
 - [libtmux (Python)](https://libtmux.git-pull.com) — the original library

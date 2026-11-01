@@ -819,6 +819,7 @@ jobs:
             tools.docs.test_check_readme_links \
             tools.docs.test_check_readme_commands \
             tools.docs.test_check_api_examples \
+            tools.docs.test_check_changelogs \
             tools.coverage.test_report \
             tools.mutate.test_main tools.mutate.test_runner \
             tools.vcpkg.test_probe tools.vcpkg.test_release \
@@ -852,6 +853,12 @@ jobs:
 
       - name: Check every README region compiles as its own snippet
         run: python3 -m tools.docs.check_example_isolation
+
+      # The library and each program keep a changelog of their own, and a
+      # program installs its changelog beside it. Nothing else notices one
+      # going missing, or a release that one forgot to list.
+      - name: Check every package keeps and installs its changelog
+        run: python3 -m tools.docs.check_changelogs
 
       - name: Run clang-tidy over the library
         run: |

@@ -239,6 +239,8 @@ $ tmux-workspace load \
 
 ## Support and status
 
+- [Changelog](CHANGELOG.md) lists what each release changed in `tmux-workspace`.
+  An install puts it in `share/doc/tmux-workspace/`.
 - Requires POSIX tmux; tests run only on private sockets, and the workspace
   fixture never reaches the default server.
 - Plugins and custom builders are rejected, and some configuration, import and
