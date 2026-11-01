@@ -155,9 +155,9 @@ It installs as a program at
 `<installed-root>/<triplet>/tools/libtmux/libtmux-mcp-server[.exe]`; manifest
 mode normally uses `vcpkg_installed` as the root, classic mode uses
 `<vcpkg-root>/installed`, and `--x-install-root` overrides both. Nothing links
-the executable. The current checkout uses a dedicated `libtmux-mcp` socket
-without a selector. Pass `--socket inherit` to retain the earlier inherited
-`TMUX` behavior, or select `name:NAME` or `path:/ABSOLUTE/PATH` with `--socket`;
+the executable. The current checkout passes tmux no socket without a selector,
+so tmux picks the server, unless `LIBTMUX_SOCKET_PATH` or `LIBTMUX_SOCKET` names
+one. Select `inherit`, `name:NAME` or `path:/ABSOLUTE/PATH` with `--socket`;
 `--socket-name`, `--socket-path`, and one positional POSIX path remain accepted.
 Use `--tmux-config /ABSOLUTE/PATH` for an explicit tmux configuration. Alpha.2's
 legacy POSIX server instead takes one socket path as its sole argument, and

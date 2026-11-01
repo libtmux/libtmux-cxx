@@ -270,10 +270,11 @@ def names_a_socket(command: Command) -> bool:
 def server_environment(command: Command, home: pathlib.Path) -> dict[str, str]:
     """Return a private environment holding only the variables the README sets.
 
-    A server given no socket opens its dedicated `libtmux-mcp` socket, which
-    starts a tmux daemon that outlives the check and answers differently from
-    one tmux release to the next. Such a command is given a private socket path
-    instead, so its arguments are still run as written and nothing is started.
+    A server given no socket leaves the choice to tmux, which would be the
+    default socket under the check's `TMUX_TMPDIR`: a server that answers
+    differently from one tmux release to the next. Such a command is given a
+    private socket path instead, so its arguments are still run as written and
+    nothing is started.
     """
     environment = {
         name: value

@@ -51,15 +51,16 @@ $ cmake --build build/mcp
 $ cmake --install build/mcp --prefix ~/.local
 ```
 
-This installs `libtmux-mcp-server` and its packaged minimal tmux configuration in
-the selected binary directory. Check it without contacting tmux:
+This installs `libtmux-mcp-server` in the selected binary directory. Check it
+without contacting tmux:
 
 ```console
 $ libtmux-mcp-server --version
 ```
 
-Register it with Claude Code. With no socket selector the server uses a
-dedicated `libtmux-mcp` socket:
+Register it with Claude Code. Without a selector or a socket variable the server
+drives the server tmux picks: the one `TMUX` names, else the default socket.
+See [Sockets](#sockets) to choose another:
 
 ```console
 $ claude mcp add tmux -- ~/.local/bin/libtmux-mcp-server
@@ -219,17 +220,27 @@ per-call override:
 | Variable | Meaning |
 |---|---|
 | `LIBTMUX_SOCKET` | Exact tmux socket name |
-| `LIBTMUX_SOCKET_PATH` | Exact socket path; mutually exclusive with the name |
+| `LIBTMUX_SOCKET_PATH` | Exact socket path; wins when `LIBTMUX_SOCKET` is also set |
 | `LIBTMUX_TMUX_CONFIG` | Explicit absolute tmux configuration path |
 
-- With no selector, the server uses the dedicated `libtmux-mcp` socket and, for
-  a newly created one, the packaged minimal configuration.
+- With no selector, `LIBTMUX_SOCKET_PATH` names the socket, else
+  `LIBTMUX_SOCKET`. With neither set the server passes tmux no socket, so tmux
+  picks one. The server starts no server of its own and ends none.
+- A variable that is empty or only whitespace counts as unset, each one alone.
+- A relative `LIBTMUX_SOCKET_PATH` reaches what `tmux -S` reaches from the
+  server's working directory. It is reported as an absolute path when that
+  fits a socket address.
 - `--socket SELECTOR` takes `name:NAME`, `path:/ABSOLUTE/PATH` or `inherit`;
   `--socket-path PATH` is tmux `-S` on POSIX, `--socket-name NAME` is `-L`, and
   one positional `PATH` stays as a POSIX spelling.
-- `--tmux-config /ABSOLUTE/PATH` selects an explicit tmux configuration.
-- Conflicting selectors, empty values, and an empty or relative
-  `LIBTMUX_TMUX_CONFIG` fail before tmux opens.
+- An option or flag comes before both variables, which are then not read.
+  `--socket inherit` uses the `TMUX` socket and stops startup with status 2
+  when `TMUX` names none.
+- `--tmux-config /ABSOLUTE/PATH` selects an explicit tmux configuration, read
+  only by a server this process starts.
+- Conflicting options, an empty option value, a variable tmux cannot use, and an
+  empty or relative `LIBTMUX_TMUX_CONFIG` fail before tmux opens. The message
+  names the variable and never quotes its value.
 - [`tmux://capabilities`][mcp-capabilities] reports the selector, its
   provenance, the server state and the effective tools.
 

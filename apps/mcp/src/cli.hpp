@@ -10,16 +10,16 @@
 
 namespace libtmux::mcp::server {
 
-enum class Selector : std::uint8_t { path, name, inherit };
-enum class Configuration : std::uint8_t { minimal, path };
+enum class Selector : std::uint8_t { none, path, name, inherit };
 
 struct CliOptions {
-  Selector selector{Selector::name};
-  std::string value{"libtmux-mcp"};
-  Configuration configuration{Configuration::minimal};
+  Selector selector{Selector::none};
+  std::string value;
   std::string configuration_path;
-  std::string packaged_configuration_path;
-  bool explicit_selector{};
+  // What chose the socket: `explicit` for an option or a flag, `env-socket-path`
+  // or `env-socket` for a variable, and `tmux-choice` when nothing did and tmux
+  // picks the server.
+  std::string selection_provenance{"tmux-choice"};
   bool help{};
   bool version{};
 };
@@ -30,16 +30,12 @@ struct OpenedServer {
   std::string socket_provenance;
   std::string configuration_provenance;
   bool server_pre_existing{};
-  bool teardown_enabled_by_default{};
-  bool owns_daemon{};
 };
 
 [[nodiscard]] libtmux::expected<CliOptions, std::string> parse_cli(int argc,
                                                                    char** argv);
 [[nodiscard]] libtmux::expected<OpenedServer, std::string>
 open_server(const CliOptions& options);
-[[nodiscard]] std::filesystem::path
-minimal_configuration_path(std::filesystem::path executable = {});
 void print_usage(std::ostream& output);
 
 } // namespace libtmux::mcp::server
