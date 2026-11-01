@@ -26,6 +26,9 @@ def instrumented_binaries(build: pathlib.Path) -> list[pathlib.Path]:
         and path.suffix not in {".a", ".so", ".cmake", ".py", ".profraw", ".profdata"}
         and "CMakeFiles" not in path.parts
         and "_deps" not in path.parts
+        # A stand-in `tmux` the sandbox tests put ahead of the real one: an
+        # executable script, which `llvm-cov` cannot read as an object.
+        and "sandbox-wrapper" not in path.parts
     ]
     return found
 

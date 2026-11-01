@@ -819,6 +819,7 @@ jobs:
             tools.docs.test_check_readme_links \
             tools.docs.test_check_readme_commands \
             tools.docs.test_check_api_examples \
+            tools.coverage.test_report \
             tools.mutate.test_main tools.mutate.test_runner \
             tools.vcpkg.test_probe tools.vcpkg.test_release \
             tools.vcpkg.test_archive \

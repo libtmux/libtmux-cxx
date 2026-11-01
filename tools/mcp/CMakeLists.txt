@@ -20,7 +20,7 @@ target_link_libraries(mcp_swap PRIVATE libtmux_build_options mcp_swap_core)
 add_executable(mcp_swap_test test_mcp_swap.cpp)
 target_link_libraries(
   mcp_swap_test
-  PRIVATE GTest::gtest_main libtmux_build_options mcp_swap_core
+  PRIVATE libtmux_test_main libtmux_build_options mcp_swap_core
           nlohmann_json::nlohmann_json)
 
 add_executable(mcp_swap_fake_server test_fake_server.cpp)

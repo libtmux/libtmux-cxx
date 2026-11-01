@@ -1,12 +1,20 @@
 """Guard complete API program boundaries before native consumer execution."""
 
 import json
+import os
 import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from tools.docs.check_api_examples import MANIFEST, ROOT, read_manifest
+from tools.docs.check_api_examples import (
+    MANIFEST,
+    ROOT,
+    SERVER_SELECTORS,
+    read_manifest,
+    run_program,
+)
 
 
 class ManifestContract(unittest.TestCase):
@@ -75,6 +83,31 @@ class ManifestContract(unittest.TestCase):
         path.write_text("// " + "x" * 100 + "\n" + path.read_text())
         with self.assertRaisesRegex(ValueError, "comment exceeds 100 columns"):
             self.check()
+
+
+class ProgramEnvironment(unittest.TestCase):
+    """Keep the programs off the server the checker was started from."""
+
+    def test_nothing_that_selects_a_server_reaches_a_program(self):
+        """Hand the program an environment without TMUX or LIBTMUX_SOCKET*."""
+        seen = {}
+
+        class Started(Exception):
+            """Stop once the program's environment is known."""
+
+        def popen(*args, **kwargs):
+            seen.update(kwargs["env"])
+            raise Started
+
+        inherited = dict.fromkeys(SERVER_SELECTORS, "decoy")
+        with (
+            mock.patch.dict(os.environ, inherited),
+            mock.patch("tools.docs.check_api_examples.subprocess.Popen", popen),
+            self.assertRaises(Started),
+        ):
+            run_program({"failureCommand": ""}, Path("/none"), Path("/none"), False)
+        self.assertEqual([name for name in SERVER_SELECTORS if name in seen], [])
+        self.assertIn("TMUX_TMPDIR", seen)
 
 
 if __name__ == "__main__":

@@ -23,7 +23,7 @@ if(LIBTMUX_BUILD_TESTS AND NOT WIN32)
   add_executable(workspace_builder_test tests/workspace_test.cpp tests/tmuxp_test.cpp)
   target_link_libraries(
     workspace_builder_test
-    PRIVATE GTest::gtest_main libtmux_build_options workspace_builder
+    PRIVATE libtmux_test_main libtmux_build_options workspace_builder
             libtmux::testing)
   target_compile_options(workspace_builder_test PRIVATE -fno-sanitize-recover=undefined)
 

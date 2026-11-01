@@ -22,7 +22,7 @@ if(LIBTMUX_BUILD_TESTS AND NOT WIN32)
                            "${CMAKE_CURRENT_SOURCE_DIR}/src")
   target_link_libraries(
     mcp_tools_test
-    PRIVATE GTest::gtest_main libtmux_build_options mcp_tools
+    PRIVATE libtmux_test_main libtmux_build_options mcp_tools
             libtmux::testing)
   target_compile_options(mcp_tools_test PRIVATE -fno-sanitize-recover=undefined)
 
@@ -52,7 +52,7 @@ if(LIBTMUX_BUILD_TESTS AND LIBTMUX_BUILD_MCP_SERVER AND NOT WIN32)
                               "${PROJECT_SOURCE_DIR}/tests")
   target_link_libraries(
     mcp_protocol_test
-    PRIVATE GTest::gtest_main libtmux_build_options libtmux::testing
+    PRIVATE libtmux_test_main libtmux_build_options libtmux::testing
             nlohmann_json::nlohmann_json)
   target_compile_definitions(
     mcp_protocol_test
@@ -135,7 +135,7 @@ if(LIBTMUX_BUILD_MCP_SERVER)
     add_executable(filter_json_test tests/filter_json_test.cpp)
     target_link_libraries(
       filter_json_test
-      PRIVATE GTest::gtest_main libtmux_build_options mcp_tools
+      PRIVATE libtmux_test_main libtmux_build_options mcp_tools
               nlohmann_json::nlohmann_json)
     target_compile_options(filter_json_test PRIVATE -fno-sanitize-recover=undefined)
 
@@ -232,7 +232,7 @@ if(LIBTMUX_BUILD_MCP_SERVER)
                               "${PROJECT_SOURCE_DIR}/src")
     target_link_libraries(
       mcp_schema_test
-      PRIVATE GTest::gtest_main libtmux_build_options mcp_tools
+      PRIVATE libtmux_test_main libtmux_build_options mcp_tools
               nlohmann_json::nlohmann_json libtmux::testing)
     target_compile_options(mcp_schema_test PRIVATE -fno-sanitize-recover=undefined)
     add_test(

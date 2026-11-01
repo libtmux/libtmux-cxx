@@ -1,6 +1,6 @@
 add_executable(build_smoke build_smoke_test.cpp)
 target_link_libraries(
-  build_smoke PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+  build_smoke PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux)
 add_test(NAME build_smoke COMMAND build_smoke)
 set_tests_properties(build_smoke PROPERTIES LABELS "contract")
 
@@ -37,7 +37,7 @@ target_include_directories(
   scoped_tmux_server_test PRIVATE "${PROJECT_SOURCE_DIR}/src/testing")
 target_link_libraries(
   scoped_tmux_server_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux_test_support
+  PRIVATE libtmux_test_main libtmux_build_options libtmux_test_support
           ${CMAKE_DL_LIBS})
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_link_options(
@@ -90,12 +90,177 @@ set_property(
   DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
   "${scoped_tmux_server_properties}")
 
+# The harness's own control, on the plain GoogleTest main: the shared one would
+# refuse to start in the environment these cases exist to name. See
+# cmake/LibtmuxTestSandbox.cmake.
+add_executable(libtmux_sandbox_canary_test sandbox_canary_test.cpp)
+target_compile_definitions(
+  libtmux_sandbox_canary_test
+  PRIVATE "LIBTMUX_TEST_SANDBOX_ROOT=\"${LIBTMUX_TEST_SANDBOX_ROOT}\"")
+target_link_libraries(
+  libtmux_sandbox_canary_test
+  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+          libtmux_test_support)
+target_compile_options(
+  libtmux_sandbox_canary_test PRIVATE -fno-sanitize-recover=undefined)
+
+gtest_discover_tests(
+  libtmux_sandbox_canary_test
+  TEST_PREFIX libtmux.sandbox.
+  PROPERTIES LABELS contract TIMEOUT 30)
+
+# Each canary case again, in what a tmux pane would hand it: a TMUX naming a
+# server and a TMUX_TMPDIR that is not the sandbox. Every case must fail, so a
+# canary that stops noticing turns this entry red. The filter names one case,
+# and a filter matching none exits 0, which WILL_FAIL also turns red.
+foreach(
+  case IN
+  ITEMS NothingSelectsAServer
+        TmuxTmpdirIsTheBuildTreesSandbox
+        TheDefaultSocketResolvesUnderTheSandbox
+        ADefaultServerCommandCarriesTheSandboxToTmux)
+  add_test(
+    NAME libtmux.sandbox.unguarded.${case}
+    COMMAND
+      "${CMAKE_COMMAND}" -E env --unset=LIBTMUX_TEST_SANDBOX
+      "TMUX=${PROJECT_BINARY_DIR}/decoy,1,0" "TMUX_TMPDIR=${PROJECT_BINARY_DIR}"
+      "$<TARGET_FILE:libtmux_sandbox_canary_test>"
+      "--gtest_filter=SandboxCanary.${case}")
+  set_tests_properties(
+    libtmux.sandbox.unguarded.${case}
+    PROPERTIES WILL_FAIL TRUE LABELS contract TIMEOUT 30)
+endforeach()
+
+# A pane-like environment handed to a nested ctest, which runs the canary behind
+# the hook. In CI nothing selects a server to begin with, so this is the only
+# entry that fails when the hook stops clearing the variables.
+set(sandbox_nested "${PROJECT_BINARY_DIR}/sandbox-nested")
+file(
+  GENERATE
+  OUTPUT "${sandbox_nested}/CTestTestfile.cmake"
+  CONTENT "include(\"${LIBTMUX_TEST_SANDBOX_HOOK}\")
+add_test(canary \"$<TARGET_FILE:libtmux_sandbox_canary_test>\"
+         \"--gtest_filter=SandboxCanary.*\")
+")
+add_test(
+  NAME libtmux.sandbox.hook.clears-a-pane-environment
+  COMMAND
+    "${CMAKE_COMMAND}" -E env TMUX=decoy TMUX_PANE=decoy LIBTMUX_SOCKET=decoy
+    LIBTMUX_SOCKET_PATH=decoy "TMUX_TMPDIR=${PROJECT_BINARY_DIR}"
+    "${CMAKE_CTEST_COMMAND}" --test-dir "${sandbox_nested}" --no-tests=error
+    --output-on-failure)
+set_tests_properties(
+  libtmux.sandbox.hook.clears-a-pane-environment
+  PROPERTIES LABELS contract TIMEOUT 60)
+
+# Nested ctests whose one test starts a tmux server in a sandbox of its own,
+# passes, and forgets the server, behind the same CTestCustom.cmake the build
+# tree has. The run must fail in the post-test command naming the socket, and
+# the nested test passing changes nothing about that. Without the hook the
+# nested run passes and the first entry of each control fails.
+#
+#   SOCKET    where the test starts it: empty for tmux's own default socket,
+#             otherwise a file directly in the nested sandbox, outside tmux-<uid>
+#   WRAPPER   a tmux ahead of the real one: "noop" ignores kill-server and
+#             "slow" obeys it a second later
+#   EXPECT    what the post-test command must say, as words
+#   SURVIVES  the server must still answer afterwards, and a last entry stops it
+find_program(sandbox_real_tmux tmux)
+if(sandbox_real_tmux)
+  execute_process(COMMAND id -u OUTPUT_VARIABLE sandbox_uid
+                  OUTPUT_STRIP_TRAILING_WHITESPACE)
+  set(sandbox_wrapper "${PROJECT_BINARY_DIR}/sandbox-wrapper")
+  file(
+    CONFIGURE
+    OUTPUT "${sandbox_wrapper}/tmux"
+    CONTENT [=[
+#!/bin/sh
+# Stands in for tmux ahead of the real one, to make stopping a server fail or lag.
+for argument in "$@"; do
+  if [ "$argument" = kill-server ]; then
+    case "${LIBTMUX_WRAPPER_MODE-}" in
+      noop) exit 0 ;;
+      slow) (sleep 1; exec "@sandbox_real_tmux@" "$@") >/dev/null 2>&1 & exit 0 ;;
+    esac
+  fi
+done
+exec "@sandbox_real_tmux@" "$@"
+]=]
+    @ONLY)
+  file(CHMOD "${sandbox_wrapper}/tmux" PERMISSIONS OWNER_READ OWNER_WRITE
+                                                   OWNER_EXECUTE)
+
+  function(libtmux_sandbox_leak_control name root_name)
+    cmake_parse_arguments(PARSE_ARGV 2 control "SURVIVES" "SOCKET;WRAPPER;EXPECT" "")
+    set(dir "${PROJECT_BINARY_DIR}/sandbox-leak-${root_name}")
+    set(root "${LIBTMUX_TEST_SANDBOX_ROOT}/${root_name}")
+    file(MAKE_DIRECTORY "${dir}" "${root}")
+    libtmux_test_sandbox_leak_script("${dir}/leaks.cmake" "${root}")
+    libtmux_test_sandbox_custom_file("${dir}/CTestCustom.cmake" "${dir}/leaks.cmake")
+    if(control_SOCKET)
+      set(socket "${root}/${control_SOCKET}")
+      set(forget "tmux -f /dev/null -S \"${socket}\" new-session -d -s forgot")
+    else()
+      set(socket "${root}/tmux-${sandbox_uid}/default")
+      set(forget "\"TMUX_TMPDIR=${root}\" tmux -f /dev/null new-session -d -s forgot")
+    endif()
+    file(WRITE "${dir}/CTestTestfile.cmake"
+         "add_test(forgetful \"${CMAKE_COMMAND}\" -E env --unset=TMUX ${forget})\n")
+
+    set(runner "${CMAKE_COMMAND}" -E env)
+    if(control_WRAPPER)
+      list(APPEND runner "LIBTMUX_WRAPPER_MODE=${control_WRAPPER}" --modify
+           "PATH=path_list_prepend:${sandbox_wrapper}")
+    endif()
+    # The nested run's output wraps long messages, so the words may be split.
+    string(REPLACE " " "[ \n]+" expect "${control_EXPECT}")
+    set(first libtmux.sandbox.leaks.${name})
+    # The nested run must also fail, with ctest's status for a failed custom
+    # command, though every test in it passed: the shell prints what it was.
+    add_test(NAME ${first}
+             COMMAND sh -c "\"$@\"; echo \"nested ctest exit status $?\"" sh
+                     ${runner} "${CMAKE_CTEST_COMMAND}" --test-dir "${dir}"
+                     --no-tests=error)
+    set_tests_properties(
+      ${first} PROPERTIES PASS_REGULAR_EXPRESSION
+                          "${expect}.*nested ctest exit status 8" LABELS real-tmux
+                          TIMEOUT 60)
+    set(probe "${CMAKE_COMMAND}" -E env --unset=TMUX tmux -N -S "${socket}")
+    if(control_SURVIVES)
+      add_test(NAME ${first}.survives COMMAND ${probe} list-sessions)
+      add_test(NAME ${first}.cleanup COMMAND ${probe} kill-server)
+      set_tests_properties(${first}.survives PROPERTIES DEPENDS ${first}
+                                                        LABELS real-tmux TIMEOUT 30)
+      set_tests_properties(${first}.cleanup PROPERTIES DEPENDS ${first}.survives
+                                                       LABELS real-tmux TIMEOUT 30)
+    else()
+      add_test(NAME ${first}.stopped COMMAND ${probe} list-sessions)
+      set_tests_properties(${first}.stopped PROPERTIES WILL_FAIL TRUE DEPENDS ${first}
+                                                       LABELS real-tmux TIMEOUT 30)
+    endif()
+  endfunction()
+
+  libtmux_sandbox_leak_control(
+    default-socket lk-d
+    EXPECT "tests left tmux servers running on the sandbox, now stopped: tmux-[0-9]+/default")
+  libtmux_sandbox_leak_control(
+    custom-socket lk-c SOCKET custom.sock
+    EXPECT "tests left tmux servers running on the sandbox, now stopped: custom.sock")
+  libtmux_sandbox_leak_control(
+    slow-stop lk-w SOCKET custom.sock WRAPPER slow
+    EXPECT "tests left tmux servers running on the sandbox, now stopped: custom.sock")
+  libtmux_sandbox_leak_control(
+    stubborn-server lk-s SOCKET custom.sock WRAPPER noop SURVIVES
+    EXPECT
+      "tests left tmux servers running on the sandbox that did not stop, so the sandbox is left in place: custom.sock")
+endif()
+
 add_subdirectory(differential)
 
 add_executable(libtmux_chain_test chain_test.cpp)
 target_link_libraries(
   libtmux_chain_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
 target_compile_options(libtmux_chain_test PRIVATE -fno-sanitize-recover=undefined)
 
@@ -112,7 +277,7 @@ target_compile_definitions(
     LIBTMUX_KEY_NAMES_PATH="${CMAKE_CURRENT_SOURCE_DIR}/data/key-names-3.3a.txt")
 target_link_libraries(
   libtmux_compatibility_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux)
 
 add_test(NAME libtmux.compatibility COMMAND libtmux_compatibility_test)
 set_tests_properties(libtmux.compatibility PROPERTIES LABELS "libtmux" TIMEOUT 30)
@@ -120,7 +285,7 @@ set_tests_properties(libtmux.compatibility PROPERTIES LABELS "libtmux" TIMEOUT 3
 add_executable(libtmux_options_test options_test.cpp)
 target_link_libraries(
   libtmux_options_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
 target_compile_options(libtmux_options_test PRIVATE -fno-sanitize-recover=undefined)
 
@@ -134,7 +299,7 @@ gtest_discover_tests(
 add_executable(libtmux_session_navigation_test integration/session_navigation_test.cpp)
 target_link_libraries(
   libtmux_session_navigation_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
 target_compile_options(
   libtmux_session_navigation_test PRIVATE -fno-sanitize-recover=undefined)
@@ -155,7 +320,7 @@ gtest_discover_tests(
 add_executable(libtmux_server_options_test integration/server_options_test.cpp)
 target_link_libraries(
   libtmux_server_options_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
 target_compile_options(
   libtmux_server_options_test PRIVATE -fno-sanitize-recover=undefined)
@@ -168,7 +333,7 @@ gtest_discover_tests(
 add_executable(libtmux_format_target_test integration/format_and_target_test.cpp)
 target_link_libraries(
   libtmux_format_target_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
 target_compile_options(
   libtmux_format_target_test PRIVATE -fno-sanitize-recover=undefined)
@@ -181,7 +346,7 @@ gtest_discover_tests(
 add_executable(libtmux_window_linking_test integration/window_linking_test.cpp)
 target_link_libraries(
   libtmux_window_linking_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
 target_compile_options(
   libtmux_window_linking_test PRIVATE -fno-sanitize-recover=undefined)
@@ -194,7 +359,7 @@ gtest_discover_tests(
 add_executable(libtmux_snapshot_framing_test integration/snapshot_framing_test.cpp)
 target_link_libraries(
   libtmux_snapshot_framing_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
 target_compile_options(
   libtmux_snapshot_framing_test PRIVATE -fno-sanitize-recover=undefined)
@@ -209,7 +374,7 @@ target_include_directories(
   libtmux_support_commands_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(
   libtmux_support_commands_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux)
 target_compile_options(
   libtmux_support_commands_test PRIVATE -fno-sanitize-recover=undefined)
 
@@ -221,7 +386,7 @@ gtest_discover_tests(
 add_executable(libtmux_support_versions_test integration/support_versions_test.cpp)
 target_link_libraries(
   libtmux_support_versions_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
 target_compile_options(
   libtmux_support_versions_test PRIVATE -fno-sanitize-recover=undefined)
@@ -234,7 +399,7 @@ gtest_discover_tests(
 add_executable(libtmux_wait_contracts_test integration/wait_contracts_test.cpp)
 target_link_libraries(
   libtmux_wait_contracts_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
 target_compile_options(
   libtmux_wait_contracts_test PRIVATE -fno-sanitize-recover=undefined)
@@ -253,7 +418,7 @@ target_compile_definitions(
   PRIVATE LIBTMUX_TEST_SOURCE_ROOT="${PROJECT_SOURCE_DIR}")
 target_link_libraries(
   libtmux_support_capabilities_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux)
 target_compile_options(
   libtmux_support_capabilities_test PRIVATE -fno-sanitize-recover=undefined)
 
@@ -265,7 +430,7 @@ gtest_discover_tests(
 add_executable(libtmux_optional_features_test integration/optional_features_test.cpp)
 target_link_libraries(
   libtmux_optional_features_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
 target_compile_options(
   libtmux_optional_features_test PRIVATE -fno-sanitize-recover=undefined)
@@ -278,7 +443,7 @@ gtest_discover_tests(
 add_executable(libtmux_server_identity_test integration/server_identity_test.cpp)
 target_link_libraries(
   libtmux_server_identity_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
 target_compile_options(
   libtmux_server_identity_test PRIVATE -fno-sanitize-recover=undefined)
@@ -291,7 +456,7 @@ gtest_discover_tests(
 add_executable(libtmux_pane_topology_test integration/pane_topology_test.cpp)
 target_link_libraries(
   libtmux_pane_topology_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
 target_compile_options(
   libtmux_pane_topology_test PRIVATE -fno-sanitize-recover=undefined)
@@ -304,7 +469,7 @@ gtest_discover_tests(
 add_executable(libtmux_wait_for_test integration/wait_for_test.cpp)
 target_link_libraries(
   libtmux_wait_for_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
 target_compile_options(
   libtmux_wait_for_test PRIVATE -fno-sanitize-recover=undefined)
@@ -317,7 +482,7 @@ gtest_discover_tests(
 add_executable(libtmux_command_test integration/command_test.cpp)
 target_link_libraries(
   libtmux_command_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
 target_compile_options(
   libtmux_command_test PRIVATE -fno-sanitize-recover=undefined)
@@ -330,7 +495,7 @@ gtest_discover_tests(
 add_executable(libtmux_buffer_test integration/buffer_test.cpp)
 target_link_libraries(
   libtmux_buffer_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
 target_compile_options(
   libtmux_buffer_test PRIVATE -fno-sanitize-recover=undefined)
@@ -343,7 +508,7 @@ gtest_discover_tests(
 add_executable(libtmux_environment_test integration/environment_test.cpp)
 target_link_libraries(
   libtmux_environment_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
 target_compile_options(
   libtmux_environment_test PRIVATE -fno-sanitize-recover=undefined)
@@ -356,7 +521,7 @@ gtest_discover_tests(
 add_executable(libtmux_key_binding_test integration/key_binding_test.cpp)
 target_link_libraries(
   libtmux_key_binding_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
 target_compile_options(
   libtmux_key_binding_test PRIVATE -fno-sanitize-recover=undefined)
@@ -369,7 +534,7 @@ gtest_discover_tests(
 add_executable(libtmux_scripting_test integration/scripting_test.cpp)
 target_link_libraries(
   libtmux_scripting_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
 target_compile_options(
   libtmux_scripting_test PRIVATE -fno-sanitize-recover=undefined)
@@ -382,7 +547,7 @@ gtest_discover_tests(
 add_executable(libtmux_expand_test integration/expand_test.cpp)
 target_link_libraries(
   libtmux_expand_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
 target_compile_options(
   libtmux_expand_test PRIVATE -fno-sanitize-recover=undefined)
@@ -395,7 +560,7 @@ gtest_discover_tests(
 add_executable(libtmux_pane_io_test integration/pane_io_test.cpp)
 target_link_libraries(
   libtmux_pane_io_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
 target_compile_options(
   libtmux_pane_io_test PRIVATE -fno-sanitize-recover=undefined)
@@ -408,7 +573,7 @@ gtest_discover_tests(
 add_executable(libtmux_window_layout_test integration/window_layout_test.cpp)
 target_link_libraries(
   libtmux_window_layout_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
 target_compile_options(
   libtmux_window_layout_test PRIVATE -fno-sanitize-recover=undefined)
@@ -421,7 +586,7 @@ gtest_discover_tests(
 add_executable(libtmux_server_sessions_test integration/server_sessions_test.cpp)
 target_link_libraries(
   libtmux_server_sessions_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
 target_compile_options(
   libtmux_server_sessions_test PRIVATE -fno-sanitize-recover=undefined)
@@ -434,7 +599,7 @@ gtest_discover_tests(
 add_executable(libtmux_cardinality_test cardinality_test.cpp)
 target_link_libraries(
   libtmux_cardinality_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
 target_compile_options(
   libtmux_cardinality_test PRIVATE -fno-sanitize-recover=undefined)
@@ -447,7 +612,7 @@ gtest_discover_tests(
 add_executable(libtmux_legacy_lookup_test legacy_lookup_test.cpp)
 target_link_libraries(
   libtmux_legacy_lookup_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
 target_compile_options(
   libtmux_legacy_lookup_test PRIVATE -fno-sanitize-recover=undefined)
@@ -460,7 +625,7 @@ gtest_discover_tests(
 add_executable(libtmux_relations_test relations_test.cpp)
 target_link_libraries(
   libtmux_relations_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
 target_compile_options(
   libtmux_relations_test PRIVATE -fno-sanitize-recover=undefined)
@@ -478,7 +643,7 @@ target_include_directories(
   libtmux_operation_state_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(
   libtmux_operation_state_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux)
 target_compile_options(
   libtmux_operation_state_test PRIVATE -fno-sanitize-recover=undefined)
 
@@ -528,7 +693,7 @@ if(NOT WIN32)
     libtmux_spawn_descriptors_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
   target_link_libraries(
     libtmux_spawn_descriptors_test
-    PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+    PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux)
   target_compile_options(
     libtmux_spawn_descriptors_test PRIVATE -fno-sanitize-recover=undefined)
   # The interposer this wraps is compiled only with the seam.
@@ -547,7 +712,7 @@ if(NOT WIN32)
     libtmux_spawn_signals_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
   target_link_libraries(
     libtmux_spawn_signals_test
-    PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+    PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux)
   target_compile_options(
     libtmux_spawn_signals_test PRIVATE -fno-sanitize-recover=undefined)
 
@@ -565,7 +730,7 @@ if(NOT WIN32)
     libtmux_posix_child_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
   target_link_libraries(
     libtmux_posix_child_test
-    PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+    PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux)
   target_compile_options(
     libtmux_posix_child_test PRIVATE -fno-sanitize-recover=undefined)
 
@@ -582,7 +747,7 @@ target_include_directories(
   libtmux_psmux_rules_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(
   libtmux_psmux_rules_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux)
 target_compile_options(
   libtmux_psmux_rules_test PRIVATE -fno-sanitize-recover=undefined)
 
@@ -599,7 +764,7 @@ if(NOT WIN32)
     libtmux_process_engine_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
   target_link_libraries(
     libtmux_process_engine_test
-    PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+    PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux)
   target_compile_options(
     libtmux_process_engine_test PRIVATE -fno-sanitize-recover=undefined)
 
@@ -621,7 +786,7 @@ if(NOT WIN32)
     libtmux_process_engine_failure_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
   target_link_libraries(
     libtmux_process_engine_failure_test
-    PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+    PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux)
   target_compile_options(
     libtmux_process_engine_failure_test PRIVATE -fno-sanitize-recover=undefined)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -650,7 +815,7 @@ target_include_directories(
   libtmux_backend_seam_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(
   libtmux_backend_seam_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux)
 target_compile_options(
   libtmux_backend_seam_test PRIVATE -fno-sanitize-recover=undefined)
 
@@ -665,7 +830,7 @@ target_include_directories(
   libtmux_command_engine_order_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(
   libtmux_command_engine_order_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux)
 target_compile_options(
   libtmux_command_engine_order_test PRIVATE -fno-sanitize-recover=undefined)
 
@@ -679,7 +844,7 @@ target_include_directories(
   libtmux_process_validation_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(
   libtmux_process_validation_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux)
 target_compile_options(
   libtmux_process_validation_test PRIVATE -fno-sanitize-recover=undefined)
 
@@ -703,7 +868,7 @@ set_tests_properties(
 add_executable(libtmux_client_test integration/client_test.cpp)
 target_link_libraries(
   libtmux_client_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
 target_compile_options(libtmux_client_test PRIVATE -fno-sanitize-recover=undefined)
 
@@ -719,7 +884,7 @@ target_include_directories(
   libtmux_value_semantics_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(
   libtmux_value_semantics_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
 target_compile_options(
   libtmux_value_semantics_test PRIVATE -fno-sanitize-recover=undefined)
@@ -732,7 +897,7 @@ gtest_discover_tests(
 add_executable(libtmux_entity_test entity_test.cpp)
 target_link_libraries(
   libtmux_entity_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
 target_compile_options(libtmux_entity_test PRIVATE -fno-sanitize-recover=undefined)
 
@@ -744,7 +909,7 @@ gtest_discover_tests(
 add_executable(libtmux_control_test control_test.cpp)
 target_link_libraries(
   libtmux_control_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
 target_compile_options(
   libtmux_control_test PRIVATE -fno-sanitize-recover=undefined)
@@ -757,7 +922,7 @@ gtest_discover_tests(
 add_executable(libtmux_server_contract_test server_contract_test.cpp)
 target_link_libraries(
   libtmux_server_contract_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
 target_include_directories(
   libtmux_server_contract_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
@@ -801,7 +966,7 @@ foreach(control_case parser integration)
     libtmux_control_${control_case}_test control_${control_case}_test.cpp)
   target_link_libraries(
     libtmux_control_${control_case}_test
-    PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+    PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
             libtmux_test_support)
   target_compile_definitions(
     libtmux_control_${control_case}_test
@@ -826,7 +991,7 @@ gtest_discover_tests(
 add_executable(libtmux_lowering_test lowering_test.cpp)
 target_link_libraries(
   libtmux_lowering_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux)
 target_compile_options(
   libtmux_lowering_test PRIVATE -fno-sanitize-recover=undefined)
 
@@ -836,7 +1001,7 @@ set_tests_properties(libtmux.lowering PROPERTIES LABELS "libtmux" TIMEOUT 10)
 add_executable(libtmux_schema_test lowering_structure_test.cpp)
 target_link_libraries(
   libtmux_schema_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux)
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux)
 target_compile_options(libtmux_schema_test PRIVATE -fno-sanitize-recover=undefined)
 
 # Named for what it checks. Conformance to the published schema is
@@ -918,7 +1083,7 @@ endif()
 add_executable(libtmux_executor_seam_test executor_seam_test.cpp)
 target_link_libraries(
   libtmux_executor_seam_test
-  PRIVATE GTest::gtest_main libtmux_build_options libtmux::libtmux
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
           libtmux_test_support)
 target_compile_options(
   libtmux_executor_seam_test PRIVATE -fno-sanitize-recover=undefined)

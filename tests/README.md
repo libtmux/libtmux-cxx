@@ -56,6 +56,34 @@ GoogleTest skip macros and is a header you choose to include.
 repository — descriptor accounting, `/proc` platform guards, the differential
 wire codec, and the fake tmux the fixture's own failure tests drive.
 
+## Nothing selects a server
+
+A command that names no server follows `TMUX` to the one its caller is inside,
+or lands on the default socket under `TMUX_TMPDIR`. ctest therefore clears
+`TMUX`, `TMUX_PANE`, `LIBTMUX_SOCKET` and `LIBTMUX_SOCKET_PATH` for every test
+and points `TMUX_TMPDIR` at `tmux-sandbox/` in the build tree
+([`cmake/LibtmuxTestSandbox.cmake`](../cmake/LibtmuxTestSandbox.cmake)).
+
+A test binary started by hand has not been through ctest. The `main` it links,
+[`support/test_main.cpp`](support/test_main.cpp), refuses to run and names each
+variable it found, until the same variables are cleared and `TMUX_TMPDIR` is a
+private directory that `LIBTMUX_TEST_SANDBOX` also names.
+[`sandbox_canary_test.cpp`](sandbox_canary_test.cpp) asserts what ctest left and
+resolves the default socket path. ctest runs it a second time in the
+environment a tmux pane has, and that run must fail, and a nested ctest hands
+it a pane's `TMUX` and expects it to pass.
+
+A test that starts a server in that directory and forgets it would outlive the
+suite, whether it used tmux's own socket or `-S <sandbox>/custom.sock`.
+`CTestCustom.cmake` in the build tree runs a script before and after the tests
+that looks at every socket in the sandbox, links not followed. Before the tests
+it refuses while a server answers on one. After them it stops each live server
+with `kill-server -S`, checks that a connect then fails for up to about three
+seconds, and fails the run, naming the sockets, even when every test passed. A
+socket file nothing answers on is not a leak and is removed; a server that does
+not stop leaves its socket, and the sandbox, in place. `ctest -N` runs both too,
+so use one ctest at a time per build tree.
+
 ## What each kind proves
 
 | Directory | Kind | What it is for |
