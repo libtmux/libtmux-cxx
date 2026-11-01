@@ -46,8 +46,8 @@ jobs:
       - name: Build the library for analysis
         if: matrix.language == 'c-cpp'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build g++
+          ./tools/ci/apt-get.sh update
+          ./tools/ci/apt-get.sh install -y ninja-build g++
           # The library alone: CodeQL wants the shipped code, and the tests
           # and examples would triple the analysis for code nobody consumes.
           cmake -S . -B build/codeql -G Ninja \

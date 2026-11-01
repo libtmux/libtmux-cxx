@@ -125,8 +125,8 @@ jobs:
 
       - name: The archive builds and installs on its own
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build g++
+          ./tools/ci/apt-get.sh update
+          ./tools/ci/apt-get.sh install -y ninja-build g++
           version="${{ steps.archive.outputs.version }}"
           tar -xzf "libtmux-cxx-${version}.tar.gz" -C /tmp
           cmake -S "/tmp/libtmux-cxx-${version}" -B /tmp/rel -G Ninja \
@@ -164,7 +164,7 @@ jobs:
       - name: Install Ninja
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
-            sudo apt-get update && sudo apt-get install -y ninja-build g++
+            ./tools/ci/apt-get.sh update && ./tools/ci/apt-get.sh install -y ninja-build g++
           else
             brew install ninja
           fi
