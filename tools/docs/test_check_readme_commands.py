@@ -234,7 +234,7 @@ class CMakeCommandTest(unittest.TestCase):
 
 
 class ServerSocketTest(unittest.TestCase):
-    """A server with no socket must not be left to start the dedicated daemon."""
+    """A server with no socket must not be left to reach the default socket."""
 
     def environment(self, environment: dict[str, str], *arguments: str) -> dict:
         """Return the environment the checker would run the server under."""

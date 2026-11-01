@@ -186,7 +186,8 @@ $ cmake -S . -B build && cmake --build build && ./build/quickstart
   [`Pane::send_line`][ref-pane-send_line] types, and
   [`Pane::wait_for_text`][ref-pane-wait_for_text] waits for the output.
 - Use [`Server::at_default()`][ref-server-at_default] to drive the server your
-  own `tmux` command does.
+  own `tmux` command does, or the one `LIBTMUX_SOCKET_PATH` or `LIBTMUX_SOCKET`
+  names.
 
 Every C++ block below is quoted from a program the suite compiles and runs
 against a real tmux, in
@@ -201,7 +202,8 @@ against a real tmux, in
   [`Server::at_socket_name`][ref-server-at_socket_name] reach a specific server.
 - [`Server::from_env`][ref-server-from_env] reaches the one the program runs
   inside, and [`Server::at_default`][ref-server-at_default] the one a person
-  means by "my tmux".
+  means by "my tmux", or the one `LIBTMUX_SOCKET_PATH` (else `LIBTMUX_SOCKET`)
+  names.
 
 [`Server::sessions`][ref-server-sessions] lists sessions;
 [`Server::windows`][ref-server-windows] and

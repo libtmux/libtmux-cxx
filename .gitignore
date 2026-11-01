@@ -1,3 +1,6 @@
+# A socket for programs run by hand; see CONTRIBUTING.
+.env
+
 # Build trees. Every preset in CMakePresets.json puts its tree under here,
 # and a coverage or sanitizer lane is several gigabytes of it.
 /build/

@@ -68,6 +68,29 @@ Never run a bare `tmux` command against the default server while working here.
 It is somebody's real session, and a stray `kill-server` takes their work with
 it.
 
+### Run a program by hand on a socket of your own
+
+The library, `tmux-workspace` and `libtmux-mcp-server` pass tmux no socket
+unless `LIBTMUX_SOCKET_PATH` or `LIBTMUX_SOCKET` names one, so a program you run
+yourself reaches the server tmux picks: the one `TMUX` names inside a pane, and
+otherwise your default one. The tests never do, because ctest sandboxes them.
+To keep a shell session off your own server, start one on a private socket and
+export the variable from a `.env` file. `.gitignore` keeps `.env` out of the
+tree and nothing packages it:
+
+```console
+$ socket=/tmp/libtmux-cxx-dev.sock
+$ tmux -f /dev/null -S "$socket" new-session -d
+$ echo "LIBTMUX_SOCKET_PATH=$socket" > .env
+$ set -a; . ./.env; set +a
+```
+
+Stop that server by naming its socket, never with a bare `tmux kill-server`:
+
+```console
+$ tmux -S "$socket" kill-server
+```
+
 ### Check the socket-path budget before macOS does
 
 `sockaddr_un::sun_path` holds 104 bytes on macOS and 108 on Linux, and macOS
@@ -79,10 +102,9 @@ case rather than letting tmux fail obscurely.
 
 A test that starts a second server *inside* the fixture's tree pays for both
 names at once. The fixture spends `libtmux-cxx-<label>-XXXXXX` on its private
-directory, and the MCP suite then adds `tmux-<uid>/libtmux-mcp` beneath it, so
-a `SocketNamespace::consumer` label of nine characters is the first that
-overruns `sun_path` under the temporary directory below. Keep those labels to
-eight.
+directory, and the MCP suite then adds a socket such as `tmux-<uid>/default`
+beneath it. Keep `SocketNamespace::consumer` labels to eight characters, which
+fits under the temporary directory below.
 
 Run the suite under a temporary directory as long as the one macOS gives:
 

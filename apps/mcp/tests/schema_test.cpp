@@ -188,8 +188,8 @@ TEST(McpProtocolSchema, NamesTheTmuxFloorWhereTheServerDescribesTmux) {
       << description;
 
   const auto disclosure = libtmux::mcp::server::capability_disclosure(
-      libtmux::ServerImplementation::tmux, "name:review", "operator-current",
-      "existing", "unknown", "/tmp/tmux-1000/review");
+      libtmux::ServerImplementation::tmux, "name:review", "explicit", "existing",
+      "unknown", "/tmp/tmux-1000/review");
   const json result = libtmux::mcp::server::capabilities_resource_result(
       all_tools(), ProtocolEra::legacy, disclosure);
   const json document = json::parse(result["contents"][0]["text"].get<std::string>());
@@ -211,7 +211,7 @@ TEST(McpProtocolSchema, DescribesPsmuxAsANamespaceWithoutAPosixAttachRoute) {
   for (const auto& [selector, endpoint] : cases) {
     SCOPED_TRACE(endpoint);
     const auto disclosure = libtmux::mcp::server::capability_disclosure(
-        libtmux::ServerImplementation::psmux, selector, "operator-current", "existing",
+        libtmux::ServerImplementation::psmux, selector, "explicit", "existing",
         "unknown", endpoint);
     const json result = libtmux::mcp::server::capabilities_resource_result(
         all_tools(), ProtocolEra::legacy, disclosure);
@@ -227,15 +227,15 @@ TEST(McpProtocolSchema, DescribesPsmuxAsANamespaceWithoutAPosixAttachRoute) {
 
 TEST(McpProtocolSchema, PreservesThePosixSocketAndExactAttachRoute) {
   const auto disclosure = libtmux::mcp::server::capability_disclosure(
-      libtmux::ServerImplementation::tmux, "name:review", "operator-current",
-      "existing", "unknown", "/tmp/tmux-1000/review");
+      libtmux::ServerImplementation::tmux, "name:review", "explicit", "existing",
+      "unknown", "/tmp/tmux-1000/review");
   const json result = libtmux::mcp::server::capabilities_resource_result(
       all_tools(), ProtocolEra::legacy, disclosure);
   const json document = json::parse(result["contents"][0]["text"].get<std::string>());
 
   EXPECT_EQ(document["connection"],
             json({{"socketSelector", "name:review"},
-                  {"socketProvenance", "operator-current"},
+                  {"socketProvenance", "explicit"},
                   {"resolvedSocketPath", "/tmp/tmux-1000/review"},
                   {"serverState", "existing"},
                   {"configurationProvenance", "unknown"},

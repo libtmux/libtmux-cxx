@@ -10,7 +10,9 @@ needs first; this page is the full boundary. The design is in
 
 On Windows, install psmux with its `tmux.exe` alias and use
 `Server::at_default()` or `Server::at_socket_name(...)`. The latter emits the
-separated `-L name` form psmux parses. `Server::from_env()` also recovers that
+separated `-L name` form psmux parses. `Server::at_default()` reads
+`LIBTMUX_SOCKET` as that name; `LIBTMUX_SOCKET_PATH` fails as unsupported,
+because psmux has no socket paths. `Server::from_env()` also recovers that
 selector inside a psmux pane. An explicit `-L default` is rejected because
 psmux gives it the same environment identity as its unselected default.
 

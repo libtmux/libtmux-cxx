@@ -56,8 +56,7 @@ if(LIBTMUX_BUILD_TESTS AND LIBTMUX_BUILD_MCP_SERVER AND NOT WIN32)
             nlohmann_json::nlohmann_json)
   target_compile_definitions(
     mcp_protocol_test
-    PRIVATE "LIBTMUX_MCP_SERVER_PATH=\"$<TARGET_FILE:libtmux_mcp_server>\""
-            "LIBTMUX_MCP_MINIMAL_CONFIG_SOURCE=\"${CMAKE_CURRENT_SOURCE_DIR}/minimal.conf\"")
+    PRIVATE "LIBTMUX_MCP_SERVER_PATH=\"$<TARGET_FILE:libtmux_mcp_server>\"")
   target_compile_options(mcp_protocol_test PRIVATE -fno-sanitize-recover=undefined)
   add_dependencies(mcp_protocol_test libtmux_mcp_server)
 
@@ -174,15 +173,7 @@ if(LIBTMUX_BUILD_MCP_SERVER)
     src/stdio_server.cpp)
   set_target_properties(libtmux_mcp_server PROPERTIES OUTPUT_NAME
                                                       libtmux-mcp-server)
-  add_custom_command(
-    TARGET libtmux_mcp_server POST_BUILD
-    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-            "${CMAKE_CURRENT_SOURCE_DIR}/minimal.conf"
-            "$<TARGET_FILE_DIR:libtmux_mcp_server>/libtmux-mcp-minimal.conf")
   target_include_directories(libtmux_mcp_server PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-  target_compile_definitions(
-    libtmux_mcp_server
-    PRIVATE "LIBTMUX_MCP_MINIMAL_CONFIG_SOURCE=\"${CMAKE_CURRENT_SOURCE_DIR}/minimal.conf\"")
   target_link_libraries(
     libtmux_mcp_server
     PRIVATE libtmux_build_options mcp_tools nlohmann_json::nlohmann_json)
@@ -306,7 +297,5 @@ if(LIBTMUX_BUILD_MCP_SERVER)
     # no target to import.
     install(TARGETS libtmux_mcp_server
             RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
-    install(FILES minimal.conf DESTINATION "${CMAKE_INSTALL_BINDIR}"
-            RENAME libtmux-mcp-minimal.conf)
   endif()
 endif()

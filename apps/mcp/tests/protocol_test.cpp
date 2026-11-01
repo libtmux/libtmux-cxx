@@ -33,6 +33,7 @@
 #include "libtmux/testing/capabilities.hpp"
 #include "run_server.hpp"
 #include "support/rejected_daemon.hpp"
+#include "support/sandbox.hpp"
 
 namespace {
 
@@ -288,6 +289,34 @@ std::vector<json> converse_ready(const std::filesystem::path& socket,
   requests.insert(requests.begin(), initialized_notification());
   requests.insert(requests.begin(), initialize_request());
   return converse(socket, requests, linger);
+}
+
+// The capabilities document a server reports for the launch it was given.
+json capabilities_for(std::vector<std::string> arguments,
+                      std::vector<std::string> environment) {
+  const auto messages =
+      converse_with(std::move(arguments), std::move(environment),
+                    {initialize_request(), initialized_notification(),
+                     json{{"jsonrpc", "2.0"},
+                          {"id", 1},
+                          {"method", "resources/read"},
+                          {"params", {{"uri", "tmux://capabilities"}}}}});
+  const json* read = response(messages, 1);
+  if (read == nullptr) {
+    return json::object();
+  }
+  return json::parse((*read)["result"]["contents"][0]["text"].get<std::string>());
+}
+
+// A launch that names no socket in the environment, in a private tmux tree.
+std::vector<std::string> bare_environment(const ScopedTmuxServer& fixture) {
+  auto environment = fixture.child_environment();
+  for (const std::string_view name :
+       {"LIBTMUX_SOCKET", "LIBTMUX_SOCKET_PATH", "LIBTMUX_TMUX_CONFIG",
+        "LIBTMUX_TOOLSETS", "LIBTMUX_TOOLS", "LIBTMUX_EXCLUDE_TOOLS"}) {
+    libtmux::test::erase_environment(environment, name);
+  }
+  return environment;
 }
 
 const json& require_response(const std::vector<json>& messages, const json& id) {
@@ -711,20 +740,14 @@ TEST(McpProtocolCli, StartsAnAbsentPinnedSocketOnlyForCreateSession) {
   const std::string initialize =
       encode_requests({initialize_request(), initialized_notification(),
                        call("create_session", {{"name", "mcp-startable"}}, 1)});
-  const std::string teardown =
-      encode_requests({call("kill_session", {{"session", "mcp-startable"}}, 2)});
   auto environment = libtmux::test::current_environment();
   libtmux::test::erase_environment(environment, "TMUX");
   libtmux::test::erase_environment(environment, "TMUX_PANE");
-  libtmux::test::set_environment(environment, "LIBTMUX_TOOLS", "kill_session");
-  const auto messages = converse_steps(socket,
-                                       {{initialize, std::chrono::milliseconds{750}},
-                                        {teardown, std::chrono::milliseconds{750}}},
-                                       std::move(environment));
+  const auto messages = converse_steps(
+      socket, {{initialize, std::chrono::milliseconds{750}}}, std::move(environment));
   auto server = libtmux::Server::at_socket_path(socket.string());
   ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
   const json* created = response(messages, 1);
-  const json* killed = response(messages, 2);
   EXPECT_THROW(
       [&] {
         PrivateTmuxEndpointCleanup cleanup(*server, socket, sentinel->tmux_tmpdir());
@@ -735,11 +758,8 @@ TEST(McpProtocolCli, StartsAnAbsentPinnedSocketOnlyForCreateSession) {
             server_environment->find("TMUX_TMPDIR=" + sentinel->tmux_tmpdir().string()),
             std::string::npos);
         ASSERT_NE(created, nullptr);
-        ASSERT_NE(killed, nullptr);
         EXPECT_FALSE(created->contains("error")) << created->dump();
-        EXPECT_FALSE(killed->contains("error")) << killed->dump();
         EXPECT_FALSE((*created)["result"]["isError"].get<bool>()) << created->dump();
-        EXPECT_FALSE((*killed)["result"]["isError"].get<bool>()) << killed->dump();
         throw std::runtime_error{"injected after target creation"};
       }(),
       std::runtime_error);
@@ -3172,140 +3192,316 @@ TEST(McpProtocolCli, PublishesCharacterCountLimits) {
   EXPECT_EQ((*waiting)["inputSchema"]["properties"]["text"]["maxLength"], 4096);
 }
 
-TEST(McpProtocolCli, EstablishesDefaultMinimalDaemonBeforeFreezingProvenance) {
-  const std::filesystem::path configuration =
-      libtmux::mcp::server::minimal_configuration_path(LIBTMUX_MCP_SERVER_PATH);
-  std::ifstream input{configuration};
-  ASSERT_TRUE(input) << configuration;
-  const std::string contents{std::istreambuf_iterator<char>{input},
-                             std::istreambuf_iterator<char>{}};
-  ASSERT_FALSE(input.bad());
-  EXPECT_NE(contents.find("exit-empty off"), std::string::npos);
-  EXPECT_EQ(contents.find("run-shell"), std::string::npos);
-
-  auto sentinel = ScopedTmuxServer::start(ScopedTmuxServerOptions{
-      .mode = SocketMode::Name,
-      .session_name = "provenance-sentinel",
-      .socket_namespace = SocketNamespace::consumer("mcp-prov")});
-  ASSERT_TRUE(sentinel.has_value()) << sentinel.error();
-  const auto private_permissions =
-      std::filesystem::status(sentinel->tmux_tmpdir()).permissions();
-  EXPECT_EQ(private_permissions & (std::filesystem::perms::group_all |
-                                   std::filesystem::perms::others_all),
-            std::filesystem::perms::none);
-  const libtmux::test::EnvironmentGuard tmux_tmpdir{"TMUX_TMPDIR",
-                                                    sentinel->tmux_tmpdir().string()};
-  libtmux::mcp::server::CliOptions options;
-  // tmux spends `$TMUX_TMPDIR/tmux-<uid>/` before this name, so it stays short
-  // for the same reason the socket above does.
-  options.value = "prov";
-  auto opened = libtmux::mcp::server::open_server(options);
-  ASSERT_TRUE(opened.has_value()) << opened.error();
-  const std::filesystem::path selected_socket{opened->server.socket_path()};
-  EXPECT_EQ(selected_socket.parent_path().parent_path(), sentinel->tmux_tmpdir());
-  EXPECT_FALSE(opened->server_pre_existing);
-  EXPECT_TRUE(opened->teardown_enabled_by_default);
-  EXPECT_TRUE(opened->owns_daemon);
-  EXPECT_EQ(opened->socket_provenance, "default-dedicated");
-  EXPECT_EQ(opened->configuration_provenance, "minimal");
-  const auto environment = opened->server.run({"show-environment", "-g"});
-  const auto alive = opened->server.run({"show-options", "-sqv", "exit-empty"});
-  const auto killed = opened->server.kill();
-
-  const auto stopped_by = std::chrono::steady_clock::now() + std::chrono::seconds{1};
-  while (killed.has_value() && opened->server.is_alive(std::chrono::milliseconds{50}) &&
-         std::chrono::steady_clock::now() < stopped_by) {
-    std::this_thread::yield();
-  }
-  const bool stopped =
-      killed.has_value() && !opened->server.is_alive(std::chrono::milliseconds{50});
-  std::error_code cleanup_error;
-  const bool removed =
-      stopped && std::filesystem::remove(selected_socket, cleanup_error);
-
-  ASSERT_TRUE(environment.has_value()) << environment.error().diagnostic;
-  EXPECT_EQ(environment->find("LIBTMUX_MCP_OWNER="), std::string::npos);
-  EXPECT_TRUE(alive.has_value()) << alive.error().diagnostic;
-  EXPECT_TRUE(killed.has_value()) << killed.error().diagnostic;
-  EXPECT_TRUE(stopped);
-  EXPECT_TRUE(removed);
-  EXPECT_FALSE(cleanup_error) << cleanup_error.message();
-  EXPECT_FALSE(std::filesystem::exists(selected_socket));
-  EXPECT_TRUE(sentinel->is_alive());
-  const auto sibling =
-      libtmux::Server::at_socket_path(sentinel->socket_path().string());
-  ASSERT_TRUE(sibling.has_value()) << sibling.error().diagnostic;
-  EXPECT_TRUE(sibling->is_alive());
-}
-
-TEST(McpProtocolCli, StopsTheAuthenticatedDefaultDaemonWhenStdioCloses) {
+TEST(McpProtocolCli, ADefaultLaunchLeavesTheServerToTmuxAndCreatesNone) {
   auto fixture = ScopedTmuxServer::start(ScopedTmuxServerOptions{
       .mode = SocketMode::Name,
-      .session_name = "cleanup-namespace",
-      .socket_namespace = SocketNamespace::consumer("mcp-stop")});
+      .session_name = "default-holder",
+      .socket_namespace = SocketNamespace::consumer("mcp-dft")});
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
-  auto environment = fixture->child_environment();
-  libtmux::test::erase_environment(environment, "TMUX");
-  for (const std::string_view name :
-       {"LIBTMUX_SOCKET", "LIBTMUX_SOCKET_PATH", "LIBTMUX_TMUX_CONFIG",
-        "LIBTMUX_TOOLSETS", "LIBTMUX_TOOLS", "LIBTMUX_EXCLUDE_TOOLS"}) {
-    libtmux::test::erase_environment(environment, name);
+  const std::filesystem::path socket_directory = fixture->socket_path().parent_path();
+  const std::filesystem::path default_socket = socket_directory / "default";
+  // TMUX unset, and TMUX empty, which tmux ignores too.
+  for (const bool empty_tmux : {false, true}) {
+    SCOPED_TRACE(empty_tmux ? "TMUX is empty" : "TMUX is unset");
+    auto environment = bare_environment(*fixture);
+    if (empty_tmux) {
+      libtmux::test::set_environment(environment, "TMUX", "");
+    }
+    const json document = capabilities_for({}, environment);
+    ASSERT_TRUE(document.contains("socket"));
+    EXPECT_EQ(document["socket"]["selector"], "none");
+    EXPECT_EQ(document["socket"]["selectionProvenance"], "tmux-choice");
+    EXPECT_EQ(document["socket"]["serverState"], "absent");
+    EXPECT_EQ(document["socket"]["configurationProvenance"], "unknown");
+    EXPECT_EQ(document["toolCount"], 41);
+    ASSERT_TRUE(document["connection"]["resolvedSocketPath"].is_string());
+    EXPECT_EQ(std::filesystem::weakly_canonical(
+                  document["connection"]["resolvedSocketPath"].get<std::string>()),
+              std::filesystem::weakly_canonical(default_socket));
   }
-
-  const auto finished = libtmux::mcp::test::run_server(
-      LIBTMUX_MCP_SERVER_PATH, {}, environment, {}, std::chrono::seconds{5});
-  auto server = libtmux::Server::at_socket_path(
-      (fixture->socket_path().parent_path() / "libtmux-mcp").string());
-  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
-  const bool still_alive =
-      server
-          ->run({"show-options", "-sqv", "exit-empty"}, std::chrono::milliseconds{250})
-          .has_value();
-  if (still_alive) {
-    static_cast<void>(server->kill());
-  }
-
-  ASSERT_TRUE(finished.has_value()) << finished.error();
-  EXPECT_FALSE(still_alive);
+  // The server used to start a daemon of its own on `libtmux-mcp`.
+  EXPECT_FALSE(std::filesystem::exists(socket_directory / "libtmux-mcp"));
+  EXPECT_FALSE(std::filesystem::exists(default_socket));
+  EXPECT_TRUE(fixture->is_alive());
 }
 
-TEST(McpProtocolCli, DoesNotClaimAnExistingDedicatedDaemon) {
+TEST(McpProtocolCli, ADefaultLaunchReportsTheServerOnTheDefaultSocketAsExisting) {
   auto fixture = ScopedTmuxServer::start(ScopedTmuxServerOptions{
       .mode = SocketMode::Name,
-      .session_name = "provenance-holder",
-      .socket_namespace = SocketNamespace::consumer("mcp-own")});
+      .session_name = "default-owner",
+      .socket_namespace = SocketNamespace::consumer("mcp-dex")});
   ASSERT_TRUE(fixture.has_value()) << fixture.error();
-  auto environment = fixture->child_environment();
-  for (const std::string_view name :
-       {"LIBTMUX_SOCKET", "LIBTMUX_SOCKET_PATH", "LIBTMUX_TMUX_CONFIG",
-        "LIBTMUX_TOOLSETS", "LIBTMUX_TOOLS", "LIBTMUX_EXCLUDE_TOOLS"}) {
-    libtmux::test::erase_environment(environment, name);
-  }
-  const std::filesystem::path socket =
-      fixture->socket_path().parent_path() / "libtmux-mcp";
-  auto server = libtmux::Server::startable_at_socket_path(
-      socket.string(),
-      libtmux::mcp::server::minimal_configuration_path(LIBTMUX_MCP_SERVER_PATH));
-  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
-  const auto started = server->run({"start-server"});
-  ASSERT_TRUE(started.has_value()) << started.error().diagnostic;
+  // A server on tmux's own default socket, in the fixture's tree.
+  const libtmux::test::EnvironmentGuard tmpdir{"TMUX_TMPDIR",
+                                               fixture->tmux_tmpdir().string()};
+  const libtmux::test_support::ScopedUnset no_tmux{"TMUX"};
+  auto held = libtmux::Server::startable_at_socket_name(
+      "default", std::filesystem::path{"/dev/null"});
+  ASSERT_TRUE(held.has_value()) << held.error().diagnostic;
+  ASSERT_TRUE(held->new_session("on-default").has_value());
+
+  const json document = capabilities_for({}, bare_environment(*fixture));
+  const auto killed = held->kill();
+
+  ASSERT_TRUE(killed.has_value()) << killed.error().diagnostic;
+  EXPECT_EQ(document["socket"]["serverState"], "existing");
+  EXPECT_EQ(document["socket"]["selectionProvenance"], "tmux-choice");
+  EXPECT_EQ(document["socket"]["configurationProvenance"], "unknown");
+}
+
+TEST(McpProtocolCli, InsideTmuxADefaultLaunchReachesTheServerTmuxNames) {
+  auto fixture = ScopedTmuxServer::start(ScopedTmuxServerOptions{
+      .session_name = "pane-server",
+      .socket_namespace = SocketNamespace::consumer("mcp-pane")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  auto environment = bare_environment(*fixture);
+  libtmux::test::set_environment(environment, "TMUX",
+                                 fixture->socket_path().string() + "," +
+                                     std::to_string(fixture->server_pid()) + ",0");
   const auto messages =
       converse_with({}, environment,
                     {initialize_request(), initialized_notification(),
+                     call("list_sessions", json::object(), 1),
                      json{{"jsonrpc", "2.0"},
-                          {"id", 1},
+                          {"id", 2},
                           {"method", "resources/read"},
                           {"params", {{"uri", "tmux://capabilities"}}}}});
-  const auto killed = server->kill();
-
-  ASSERT_TRUE(killed.has_value()) << killed.error().diagnostic;
-  const json* read = response(messages, 1);
+  const json* listed = response(messages, 1);
+  const json* read = response(messages, 2);
+  ASSERT_NE(listed, nullptr);
   ASSERT_NE(read, nullptr);
+  EXPECT_EQ((*listed)["result"]["structuredContent"]["sessions"][0]["name"],
+            "pane-server");
   const json document =
       json::parse((*read)["result"]["contents"][0]["text"].get<std::string>());
+  EXPECT_EQ(document["socket"]["selectionProvenance"], "tmux-choice");
   EXPECT_EQ(document["socket"]["serverState"], "existing");
-  EXPECT_EQ(document["socket"]["configurationProvenance"], "unknown");
-  EXPECT_EQ(document["toolCount"], 41);
+  EXPECT_EQ(std::filesystem::weakly_canonical(
+                document["connection"]["resolvedSocketPath"].get<std::string>()),
+            std::filesystem::weakly_canonical(fixture->socket_path()))
+      << "the server reports a socket other than the one it reached";
+}
+
+TEST(McpProtocolCli, ReadsTheSocketVariablesWhenNoOptionNamesASocket) {
+  struct Case {
+    const char* label;
+    std::optional<std::string> path;
+    std::optional<std::string> name;
+    std::vector<std::string> arguments;
+    std::string selector;
+    std::string provenance;
+  };
+  const std::string path = "/tmp/libtmux-cxx-env-path-no-dispatch.sock";
+  const std::string name = "libtmux-cxx-env-name-no-dispatch";
+  const std::vector<Case> cases{
+      {"a path", path, std::nullopt, {}, "path:" + path, "env-socket-path"},
+      {"a name", std::nullopt, name, {}, "name:" + name, "env-socket"},
+      {"both: the path wins", path, name, {}, "path:" + path, "env-socket-path"},
+      {"a blank path leaves the name", "  ", name, {}, "name:" + name, "env-socket"},
+      {"a blank name leaves the path", path, "", {}, "path:" + path, "env-socket-path"},
+      {"an option comes before both",
+       path,
+       name,
+       {"--socket-name", "libtmux-cxx-flag-no-dispatch"},
+       "name:libtmux-cxx-flag-no-dispatch",
+       "explicit"},
+      {"an option leaves an unusable variable unread",
+       std::nullopt,
+       "has/separator",
+       {"--socket-name", "libtmux-cxx-flag-no-dispatch"},
+       "name:libtmux-cxx-flag-no-dispatch",
+       "explicit"},
+  };
+  for (const Case& item : cases) {
+    SCOPED_TRACE(item.label);
+    auto environment = libtmux::test::current_environment();
+    libtmux::test::erase_environment(environment, "TMUX");
+    libtmux::test::erase_environment(environment, "LIBTMUX_SOCKET");
+    libtmux::test::erase_environment(environment, "LIBTMUX_SOCKET_PATH");
+    if (item.path.has_value()) {
+      libtmux::test::set_environment(environment, "LIBTMUX_SOCKET_PATH", *item.path);
+    }
+    if (item.name.has_value()) {
+      libtmux::test::set_environment(environment, "LIBTMUX_SOCKET", *item.name);
+    }
+    const json document = capabilities_for(item.arguments, std::move(environment));
+    ASSERT_TRUE(document.contains("socket"));
+    EXPECT_EQ(document["socket"]["selector"], item.selector);
+    EXPECT_EQ(document["socket"]["selectionProvenance"], item.provenance);
+  }
+}
+
+// Runs the case from a working directory of its own, and puts the old one back.
+class WorkingDirectory final {
+public:
+  explicit WorkingDirectory(const std::filesystem::path& directory)
+      : previous_{std::filesystem::current_path()} {
+    std::filesystem::current_path(directory);
+  }
+  ~WorkingDirectory() {
+    std::error_code ignored;
+    std::filesystem::current_path(previous_, ignored);
+  }
+  WorkingDirectory(const WorkingDirectory&) = delete;
+  WorkingDirectory& operator=(const WorkingDirectory&) = delete;
+
+private:
+  std::filesystem::path previous_;
+};
+
+std::vector<std::string> relative_path_environment(std::string_view path) {
+  auto environment = libtmux::test::current_environment();
+  libtmux::test::erase_environment(environment, "TMUX");
+  libtmux::test::erase_environment(environment, "LIBTMUX_SOCKET");
+  libtmux::test::set_environment(environment, "LIBTMUX_SOCKET_PATH", path);
+  return environment;
+}
+
+TEST(McpProtocolCli, ARelativeSocketPathVariableReachesWhatTmuxDashSReaches) {
+  auto fixture = ScopedTmuxServer::start(ScopedTmuxServerOptions{
+      .mode = SocketMode::Name,
+      .session_name = "relative-holder",
+      .socket_namespace = SocketNamespace::consumer("mcp-rel")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  // A short directory, so the absolute path fits a socket address wherever the
+  // build tree is.
+  const WorkingDirectory here{fixture->tmux_tmpdir()};
+  const std::filesystem::path expected = fixture->tmux_tmpdir() / "rel/e.sock";
+  const json document = capabilities_for({}, relative_path_environment("rel/e.sock"));
+  ASSERT_TRUE(document.contains("socket"));
+  EXPECT_EQ(document["socket"]["selector"], "path:" + expected.string());
+  EXPECT_EQ(document["socket"]["selectionProvenance"], "env-socket-path");
+  EXPECT_EQ(document["connection"]["resolvedSocketPath"], expected.string());
+}
+
+TEST(McpProtocolCli, ARelativeSocketPathIsKeptWhenItsAbsoluteFormWouldNotFit) {
+  auto fixture = ScopedTmuxServer::start(ScopedTmuxServerOptions{
+      .mode = SocketMode::Name,
+      .session_name = "deep-holder",
+      .socket_namespace = SocketNamespace::consumer("mcp-deep")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  // tmux takes `-S` as given, so a short relative path works from a directory
+  // that is deeper than a socket address can hold.
+  std::filesystem::path deep = fixture->tmux_tmpdir();
+  while (deep.string().size() <= libtmux::kSocketPathLimit) {
+    deep /= std::string(20, 'd');
+  }
+  std::error_code failed;
+  std::filesystem::create_directories(deep, failed);
+  ASSERT_FALSE(failed) << failed.message();
+  const WorkingDirectory here{deep};
+  const json document = capabilities_for({}, relative_path_environment("e.sock"));
+  ASSERT_TRUE(document.contains("socket"));
+  EXPECT_EQ(document["socket"]["selector"], "path:e.sock");
+  EXPECT_EQ(document["socket"]["selectionProvenance"], "env-socket-path");
+  EXPECT_EQ(document["socket"]["serverState"], "absent");
+}
+
+// What the server prints and how it exits, for a launch that is refused before
+// it contacts tmux. `environment` is words for env(1), in front of the program.
+struct RefusedStartup {
+  int status;
+  std::string output;
+};
+
+RefusedStartup refused_startup(const std::string& environment,
+                               const std::string& arguments = {}) {
+  const std::string command =
+      "env " + environment + " " +
+      libtmux::test::rejected::shell_quote(LIBTMUX_MCP_SERVER_PATH) + " " + arguments +
+      " </dev/null 2>&1";
+  RefusedStartup result{-1, {}};
+  FILE* const pipe = ::popen(command.c_str(), "r");
+  if (pipe == nullptr) {
+    return result;
+  }
+  std::array<char, 512> buffer{};
+  while (const std::size_t count = std::fread(buffer.data(), 1, buffer.size(), pipe)) {
+    result.output.append(buffer.data(), count);
+  }
+  result.status = ::pclose(pipe);
+  return result;
+}
+
+TEST(McpProtocolCli, AnUnusableSocketVariableStopsStartupNamingOnlyTheVariable) {
+  const std::string unfit(300, 'x');
+  const struct {
+    const char* variable;
+    std::string value;
+  } refusals[]{{"LIBTMUX_SOCKET_PATH", unfit}, {"LIBTMUX_SOCKET", "has/separator"}};
+  for (const auto& refusal : refusals) {
+    SCOPED_TRACE(refusal.variable);
+    const auto started =
+        refused_startup("-u TMUX -u LIBTMUX_SOCKET -u LIBTMUX_SOCKET_PATH " +
+                        std::string{refusal.variable} + "=" + refusal.value);
+    EXPECT_TRUE(WIFEXITED(started.status) && WEXITSTATUS(started.status) == 2)
+        << started.status << started.output;
+    EXPECT_NE(started.output.find(refusal.variable), std::string::npos)
+        << started.output;
+    EXPECT_EQ(started.output.find(refusal.value), std::string::npos)
+        << "the message quotes the value";
+  }
+}
+
+TEST(McpProtocolCli, InheritWithNoTmuxSocketStopsStartupAndReadsNoVariable) {
+  // The variables name servers that may be running; an option that asks for the
+  // `TMUX` socket must not fall back to either of them.
+  const std::string variables =
+      " LIBTMUX_SOCKET=libtmux-cxx-inherit-variable"
+      " LIBTMUX_SOCKET_PATH=/tmp/libtmux-cxx-inherit-variable.sock";
+  const struct {
+    const char* label;
+    const char* tmux;
+  } cases[]{{"TMUX is unset", "-u TMUX"},
+            {"TMUX is empty", "TMUX="},
+            {"TMUX names no socket", "TMUX=,1,0"}};
+  for (const auto& item : cases) {
+    SCOPED_TRACE(item.label);
+    const auto started =
+        refused_startup(std::string{item.tmux} + variables, "--socket inherit");
+    EXPECT_TRUE(WIFEXITED(started.status) && WEXITSTATUS(started.status) == 2)
+        << started.status << started.output;
+    EXPECT_NE(started.output.find("TMUX"), std::string::npos) << started.output;
+    EXPECT_EQ(started.output.find("libtmux-cxx-inherit-variable"), std::string::npos)
+        << "the message quotes a variable's value";
+  }
+}
+
+TEST(McpProtocolCli, InheritReachesTheTmuxSocketAndLeavesTheVariablesUnread) {
+  auto fixture = ScopedTmuxServer::start(ScopedTmuxServerOptions{
+      .session_name = "inherit-pane",
+      .socket_namespace = SocketNamespace::consumer("mcp-inh")});
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  auto environment = bare_environment(*fixture);
+  libtmux::test::set_environment(environment, "TMUX",
+                                 fixture->socket_path().string() + "," +
+                                     std::to_string(fixture->server_pid()) + ",0");
+  libtmux::test::set_environment(environment, "LIBTMUX_SOCKET",
+                                 "libtmux-cxx-inherit-variable");
+  libtmux::test::set_environment(environment, "LIBTMUX_SOCKET_PATH",
+                                 "/tmp/libtmux-cxx-inherit-variable.sock");
+  const auto messages =
+      converse_with({"--socket", "inherit"}, environment,
+                    {initialize_request(), initialized_notification(),
+                     call("list_sessions", json::object(), 1),
+                     json{{"jsonrpc", "2.0"},
+                          {"id", 2},
+                          {"method", "resources/read"},
+                          {"params", {{"uri", "tmux://capabilities"}}}}});
+  const json* listed = response(messages, 1);
+  const json* read = response(messages, 2);
+  ASSERT_NE(listed, nullptr);
+  ASSERT_NE(read, nullptr);
+  EXPECT_EQ((*listed)["result"]["structuredContent"]["sessions"][0]["name"],
+            "inherit-pane");
+  const json document =
+      json::parse((*read)["result"]["contents"][0]["text"].get<std::string>());
+  EXPECT_EQ(document["socket"]["selector"], "inherit");
+  EXPECT_EQ(document["socket"]["selectionProvenance"], "explicit");
+  EXPECT_EQ(document["socket"]["serverState"], "existing");
+  EXPECT_EQ(std::filesystem::weakly_canonical(
+                document["connection"]["resolvedSocketPath"].get<std::string>()),
+            std::filesystem::weakly_canonical(fixture->socket_path()));
 }
 
 TEST(McpProtocolCli, PublishesStaticEffectiveCapabilitiesInBothEras) {
@@ -3368,7 +3564,7 @@ TEST(McpProtocolCli, PublishesStaticEffectiveCapabilitiesInBothEras) {
   EXPECT_EQ(document["operatingSystemBoundary"], "none");
   EXPECT_EQ(document["socket"]["selector"],
             "name:libtmux-cxx-capabilities-legacy-no-dispatch");
-  EXPECT_EQ(document["socket"]["selectionProvenance"], "operator-current");
+  EXPECT_EQ(document["socket"]["selectionProvenance"], "explicit");
   EXPECT_EQ(document["socket"]["serverState"], "absent");
   EXPECT_EQ(document["socket"]["configurationProvenance"], "unknown");
   EXPECT_EQ(document["socket"]["namespaceBoundary"], "tmux-objects-only");
@@ -3575,8 +3771,8 @@ TEST(McpProtocolCli, RejectsInvalidPolicyBeforeOpeningTmux) {
       {"LIBTMUX_TOOLS", "unknown"},
       {"LIBTMUX_EXCLUDE_TOOLS", "capture_pane,"},
       {"LIBTMUX_EXCLUDE_TOOLS", "unknown"},
-      {"LIBTMUX_SOCKET", ""},
-      {"LIBTMUX_SOCKET_PATH", ""},
+      {"LIBTMUX_SOCKET", "has/separator"},
+      {"LIBTMUX_SOCKET_PATH", std::string(300, 'x')},
       {"LIBTMUX_TMUX_CONFIG", ""},
       {"LIBTMUX_TMUX_CONFIG", "relative.conf"},
       {"LIBTMUX_SAFETY", "read-only"},
@@ -3592,34 +3788,6 @@ TEST(McpProtocolCli, RejectsInvalidPolicyBeforeOpeningTmux) {
     EXPECT_NE(finished.error().find("exited with status 2"), std::string::npos)
         << policy.name << '=' << policy.value;
   }
-}
-
-TEST(McpProtocolCli, UsesSeparateSocketEnvironmentVariables) {
-  auto environment = libtmux::test::current_environment();
-  libtmux::test::erase_environment(environment, "TMUX");
-  libtmux::test::erase_environment(environment, "LIBTMUX_SOCKET");
-  libtmux::test::set_environment(environment, "LIBTMUX_SOCKET_PATH",
-                                 "/tmp/libtmux-cxx-env-path-no-dispatch.sock");
-  const auto messages =
-      converse_with({}, environment,
-                    {initialize_request(), initialized_notification(),
-                     json{{"jsonrpc", "2.0"},
-                          {"id", 1},
-                          {"method", "resources/read"},
-                          {"params", {{"uri", "tmux://capabilities"}}}}});
-  const json* read = response(messages, 1);
-  ASSERT_NE(read, nullptr);
-  const json document =
-      json::parse((*read)["result"]["contents"][0]["text"].get<std::string>());
-  EXPECT_EQ(document["socket"]["selector"],
-            "path:/tmp/libtmux-cxx-env-path-no-dispatch.sock");
-  EXPECT_EQ(document["socket"]["selectionProvenance"], "operator-current");
-
-  libtmux::test::set_environment(environment, "LIBTMUX_SOCKET", "conflict");
-  const auto conflicting = libtmux::mcp::test::run_server(
-      LIBTMUX_MCP_SERVER_PATH, {}, std::move(environment), {}, std::chrono::seconds{5});
-  ASSERT_FALSE(conflicting.has_value());
-  EXPECT_NE(conflicting.error().find("exited with status 2"), std::string::npos);
 }
 
 TEST(McpProtocolCli, RetainsNestedReadsForAggregateOnlySelection) {
@@ -3711,7 +3879,7 @@ TEST(McpProtocolCli, ExplicitSocketDefaultsExcludeTeardown) {
             tools.end());
   const json document =
       json::parse((*read)["result"]["contents"][0]["text"].get<std::string>());
-  EXPECT_EQ(document["socket"]["selectionProvenance"], "operator-current");
+  EXPECT_EQ(document["socket"]["selectionProvenance"], "explicit");
 }
 
 TEST(McpProtocolCli, KeepsAnIdReservedUntilItsReplyIsWritten) {
@@ -3785,58 +3953,6 @@ TEST_F(McpProtocol, KeepsBatchIdsReservedThroughAggregateBackpressure) {
   EXPECT_EQ(duplicate_reply["error"]["message"], "request id is already in flight");
 }
 
-TEST(McpProtocolCli, UsesTheProductDedicatedDefaultRoute) {
-  auto fixture = ScopedTmuxServer::start(ScopedTmuxServerOptions{
-      .mode = SocketMode::Name,
-      .session_name = "default-route-holder",
-      .socket_namespace = SocketNamespace::consumer("mcp-dft")});
-  ASSERT_TRUE(fixture.has_value()) << fixture.error();
-  auto environment = fixture->child_environment();
-  const auto messages =
-      converse_with({}, std::move(environment),
-                    {initialize_request(), initialized_notification(),
-                     json{{"jsonrpc", "2.0"},
-                          {"id", 1},
-                          {"method", "resources/read"},
-                          {"params", {{"uri", "tmux://capabilities"}}}}});
-  auto server = libtmux::Server::at_socket_path(
-      (fixture->socket_path().parent_path() / "libtmux-mcp").string());
-  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
-  EXPECT_FALSE(
-      server
-          ->run({"show-options", "-sqv", "exit-empty"}, std::chrono::milliseconds{250})
-          .has_value());
-  const json* read = response(messages, 1);
-  ASSERT_NE(read, nullptr);
-  const json document =
-      json::parse((*read)["result"]["contents"][0]["text"].get<std::string>());
-  EXPECT_EQ(document["socket"]["serverState"], "created");
-  EXPECT_EQ(document["socket"]["configurationProvenance"], "minimal");
-  EXPECT_EQ(document["socket"]["selectionProvenance"], "default-dedicated");
-  EXPECT_EQ(document["toolCount"], 45);
-}
-
-TEST(McpProtocolCli, DoesNotUseAnInvalidInheritedRoute) {
-  auto fixture = ScopedTmuxServer::start(ScopedTmuxServerOptions{
-      .mode = SocketMode::Name,
-      .session_name = "invalid-route-holder",
-      .socket_namespace = SocketNamespace::consumer("mcp-inv")});
-  ASSERT_TRUE(fixture.has_value()) << fixture.error();
-  auto environment = fixture->child_environment();
-  libtmux::test::set_environment(environment, "TMUX", "");
-  const auto finished = libtmux::mcp::test::run_server(
-      LIBTMUX_MCP_SERVER_PATH, {}, std::move(environment), {}, std::chrono::seconds{5});
-  ASSERT_TRUE(finished.has_value());
-  EXPECT_EQ(*finished, "");
-  auto server = libtmux::Server::at_socket_path(
-      (fixture->socket_path().parent_path() / "libtmux-mcp").string());
-  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
-  EXPECT_FALSE(
-      server
-          ->run({"show-options", "-sqv", "exit-empty"}, std::chrono::milliseconds{250})
-          .has_value());
-}
-
 // The server refuses a daemon older than the floor where it starts, naming the
 // release and the remedy, and exits without serving a request.
 class McpProtocolRejected : public libtmux::test::rejected::RejectedDaemonTest {};
@@ -3845,7 +3961,6 @@ TEST_F(McpProtocolRejected, StartupRefusesTheDaemonWithTheRemedy) {
   libtmux::mcp::server::CliOptions options;
   options.selector = libtmux::mcp::server::Selector::path;
   options.value = daemon_->socket_path().string();
-  options.explicit_selector = true;
   const auto opened = libtmux::mcp::server::open_server(options);
   ASSERT_FALSE(opened.has_value());
   libtmux::test::rejected::expect_floor_and_remedy(opened.error());

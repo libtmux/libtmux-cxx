@@ -209,21 +209,34 @@ per-call override. The shared environment contract is:
 | Variable | Meaning |
 |---|---|
 | `LIBTMUX_SOCKET` | Exact tmux socket name |
-| `LIBTMUX_SOCKET_PATH` | Exact socket path; mutually exclusive with the name |
+| `LIBTMUX_SOCKET_PATH` | Exact socket path; wins when `LIBTMUX_SOCKET` is also set |
 | `LIBTMUX_TMUX_CONFIG` | Explicit absolute tmux configuration path |
 
-With no selector, the server uses the product-dedicated `libtmux-mcp` socket.
-With no configuration path, a newly created dedicated socket uses minimal
-configuration. Explicitly named, path-pinned, inherited, or already-running
-sockets have user-configured or unknown provenance and omit teardown by
-default. A wholly new dedicated minimal socket may default to all four
-toolsets. `tmux://capabilities` reports the selector, selection provenance,
-server state, and configuration provenance. On POSIX, its connection block also
-reports the resolved socket path and exact `tmux -N -S ... attach` command. On
+An option or flag comes first and leaves both variables unread. Otherwise
+`LIBTMUX_SOCKET_PATH` selects a socket path (`-S`), else `LIBTMUX_SOCKET` a
+socket name (`-L`). A variable that is empty or only whitespace counts as
+unset, each one alone; any other value is used as written. A relative
+`LIBTMUX_SOCKET_PATH` reaches what `tmux -S` reaches from the server's working
+directory, and the server reports its absolute path when that fits a socket
+address and the path as given when it does not. With neither variable the
+server passes tmux no socket, so tmux picks the server: the one `TMUX` names
+when the client runs inside tmux, and the default socket under `TMUX_TMPDIR`
+otherwise. The server creates no server of its own, so a default launch has no
+`teardown` toolset; `LIBTMUX_TOOLSETS` grants it. A server this process starts,
+because a tool created a session on an absent socket, reads the user's tmux
+configuration or the file `--tmux-config` names.
+
+`tmux://capabilities` reports the selector, selection provenance, server
+state, and configuration provenance. The selection provenance is one of
+`explicit` (an option or flag chose the socket), `env-socket-path`
+(`LIBTMUX_SOCKET_PATH` chose it), `env-socket` (`LIBTMUX_SOCKET` chose it) and
+`tmux-choice` (nothing chose, so tmux picked the server). The selector of a
+`tmux-choice` launch is `none`. The server state is `existing` or `absent`.
+On POSIX, its connection block also reports the resolved socket path of the
+server the commands reach and the exact `tmux -N -S ... attach` command. On
 Windows, it reports the psmux namespace selector and leaves
 `resolvedSocketPath` and `attachCommand` null because psmux has no exact attach
-route. The process stops a dedicated daemon only when its startup nonce proves
-that this invocation created it.
+route.
 
 CLI selectors remain available:
 
@@ -243,13 +256,16 @@ The selectors are:
 - `--socket-name NAME` for tmux or psmux `-L NAME`;
 - one positional `PATH`, retained as a POSIX compatibility spelling.
 
-`--tmux-config /ABSOLUTE/PATH` selects an explicit tmux configuration rather
-than the packaged minimal file. Earlier no-selector launches followed `$TMUX`;
-the current default is the dedicated socket above. Pass `--socket inherit` to
-retain that earlier behavior; it requires a valid inherited `$TMUX` route.
+`--tmux-config /ABSOLUTE/PATH` selects an explicit tmux configuration for a
+server this process starts. `--socket inherit` names the `TMUX` socket
+explicitly, as a path, and leaves both socket variables unread. It needs a
+valid inherited `$TMUX` route and stops startup with status 2, naming `TMUX`,
+when there is none. A launch with no selector reaches the same server inside
+tmux, because tmux reads `$TMUX` itself.
 
-Conflicting selectors, empty values, and an empty or relative
-`LIBTMUX_TMUX_CONFIG` fail before tmux opens. Windows psmux rejects
+Conflicting options, empty option values, a variable tmux cannot use, and an
+empty or relative `LIBTMUX_TMUX_CONFIG` fail before tmux opens. The message
+names the variable and never quotes its value. Windows psmux rejects
 socket paths before dispatch. Psmux 3.3.7 ignores
 `PSMUX_DATA_DIR` and stores routing state in the Windows profile's `.psmux`
 directory; use a high-entropy `--socket-name` and exact session and registry

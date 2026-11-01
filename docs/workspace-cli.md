@@ -66,6 +66,29 @@ filenames containing spaces. Queries do not start tmux or load configuration;
 session names and configuration aliases are not suggested. Add the appropriate
 command to your shell configuration to enable it in future sessions.
 
+## Selecting the server
+
+`load`, `freeze` and `shell` take `-S PATH` (a socket path) or `-L NAME` (a
+socket name); `-S` wins when both are given. With neither, `LIBTMUX_SOCKET_PATH`
+selects a socket path and `LIBTMUX_SOCKET` a socket name, and the path wins when
+both are set. A variable that is empty or only whitespace counts as unset, each
+one alone, and any other value is used as written. A flag leaves both variables
+unread.
+
+With no flag and no variable the command passes tmux no socket, so tmux picks
+the server: the one `TMUX` names inside a pane, and the default socket under
+`TMUX_TMPDIR` elsewhere. The command reads `TMUX` itself only where it asks for
+the pane it runs in: `load --append`, and an attached `load` inside tmux, which
+switches that pane's client and refuses a server other than the pane's.
+`shell` hands tmuxp the `-S` or `-L` that a flag or a variable chose; tmuxp
+reads neither variable, and inside tmux it follows `TMUX` itself.
+
+A value tmux cannot use, such as a name holding `/`, is refused with exit
+status 2. The message names the variable and never quotes its value. To keep a
+shell session or a development checkout off the server you use, put
+`LIBTMUX_SOCKET_PATH` in a `.env` file that is not committed; see
+[CONTRIBUTING](../.github/CONTRIBUTING.md).
+
 ## Current commands
 
 `ls`, `search`, `edit`, `convert`, `import teamocil`, `import tmuxinator`, `debug-info`,

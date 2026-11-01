@@ -9,6 +9,90 @@ was recorded as it landed.
 
 ## Unreleased
 
+### Breaking
+
+- `libtmux-mcp-server` with no selector no longer starts a server of its own on
+  the socket `libtmux-mcp`. It passes tmux no socket unless
+  `LIBTMUX_SOCKET_PATH` or `LIBTMUX_SOCKET` names one, so it drives the server
+  `TMUX` names inside tmux and the default socket elsewhere.
+  Behaviour-breaking; flags and options are unchanged. (#128)
+
+  Before: `libtmux-mcp-server`
+  After: `libtmux-mcp-server --socket-name libtmux-mcp` (the server it starts
+  now reads your tmux configuration, is not stopped at exit, and has no
+  `teardown` toolset unless `LIBTMUX_TOOLSETS` grants it)
+
+- `tmux://capabilities` reports the selection provenance as `explicit`,
+  `env-socket-path`, `env-socket` or `tmux-choice`, in place of
+  `operator-current` and `default-dedicated`. A launch that names no socket has
+  the selector `none`, and the server state is `existing` or `absent`;
+  `created` is gone. Behaviour-breaking: a client that matches the old strings
+  stops matching. (#128)
+
+  Before: `"selectionProvenance": "operator-current"`
+  After: `"selectionProvenance": "explicit"` for an option or flag,
+  `"env-socket-path"` or `"env-socket"` for a variable
+
+- A server `libtmux-mcp-server` starts on `--socket-name`, `--socket-path` or a
+  socket variable no longer runs with `exit-empty off`: it reads your tmux
+  configuration and exits with its last session. The installed
+  `libtmux-mcp-minimal.conf` is removed. Behaviour-breaking; the command line
+  is unchanged. (#128)
+
+  Before: `libtmux-mcp-server --socket-name agent`
+  After: `libtmux-mcp-server --socket-name agent --tmux-config /path/keep.conf`,
+  with `set -s exit-empty off` in the file
+
+- `libtmux-mcp-server --socket inherit` stops startup with status 2, naming
+  `TMUX`, when `TMUX` names no socket, and reads neither socket variable.
+  Before, it fell back to the default socket. Behaviour-breaking. (#128)
+
+- `Server::at_default()` and `Server::startable_at_default()` read
+  `LIBTMUX_SOCKET_PATH` and `LIBTMUX_SOCKET`, and reach the server `TMUX` names
+  inside tmux. Behaviour-breaking; source-compatible. Before, they ignored the
+  variables and pinned the default socket whatever `TMUX` said. (#128)
+
+  Before: `Server::at_default()`
+  After: `Server::at_socket_name("default")` for the default socket whatever the
+  variables and `TMUX` say
+
+### Server
+
+- Add `socket_from_environment()`, `EnvironmentSocket` and `SocketSource` in
+  `libtmux/socket.hpp`, which report which variable chose the socket. The path
+  wins when both variables are set, a variable that is empty or only whitespace
+  counts as unset, and a value tmux cannot use fails the default handle naming
+  the variable and not its value. (#128)
+- `Server::socket_path()`, the pinned route and a control client from a handle
+  that names no socket now describe the server a bare `tmux` reaches, which
+  inside tmux is the one `TMUX` names. Before, control mode attached to the
+  default socket. (#128)
+
+### Workspace CLI
+
+- `tmux-workspace load`, `freeze` and `shell` select the server with `-S`, then
+  `-L`, then `LIBTMUX_SOCKET_PATH`, then `LIBTMUX_SOCKET`, and with none of them
+  pass tmux no socket. Before, no flag meant the `TMUX` socket as `-S`, and the
+  variables were not read. Pass `-S "${TMUX%%,*}"` for the earlier choice.
+  `--append` and an attached `load` still require the selected server to be the
+  pane's. (#128)
+- `shell` hands tmuxp the `-S` or `-L` that a flag or a variable chose, since
+  tmuxp reads neither variable. (#128)
+
+### MCP server
+
+- Both socket variables set no longer stops startup: the path wins. A variable
+  that is empty or only whitespace is unset instead of an error, and a relative
+  `LIBTMUX_SOCKET_PATH` is accepted and reported as an absolute path when that
+  fits a socket address. A variable tmux cannot use stops startup with status 2,
+  naming the variable. (#128)
+
+### Documentation
+
+- Describe the socket choice in the README, `docs/workspace-cli.md`,
+  `docs/mcp-server.md` and `docs/windows.md`, and add a `.env` recipe for a
+  program run by hand to CONTRIBUTING. (#128)
+
 ### Testing
 
 - CI tests the oldest and newest released tmux, 3.3a and 3.8, on a push and a

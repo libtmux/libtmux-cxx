@@ -293,8 +293,10 @@ public:
         ->disable_flag_override();
   }
   static void sockets(CLI::App& app) {
-    app.add_option("-L", "tmux socket name");
-    app.add_option("-S", "tmux socket path; takes precedence over -L");
+    app.add_option("-L", "tmux socket name; overrides LIBTMUX_SOCKET and "
+                         "LIBTMUX_SOCKET_PATH");
+    app.add_option("-S", "tmux socket path; overrides -L, LIBTMUX_SOCKET_PATH and "
+                         "LIBTMUX_SOCKET");
   }
   void save_options(CLI::App& app) {
     app.add_option("--save-to", "Output path; machine mode defaults to stdout");

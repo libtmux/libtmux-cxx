@@ -553,15 +553,34 @@ void rethrow_refusal(const libtmux::CommandFailure& failure) {
   if (failure.kind == libtmux::FailureKind::unsupported)
     throw Failure{1, "tmux_unsupported", failure.diagnostic};
 }
+// -S, then -L, then what the core makes of LIBTMUX_SOCKET_PATH and
+// LIBTMUX_SOCKET, and with none of them the server tmux picks: the one TMUX
+// names inside a pane, the default socket elsewhere. TMUX is read here only by
+// the commands that ask for the pane they run in.
 Server endpoint(const Request& request) {
+  const bool flagged = !request.value("S").empty() || !request.value("L").empty();
   auto server =
       !request.value("S").empty()   ? Server::at_socket_path(expand(request.value("S")))
       : !request.value("L").empty() ? Server::at_socket_name(request.value("L"))
-      : !environment("TMUX").empty() ? Server::at_socket_path(tmux_context().socket)
-                                     : Server::at_default();
+                                    : Server::at_default();
   if (!server)
-    throw Failure{2, "usage", "the selected tmux socket cannot be used"};
+    throw Failure{2, "usage",
+                  flagged ? "the selected tmux socket cannot be used"
+                          : server.error().diagnostic};
   return *server;
+}
+// The arguments that select a socket for a tmux this tool starts itself, or for
+// tmuxp, which reads neither variable: -S, -L, or what a variable chose.
+// Nothing when none did, so the child follows TMUX and the default as tmux does.
+std::vector<std::string> socket_arguments(const Request& request, bool expanded) {
+  if (!request.value("S").empty())
+    return {"-S", expanded ? expand(request.value("S")) : request.value("S")};
+  if (!request.value("L").empty())
+    return {"-L", request.value("L")};
+  auto chosen = libtmux::socket_from_environment().arguments();
+  if (!chosen)
+    throw Failure{2, "usage", "the selected tmux socket cannot be used"};
+  return *std::move(chosen);
 }
 // Resolves the context an attached load hands off through, before anything is
 // built: TMUX parses, names the server this command targets and a process
@@ -696,12 +715,8 @@ struct Bootstrap {
 // executable the library refuses never reaches this launch.
 Server start_endpoint(const Request& request, Bootstrap& bootstrap) {
   std::vector<std::string> command{"tmux", "-u"};
-  if (!request.value("S").empty())
-    command.insert(command.end(), {"-S", expand(request.value("S"))});
-  else if (!request.value("L").empty())
-    command.insert(command.end(), {"-L", request.value("L")});
-  else if (!environment("TMUX").empty())
-    command.insert(command.end(), {"-S", tmux_context().socket});
+  for (auto& argument : socket_arguments(request, true))
+    command.push_back(std::move(argument));
   if (!request.value("f").empty())
     command.insert(command.end(), {"-f", expand(request.value("f"))});
   if (request.flag("2"))
@@ -1422,13 +1437,10 @@ static Execution execute_impl(const Request& request, const EventSink& event,
       arguments.push_back(request.value("log-level"));
     }
     arguments.push_back("shell");
-    if (request.flag("S")) {
-      arguments.push_back("-S");
-      arguments.push_back(request.value("S"));
-    } else if (request.flag("L")) {
-      arguments.push_back("-L");
-      arguments.push_back(request.value("L"));
-    }
+    // tmuxp reads neither variable, and inside tmux it follows TMUX itself, so
+    // a socket a variable chose has to be passed to it.
+    for (auto& argument : socket_arguments(request, false))
+      arguments.push_back(std::move(argument));
     for (const auto* name :
          {"best", "pdb", "code", "ptipython", "ptpython", "ipython", "bpython"})
       if (request.flag(name))
