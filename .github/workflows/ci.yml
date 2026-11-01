@@ -112,16 +112,16 @@ jobs:
           FAMILY: ${{ matrix.family }}
           COMPILER_VERSION: ${{ matrix.version }}
         run: |
-          sudo apt-get update
+          ./tools/ci/apt-get.sh update
           if [ "$FAMILY" = clang ]; then
-            sudo apt-get install -y "clang-$COMPILER_VERSION" \
+            ./tools/ci/apt-get.sh install -y "clang-$COMPILER_VERSION" \
               "libc++-$COMPILER_VERSION-dev" "libc++abi-$COMPILER_VERSION-dev" ninja-build
             sudo update-alternatives --install /usr/bin/clang clang \
               "/usr/bin/clang-$COMPILER_VERSION" 100
             sudo update-alternatives --install /usr/bin/clang++ clang++ \
               "/usr/bin/clang++-$COMPILER_VERSION" 100
           else
-            sudo apt-get install -y "gcc-$COMPILER_VERSION" "g++-$COMPILER_VERSION" ninja-build
+            ./tools/ci/apt-get.sh install -y "gcc-$COMPILER_VERSION" "g++-$COMPILER_VERSION" ninja-build
           fi
 
       - name: Resolve the tmux revision
@@ -144,7 +144,7 @@ jobs:
         env:
           TMUX_SHA: ${{ steps.tmux-ref.outputs.sha }}
         run: |
-          sudo apt-get install -y libevent-dev libncurses5-dev libtinfo-dev libutempter-dev bison
+          ./tools/ci/apt-get.sh install -y libevent-dev libncurses5-dev libtinfo-dev libutempter-dev bison
           python3 -m tools.ci.tmux_ref build "$TMUX_SHA" \
             --prefix "$HOME/tmux-builds/tmux-$TMUX_SHA" \
             --source "$HOME/tmux-src/tmux-$TMUX_SHA"
@@ -223,14 +223,14 @@ jobs:
 
       - name: Install the pinned toolchain
         run: |
-          sudo apt-get update
-          sudo apt-get install -y clang-18 libc++-18-dev libc++abi-18-dev ninja-build
+          ./tools/ci/apt-get.sh update
+          ./tools/ci/apt-get.sh install -y clang-18 libc++-18-dev libc++abi-18-dev ninja-build
           sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
           sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
 
       - name: Build the supported client and the rejected daemon
         run: |
-          sudo apt-get install -y libevent-dev libncurses5-dev libtinfo-dev libutempter-dev bison
+          ./tools/ci/apt-get.sh install -y libevent-dev libncurses5-dev libtinfo-dev libutempter-dev bison
           mkdir -p ~/tmux-builds ~/tmux-src
           for version in ${{ matrix.client-tmux }} ${{ matrix.rejected-tmux }}; do
             git clone --branch "$version" --depth 1 https://github.com/tmux/tmux.git "$HOME/tmux-src/tmux-$version"
@@ -419,8 +419,8 @@ jobs:
 
       - name: Install GCC, tmux and Ninja
         run: |
-          sudo apt-get update
-          sudo apt-get install -y g++ tmux ninja-build
+          ./tools/ci/apt-get.sh update
+          ./tools/ci/apt-get.sh install -y g++ tmux ninja-build
 
       - name: Build and test with GCC and libstdc++
         run: |
@@ -448,8 +448,8 @@ jobs:
 
       - name: Install the pinned toolchain and tmux
         run: |
-          sudo apt-get update
-          sudo apt-get install -y clang-18 libc++-18-dev libc++abi-18-dev \
+          ./tools/ci/apt-get.sh update
+          ./tools/ci/apt-get.sh install -y clang-18 libc++-18-dev libc++abi-18-dev \
             ninja-build tmux
           sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
           sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
@@ -490,8 +490,8 @@ jobs:
 
       - name: Install the pinned toolchain and tmux
         run: |
-          sudo apt-get update
-          sudo apt-get install -y clang-18 libc++-18-dev libc++abi-18-dev ninja-build tmux
+          ./tools/ci/apt-get.sh update
+          ./tools/ci/apt-get.sh install -y clang-18 libc++-18-dev libc++abi-18-dev ninja-build tmux
           sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
           sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
 
@@ -519,8 +519,8 @@ jobs:
 
       - name: Install the pinned toolchain
         run: |
-          sudo apt-get update
-          sudo apt-get install -y clang-18 ninja-build
+          ./tools/ci/apt-get.sh update
+          ./tools/ci/apt-get.sh install -y clang-18 ninja-build
           sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
           sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
 
@@ -555,8 +555,8 @@ jobs:
 
       - name: Install the pinned toolchain and tmux
         run: |
-          sudo apt-get update
-          sudo apt-get install -y clang-18 libc++-18-dev libc++abi-18-dev ninja-build tmux
+          ./tools/ci/apt-get.sh update
+          ./tools/ci/apt-get.sh install -y clang-18 libc++-18-dev libc++abi-18-dev ninja-build tmux
           sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
           sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
 
@@ -590,8 +590,8 @@ jobs:
 
       - name: Install the pinned toolchain and tmux
         run: |
-          sudo apt-get update
-          sudo apt-get install -y clang-18 libc++-18-dev libc++abi-18-dev ninja-build tmux
+          ./tools/ci/apt-get.sh update
+          ./tools/ci/apt-get.sh install -y clang-18 libc++-18-dev libc++abi-18-dev ninja-build tmux
           sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
           sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
 
@@ -620,8 +620,8 @@ jobs:
 
       - name: Install tmux and a compiler
         run: |
-          sudo apt-get update
-          sudo apt-get install -y tmux ninja-build clang-18 libc++-18-dev \
+          ./tools/ci/apt-get.sh update
+          ./tools/ci/apt-get.sh install -y tmux ninja-build clang-18 libc++-18-dev \
             libc++abi-18-dev
           for tool in clang clang++; do
             sudo update-alternatives --install "/usr/bin/$tool" "$tool" \
@@ -716,8 +716,8 @@ jobs:
 
       - name: Install the pinned toolchain and tmux
         run: |
-          sudo apt-get update
-          sudo apt-get install -y clang-18 libc++-18-dev libc++abi-18-dev \
+          ./tools/ci/apt-get.sh update
+          ./tools/ci/apt-get.sh install -y clang-18 libc++-18-dev libc++abi-18-dev \
             llvm-18 ninja-build tmux
           sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
           sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
@@ -749,8 +749,8 @@ jobs:
 
       - name: Install the pinned toolchain
         run: |
-          sudo apt-get update
-          sudo apt-get install -y clang-18 clang-format-18 clang-tidy-18 \
+          ./tools/ci/apt-get.sh update
+          ./tools/ci/apt-get.sh install -y clang-18 clang-format-18 clang-tidy-18 \
             libc++-18-dev libc++abi-18-dev ninja-build g++ doxygen
           for tool in clang clang++ clang-format clang-tidy; do
             sudo update-alternatives --install /usr/bin/$tool $tool /usr/bin/$tool-18 100
@@ -880,8 +880,8 @@ jobs:
 
       - name: Install the pinned toolchain
         run: |
-          sudo apt-get update
-          sudo apt-get install -y clang-18 libc++-18-dev libc++abi-18-dev ninja-build
+          ./tools/ci/apt-get.sh update
+          ./tools/ci/apt-get.sh install -y clang-18 libc++-18-dev libc++abi-18-dev ninja-build
           sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
           sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
 
@@ -938,7 +938,7 @@ jobs:
       # directory they remove.
       - name: The installed package is enough to test the examples
         run: |
-          sudo apt-get install -y tmux
+          ./tools/ci/apt-get.sh install -y tmux
           cmake -S examples -B build/examples -G Ninja \
             -DCMAKE_PREFIX_PATH="$PWD/build/prefix" \
             -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CXX_FLAGS=-stdlib=libc++ \
@@ -1086,8 +1086,8 @@ jobs:
       # a build tree.
       - name: A consumer resolves the port and builds on it
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build
+          ./tools/ci/apt-get.sh update
+          ./tools/ci/apt-get.sh install -y ninja-build
           python3 -m tools.vcpkg probe \
             --vcpkg "$RUNNER_TEMP/vcpkg" \
             --triplet x64-linux \

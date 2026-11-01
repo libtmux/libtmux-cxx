@@ -5,7 +5,7 @@ states a range the manifest does not, when a workflow carries a version list of
 its own, and when the workflow structure the plan relies on has been undone: a
 dispatch input spliced into a script, a tmate step that is not pinned or not
 limited to the actor, an aggregate job that forgot a job, a release that no
-longer runs the whole table.
+longer runs the whole table, a script that calls apt-get without the wrapper.
 
 Run from the repository root::
 
@@ -35,6 +35,13 @@ SPLICED = re.compile(
 )
 RANGE_CLAIM = re.compile(r"(\d+\.\d+[a-z]?) through (\d+\.\d+[a-z]?), plus `")
 RUN_KEY = re.compile(r"^(\s*)(?:- )?run:\s*(.*)$")
+RAW_APT = re.compile(
+    r"(?:^|[;&|(`{]|\b(?:then|do|else)\b|\bsudo\b)\s*(?:-\S+\s+)*"
+    r"(?P<command>apt-get|apt)(?![\w./-])"
+)
+JOB_HEAD = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$")
+STEP_HEAD = re.compile(r"^(\s*)- [\w-]+:")
+NAME_KEY = re.compile(r"^(\s*)(?:- )?name:\s*(.+?)\s*$")
 
 
 def _squash(text: str) -> str:
@@ -78,6 +85,38 @@ def _jobs(text: str) -> dict[str, str]:
 
 def _steps(job: str) -> list[str]:
     return re.split(r"(?m)^      - ", job)[1:]
+
+
+def _where(lines: list[str], number: int) -> str:
+    """Name the job and step that the 1-based line ``number`` falls in."""
+    before = range(number - 1, -1, -1)
+    job = next((m[1] for i in before if (m := JOB_HEAD.match(lines[i]))), "")
+    head = next((i for i in before if STEP_HEAD.match(lines[i])), None)
+    step = ""
+    if head is not None:
+        indent = len(STEP_HEAD.match(lines[head])[1])
+        for offset, line in enumerate(lines[head:]):
+            later = STEP_HEAD.match(line)
+            if offset and later and len(later[1]) <= indent:
+                break
+            named = NAME_KEY.match(line)
+            if named and len(named[1]) in (indent, indent + 2):
+                step = named[2].strip("'\"")
+                break
+    parts = [f"job {job}"] if job and any(line == "jobs:" for line in lines) else []
+    parts += [f'step "{step}"'] if step else []
+    return ", ".join(parts) or "an unnamed step"
+
+
+def check_apt(label: str, text: str) -> list[str]:
+    """Return each script line that calls apt-get or apt without the wrapper."""
+    lines = text.splitlines()
+    return [
+        f"{label}:{number} ({_where(lines, number)}) calls {found['command']} "
+        "directly; run it through tools/ci/apt-get.sh"
+        for number, body in _run_bodies(text)
+        if not body.lstrip().startswith("#") and (found := RAW_APT.search(body))
+    ]
 
 
 def check_docs(root: pathlib.Path, manifest: Manifest) -> list[str]:
@@ -212,6 +251,10 @@ def check(root: pathlib.Path) -> list[str]:
     for path in sorted(workflows.glob("*.yml")):
         if path.name != "ci.yml" and TMATE.search(path.read_text()):
             problems.append(f"{path.name} runs action-tmate; only ci.yml may")
+    actions = (root / ".github/actions").glob("*/action.yml")
+    for path in sorted([*workflows.glob("*.yml"), *actions]):
+        label = path.relative_to(root).as_posix()
+        problems += check_apt(label, path.read_text())
     return problems
 
 
