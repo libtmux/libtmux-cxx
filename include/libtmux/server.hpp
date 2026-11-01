@@ -86,9 +86,9 @@ struct ExecutorOptions {
 /// The members fall into a few groups.
 ///
 /// **Connecting.** `at_socket_path()` and `at_socket_name()` choose a socket by
-/// path (`-S`) or by name (`-L`), `at_default()` takes the one tmux uses with
-/// neither flag, and `from_env()` reads the server this process is already
-/// inside. `startable_at_socket_path()`, `startable_at_socket_name()` and
+/// path (`-S`) or by name (`-L`), `at_default()` takes the one tmux picks when
+/// the caller names none, and `from_env()` reads the server this process is
+/// already inside. `startable_at_socket_path()`, `startable_at_socket_name()` and
 /// `startable_at_default()` build handles that may create an absent server, and
 /// `over()` builds a handle over a transport you supply. `is_alive()` and
 /// `check_alive()` answer whether anything is listening, the second keeping the
@@ -220,6 +220,9 @@ public:
   startable_at_socket_name(std::string_view name,
                            std::optional<std::filesystem::path> configuration,
                            CommandObserver observer = {}, ExecutionPolicy policy = {});
+  /// `at_default()`, for a handle that may create an absent server. The
+  /// selection is the same, and so is what a variable that cannot be used
+  /// reports.
   [[nodiscard]] static expected<Server, CommandFailure>
   startable_at_default(std::optional<std::filesystem::path> configuration,
                        CommandObserver observer = {}, ExecutionPolicy policy = {});
@@ -234,8 +237,17 @@ public:
   [[nodiscard]] static expected<Server, CommandFailure>
   from_env(CommandObserver observer = {}, ExecutionPolicy policy = {});
 
-  /// The server tmux would talk to with no `-L` or `-S` at all, which is the
-  /// one a person means when they say "my tmux".
+  /// The server a bare `tmux` command reaches from this process, unless the
+  /// environment names another: the one a person means when they say "my tmux".
+  ///
+  /// `LIBTMUX_SOCKET_PATH` selects a socket path (`-S`), else `LIBTMUX_SOCKET`
+  /// a socket name (`-L`); `socket_from_environment()` has the rules for both
+  /// set, for a blank value and for the diagnostic. With neither set the handle
+  /// names no socket and tmux picks the server: the one `TMUX` names inside a
+  /// tmux pane, and the default socket under `TMUX_TMPDIR` elsewhere. Either
+  /// way `socket_path()` reports the server the commands reach. A variable
+  /// that cannot be used fails with the variable named and its value left out;
+  /// `at_socket_path()` and `at_socket_name()` read neither variable.
   [[nodiscard]] static expected<Server, CommandFailure>
   at_default(CommandObserver observer = {}, ExecutionPolicy policy = {});
 

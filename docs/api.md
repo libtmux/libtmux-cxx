@@ -154,7 +154,7 @@ The tmux this transport speaks to. Absent asks the executor by running `-V`, whi
 <a id="libtmux-server-hpp-server"></a>
 ### `Server`
 
-One tmux server, addressed by the socket it listens on.  The entry point: sessions, windows and panes are read from here and carry the server with them. Constructing a handle sends no command. Only a startable handle may create an absent daemon; ordinary handles never do.  A Server is a handle. Copying one costs a reference count, and every entity read from it keeps the same connection alive, so a listing outlives the Server value that produced it. The connection is fixed at construction, which is what makes a Server safe to copy between threads. Apart from `is_alive()`, which answers `bool`, a call that reaches tmux returns an `expected`, and the library does not throw to report a tmux failure.  # What is on here  The members fall into a few groups.  **Connecting.** `at_socket_path()` and `at_socket_name()` choose a socket by path (`-S`) or by name (`-L`), `at_default()` takes the one tmux uses with neither flag, and `from_env()` reads the server this process is already inside. `startable_at_socket_path()`, `startable_at_socket_name()` and `startable_at_default()` build handles that may create an absent server, and `over()` builds a handle over a transport you supply. `is_alive()` and `check_alive()` answer whether anything is listening, the second keeping the reason when nothing is. `capabilities()` says what the handle may rely on and runs no command; on psmux that is exact inspection and namespace cleanup only. Most typed calls outside it report `FailureKind::unsupported` there; `control()` and `over_control()` report a `ProtocolError` instead, and the environment calls and raw commands are not checked. `tmux_version()` reports the tmux release, and `socket_path()` reports the resolved socket. `control()` and `control_with_options()` open a control-mode connection to one session, and `over_control()` returns a Server whose commands travel over held-open control clients.  **Finding one thing.** `session()`, `window()` and `pane()` take a target, such as an id or a `session:window` path, and resolve it the way tmux does: a session target names that session's active pane and the window that pane is in. A target tmux cannot resolve comes back as a `FailureKind::missing` failure.  **Listing everything.** `sessions()`, `windows()`, `panes()` and `clients()`. Each is one snapshot: iterating or filtering it never reaches tmux again, and a current view means calling again. `windows()` and `panes()` span every session.  **Querying things and getting around.** A listing already in memory is filtered without tmux: `matching()` takes a `FilterExpr` built from an entity's typed fields, and `exactly_one()` takes the single match, borrowing it from the listing, where `exactly_one_owned()` takes a copy. Both report `CardinalityError::none_matched` or `CardinalityError::several_matched` otherwise. `children_of()` and `parent_of()` join two listings on an id so a filter can ask about related rows. To move between levels, go down with `Session::windows()`, `Session::panes()` and `Window::panes()`, up with `Pane::window()`, `Pane::session()`, `Window::session()` and `Client::session()`, and across to the active window or pane with `Session::active_window()`, `Session::active_pane()` and `Window::active_pane()`. Each of those asks tmux, so each can fail.  **Changing things.** `new_session()` creates a session detached and returns it, and `kill()` ends the server and everything in it.  **Options and hooks.** `options()`, `server_options()`, `global_options()`, `hooks()` and `global_hooks()` read them, `global_hooks()` being how a hook set globally is read back, since `hooks()` without a target does not report it; `set_server_option()`, `set_global_option()` and `set_global_hook()` write them. The environment every new process starts with is `environment()`, with `set_environment()` to bind a name, `unset_environment()` to forget it, and `remove_environment()` to keep the name but take it out of what a process inherits.  **Everything else tmux keeps.** Paste buffers: `buffers()` lists them, `set_buffer()` fills one, and `load_buffer()` and `save_buffer()` move one to and from a file the tmux server reads or writes. Key bindings: `bind_key()` and `unbind_key()`. `commands()` lists every command this tmux understands, `expand()` expands a format against the server alone, `source_file()` runs a configuration file and `check_file()` reports what tmux would refuse in it without running any, and `validate_layouts()` checks saved layouts without applying them. `run_shell()` reports whether a shell command ran, not what it printed, and `show_message()` puts a message on every attached client's status line. `wait_for()` blocks until `signal()` releases a channel, and with no timeout never gives up; `wait_for_text()` waits for the pane a target names to produce some text.  **Things that need a terminal.** None are here: every command this library runs talks to tmux through pipes. `Session::attach_command()` returns the argv for a terminal you own to run.  Anything tmux can do that is not here is reachable through `run()`, which runs one command; `run_batch()` and `run_chain()` run several, and `try_submit()` admits one to a `CommandRuntime` without waiting for it.
+One tmux server, addressed by the socket it listens on.  The entry point: sessions, windows and panes are read from here and carry the server with them. Constructing a handle sends no command. Only a startable handle may create an absent daemon; ordinary handles never do.  A Server is a handle. Copying one costs a reference count, and every entity read from it keeps the same connection alive, so a listing outlives the Server value that produced it. The connection is fixed at construction, which is what makes a Server safe to copy between threads. Apart from `is_alive()`, which answers `bool`, a call that reaches tmux returns an `expected`, and the library does not throw to report a tmux failure.  # What is on here  The members fall into a few groups.  **Connecting.** `at_socket_path()` and `at_socket_name()` choose a socket by path (`-S`) or by name (`-L`), `at_default()` takes the one tmux picks when the caller names none, and `from_env()` reads the server this process is already inside. `startable_at_socket_path()`, `startable_at_socket_name()` and `startable_at_default()` build handles that may create an absent server, and `over()` builds a handle over a transport you supply. `is_alive()` and `check_alive()` answer whether anything is listening, the second keeping the reason when nothing is. `capabilities()` says what the handle may rely on and runs no command; on psmux that is exact inspection and namespace cleanup only. Most typed calls outside it report `FailureKind::unsupported` there; `control()` and `over_control()` report a `ProtocolError` instead, and the environment calls and raw commands are not checked. `tmux_version()` reports the tmux release, and `socket_path()` reports the resolved socket. `control()` and `control_with_options()` open a control-mode connection to one session, and `over_control()` returns a Server whose commands travel over held-open control clients.  **Finding one thing.** `session()`, `window()` and `pane()` take a target, such as an id or a `session:window` path, and resolve it the way tmux does: a session target names that session's active pane and the window that pane is in. A target tmux cannot resolve comes back as a `FailureKind::missing` failure.  **Listing everything.** `sessions()`, `windows()`, `panes()` and `clients()`. Each is one snapshot: iterating or filtering it never reaches tmux again, and a current view means calling again. `windows()` and `panes()` span every session.  **Querying things and getting around.** A listing already in memory is filtered without tmux: `matching()` takes a `FilterExpr` built from an entity's typed fields, and `exactly_one()` takes the single match, borrowing it from the listing, where `exactly_one_owned()` takes a copy. Both report `CardinalityError::none_matched` or `CardinalityError::several_matched` otherwise. `children_of()` and `parent_of()` join two listings on an id so a filter can ask about related rows. To move between levels, go down with `Session::windows()`, `Session::panes()` and `Window::panes()`, up with `Pane::window()`, `Pane::session()`, `Window::session()` and `Client::session()`, and across to the active window or pane with `Session::active_window()`, `Session::active_pane()` and `Window::active_pane()`. Each of those asks tmux, so each can fail.  **Changing things.** `new_session()` creates a session detached and returns it, and `kill()` ends the server and everything in it.  **Options and hooks.** `options()`, `server_options()`, `global_options()`, `hooks()` and `global_hooks()` read them, `global_hooks()` being how a hook set globally is read back, since `hooks()` without a target does not report it; `set_server_option()`, `set_global_option()` and `set_global_hook()` write them. The environment every new process starts with is `environment()`, with `set_environment()` to bind a name, `unset_environment()` to forget it, and `remove_environment()` to keep the name but take it out of what a process inherits.  **Everything else tmux keeps.** Paste buffers: `buffers()` lists them, `set_buffer()` fills one, and `load_buffer()` and `save_buffer()` move one to and from a file the tmux server reads or writes. Key bindings: `bind_key()` and `unbind_key()`. `commands()` lists every command this tmux understands, `expand()` expands a format against the server alone, `source_file()` runs a configuration file and `check_file()` reports what tmux would refuse in it without running any, and `validate_layouts()` checks saved layouts without applying them. `run_shell()` reports whether a shell command ran, not what it printed, and `show_message()` puts a message on every attached client's status line. `wait_for()` blocks until `signal()` releases a channel, and with no timeout never gives up; `wait_for_text()` waits for the pane a target names to produce some text.  **Things that need a terminal.** None are here: every command this library runs talks to tmux through pipes. `Session::attach_command()` returns the argv for a terminal you own to run.  Anything tmux can do that is not here is reachable through `run()`, which runs one command; `run_batch()` and `run_chain()` run several, and `try_submit()` admits one to a `CommandRuntime` without waiting for it.
 
 ```cpp
 class Server;
@@ -212,6 +212,7 @@ template <typename Path> requires std::same_as<std::remove_cvref_t<Path>, std::f
 ```cpp
 [[nodiscard]] static expected<Server, CommandFailure> startable_at_default(std::optional<std::filesystem::path> configuration, CommandObserver observer = {}, ExecutionPolicy policy = {});
 ```
+`at_default()`, for a handle that may create an absent server. The selection is the same, and so is what a variable that cannot be used reports.
 
 <a id="libtmux-server-hpp-server-from-env"></a>
 #### `Server::from_env`
@@ -227,7 +228,7 @@ The server this process is running inside.  tmux exports `TMUX` to everything it
 ```cpp
 [[nodiscard]] static expected<Server, CommandFailure> at_default(CommandObserver observer = {}, ExecutionPolicy policy = {});
 ```
-The server tmux would talk to with no `-L` or `-S` at all, which is the one a person means when they say "my tmux".
+The server a bare `tmux` command reaches from this process, unless the environment names another: the one a person means when they say "my tmux".  `LIBTMUX_SOCKET_PATH` selects a socket path (`-S`), else `LIBTMUX_SOCKET` a socket name (`-L`); `socket_from_environment()` has the rules for both set, for a blank value and for the diagnostic. With neither set the handle names no socket and tmux picks the server: the one `TMUX` names inside a tmux pane, and the default socket under `TMUX_TMPDIR` elsewhere. Either way `socket_path()` reports the server the commands reach. A variable that cannot be used fails with the variable named and its value left out; `at_socket_path()` and `at_socket_name()` read neither variable.
 
 <a id="libtmux-server-hpp-server-over"></a>
 #### `Server::over`
@@ -7777,7 +7778,7 @@ A pane target is its id, or `session:window.pane`.
 <a id="libtmux-socket-hpp"></a>
 ## `libtmux/socket.hpp`
 
-Build the connection arguments that select a tmux-compatible server.  tmux selects a server either by socket name (`-L`) or by socket path (`-S`). A name is resolved under the socket directory, so it must be a single path component; a path is used verbatim. Either way the result must fit a UNIX domain socket address. Windows psmux supports names but has no `-S` transport, so socket paths are rejected there.
+Build the connection arguments that select a tmux-compatible server.  tmux selects a server either by socket name (`-L`) or by socket path (`-S`). A name is resolved under the socket directory, so it must be a single path component; a path is used verbatim. Either way the result must fit a UNIX domain socket address. Windows psmux supports names but has no `-S` transport, so socket paths are rejected there.  A caller that selects neither leaves the choice to the environment: `socket_from_environment()` reads `LIBTMUX_SOCKET_PATH` and `LIBTMUX_SOCKET`, and with neither set nothing is selected, so tmux picks the server itself.
 
 **Symbols:**
 
@@ -7786,12 +7787,22 @@ Build the connection arguments that select a tmux-compatible server.  tmux selec
   - [`SocketError::name_has_separator`](#libtmux-socket-hpp-socketerror-name-has-separator)
   - [`SocketError::path_too_long`](#libtmux-socket-hpp-socketerror-path-too-long)
   - [`SocketError::path_unsupported`](#libtmux-socket-hpp-socketerror-path-unsupported)
+- [`SocketSource`](#libtmux-socket-hpp-socketsource)
+  - [`SocketSource::none`](#libtmux-socket-hpp-socketsource-none)
+  - [`SocketSource::path_variable`](#libtmux-socket-hpp-socketsource-path-variable)
+  - [`SocketSource::name_variable`](#libtmux-socket-hpp-socketsource-name-variable)
+- [`EnvironmentSocket`](#libtmux-socket-hpp-environmentsocket)
+  - [`EnvironmentSocket::source`](#libtmux-socket-hpp-environmentsocket-source)
+  - [`EnvironmentSocket::value`](#libtmux-socket-hpp-environmentsocket-value)
+  - [`EnvironmentSocket::arguments`](#libtmux-socket-hpp-environmentsocket-arguments)
 - [`Free symbols`](#libtmux-socket-hpp-free-symbols)
   - [`kSocketPathLimit`](#libtmux-socket-hpp-free-symbols-ksocketpathlimit)
   - [`kSocketPathLimit`](#libtmux-socket-hpp-free-symbols-ksocketpathlimit-2)
   - [`to_string`](#libtmux-socket-hpp-free-symbols-to-string)
   - [`socket_name_arguments`](#libtmux-socket-hpp-free-symbols-socket-name-arguments)
   - [`socket_path_arguments`](#libtmux-socket-hpp-free-symbols-socket-path-arguments)
+  - [`to_string`](#libtmux-socket-hpp-free-symbols-to-string-2)
+  - [`socket_from_environment`](#libtmux-socket-hpp-free-symbols-socket-from-environment)
 
 <a id="libtmux-socket-hpp-socketerror"></a>
 ### `SocketError`
@@ -7813,6 +7824,56 @@ enum class SocketError;
 
 <a id="libtmux-socket-hpp-socketerror-path-unsupported"></a>
 #### `SocketError::path_unsupported` — `path_unsupported,`
+
+<a id="libtmux-socket-hpp-socketsource"></a>
+### `SocketSource`
+
+What chose a socket when the caller named none.
+
+```cpp
+enum class SocketSource;
+```
+
+<a id="libtmux-socket-hpp-socketsource-none"></a>
+#### `SocketSource::none` — `none,`
+
+<a id="libtmux-socket-hpp-socketsource-path-variable"></a>
+#### `SocketSource::path_variable` — `path_variable,`
+
+<a id="libtmux-socket-hpp-socketsource-name-variable"></a>
+#### `SocketSource::name_variable` — `name_variable,`
+
+<a id="libtmux-socket-hpp-environmentsocket"></a>
+### `EnvironmentSocket`
+
+The socket the environment selects, or none.
+
+```cpp
+struct EnvironmentSocket;
+```
+
+<a id="libtmux-socket-hpp-environmentsocket-source"></a>
+#### `EnvironmentSocket::source`
+
+```cpp
+SocketSource source{SocketSource::none};
+```
+
+<a id="libtmux-socket-hpp-environmentsocket-value"></a>
+#### `EnvironmentSocket::value`
+
+```cpp
+std::string value;
+```
+The variable's value, as given: not trimmed and not checked.
+
+<a id="libtmux-socket-hpp-environmentsocket-arguments"></a>
+#### `EnvironmentSocket::arguments`
+
+```cpp
+[[nodiscard]] expected<std::vector<std::string>, SocketError> arguments() const;
+```
+`-S path` for the path variable, `-L name` for the name variable, and nothing at all when no variable is set. A value `socket_path_arguments()` or `socket_name_arguments()` rejects is rejected here.
 
 <a id="libtmux-socket-hpp-free-symbols"></a>
 ### `Free symbols`
@@ -7855,6 +7916,22 @@ Available when `!(defined(_WIN32))`.
 [[nodiscard]] inline expected<std::vector<std::string>, SocketError> socket_path_arguments(std::string_view path);
 ```
 `-S path`: used verbatim, so the address limit applies to it directly.
+
+<a id="libtmux-socket-hpp-free-symbols-to-string-2"></a>
+#### `to_string`
+
+```cpp
+[[nodiscard]] constexpr std::string_view to_string(SocketSource source) noexcept;
+```
+The variable a source names, for a diagnostic that must not quote its value.
+
+<a id="libtmux-socket-hpp-free-symbols-socket-from-environment"></a>
+#### `socket_from_environment`
+
+```cpp
+[[nodiscard]] EnvironmentSocket socket_from_environment();
+```
+Reads `LIBTMUX_SOCKET_PATH`, then `LIBTMUX_SOCKET`.  The path wins when both are set, as tmux's `-S` overrides `-L`. A variable that is empty or only whitespace counts as unset, each one alone, so an empty path leaves a set name in force. Any other value is returned as it was given. `TMUX` is not read: tmux follows it by itself when no socket is passed.
 
 <a id="libtmux-format-hpp"></a>
 ## `libtmux/format.hpp`

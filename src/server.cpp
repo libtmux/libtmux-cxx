@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <filesystem>
 #include <memory>
@@ -155,6 +156,37 @@ CommandFailure rejected_selector(std::string_view selector, SocketError error) {
       .delivery = DeliveryStatus::not_started,
       .exit_code = 0,
       .diagnostic = std::string{to_string(error)} + ": " + std::string{selector}};
+}
+
+// The selector for a handle whose caller named no socket. A variable chooses
+// one; with neither set the selector is empty and tmux picks the server, so the
+// one `TMUX` names inside tmux and its default socket elsewhere. The refusal
+// names the variable and never its value.
+expected<std::vector<std::string>, CommandFailure> default_selector() {
+  const auto chosen = socket_from_environment();
+  if (chosen.source == SocketSource::name_variable) {
+    if (auto invalid = libtmux_psmux::invalid_socket_name(chosen.value);
+        invalid.has_value()) {
+      return unexpected(
+          CommandFailure{.kind = FailureKind::validation,
+                         .delivery = DeliveryStatus::not_started,
+                         .exit_code = 0,
+                         .diagnostic = std::string{to_string(chosen.source)} +
+                                       " is not a socket name psmux accepts"});
+    }
+  }
+  auto arguments = chosen.arguments();
+  if (!arguments.has_value()) {
+    return unexpected(
+        CommandFailure{.kind = arguments.error() == SocketError::path_unsupported
+                                   ? FailureKind::unsupported
+                                   : FailureKind::validation,
+                       .delivery = DeliveryStatus::not_started,
+                       .exit_code = 0,
+                       .diagnostic = std::string{to_string(chosen.source)} + ": " +
+                                     std::string{to_string(arguments.error())}});
+  }
+  return *std::move(arguments);
 }
 
 expected<Server, CommandFailure> subprocess_server(std::vector<std::string> connection,
@@ -588,6 +620,30 @@ private:
 
 } // namespace
 
+// A variable that is unset, empty or only whitespace names nothing. Anything
+// else is used as given, so a value with padding is a socket with padding.
+EnvironmentSocket socket_from_environment() {
+  const auto named = [](std::string_view variable) -> std::optional<std::string> {
+    auto value = libtmux_env::value(variable);
+    if (!value.has_value()) {
+      return std::nullopt;
+    }
+    const bool blank = std::ranges::all_of(*value, [](const char character) {
+      return std::isspace(static_cast<unsigned char>(character)) != 0;
+    });
+    return blank ? std::nullopt : value;
+  };
+  if (auto path = named("LIBTMUX_SOCKET_PATH"); path.has_value()) {
+    return EnvironmentSocket{.source = SocketSource::path_variable,
+                             .value = *std::move(path)};
+  }
+  if (auto name = named("LIBTMUX_SOCKET"); name.has_value()) {
+    return EnvironmentSocket{.source = SocketSource::name_variable,
+                             .value = *std::move(name)};
+  }
+  return EnvironmentSocket{};
+}
+
 expected<Server, CommandFailure>
 Server::over(std::shared_ptr<const CommandExecutor> executor, ExecutorOptions options,
              CommandObserver observer, ExecutionPolicy policy) {
@@ -662,16 +718,22 @@ expected<Server, CommandFailure> Server::from_env(CommandObserver observer,
 
 expected<Server, CommandFailure> Server::at_default(CommandObserver observer,
                                                     ExecutionPolicy policy) {
-  // No selector at all, which is what tmux itself does: the default socket
-  // under the directory it chooses, honouring TMUX_TMPDIR as tmux does.
-  return subprocess_server({}, std::move(observer), policy);
+  auto selector = default_selector();
+  if (!selector.has_value()) {
+    return unexpected(std::move(selector.error()));
+  }
+  return subprocess_server(*std::move(selector), std::move(observer), policy);
 }
 
 expected<Server, CommandFailure>
 Server::startable_at_default(std::optional<std::filesystem::path> configuration,
                              CommandObserver observer, ExecutionPolicy policy) {
-  return startable_subprocess_server({}, std::move(configuration), std::move(observer),
-                                     policy);
+  auto selector = default_selector();
+  if (!selector.has_value()) {
+    return unexpected(std::move(selector.error()));
+  }
+  return startable_subprocess_server(*std::move(selector), std::move(configuration),
+                                     std::move(observer), policy);
 }
 
 expected<Server, CommandFailure> Server::at_socket_name(std::string_view name,

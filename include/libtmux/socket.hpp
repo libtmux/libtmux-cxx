@@ -7,6 +7,10 @@
 // single path component; a path is used verbatim. Either way the result must
 // fit a UNIX domain socket address. Windows psmux supports names but has no
 // `-S` transport, so socket paths are rejected there.
+//
+// A caller that selects neither leaves the choice to the environment:
+// `socket_from_environment()` reads `LIBTMUX_SOCKET_PATH` and `LIBTMUX_SOCKET`,
+// and with neither set nothing is selected, so tmux picks the server itself.
 
 #include "libtmux/abi.hpp"
 #include "libtmux/expected.hpp"
@@ -91,5 +95,56 @@ socket_path_arguments(std::string_view path) {
   return std::vector<std::string>{"-S", std::string{path}};
 #endif
 }
+
+/// What chose a socket when the caller named none.
+enum class SocketSource {
+  none,          ///< Neither variable is set: tmux picks the server.
+  path_variable, ///< `LIBTMUX_SOCKET_PATH`, tmux `-S`.
+  name_variable, ///< `LIBTMUX_SOCKET`, tmux `-L`.
+};
+
+/// The variable a source names, for a diagnostic that must not quote its value.
+[[nodiscard]] constexpr std::string_view to_string(SocketSource source) noexcept {
+  switch (source) {
+  case SocketSource::none:
+    return "no socket variable";
+  case SocketSource::path_variable:
+    return "LIBTMUX_SOCKET_PATH";
+  case SocketSource::name_variable:
+    return "LIBTMUX_SOCKET";
+  }
+  return "unknown socket source";
+}
+
+/// The socket the environment selects, or none.
+struct EnvironmentSocket {
+  SocketSource source{SocketSource::none};
+  /// The variable's value, as given: not trimmed and not checked.
+  std::string value;
+
+  /// `-S path` for the path variable, `-L name` for the name variable, and
+  /// nothing at all when no variable is set. A value `socket_path_arguments()` or
+  /// `socket_name_arguments()` rejects is rejected here.
+  [[nodiscard]] expected<std::vector<std::string>, SocketError> arguments() const {
+    switch (source) {
+    case SocketSource::path_variable:
+      return socket_path_arguments(value);
+    case SocketSource::name_variable:
+      return socket_name_arguments(value);
+    case SocketSource::none:
+      break;
+    }
+    return std::vector<std::string>{};
+  }
+};
+
+/// Reads `LIBTMUX_SOCKET_PATH`, then `LIBTMUX_SOCKET`.
+///
+/// The path wins when both are set, as tmux's `-S` overrides `-L`. A variable
+/// that is empty or only whitespace counts as unset, each one alone, so an
+/// empty path leaves a set name in force. Any other value is returned as it
+/// was given. `TMUX` is not read: tmux follows it by itself when no socket is
+/// passed.
+[[nodiscard]] EnvironmentSocket socket_from_environment();
 
 LIBTMUX_NAMESPACE_END

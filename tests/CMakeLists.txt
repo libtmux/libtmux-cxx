@@ -453,6 +453,19 @@ gtest_discover_tests(
   TEST_PREFIX libtmux.server.identity.
   PROPERTIES LABELS real-tmux TIMEOUT 60)
 
+add_executable(libtmux_socket_default_test integration/socket_default_test.cpp)
+target_link_libraries(
+  libtmux_socket_default_test
+  PRIVATE libtmux_test_main libtmux_build_options libtmux::libtmux
+          libtmux_test_support)
+target_compile_options(
+  libtmux_socket_default_test PRIVATE -fno-sanitize-recover=undefined)
+
+gtest_discover_tests(
+  libtmux_socket_default_test
+  TEST_PREFIX libtmux.socket.default.
+  PROPERTIES LABELS real-tmux TIMEOUT 60)
+
 add_executable(libtmux_pane_topology_test integration/pane_topology_test.cpp)
 target_link_libraries(
   libtmux_pane_topology_test
