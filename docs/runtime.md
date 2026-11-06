@@ -89,9 +89,11 @@ refuses rather than waiting for a slot.
 
 `Server::try_submit` asks the daemon for its release before admission, so a
 submission to an endpoint whose daemon has not answered yet can block the
-calling thread for as long as that probe takes, up to the command's timeout. A
-live daemon's answer is remembered; an absent endpoint is asked again on every
-submission. Admission itself never waits for a slot.
+calling thread for as long as that probe takes. The probe is paid out of the
+command's own deadline: the timeout is read once, when `try_submit` is called,
+and the probe and the command share it, so the command is given what the probe
+left. A live daemon's answer is remembered; an absent endpoint is asked again on
+every submission. Admission itself never waits for a slot.
 
 ## Admission
 
