@@ -1040,6 +1040,11 @@ foreach(
   probe
   flag_field_has_no_string_operations
   numeric_field_has_no_string_operations
+  flag_field_rejects_a_pointer_operand
+  number_field_rejects_a_fractional_operand
+  number_field_rejects_a_character_operand
+  number_field_rejects_a_wide_unsigned_operand
+  number_field_rejects_a_bool_operand
   string_field_has_no_ordering
   cardinality_refuses_a_temporary
   cardinality_refuses_a_produced_element
