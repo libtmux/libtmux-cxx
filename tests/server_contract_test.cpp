@@ -2,6 +2,7 @@
 // prototype that shares its kernel. These are the contracts a caller can
 // observe through Server, which is the only surface that survives deletion of
 // the transport spikes.
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -1762,6 +1763,78 @@ TEST(ServerContract, AnArgumentEndingInASeparatorIsNotACommandBoundary) {
   const auto second = server.run({"show-options", "-gv", "@second"});
   ASSERT_TRUE(second.has_value()) << second.error().diagnostic;
   EXPECT_EQ(*second, "kept\n");
+}
+
+// A lone `;` is one more argument of the command it follows. The library kept a
+// lone one unescaped because its own batch separator is the same string, so
+// tmux ended the command there and the character never arrived.
+TEST(ServerContract, ALoneSeparatorArgumentIsDataOnTheSubprocessTransport) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+
+  ASSERT_TRUE(server.run({"set-option", "-g", "@probe", ";"}).has_value());
+  const auto stored = server.run({"show-options", "-gv", "@probe"});
+  ASSERT_TRUE(stored.has_value()) << stored.error().diagnostic;
+  EXPECT_EQ(*stored, ";\n");
+  const auto printed = server.run({"display-message", "-p", ";"});
+  ASSERT_TRUE(printed.has_value()) << printed.error().diagnostic;
+  EXPECT_EQ(*printed, ";\n");
+
+  // Beside a real separator it is still data, and the separator still ends
+  // the command it follows.
+  libtmux::CommandBatch batch;
+  ASSERT_TRUE(batch.add({"set-option", "-g", "@first", ";"}));
+  ASSERT_TRUE(batch.add({"set-option", "-g", "@second", "kept"}));
+  ASSERT_TRUE(server.run_batch(batch).has_value());
+  const auto first = server.run({"show-options", "-gv", "@first"});
+  ASSERT_TRUE(first.has_value()) << first.error().diagnostic;
+  EXPECT_EQ(*first, ";\n");
+  const auto second = server.run({"show-options", "-gv", "@second"});
+  ASSERT_TRUE(second.has_value()) << second.error().diagnostic;
+  EXPECT_EQ(*second, "kept\n");
+
+  // A typed call that puts caller text after `--` reaches the same place.
+  const auto sessions = server.sessions();
+  ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
+  const auto refused = sessions->front().set_option(";", "kill-server");
+  EXPECT_FALSE(refused.has_value());
+  EXPECT_TRUE(server.is_alive());
+  if (!refused.has_value()) {
+    EXPECT_EQ(refused.error().diagnostic.find("too few arguments"), std::string::npos)
+        << refused.error().diagnostic;
+  }
+}
+
+TEST(ServerContract, PaneSendTextDeliversALoneSeparator) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  const Server server = connect(*fixture);
+  const auto sessions = server.sessions();
+  ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
+  const auto window =
+      sessions->front().new_window({.name = "echo", .shell_command = "cat"});
+  ASSERT_TRUE(window.has_value()) << window.error().diagnostic;
+  const auto panes = window->panes();
+  ASSERT_TRUE(panes.has_value() && !panes->empty());
+  const libtmux::Pane& pane = panes->front();
+
+  // The terminal echoes what arrives, so the line shows what tmux delivered.
+  for (const std::string_view text : {"A;", ";", "B"}) {
+    ASSERT_TRUE(pane.send_text(text).has_value()) << text;
+  }
+  ASSERT_TRUE(pane.send_key("Enter").has_value());
+
+  std::string captured;
+  EXPECT_TRUE(wait_until(
+      [&] {
+        const auto text = pane.capture();
+        captured = text.has_value() ? *text : std::string{};
+        return std::ranges::count(captured, 'B') >= 2;
+      },
+      std::chrono::seconds{5}))
+      << captured;
+  EXPECT_NE(captured.find("A;;B"), std::string::npos) << captured;
 }
 
 TEST(ServerContract, DataThatLooksLikeAFlagIsStillData) {
