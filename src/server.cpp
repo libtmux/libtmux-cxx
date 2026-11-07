@@ -311,10 +311,14 @@ public:
       }
       return report_failure(command, support::versions::replaced_daemon());
     }
+    // The executor wrote this text and may have quoted an argument back.
+    if (!answer.has_value()) {
+      answer = unexpected(redact(std::move(answer.error()), command));
+    }
     const auto elapsed = std::chrono::steady_clock::now() - started;
     if (const auto observer = command_observer(); observer.has_value()) {
       const std::string rendered = detail::rendered_command(command);
-      const std::vector<std::string> argv = command.argv();
+      const std::vector<std::string> argv = detail::redacted_argv(command);
       (*observer)(
           CommandReport{.command = rendered,
                         .argv = argv,

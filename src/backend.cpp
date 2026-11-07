@@ -183,6 +183,17 @@ std::string rendered_command(const CommandRequest& command) {
   return rendered;
 }
 
+std::vector<std::string> redacted_argv(const CommandRequest& command) {
+  const std::vector<std::string_view> parts = sensitive_parts(command);
+  std::vector<std::string> argv;
+  argv.reserve(command.size());
+  for (const CommandArgument& argument : command.arguments()) {
+    argv.push_back(parts.empty() ? argument.value()
+                                 : redacted_text(argument.value(), parts));
+  }
+  return argv;
+}
+
 namespace {
 // Per thread, not per Backend: a Backend is shared between threads, and this
 // marks where one thread is in one command.
@@ -207,7 +218,7 @@ void Backend::observe(const CommandRequest& command, const CommandFailure* failu
   if (!observer_) {
     return;
   }
-  const std::vector<std::string> argv = command.argv();
+  const std::vector<std::string> argv = redacted_argv(command);
   // `not_started` is this library's own word for nothing having been
   // dispatched, so there is no duration to report however far into the
   // dispatch the refusal happened.

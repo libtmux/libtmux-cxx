@@ -50,6 +50,10 @@ struct PreparedAttach {
 // it has the argv already.
 [[nodiscard]] std::string rendered_command(const CommandRequest& command);
 
+// The command's arguments, one element each, with every sensitive part
+// replaced as `rendered_command` replaces it: what a report may carry.
+[[nodiscard]] std::vector<std::string> redacted_argv(const CommandRequest& command);
+
 class Backend {
 public:
   Backend() = default;

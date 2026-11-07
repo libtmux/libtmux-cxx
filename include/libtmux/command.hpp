@@ -217,8 +217,9 @@ private:
 ///
 /// There is otherwise no way to see what this library ran: a caller debugging a
 /// tmux interaction has only the failures, and nothing at all when things
-/// succeed. The command is rendered as tmux received it, with any argument
-/// marked sensitive replaced.
+/// succeed. A report carries no argument marked sensitive: `command`, `argv`
+/// and the text of `failure` all have it replaced, whichever transport ran the
+/// command and including a failure a custom executor returned.
 ///
 /// Synchronous calls invoke it on their caller's thread. Asynchronous calls
 /// invoke it only on the thread calling `CommandRuntime::dispatch_ready`.
@@ -227,8 +228,9 @@ struct CommandReport {
   /// As tmux received it, with any argument marked sensitive replaced. For a
   /// human reading a log.
   std::string_view command;
-  /// The same command unrendered, for a caller building structured telemetry
-  /// rather than a line of text. Empty when the report has no argv to give.
+  /// The same command as one element per argument, for a caller building
+  /// structured telemetry rather than a line of text, with any sensitive part
+  /// replaced. Empty when the report has no argv to give.
   std::span<const std::string> argv;
   /// Nothing when the command succeeded.
   const CommandFailure* failure;
@@ -294,7 +296,9 @@ struct ExecutionPolicy {
 ///
 /// Returning the command's standard output is the whole contract: a listing
 /// answers its rows, a mutation answers whatever tmux printed, and a failure
-/// answers `CommandFailure` rather than throwing.
+/// answers `CommandFailure` rather than throwing. The library replaces any
+/// argument marked sensitive in that failure's diagnostic before it reaches an
+/// observer or the caller, so an executor may quote the command it ran.
 ///
 /// A batch arrives here too, as one request whose argv carries `;` between the
 /// grouped commands — there is no second method to implement, but the
