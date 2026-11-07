@@ -5589,6 +5589,7 @@ Why a tmux command produced no answer.  `refused` means tmux ran and said no; `m
   - [`CommandArgument::value`](#libtmux-command-hpp-commandargument-value)
   - [`CommandArgument::sensitivity`](#libtmux-command-hpp-commandargument-sensitivity)
   - [`CommandArgument::sensitive_parts`](#libtmux-command-hpp-commandargument-sensitive-parts)
+  - [`CommandArgument::is_separator`](#libtmux-command-hpp-commandargument-is-separator)
 - [`CommandRequest`](#libtmux-command-hpp-commandrequest)
   - [`CommandRequest::CommandRequest`](#libtmux-command-hpp-commandrequest-commandrequest)
   - [`CommandRequest::CommandRequest`](#libtmux-command-hpp-commandrequest-commandrequest-2)
@@ -5795,10 +5796,18 @@ Keep a composite argument intact on the wire while treating one byte range insid
 [[nodiscard]] const std::vector<std::string>& sensitive_parts() const noexcept;
 ```
 
+<a id="libtmux-command-hpp-commandargument-is-separator"></a>
+#### `CommandArgument::is_separator`
+
+```cpp
+[[nodiscard]] bool is_separator() const noexcept;
+```
+Whether this is the `;` a `CommandBatch` puts between its commands. Every other argument, including one that is exactly `;` or ends in one, is data.
+
 <a id="libtmux-command-hpp-commandrequest"></a>
 ### `CommandRequest`
 
-One tmux command as argv, with no shell between it and tmux.  Arguments are passed as separate words, so a value holding a space, a quote or a `;` arrives whole and nothing here needs escaping.
+One tmux command as argv, with no shell between it and tmux.  Arguments are passed as separate words, so a value holding a space, a quote or a `;` arrives whole and nothing here needs escaping. That includes an argument that is exactly `;`: only the separator a `CommandBatch` adds between its commands is one, and `CommandArgument::is_separator` says which.
 
 ```cpp
 class CommandRequest;
@@ -5965,7 +5974,7 @@ Which tmux to run. A bare name is resolved through `PATH`, as tmux's own documen
 <a id="libtmux-command-hpp-commandexecutor"></a>
 ### `CommandExecutor`
 
-A transport a caller supplies.  `BackendKind::custom` named this possibility from the first release, but nothing implemented it: the interface a backend had to satisfy lived in the library's private headers, so the only reachable transport was the one that launches a subprocess per command. This is the seam that makes the name true.  One method, deliberately. Everything else a backend does — routing an entity command through its owning psmux session, proving a session belongs, preparing an attach argv — is either psmux's problem or the library's, and freezing it here would make a private arrangement permanent. What a transport owes is an answer to one command; the library supplies the rest and asks this for the tmux version too, by running `-V` through it.  `run` is const and may be called from any thread, because a `Server` is copyable across threads and shares one executor. An implementation that keeps a connection or a buffer synchronises itself.  Returning the command's standard output is the whole contract: a listing answers its rows, a mutation answers whatever tmux printed, and a failure answers `CommandFailure` rather than throwing.  A batch arrives here too, as one request whose argv carries `;` between the grouped commands — there is no second method to implement, but the separators must reach tmux as they are. A transport that interprets or drops them turns one fail-fast group into something else without saying so.
+A transport a caller supplies.  `BackendKind::custom` named this possibility from the first release, but nothing implemented it: the interface a backend had to satisfy lived in the library's private headers, so the only reachable transport was the one that launches a subprocess per command. This is the seam that makes the name true.  One method, deliberately. Everything else a backend does — routing an entity command through its owning psmux session, proving a session belongs, preparing an attach argv — is either psmux's problem or the library's, and freezing it here would make a private arrangement permanent. What a transport owes is an answer to one command; the library supplies the rest and asks this for the tmux version too, by running `-V` through it.  `run` is const and may be called from any thread, because a `Server` is copyable across threads and shares one executor. An implementation that keeps a connection or a buffer synchronises itself.  Returning the command's standard output is the whole contract: a listing answers its rows, a mutation answers whatever tmux printed, and a failure answers `CommandFailure` rather than throwing.  A batch arrives here too, as one request whose argv carries `;` between the grouped commands — there is no second method to implement, but the separators must reach tmux as they are. A transport that interprets or drops them turns one fail-fast group into something else without saying so.  Only an argument for which `CommandArgument::is_separator` holds is a separator. A data argument that is `;` or ends in one reaches tmux with a backslash before that `;`, or tmux reads it as the end of the command, and a transport that sends `argv()` as it stands loses the character.
 
 ```cpp
 class CommandExecutor;
@@ -7157,7 +7166,7 @@ Whether `pane_id` (<code>\%N</code>) is still part of a window's arrangement, re
 <a id="libtmux-batch-hpp"></a>
 ## `libtmux/batch.hpp`
 
-Build one tmux command sequence from several commands.  tmux accepts multiple commands in a single invocation separated by a `;` argument. Because the core execs argv directly and never goes through a shell, the separator is a bare `;` element — there is no backslash to escape and no quoting to get wrong.  A batch is one fail-fast group: tmux stops at the first command that errors. That is why a batch is a distinct type from a list of independent requests, which the transport runs separately and attributes individually.
+Build one tmux command sequence from several commands.  tmux accepts multiple commands in a single invocation separated by a `;` argument. Because the core execs argv directly and never goes through a shell, the separator is a bare `;` element, marked as one so a data argument that is also `;` is never mistaken for it.  A batch is one fail-fast group: tmux stops at the first command that errors. That is why a batch is a distinct type from a list of independent requests, which the transport runs separately and attributes individually.
 
 **Symbols:**
 
@@ -7174,7 +7183,7 @@ Build one tmux command sequence from several commands.  tmux accepts multiple co
 <a id="libtmux-batch-hpp-commandbatch"></a>
 ### `CommandBatch`
 
-The argv a chain becomes: commands joined by tmux's separator.  An empty command is rejected rather than emitted, because tmux reads two adjacent separators as the next command's first argument.
+The argv a chain becomes: commands joined by tmux's separator.  A `;` inside a command is data, however it is spelled, and never ends it.  An empty command is rejected rather than emitted, because tmux reads two adjacent separators as the next command's first argument.
 
 ```cpp
 class CommandBatch;
