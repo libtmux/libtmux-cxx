@@ -55,7 +55,7 @@ jobs:
     # also fails a dispatch that asks for something CI will not do before any
     # runner is spent on it.
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       scope: ${{ steps.plan.outputs.scope }}
@@ -88,7 +88,7 @@ jobs:
     name: compatibility (${{ matrix.slug }}, ${{ matrix.compiler }})
     needs: plan
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -101,7 +101,7 @@ jobs:
       # the ccache build pinned in its own metadata.json. A bump to this
       # action therefore moves @actions/cache and the action's own bundle,
       # not the ccache binary: CI currently runs ccache 4.9.1 on
-      # ubuntu-latest.
+      # ubuntu-24.04.
       - uses: hendrikmuhs/ccache-action@f09c25b45002a07be2955cbe52e8cee55643f89d # v1.2.24
         with:
           key: ${{ github.job }}-${{ matrix.compiler }}-tmux-${{ matrix.slug }}
@@ -208,7 +208,7 @@ jobs:
     needs: plan
     if: needs.plan.outputs.rejection_planned == 'true'
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -407,7 +407,7 @@ jobs:
     # only under clang and libc++ until three lines of duration arithmetic were
     # spelled explicitly, which no lane would have caught.
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -436,7 +436,7 @@ jobs:
     # question it claims to - is caught here rather than the next time a
     # maintainer runs them by hand.
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -478,7 +478,7 @@ jobs:
     # own ABI namespace. Until this lane existed, the only thing that had ever
     # been built against it was one example program.
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -507,7 +507,7 @@ jobs:
     # option name that ends in an asterisk and the marker tmux uses for an
     # inherited one.
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -543,7 +543,7 @@ jobs:
     # multi-byte. A lane that is not UTF-8 is the only thing that checks the
     # library does not depend on its caller's locale.
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -572,7 +572,7 @@ jobs:
 
   sanitizers:
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -608,7 +608,7 @@ jobs:
     # A mutation that no longer applies, or no longer builds, fails the job
     # too: run by hand that case prints nothing and reads like a pass.
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -642,7 +642,7 @@ jobs:
     # the number is in front of someone on every run rather than discovered
     # months later.
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -704,7 +704,7 @@ jobs:
     # instrumentation silently disabled, a suite that stopped running — and
     # not the ordinary drift of a few lines.
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -732,7 +732,7 @@ jobs:
 
   lint:
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -872,7 +872,7 @@ jobs:
     # Proves the shipped package, not the build tree: install it and build an
     # outside project that knows only find_package.
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -1068,7 +1068,7 @@ jobs:
     # and the cheap one does not answer the expensive one: whether the database
     # still describes the ports, and whether vcpkg can actually resolve them.
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       # Unshallowed because vcpkg fetches the baseline commit out of this
@@ -1128,7 +1128,7 @@ jobs:
       - lint
       - package
       - registry
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
