@@ -314,6 +314,14 @@ public:
   /// it the command reports `truncated` rather than returning a prefix that
   /// reads like a complete answer. Unset uses the package default, which is
   /// ample for every listing and can be too small for a long scrollback.
+  ///
+  /// The timeout is one deadline for the whole call. The first command on a
+  /// handle also asks the daemon which release it is, and that probe is paid out
+  /// of the same deadline, not a second one: a call given 200 ms is over, with an
+  /// answer or with `timeout`, in about 200 ms however the time is split. A
+  /// probe that uses it all fails the call as `timeout` with
+  /// `delivery == not_started`, before the command is written. A custom executor
+  /// receives what is left of the deadline as its own timeout.
   [[nodiscard]] expected<std::string, CommandFailure>
   run(const CommandRequest& command,
       std::optional<std::chrono::milliseconds> timeout = {},
@@ -325,8 +333,9 @@ public:
   ///
   /// Admission does not wait for a slot, but the daemon's release is asked
   /// before it. A submission to an endpoint whose daemon has not answered yet
-  /// can block the calling thread on that probe, up to the command's timeout.
-  /// An empty command is a validation error.
+  /// can block the calling thread on that probe. The probe and the command
+  /// share one deadline, read when this is called: the command's timeout is what
+  /// the probe left. An empty command is a validation error.
   [[nodiscard]] expected<CommandOperation, CommandFailure>
   try_submit(CommandRuntime& runtime, CommandRequest command,
              std::optional<std::chrono::milliseconds> timeout = {},

@@ -8,6 +8,7 @@
 #include <string_view>
 #include <variant>
 
+#include "deadline.hpp"
 #include "environment.hpp"
 #include "process.hpp"
 #include "psmux.hpp"
@@ -952,12 +953,15 @@ SubprocessBackend::prepare_request(const CommandRequest& command,
                                    std::optional<std::chrono::milliseconds> timeout,
                                    std::optional<std::size_t> output_limit,
                                    bool allow_noop) const {
-  auto checked = check_command(command, timeout);
+  // The version check and the command are paid out of one budget: the probe
+  // takes what it needs, and the command gets what is left.
+  const auto deadline = Deadline::within(timeout);
+  auto checked = check_command(command, deadline.remaining());
   if (!checked.has_value()) {
     return unexpected(std::move(checked.error()));
   }
-  return assemble_request(command, session, timeout, output_limit, *checked,
-                          allow_noop);
+  return assemble_request(command, session, deadline.remaining(), output_limit,
+                          *checked, allow_noop);
 }
 
 expected<void, CommandFailure> SubprocessBackend::check_release() const {

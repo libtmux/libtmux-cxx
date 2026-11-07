@@ -5,6 +5,16 @@ include(CMakeFindDependencyMacro)
 # The library starts threads for control-mode connections.
 find_dependency(Threads)
 
+# The C++20 build was linked against a tl::expected the system provides, and
+# `<libtmux/expected.hpp>` includes `<tl/expected.hpp>`. The target is named in
+# the exported link interface, so it has to exist here. No version is requested:
+# the v1.1.0 release declares 1.0.0 in its own package, and the build already
+# checked the API it needs. A build that fetched its copy installed the headers
+# beside ours and asks for nothing.
+if("@LIBTMUX_TL_EXPECTED_FOUND@")
+  find_dependency(tl-expected CONFIG)
+endif()
+
 include("${CMAKE_CURRENT_LIST_DIR}/libtmuxTargets.cmake")
 
 # `libtmux::testing` is defined only when the component is requested, so a

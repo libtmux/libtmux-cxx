@@ -3,6 +3,7 @@
 #include "backend.hpp"
 #include "command_engine.hpp"
 #include "completion_queue.hpp"
+#include "deadline.hpp"
 #include "operation_state.hpp"
 #include "process.hpp"
 #include "process_validation.hpp"
@@ -519,6 +520,12 @@ struct CommandRuntime::State final {
          std::optional<std::chrono::milliseconds> timeout,
          std::optional<std::size_t> output_limit) {
     Checked checked;
+    // One budget for the whole submission: the version probe takes what it
+    // needs and the command gets what is left, so a call given 200 ms is over
+    // in about 200 ms rather than 200 ms per phase.
+    const detail::Deadline budget = detail::Deadline::within(
+        timeout.has_value() ? timeout
+                            : (backend ? backend->policy().timeout : std::nullopt));
 #if !defined(_WIN32)
     // Asking the daemon for its release can launch a probe and wait for it, so
     // it is asked before the submission lock is taken, bounded by this
@@ -527,17 +534,16 @@ struct CommandRuntime::State final {
     if (const auto subprocess =
             std::dynamic_pointer_cast<const detail::SubprocessBackend>(backend);
         subprocess && !command.empty()) {
-      checked = subprocess->check_command(
-          command, timeout.has_value() ? timeout : subprocess->policy().timeout);
+      checked = subprocess->check_command(command, budget.remaining());
     }
 #endif
-    return submit_checked(std::move(backend), std::move(command), timeout, output_limit,
+    return submit_checked(std::move(backend), std::move(command), budget, output_limit,
                           std::move(checked));
   }
 
   [[nodiscard]] expected<CommandOperation, CommandFailure>
   submit_checked(std::shared_ptr<const detail::Backend> backend, CommandRequest command,
-                 std::optional<std::chrono::milliseconds> timeout,
+                 const detail::Deadline& budget,
                  std::optional<std::size_t> output_limit,
                  [[maybe_unused]] Checked checked) {
     // The submission lock makes preflight, admission, engine submission, and task
@@ -575,7 +581,7 @@ struct CommandRuntime::State final {
     }
 
     const ExecutionPolicy& policy = subprocess->policy();
-    const auto deadline = timeout.has_value() ? timeout : policy.timeout;
+    const auto deadline = budget.remaining();
     const auto allowed = output_limit.has_value() ? output_limit : policy.output_limit;
     detail::ProcessRequest request;
     detail::ProcessValidationResult validation;

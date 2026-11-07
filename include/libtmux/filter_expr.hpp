@@ -11,8 +11,10 @@
 #include "libtmux/abi.hpp"
 #include "libtmux/lowered_node.hpp"
 #include <algorithm>
+#include <concepts>
 #include <cstddef>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <ranges>
 #include <string>
@@ -229,6 +231,34 @@ private:
   Node node_;
 };
 
+/// Whether `Type` is a type whose purpose is to name a character. `char` is
+/// one; `signed char` and `unsigned char` (`int8_t`, `uint8_t`) are small
+/// integers and are not.
+template <typename Type>
+inline constexpr bool is_character_type_v =
+    std::same_as<Type, char> || std::same_as<Type, wchar_t> ||
+    std::same_as<Type, char8_t> || std::same_as<Type, char16_t> ||
+    std::same_as<Type, char32_t>;
+
+/// What a flag field is compared with: a `bool`, and nothing that merely
+/// converts to one. A pointer converts to `bool`, so `field == "false"` once
+/// built a node that tested for true.
+template <typename Type>
+concept FlagOperand = std::same_as<Type, bool>;
+
+/// What a numeric field is compared with: an integer that is neither a `bool`
+/// nor a character type, and whose every value the field's `long long` holds.
+/// A floating-point operand would be truncated, a character would become its
+/// code, and an unsigned type as wide as `long long` could wrap to a negative
+/// number, so none of them is an operand; `std::uint8_t` and `unsigned int`
+/// are. A caller who means one of the refused types converts it first and owns
+/// the conversion.
+template <typename Type>
+concept NumberOperand =
+    std::integral<Type> && !std::same_as<Type, bool> && !is_character_type_v<Type> &&
+    std::in_range<long long>(std::numeric_limits<Type>::max()) &&
+    std::in_range<long long>(std::numeric_limits<Type>::min());
+
 /// A typed field handle. Only the operations a field's type actually supports
 /// are declared, so `pane::active.starts_with(...)` is a compile error rather
 /// than a runtime surprise.
@@ -279,22 +309,28 @@ template <typename Entity> struct NumberFieldHandle {
     return field.read(row);
   }
 
-  [[nodiscard]] FilterExpr<Entity> operator==(long long operand) const {
+  template <NumberOperand Operand>
+  [[nodiscard]] FilterExpr<Entity> operator==(Operand operand) const {
     return make(NumberOp::equals, operand);
   }
-  [[nodiscard]] FilterExpr<Entity> operator!=(long long operand) const {
+  template <NumberOperand Operand>
+  [[nodiscard]] FilterExpr<Entity> operator!=(Operand operand) const {
     return make(NumberOp::not_equals, operand);
   }
-  [[nodiscard]] FilterExpr<Entity> operator<(long long operand) const {
+  template <NumberOperand Operand>
+  [[nodiscard]] FilterExpr<Entity> operator<(Operand operand) const {
     return make(NumberOp::less, operand);
   }
-  [[nodiscard]] FilterExpr<Entity> operator<=(long long operand) const {
+  template <NumberOperand Operand>
+  [[nodiscard]] FilterExpr<Entity> operator<=(Operand operand) const {
     return make(NumberOp::less_equal, operand);
   }
-  [[nodiscard]] FilterExpr<Entity> operator>(long long operand) const {
+  template <NumberOperand Operand>
+  [[nodiscard]] FilterExpr<Entity> operator>(Operand operand) const {
     return make(NumberOp::greater, operand);
   }
-  [[nodiscard]] FilterExpr<Entity> operator>=(long long operand) const {
+  template <NumberOperand Operand>
+  [[nodiscard]] FilterExpr<Entity> operator>=(Operand operand) const {
     return make(NumberOp::greater_equal, operand);
   }
 
@@ -315,10 +351,12 @@ template <typename Entity> struct BoolFieldHandle {
   [[nodiscard]] operator FilterExpr<Entity>() const { // NOLINT(*-explicit-*)
     return FilterExpr<Entity>{typename FilterExpr<Entity>::BoolTest{field, true}};
   }
-  [[nodiscard]] FilterExpr<Entity> operator==(bool expected) const {
+  template <FlagOperand Operand>
+  [[nodiscard]] FilterExpr<Entity> operator==(Operand expected) const {
     return FilterExpr<Entity>{typename FilterExpr<Entity>::BoolTest{field, expected}};
   }
-  [[nodiscard]] FilterExpr<Entity> operator!=(bool expected) const {
+  template <FlagOperand Operand>
+  [[nodiscard]] FilterExpr<Entity> operator!=(Operand expected) const {
     return *this == !expected;
   }
 };

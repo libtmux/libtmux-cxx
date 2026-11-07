@@ -16,6 +16,7 @@
 
 #include "acquire.hpp"
 #include "backend.hpp"
+#include "deadline.hpp"
 #include "environment.hpp"
 #include "path.hpp"
 #include "psmux.hpp"
@@ -245,6 +246,9 @@ public:
   [[nodiscard]] expected<std::string, CommandFailure>
   run(const CommandRequest& command, std::optional<std::chrono::milliseconds> timeout,
       std::optional<std::size_t> output_limit) const override {
+    // One deadline for the call: the version probe is paid out of it and the
+    // command gets what is left.
+    const auto deadline = detail::Deadline::within(timeout);
     if (options_.implementation != ServerImplementation::psmux) {
       if (command.empty()) {
         return report_failure(
@@ -262,8 +266,12 @@ public:
                                                "dispatched by name"));
       }
       if (!diagnostic) {
-        if (auto checked = check_version(timeout); !checked.has_value()) {
+        if (auto checked = check_version(deadline.remaining()); !checked.has_value()) {
           return report_failure(command, std::move(checked.error()));
+        }
+        if (deadline.expired()) {
+          return report_failure(command,
+                                detail::Deadline::exhausted("the version check"));
         }
         // The executor reaches a daemon the library did not launch, and a
         // literal command meets the same gates there as on a launched one.
@@ -300,7 +308,7 @@ public:
       sent = &fenced;
     }
     const auto started = std::chrono::steady_clock::now();
-    auto answer = executor_->run(*sent, timeout, output_limit);
+    auto answer = executor_->run(*sent, deadline.remaining(), output_limit);
     if (!answer.has_value() && !fenced_token.empty() &&
         answer.error().diagnostic.find("unknown command: " + fence_marker_) !=
             std::string::npos) {

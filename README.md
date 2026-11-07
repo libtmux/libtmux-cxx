@@ -961,9 +961,14 @@ the program installs, its socket options, and the Windows triplets.
 
 - `LIBTMUX_FETCH_DEPS` is off by default: a build that needs the network says so
   and stops.
-- It covers every dependency, the C++20 lane's `tl::expected` included: the
-  build looks for an installed one first, and says what to install when there is
-  none.
+- It covers every dependency, the C++20 lane's `tl::expected` included. The
+  build looks for an installed one first and says what to install when there
+  is none.
+- The upstream `tl::expected` v1.1.0 install is accepted, although that release
+  declares version 1.0.0.
+- The installed package finds `tl::expected` again for a
+  `find_package(libtmux)` consumer, and its pkg-config file names its include
+  directories.
 
 ## Core concepts
 
