@@ -19,6 +19,19 @@ was recorded as it landed.
 
 ## Unreleased
 
+### Breaking
+
+- `CommandReport::argv` and the failure a custom `CommandExecutor` returns no
+  longer carry an argument marked `CommandArgument::sensitive`. Each sensitive
+  part is replaced with `[REDACTED]`, as `CommandReport::command` already was,
+  and `argv` keeps one element per argument. The same text reaches the
+  observer and the caller, over `Server::over` and `Server::over_control`, and
+  in the report of an asynchronous command. Behaviour-breaking;
+  source-compatible. (#151)
+
+  Before: `report.argv.back() == "example-secret-value"`
+  After:  `report.argv.back() == "[REDACTED]"`
+
 ## 0.1.0 (2026-11-01)
 
 This is the first release without an `-alpha` tag. It ships the C++ library, the
