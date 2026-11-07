@@ -5891,7 +5891,7 @@ void push_back(CommandArgument argument);
 <a id="libtmux-command-hpp-commandreport"></a>
 ### `CommandReport`
 
-Told about every command, as it finishes.  There is otherwise no way to see what this library ran: a caller debugging a tmux interaction has only the failures, and nothing at all when things succeed. The command is rendered as tmux received it, with any argument marked sensitive replaced.  Synchronous calls invoke it on their caller's thread. Asynchronous calls invoke it only on the thread calling `CommandRuntime::dispatch_ready`. No internal lock is held; a shared observer must synchronise itself.
+Told about every command, as it finishes.  There is otherwise no way to see what this library ran: a caller debugging a tmux interaction has only the failures, and nothing at all when things succeed. A report carries no argument marked sensitive: `command`, `argv` and the text of `failure` all have it replaced, whichever transport ran the command and including a failure a custom executor returned.  Synchronous calls invoke it on their caller's thread. Asynchronous calls invoke it only on the thread calling `CommandRuntime::dispatch_ready`. No internal lock is held; a shared observer must synchronise itself.
 
 ```cpp
 struct CommandReport;
@@ -5911,7 +5911,7 @@ As tmux received it, with any argument marked sensitive replaced. For a human re
 ```cpp
 std::span<const std::string> argv;
 ```
-The same command unrendered, for a caller building structured telemetry rather than a line of text. Empty when the report has no argv to give.
+The same command as one element per argument, for a caller building structured telemetry rather than a line of text, with any sensitive part replaced. Empty when the report has no argv to give.
 
 <a id="libtmux-command-hpp-commandreport-failure"></a>
 #### `CommandReport::failure`
@@ -5965,7 +5965,7 @@ Which tmux to run. A bare name is resolved through `PATH`, as tmux's own documen
 <a id="libtmux-command-hpp-commandexecutor"></a>
 ### `CommandExecutor`
 
-A transport a caller supplies.  `BackendKind::custom` named this possibility from the first release, but nothing implemented it: the interface a backend had to satisfy lived in the library's private headers, so the only reachable transport was the one that launches a subprocess per command. This is the seam that makes the name true.  One method, deliberately. Everything else a backend does — routing an entity command through its owning psmux session, proving a session belongs, preparing an attach argv — is either psmux's problem or the library's, and freezing it here would make a private arrangement permanent. What a transport owes is an answer to one command; the library supplies the rest and asks this for the tmux version too, by running `-V` through it.  `run` is const and may be called from any thread, because a `Server` is copyable across threads and shares one executor. An implementation that keeps a connection or a buffer synchronises itself.  Returning the command's standard output is the whole contract: a listing answers its rows, a mutation answers whatever tmux printed, and a failure answers `CommandFailure` rather than throwing.  A batch arrives here too, as one request whose argv carries `;` between the grouped commands — there is no second method to implement, but the separators must reach tmux as they are. A transport that interprets or drops them turns one fail-fast group into something else without saying so.
+A transport a caller supplies.  `BackendKind::custom` named this possibility from the first release, but nothing implemented it: the interface a backend had to satisfy lived in the library's private headers, so the only reachable transport was the one that launches a subprocess per command. This is the seam that makes the name true.  One method, deliberately. Everything else a backend does — routing an entity command through its owning psmux session, proving a session belongs, preparing an attach argv — is either psmux's problem or the library's, and freezing it here would make a private arrangement permanent. What a transport owes is an answer to one command; the library supplies the rest and asks this for the tmux version too, by running `-V` through it.  `run` is const and may be called from any thread, because a `Server` is copyable across threads and shares one executor. An implementation that keeps a connection or a buffer synchronises itself.  Returning the command's standard output is the whole contract: a listing answers its rows, a mutation answers whatever tmux printed, and a failure answers `CommandFailure` rather than throwing. The library replaces any argument marked sensitive in that failure's diagnostic before it reaches an observer or the caller, so an executor may quote the command it ran.  A batch arrives here too, as one request whose argv carries `;` between the grouped commands — there is no second method to implement, but the separators must reach tmux as they are. A transport that interprets or drops them turns one fail-fast group into something else without saying so.
 
 ```cpp
 class CommandExecutor;

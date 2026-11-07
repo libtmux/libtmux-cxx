@@ -2,6 +2,7 @@
 // prototype that shares its kernel. These are the contracts a caller can
 // observe through Server, which is the only surface that survives deletion of
 // the transport spikes.
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -1906,6 +1907,62 @@ TEST(ServerContract, AnObserverNeverSeesAnEnvironmentValue) {
     EXPECT_EQ(diagnostic.find(secret), std::string::npos) << diagnostic;
     EXPECT_EQ(diagnostic.find(shell_secret), std::string::npos) << diagnostic;
   }
+}
+
+// `CommandReport::argv` is documented as the structured form of `command`, so
+// a caller who logs it has the same right not to find a secret there.
+TEST(ServerContract, AnObserverNeverSeesASensitiveArgumentInArgv) {
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+
+  std::mutex guard;
+  std::vector<std::vector<std::string>> argvs;
+  auto server = Server::at_socket_path(
+      fixture->socket_path().string(), [&](const libtmux::CommandReport& report) {
+        const std::lock_guard held{guard};
+        argvs.emplace_back(report.argv.begin(), report.argv.end());
+      });
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+
+  constexpr std::string_view secret = "argv-secret-value";
+  libtmux::CommandRequest printing{"display-message", "-p"};
+  printing.push_back(libtmux::CommandArgument::sensitive(std::string{secret}));
+  const auto printed = server->run(printing);
+  ASSERT_TRUE(printed.has_value()) << printed.error().diagnostic;
+  EXPECT_EQ(*printed, std::string{secret} + "\n");
+  {
+    const std::lock_guard held{guard};
+    ASSERT_EQ(argvs.size(), 1U);
+    EXPECT_EQ(argvs.back(),
+              (std::vector<std::string>{"display-message", "-p", "[REDACTED]"}));
+  }
+
+  libtmux::CommandRequest failing{"kill-session", "-t"};
+  failing.push_back(libtmux::CommandArgument::sensitive(std::string{secret}));
+  ASSERT_FALSE(server->run(failing).has_value());
+  libtmux::CommandBatch batch;
+  ASSERT_TRUE(batch.add({"display-message", "-p", "public-prefix"}));
+  ASSERT_TRUE(batch.add(printing));
+  ASSERT_TRUE(server->run_batch(batch).has_value());
+  auto runtime = start_runtime();
+  auto async_refused = server->try_submit(runtime, failing);
+  ASSERT_TRUE(async_refused.has_value()) << async_refused.error().diagnostic;
+  ASSERT_FALSE(std::move(*async_refused).wait().has_value());
+  ASSERT_TRUE(wait_until([&runtime] { return runtime.snapshot().completed == 1U; }));
+  EXPECT_EQ(runtime.dispatch_ready(), 1U);
+
+  const std::lock_guard held{guard};
+  ASSERT_EQ(argvs.size(), 4U);
+  for (const auto& argv : argvs) {
+    for (const std::string& argument : argv) {
+      EXPECT_EQ(argument.find(secret), std::string::npos) << argument;
+    }
+  }
+  // The batch reports its commands as one argv, so the public part stays.
+  EXPECT_NE(std::ranges::find(argvs.at(2), "public-prefix"), argvs.at(2).end());
+  EXPECT_NE(std::ranges::find(argvs.at(2), "[REDACTED]"), argvs.at(2).end());
+  EXPECT_EQ(argvs.at(3),
+            (std::vector<std::string>{"kill-session", "-t", "[REDACTED]"}));
 }
 
 TEST(ServerContract, ARefusalNamesTheCommandAndCarriesNoStrayNewline) {

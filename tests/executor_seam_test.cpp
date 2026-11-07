@@ -43,6 +43,47 @@ using libtmux::FailureKind;
 using libtmux::Server;
 using libtmux::Version;
 
+// Echoes its last argument back in the failure it returns, as a transport that
+// quotes the command it could not run does.
+class EchoingExecutor final : public libtmux::CommandExecutor {
+public:
+  explicit EchoingExecutor(bool fail) : fail_{fail} {}
+
+  [[nodiscard]] libtmux::expected<std::string, CommandFailure>
+  run(const CommandRequest& command, std::optional<std::chrono::milliseconds>,
+      std::optional<std::size_t>) const override {
+    if (!fail_) {
+      return std::string{};
+    }
+    return libtmux::unexpected(
+        CommandFailure{.kind = FailureKind::refused,
+                       .delivery = libtmux::DeliveryStatus::replied,
+                       .exit_code = 1,
+                       .diagnostic = "executor says bad arg " + command.argv().back()});
+  }
+
+private:
+  bool fail_;
+};
+
+// What an observer wrote down about one command.
+struct Observed {
+  std::string command;
+  std::vector<std::string> argv;
+  std::optional<std::string> failure;
+};
+
+[[nodiscard]] libtmux::CommandObserver record(std::vector<Observed>& into) {
+  return [&into](const libtmux::CommandReport& report) {
+    into.push_back(Observed{
+        .command = std::string{report.command},
+        .argv = {report.argv.begin(), report.argv.end()},
+        .failure = report.failure == nullptr
+                       ? std::nullopt
+                       : std::optional<std::string>{report.failure->diagnostic}});
+  };
+}
+
 // Answers a fixed script, so the seam can be tested without any tmux at all.
 class ScriptedExecutor final : public libtmux::CommandExecutor {
 public:
@@ -403,6 +444,57 @@ TEST(ExecutorSeam, NoExecutorIsRefusedRatherThanDereferenced) {
   EXPECT_EQ(server.error().delivery, libtmux::DeliveryStatus::not_started);
 }
 
+TEST(ExecutorSeam, AnArgumentMarkedSensitiveIsRedactedFromWhatAFailureReports) {
+  constexpr std::string_view secret = "example-secret-value";
+  std::vector<Observed> observed;
+  auto server = Server::over(
+      std::make_shared<EchoingExecutor>(true),
+      libtmux::ExecutorOptions{.implementation = libtmux::ServerImplementation::tmux,
+                               .version = Version{3, 4, 0}},
+      record(observed));
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+
+  CommandRequest request{"set-environment", "TOKEN"};
+  request.push_back(libtmux::CommandArgument::sensitive(std::string{secret}));
+  const auto result = server->run(request);
+
+  ASSERT_FALSE(result.has_value());
+  EXPECT_EQ(result.error().diagnostic.find(secret), std::string::npos)
+      << result.error().diagnostic;
+  EXPECT_EQ(libtmux::to_string(result.error()).find(secret), std::string::npos)
+      << libtmux::to_string(result.error());
+  EXPECT_EQ(result.error().diagnostic, "executor says bad arg [REDACTED]");
+
+  ASSERT_EQ(observed.size(), 1U);
+  const Observed& report = observed.front();
+  EXPECT_EQ(report.command, "set-environment TOKEN [REDACTED]");
+  EXPECT_EQ(report.argv,
+            (std::vector<std::string>{"set-environment", "TOKEN", "[REDACTED]"}));
+  ASSERT_TRUE(report.failure.has_value());
+  EXPECT_EQ(*report.failure, result.error().diagnostic);
+}
+
+TEST(ExecutorSeam, AnArgumentMarkedSensitiveIsRedactedFromASuccessfulReport) {
+  std::vector<Observed> observed;
+  auto server = Server::over(
+      std::make_shared<EchoingExecutor>(false),
+      libtmux::ExecutorOptions{.implementation = libtmux::ServerImplementation::tmux,
+                               .version = Version{3, 4, 0}},
+      record(observed));
+  ASSERT_TRUE(server.has_value()) << server.error().diagnostic;
+
+  const std::string value{"NAME=hunter2-and-more"};
+  CommandRequest request{"set-environment", "-g"};
+  request.push_back(libtmux::CommandArgument::sensitive_range(value, 5U, 16U));
+  ASSERT_TRUE(server->run(request).has_value());
+
+  ASSERT_EQ(observed.size(), 1U);
+  // Only the marked range goes, and the argument stays one element.
+  EXPECT_EQ(observed.front().argv,
+            (std::vector<std::string>{"set-environment", "-g", "NAME=[REDACTED]"}));
+  EXPECT_FALSE(observed.front().failure.has_value());
+}
+
 TEST(ExecutorSeam, ListingsOverAControlConnectionMatchTheLaunchingPath) {
   LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
   auto fixture = libtmux::test::ScopedTmuxServer::start();
@@ -607,6 +699,46 @@ TEST(ControlBackedServer, SpreadsCommandsOverTheClientsItWasAskedFor) {
     EXPECT_TRUE(controlled->sessions().has_value());
   }
   EXPECT_FALSE(launching->over_control(fixture->session_name(), 0U).has_value());
+}
+
+// tmux quotes the target it could not find, so the failure a control client
+// returns holds the value of a sensitive argument unless it is redacted.
+TEST(ControlBackedServer, RedactsASensitiveArgumentFromTheFailureAndTheReport) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  constexpr std::string_view secret = "example-secret-window";
+  std::vector<Observed> observed;
+  auto launching =
+      Server::at_socket_path(fixture->socket_path().string(), record(observed));
+  ASSERT_TRUE(launching.has_value()) << launching.error().diagnostic;
+  auto controlled = launching->over_control(fixture->session_name());
+  ASSERT_TRUE(controlled.has_value()) << controlled.error().message;
+
+  CommandRequest request{"select-window", "-t"};
+  request.push_back(libtmux::CommandArgument::sensitive(std::string{secret}));
+  const auto result = controlled->run(request);
+
+  ASSERT_FALSE(result.has_value());
+  EXPECT_EQ(result.error().kind, FailureKind::refused);
+  EXPECT_NE(result.error().diagnostic.find("[REDACTED]"), std::string::npos)
+      << result.error().diagnostic;
+  EXPECT_EQ(result.error().diagnostic.find(secret), std::string::npos)
+      << result.error().diagnostic;
+  const Observed* seen = nullptr;
+  for (const Observed& each : observed) {
+    EXPECT_EQ(each.command.find(secret), std::string::npos) << each.command;
+    for (const std::string& argument : each.argv) {
+      EXPECT_NE(argument, secret);
+    }
+    if (each.failure.has_value()) {
+      EXPECT_EQ(each.failure->find(secret), std::string::npos) << *each.failure;
+      seen = &each;
+    }
+  }
+  ASSERT_NE(seen, nullptr) << "no report carried the failure";
+  EXPECT_EQ(seen->argv,
+            (std::vector<std::string>{"select-window", "-t", "[REDACTED]"}));
 }
 
 } // namespace
