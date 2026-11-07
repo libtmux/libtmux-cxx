@@ -45,6 +45,11 @@ struct PreparedAttach {
   std::shared_ptr<const SocketAlias> route;
 };
 
+// The words tmux parses: a data argument that is `;` or ends in one carries
+// the backslash tmux needs, and only a batch's separator stays bare. What the
+// gates in `support::commands` read, since they follow tmux's own parse.
+[[nodiscard]] std::vector<std::string> wire_argv(const CommandRequest& command);
+
 // The command as one line, which is what a person reads in a log or in a
 // diagnostic. Bounded: a format request is long, and a caller wanting all of
 // it has the argv already.

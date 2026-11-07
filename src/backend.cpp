@@ -43,15 +43,14 @@ FailureKind kind_of(ProcessError::Kind kind) noexcept {
   return FailureKind::spawn;
 }
 
-// tmux reads a trailing `;` on an argument as a command separator, so an
-// argument that ends in one arrives truncated — and, in a batch, whatever
-// followed it becomes the next command. A backslash escapes the separator,
-// and any backslashes already in front of it have to be doubled or they
-// escape the escape instead. The batch separator is the one argument that
-// means it. The control transport quotes its arguments and needs none of
-// this, which is why the two transports disagreed.
-std::string escaped_argument(const std::string& argument) {
-  if (argument == kCommandSeparator || argument.empty() || argument.back() != ';') {
+// tmux reads a trailing `;` on an argument as a command separator, so a data
+// argument that ends in one, a lone `;` included, arrives truncated and, in a
+// batch, whatever followed it becomes the next command. A backslash escapes
+// it. Only the separator a batch marked as one is left bare. The control
+// transport quotes its arguments and needs none of this.
+std::string escaped_argument(const CommandArgument& data) {
+  const std::string& argument = data.value();
+  if (data.is_separator() || argument.empty() || argument.back() != ';') {
     return argument;
   }
   // Exactly one backslash. tmux strips the one immediately before a trailing
@@ -158,6 +157,15 @@ std::size_t utf8_safe_cut(std::string_view text, std::size_t maximum) {
 }
 
 } // namespace
+
+std::vector<std::string> wire_argv(const CommandRequest& command) {
+  std::vector<std::string> argv;
+  argv.reserve(command.size());
+  for (const CommandArgument& argument : command.arguments()) {
+    argv.push_back(escaped_argument(argument));
+  }
+  return argv;
+}
 
 std::string rendered_command(const CommandRequest& command) {
   constexpr std::size_t maximum = 300U;
@@ -608,9 +616,8 @@ ProcessRequest SubprocessBackend::build_request(
     }
   }
   for (const CommandArgument& argument : command.arguments()) {
-    request.arguments.push_back(
-        Argument{escaped_argument(argument.value()),
-                 static_cast<Sensitivity>(argument.sensitivity())});
+    request.arguments.push_back(Argument{
+        escaped_argument(argument), static_cast<Sensitivity>(argument.sensitivity())});
   }
 
   return request;
@@ -921,8 +928,8 @@ SubprocessBackend::check_command(
   }
   // A command written by hand meets the gates the typed calls meet, before the
   // call, and in whatever spelling and position tmux would accept it.
-  if (auto refusal = support::commands::refuse_literal(command.argv(), checked->version,
-                                                       checked->live)) {
+  if (auto refusal = support::commands::refuse_literal(
+          wire_argv(command), checked->version, checked->live)) {
     return unexpected(std::move(*refusal));
   }
   return std::optional<EndpointVersion>{*std::move(checked)};

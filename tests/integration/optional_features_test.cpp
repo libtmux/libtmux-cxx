@@ -14,6 +14,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <fcntl.h>
@@ -24,6 +25,7 @@
 
 #include <gtest/gtest.h>
 
+#include "libtmux/batch.hpp"
 #include "libtmux/control.hpp"
 #include "libtmux/server.hpp"
 #include "libtmux/testing/scoped_server.hpp"
@@ -35,6 +37,23 @@ using libtmux::DeliveryStatus;
 using libtmux::FailureKind;
 using libtmux::Server;
 using libtmux::Version;
+
+// A spelling holding a `;` element is a chain of commands. `Server::run` takes
+// that `;` as data, so a chain goes through a batch, which is how tmux reads it.
+libtmux::expected<std::string, libtmux::CommandFailure>
+run_spelling(const Server& server, const std::vector<std::string>& spelling) {
+  libtmux::CommandBatch batch;
+  libtmux::CommandRequest current;
+  for (const std::string& word : spelling) {
+    if (word == ";") {
+      static_cast<void>(batch.add(std::exchange(current, {})));
+    } else {
+      current.emplace_back(word);
+    }
+  }
+  static_cast<void>(batch.add(std::move(current)));
+  return server.run_batch(batch);
+}
 
 struct Lane {
   libtmux::test::ScopedTmuxServer fixture;
@@ -170,13 +189,12 @@ TEST(OptionalFeatures, AnUnnamedRawBreakPaneIsRefusedOnExactly37) {
       {"break-p", "-d", "-s", source},
       {"break", "-d", "-s", source},
       {"split-window", "-d", ";", "break-p", "-d", "-s", source},
-      {"split-window", "-d;", "breakp", "-d", "-s", source},
   };
   const bool exact_37 = lane.running == Version{.major = 3, .minor = 7};
   for (const auto& spelling : spellings) {
     const auto before = lane.server.windows();
     ASSERT_TRUE(before.has_value());
-    const auto raw = lane.server.run(spelling);
+    const auto raw = run_spelling(lane.server, spelling);
     if (!exact_37) {
       // Other releases are not this library's to refuse.
       EXPECT_TRUE(raw.has_value() || raw.error().kind != FailureKind::validation)
@@ -239,7 +257,7 @@ TEST(OptionalFeatures, RawNamedBufferCommandsNeed34InEverySpelling) {
       {"list-buffers", ";", "delete-buffer", "-b", "missing"},
   };
   for (const auto& spelling : spellings) {
-    const auto raw = lane.server.run(spelling);
+    const auto raw = run_spelling(lane.server, spelling);
     ASSERT_FALSE(raw.has_value()) << spelling.front();
     const bool refused_by_library =
         raw.error().diagnostic.find("needs tmux 3.4") != std::string::npos;
@@ -274,7 +292,7 @@ TEST(OptionalFeatures, RawLayoutsAreCheckedBeforeTmuxSeesThem) {
                                                         "main-vertical-mirrored"},
                                std::vector<std::string>{"selectl", "-t", target, "--",
                                                         "main-horizontal-mirrored"}}) {
-    const auto raw = lane.server.run(spelling);
+    const auto raw = run_spelling(lane.server, spelling);
     if (mirrored) {
       EXPECT_TRUE(raw.has_value()) << (raw ? "" : raw.error().diagnostic);
       continue;
@@ -306,7 +324,7 @@ TEST(OptionalFeatures, RawNamesWithSeparatorsAreRefusedOnExactly37) {
       {"list-windows", ";", "neww", "-t", session, "-n", "a.b"},
   };
   for (const auto& spelling : spellings) {
-    const auto raw = lane.server.run(spelling);
+    const auto raw = run_spelling(lane.server, spelling);
     if (!exact_37) {
       // Other releases are not this library's to refuse.
       EXPECT_TRUE(raw.has_value() ||
@@ -394,7 +412,7 @@ TEST(OptionalFeatures, ARawClipboardQueryIsRefusedBelow36aWithAClientAttached) {
   };
   const bool gated = lane.running < Version{.major = 3, .minor = 6, .revision = 1};
   for (const auto& spelling : spellings) {
-    const auto raw = lane.server.run(spelling);
+    const auto raw = run_spelling(lane.server, spelling);
     if (!gated) {
       // Other releases are not this library's to refuse.
       if (!raw.has_value()) {
