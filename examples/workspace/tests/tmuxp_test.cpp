@@ -2,8 +2,12 @@
 
 #include "libtmux_consumers/tmuxp.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
+#include <map>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -296,6 +300,50 @@ TEST(Tmuxp, AMalformedCommandMappingIsRefused) {
                   "      - shell_command:\n          - [not, a, command]\n");
   ASSERT_FALSE(listed.has_value());
   EXPECT_EQ(listed.error().reason, "a command is a string or a mapping");
+}
+
+// The tmuxp examples parse_tmuxp refuses, with the refusal it gives. Each is a
+// gap in the parser, not a fixture to drop: the test fails when the refusal
+// changes or the file starts to parse.
+// A refusal at the top of the document has an empty `where`.
+const std::map<std::string, std::pair<std::string, std::string>> kExamplesRefused{
+    {"env-variables.yaml",
+     {"",
+      "unsupported key: before_script (prefix a custom key with \"x-\" to keep it)"}},
+    {"plugin-system.yaml",
+     {"", "unsupported key: plugins (prefix a custom key with \"x-\" to keep it)"}},
+};
+
+TEST(Tmuxp, EveryTmuxpExampleParses) {
+  // tmuxp's example catalog, kept with tmuxp's license in tests/fixtures/tmuxp.
+  std::vector<std::filesystem::path> examples;
+  for (const auto& entry :
+       std::filesystem::directory_iterator{LIBTMUX_TMUXP_FIXTURES}) {
+    if (entry.path().extension() == ".yaml") {
+      examples.push_back(entry.path());
+    }
+  }
+  std::sort(examples.begin(), examples.end());
+  ASSERT_GE(examples.size(), 20U)
+      << "the catalog is missing from " << LIBTMUX_TMUXP_FIXTURES;
+
+  for (const auto& path : examples) {
+    SCOPED_TRACE(path.filename().string());
+    std::ifstream reading{path};
+    ASSERT_TRUE(reading.good());
+    std::ostringstream document;
+    document << reading.rdbuf();
+    const auto parsed = parse_tmuxp(document.str());
+    const auto refused = kExamplesRefused.find(path.filename().string());
+    if (refused == kExamplesRefused.end()) {
+      EXPECT_TRUE(parsed.has_value())
+          << parsed.error().where << ": " << parsed.error().reason;
+    } else {
+      ASSERT_FALSE(parsed.has_value()) << "now parses; remove it from kExamplesRefused";
+      EXPECT_EQ(parsed.error().where, refused->second.first);
+      EXPECT_EQ(parsed.error().reason, refused->second.second);
+    }
+  }
 }
 
 TEST(Tmuxp, TheKeysThatTookTheCorpusToTwentyOne) {

@@ -27,6 +27,11 @@ if(LIBTMUX_BUILD_TESTS AND NOT WIN32)
             libtmux::testing)
   target_compile_options(workspace_builder_test PRIVATE -fno-sanitize-recover=undefined)
 
+  # tmuxp's own example catalog, which tmuxp_test.cpp reads file by file.
+  target_compile_definitions(
+    workspace_builder_test
+    PRIVATE LIBTMUX_TMUXP_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/tmuxp")
+
   add_test(NAME consumer.workspace COMMAND workspace_builder_test)
   set_tests_properties(
     consumer.workspace PROPERTIES LABELS "consumer;real-tmux" TIMEOUT 60)
