@@ -1040,6 +1040,11 @@ foreach(
   probe
   flag_field_has_no_string_operations
   numeric_field_has_no_string_operations
+  flag_field_rejects_a_pointer_operand
+  number_field_rejects_a_fractional_operand
+  number_field_rejects_a_character_operand
+  number_field_rejects_a_wide_unsigned_operand
+  number_field_rejects_a_bool_operand
   string_field_has_no_ordering
   cardinality_refuses_a_temporary
   cardinality_refuses_a_produced_element
@@ -1105,3 +1110,36 @@ gtest_discover_tests(
   libtmux_executor_seam_test
   TEST_PREFIX libtmux.executor.
   PROPERTIES LABELS real-tmux TIMEOUT 60)
+
+# The tl::expected API check in cmake/TlExpected.cmake must answer for the copy
+# it is given now, not the one a build directory saw before. The script
+# configures one build directory twice against two fake packages. It compiles
+# two one-line programs, so it is fast, and it needs no network and no tmux.
+add_test(
+  NAME libtmux.cmake.tl_expected_api_check_is_not_cached
+  COMMAND
+    "${CMAKE_COMMAND}" "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
+    "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/tl_expected_stale_cache"
+    "-DCXX_COMPILER=${CMAKE_CXX_COMPILER}" -P
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/tl_expected_stale_cache.cmake")
+set_tests_properties(
+  libtmux.cmake.tl_expected_api_check_is_not_cached PROPERTIES LABELS "libtmux;cmake"
+                                                                 TIMEOUT 120)
+
+# The same script against the module with its `unset` removed must fail, or the
+# test above could not tell a stale cache from a fresh one. It passes only when
+# the script prints the STALE_CACHE_REUSED message: any other failure (a
+# missing compiler, a configure error) does not match, so it cannot pass for the
+# wrong reason. The regular expression replaces the exit status, so there is no
+# WILL_FAIL here.
+add_test(
+  NAME libtmux.cmake.tl_expected_api_check_is_not_cached.detects_a_stale_cache
+  COMMAND
+    "${CMAKE_COMMAND}" "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
+    "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/tl_expected_stale_cache_mutated"
+    "-DCXX_COMPILER=${CMAKE_CXX_COMPILER}" -DDROP_UNSET=ON -P
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/tl_expected_stale_cache.cmake")
+set_tests_properties(
+  libtmux.cmake.tl_expected_api_check_is_not_cached.detects_a_stale_cache
+  PROPERTIES LABELS "libtmux;cmake" TIMEOUT 120 PASS_REGULAR_EXPRESSION
+             "STALE_CACHE_REUSED")

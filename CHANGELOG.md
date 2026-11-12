@@ -19,6 +19,37 @@ was recorded as it landed.
 
 ## Unreleased
 
+### Breaking
+
+- A numeric field in a query takes an integer that is not a `bool` or a
+  character type and that `long long` can hold (`std::uint8_t` and `unsigned
+  int` qualify, `char` and `unsigned long long` do not), and a flag takes a
+  `bool`. `pane::width > 80.9`, `pane::width == 'x'`, `pane::width == ULLONG_MAX`
+  and `pane::active == "false"` no longer compile; each used to compile as a
+  different comparison. On LP64 `std::size_t`, `unsigned long` and
+  `std::uint64_t` are as wide as `long long` and are refused too. Source-breaking. (#146)
+
+  Before: `pane::width == pane_count` with a `std::size_t`
+  After:  `pane::width == static_cast<long long>(pane_count)`
+
+### Server
+
+- One timeout is one deadline. `Server::run` and `Server::try_submit` pay the
+  version probe and the command out of the same budget, so a 200 ms call no
+  longer takes up to 300 ms on a handle whose daemon has not answered yet. A
+  probe that uses the budget fails the call as `timeout` with
+  `delivery == not_started`, and a custom executor receives what is left. (#146)
+
+### Build
+
+- The C++20 build links a `tl::expected` the system provides, and the installed
+  package finds it again, so a `find_package(libtmux)` consumer can include
+  `<tl/expected.hpp>`. It accepts the upstream v1.1.0 install, which declares
+  version 1.0.0, by checking for the `and_then` and `transform` members rather
+  than the version number, and it no longer fails to configure when the package
+  lists several include directories. The installed pkg-config file names each of
+  that package's include directories. (#146)
+
 ## 0.1.0 (2026-11-01)
 
 This is the first release without an `-alpha` tag. It ships the C++ library, the

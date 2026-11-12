@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
+#include <cstdint>
 #include <format>
 #include <iterator>
 #include <ranges>
@@ -82,6 +84,44 @@ static_assert(!ComparesUnequal<decltype(libtmux::pane::title), int>);
 static_assert(!ComparesUnequal<PaneFlag, std::string>);
 static_assert(!std::is_convertible_v<PaneFlag, bool>);
 static_assert(!std::is_convertible_v<libtmux::FilterExpr<libtmux::Pane>, bool>);
+
+template <typename Handle, typename Operand>
+concept ComparesEqual = requires(Handle handle, Operand operand) { handle == operand; };
+template <typename Handle, typename Operand>
+concept ComparesAbove = requires(Handle handle, Operand operand) { handle > operand; };
+
+using PaneWidth = decltype(libtmux::pane::width);
+
+// The legal operands of the two kinds of field, and the ones that look legal
+// and are not. The probes in this directory fail to compile on each rejected
+// one; this states the whole set in one place, so a widening shows up here.
+static_assert(ComparesEqual<PaneFlag, bool>);
+static_assert(!ComparesEqual<PaneFlag, const char*>);
+static_assert(!ComparesEqual<PaneFlag, int>);
+static_assert(!ComparesEqual<PaneFlag, std::string>);
+static_assert(ComparesEqual<PaneWidth, int>);
+static_assert(ComparesEqual<PaneWidth, long>);
+static_assert(ComparesEqual<PaneWidth, long long>);
+static_assert(ComparesEqual<PaneWidth, short>);
+static_assert(ComparesEqual<PaneWidth, unsigned>);
+static_assert(ComparesEqual<PaneWidth, unsigned short>);
+static_assert(ComparesAbove<PaneWidth, int>);
+static_assert(!ComparesEqual<PaneWidth, bool>);
+static_assert(!ComparesEqual<PaneWidth, double>);
+static_assert(!ComparesEqual<PaneWidth, float>);
+static_assert(!ComparesEqual<PaneWidth, char>);
+static_assert(ComparesEqual<PaneWidth, signed char>);
+static_assert(ComparesEqual<PaneWidth, unsigned char>);
+static_assert(ComparesEqual<PaneWidth, std::uint8_t>);
+static_assert(!ComparesEqual<PaneWidth, char16_t>);
+static_assert(!ComparesEqual<PaneWidth, char32_t>);
+static_assert(!ComparesEqual<PaneWidth, wchar_t>);
+static_assert(!ComparesEqual<PaneWidth, char8_t>);
+static_assert(!ComparesEqual<PaneWidth, unsigned long>);
+static_assert(!ComparesEqual<PaneWidth, unsigned long long>);
+static_assert(!ComparesEqual<PaneWidth, std::size_t>);
+static_assert(!ComparesAbove<PaneWidth, double>);
+static_assert(!ComparesEqual<PaneWidth, const char*>);
 
 static_assert(std::is_nothrow_copy_constructible_v<libtmux::AttachCommand>);
 static_assert(std::is_nothrow_move_constructible_v<libtmux::AttachCommand>);
@@ -163,6 +203,10 @@ void uses() {
   // A numeric field offers comparisons.
   (void)(libtmux::window::width > 80);
   (void)(libtmux::window::index <= 9);
+  (void)(libtmux::window::width == 80u);
+  (void)(libtmux::window::width != 80LL);
+  (void)(libtmux::window::width == std::uint8_t{80});
+  (void)(libtmux::window::active == true);
 
   // Every handle is also a ranges projection, and a flag handle a predicate,
   // so the standard algorithms take the same names the filters take.

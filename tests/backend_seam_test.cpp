@@ -27,6 +27,7 @@
 
 #include "acquire.hpp"
 #include "backend.hpp"
+#include "deadline.hpp"
 #include "notification_stream.hpp"
 
 namespace {
@@ -1459,6 +1460,24 @@ TEST(BackendSeam, NotificationDropsBelongToTheCursorThatFellBehind) {
   ASSERT_EQ(slow_tail.size(), 2U);
   EXPECT_EQ(slow_tail.front().body, bytes("two"));
   EXPECT_EQ(notifications.dropped(slow), 1U);
+}
+
+TEST(BackendSeam, ADeadlineClampsBothEndsOfItsBudget) {
+  using libtmux::detail::Deadline;
+  // A budget past the clock's range is a call that waits as long as it takes,
+  // not a signed overflow.
+  const Deadline huge = Deadline::within(std::chrono::milliseconds::max());
+  EXPECT_FALSE(huge.bounded());
+  EXPECT_FALSE(huge.expired());
+  EXPECT_FALSE(huge.remaining().has_value());
+  // A negative budget is already over, and reads as zero left.
+  const Deadline negative = Deadline::within(std::chrono::milliseconds::min());
+  EXPECT_TRUE(negative.bounded());
+  EXPECT_TRUE(negative.expired());
+  EXPECT_EQ(negative.remaining(), std::chrono::milliseconds{0});
+  const Deadline ordinary = Deadline::within(std::chrono::seconds{60});
+  EXPECT_TRUE(ordinary.bounded());
+  EXPECT_FALSE(ordinary.expired());
 }
 
 } // namespace

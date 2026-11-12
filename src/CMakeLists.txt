@@ -61,14 +61,25 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   endif()
 endif()
 
+# Whether the installed package must find `tl::expected` for its consumer. Read
+# by the package config below.
+set(LIBTMUX_TL_EXPECTED_FOUND FALSE)
 if(LIBTMUX_CXX_STANDARD STREQUAL "20")
   include("${PROJECT_SOURCE_DIR}/cmake/TlExpected.cmake")
-  libtmux_resolve_tl_expected(LIBTMUX_TL_EXPECTED_INCLUDE LIBTMUX_TL_EXPECTED_INSTALL)
-  # Never linked, only included. tl::expected is header-only, so linking it
-  # adds nothing but would put the resolved target in our exported link
-  # interface, where a consumer cannot resolve it.
-  target_include_directories(
-    libtmux PUBLIC $<BUILD_INTERFACE:${LIBTMUX_TL_EXPECTED_INCLUDE}>)
+  libtmux_resolve_tl_expected(
+    LIBTMUX_TL_EXPECTED_FOUND LIBTMUX_TL_EXPECTED_INCLUDE LIBTMUX_TL_EXPECTED_INSTALL)
+  if(LIBTMUX_TL_EXPECTED_FOUND)
+    # A copy the system provides is a dependency like any other: linked, so its
+    # whole interface (several include directories, a compile definition)
+    # reaches us and, through the export, a consumer. The installed config
+    # finds it again with find_dependency.
+    target_link_libraries(libtmux PUBLIC tl::expected)
+  else()
+    # The copy this build fetched has no target, only headers. Those are
+    # installed beside ours, so the consumer needs nothing else.
+    target_include_directories(
+      libtmux PUBLIC $<BUILD_INTERFACE:${LIBTMUX_TL_EXPECTED_INCLUDE}>)
+  endif()
   target_compile_definitions(libtmux PUBLIC LIBTMUX_USE_TL_EXPECTED)
   if(LIBTMUX_INSTALL AND LIBTMUX_TL_EXPECTED_INSTALL)
     # Only the copy this build fetched. One the system already provides is
@@ -125,6 +136,17 @@ if(LIBTMUX_INSTALL)
   set(LIBTMUX_PC_CFLAGS "-std=c++${LIBTMUX_CXX_STANDARD}")
   if(LIBTMUX_CXX_STANDARD STREQUAL "20")
     string(APPEND LIBTMUX_PC_CFLAGS " -DLIBTMUX_USE_TL_EXPECTED")
+    if(LIBTMUX_TL_EXPECTED_FOUND)
+      # A copy the system provides lives outside our prefix, and the pc file has
+      # no target to carry its include directories: name each one. The fetched
+      # copy is installed under our prefix and needs nothing here.
+      get_target_property(_libtmux_tl_includes tl::expected INTERFACE_INCLUDE_DIRECTORIES)
+      foreach(_libtmux_tl_dir IN LISTS _libtmux_tl_includes)
+        if(_libtmux_tl_dir AND NOT _libtmux_tl_dir MATCHES "[$]<")
+          string(APPEND LIBTMUX_PC_CFLAGS " -I${_libtmux_tl_dir}")
+        endif()
+      endforeach()
+    endif()
   endif()
   configure_file(
     "${PROJECT_SOURCE_DIR}/cmake/libtmux.pc.in"

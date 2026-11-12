@@ -5,9 +5,11 @@
 #include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <future>
 #include <latch>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <semaphore>
@@ -2051,3 +2053,146 @@ TEST(ServerContract, AServerRunsTheTmuxItsPolicyNames) {
   ASSERT_TRUE(sessions.has_value()) << sessions.error().diagnostic;
   EXPECT_EQ(sessions->size(), 1U);
 }
+
+namespace {
+
+// One deadline covers the version probe and the dispatch that follows it.
+class SlowProbeExecutor final : public libtmux::CommandExecutor {
+public:
+  explicit SlowProbeExecutor(std::chrono::milliseconds probe) : probe_{probe} {}
+
+  [[nodiscard]] libtmux::expected<std::string, libtmux::CommandFailure>
+  run(const libtmux::CommandRequest& command,
+      std::optional<std::chrono::milliseconds> timeout,
+      std::optional<std::size_t>) const override {
+    const auto argv = command.argv();
+    if (argv.front() == "run-shell") {
+      std::this_thread::sleep_for(probe_);
+      const std::string marker = argv.back().substr(0, argv.back().find("#{version}"));
+      return libtmux::unexpected(
+          libtmux::CommandFailure{.kind = libtmux::FailureKind::refused,
+                                  .delivery = DeliveryStatus::replied,
+                                  .exit_code = 1,
+                                  .diagnostic = "unknown command: " + marker + "3.4"});
+    }
+    const std::lock_guard held{mutex_};
+    dispatched = true;
+    dispatch_timeout = timeout;
+    return std::string{"ok\n"};
+  }
+
+  mutable std::mutex mutex_;
+  mutable bool dispatched{false};
+  mutable std::optional<std::chrono::milliseconds> dispatch_timeout;
+
+private:
+  std::chrono::milliseconds probe_;
+};
+
+TEST(ServerContract, TheVersionProbeSpendsTheSameDeadlineAsTheCommand) {
+  using namespace std::chrono_literals;
+  auto executor = std::make_shared<SlowProbeExecutor>(120ms);
+  auto server = Server::over(
+      executor,
+      libtmux::ExecutorOptions{.implementation = libtmux::ServerImplementation::tmux});
+  ASSERT_TRUE(server.has_value());
+
+  const auto answer = server->run({"display-message", "-p", "x"}, 300ms);
+  ASSERT_TRUE(answer.has_value()) << answer.error().diagnostic;
+  ASSERT_TRUE(executor->dispatch_timeout.has_value());
+  EXPECT_LE(*executor->dispatch_timeout, 180ms)
+      << "what is left after a 120 ms probe of 300 ms, not the whole 300 ms";
+  EXPECT_GT(*executor->dispatch_timeout, 0ms);
+}
+
+TEST(ServerContract, AProbeThatUsesTheWholeDeadlineFailsBeforeDispatch) {
+  using namespace std::chrono_literals;
+  auto executor = std::make_shared<SlowProbeExecutor>(250ms);
+  auto server = Server::over(
+      executor,
+      libtmux::ExecutorOptions{.implementation = libtmux::ServerImplementation::tmux});
+  ASSERT_TRUE(server.has_value());
+
+  const auto started = std::chrono::steady_clock::now();
+  const auto answer = server->run({"display-message", "-p", "x"}, 200ms);
+  const auto took = std::chrono::steady_clock::now() - started;
+  ASSERT_FALSE(answer.has_value());
+  EXPECT_EQ(answer.error().kind, libtmux::FailureKind::timeout);
+  EXPECT_EQ(answer.error().delivery, DeliveryStatus::not_started)
+      << "nothing was written, so a retry is safe";
+  EXPECT_FALSE(executor->dispatched);
+  EXPECT_LT(took, 450ms);
+}
+
+// The same for the subprocess transport, through a tmux that is slow to start.
+TEST(ServerContract, ASlowTmuxStartIsPaidOutOfOneDeadline) {
+  using namespace std::chrono_literals;
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  std::filesystem::path directory =
+      std::filesystem::temp_directory_path() / "libtmux-slow-tmux-XXXXXX";
+  std::string pattern = directory.string();
+  ASSERT_NE(::mkdtemp(pattern.data()), nullptr);
+  directory = pattern;
+  const std::filesystem::path wrapper = directory / "tmux";
+  {
+    std::ofstream script{wrapper};
+    script << "#!/bin/sh\nsleep 0.4\nexec tmux \"$@\"\n";
+  }
+  std::filesystem::permissions(wrapper, std::filesystem::perms::owner_all);
+
+  auto server =
+      Server::at_socket_path(fixture->socket_path().string(), {},
+                             libtmux::ExecutionPolicy{.tmux_binary = wrapper});
+  ASSERT_TRUE(server.has_value());
+  const auto started = std::chrono::steady_clock::now();
+  const auto answer = server->run({"display-message", "-p", "x"}, 600ms);
+  const auto took = std::chrono::steady_clock::now() - started;
+  std::filesystem::remove_all(directory);
+
+  ASSERT_FALSE(answer.has_value())
+      << "the probe took 400 ms and the command would take 400 more";
+  EXPECT_EQ(answer.error().kind, libtmux::FailureKind::timeout);
+  EXPECT_LT(took, 750ms) << "one 600 ms deadline, not 600 ms per phase";
+}
+
+// A submission asks for the release before admission and pays for it out of the
+// same deadline as the command it submits.
+TEST(ServerContract, ASlowTmuxStartIsPaidOutOfOneDeadlineOnTheAsyncPath) {
+  using namespace std::chrono_literals;
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  std::filesystem::path directory =
+      std::filesystem::temp_directory_path() / "libtmux-slow-async-XXXXXX";
+  std::string pattern = directory.string();
+  ASSERT_NE(::mkdtemp(pattern.data()), nullptr);
+  directory = pattern;
+  const std::filesystem::path wrapper = directory / "tmux";
+  {
+    std::ofstream script{wrapper};
+    script << "#!/bin/sh\nsleep 0.4\nexec tmux \"$@\"\n";
+  }
+  std::filesystem::permissions(wrapper, std::filesystem::perms::owner_all);
+
+  auto server =
+      Server::at_socket_path(fixture->socket_path().string(), {},
+                             libtmux::ExecutionPolicy{.tmux_binary = wrapper});
+  ASSERT_TRUE(server.has_value());
+  auto runtime = start_runtime();
+  const auto started = std::chrono::steady_clock::now();
+  auto operation = server->try_submit(runtime, {"display-message", "-p", "x"}, 600ms);
+  bool timed_out = !operation.has_value();
+  if (operation.has_value()) {
+    ASSERT_TRUE(operation->wait_for(5s).value_or(false));
+    const auto answer = std::move(*operation).wait();
+    timed_out =
+        !answer.has_value() && answer.error().kind == libtmux::FailureKind::timeout;
+  }
+  const auto took = std::chrono::steady_clock::now() - started;
+  std::filesystem::remove_all(directory);
+
+  EXPECT_TRUE(timed_out) << "the probe took 400 ms and the command would take 400 more";
+  EXPECT_LT(took, 750ms) << "one 600 ms deadline, not 600 ms per phase";
+}
+
+} // namespace

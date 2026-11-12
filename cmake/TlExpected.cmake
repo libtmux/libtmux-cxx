@@ -10,23 +10,63 @@ include(FetchContent)
 # it. It also ignored a copy the system already had, which is the packager's
 # usual complaint.
 #
-# Answers with the include directory to add, which is all a header-only
-# dependency contributes: linking the imported target would put it in this
-# package's exported link interface, where a consumer cannot resolve it.
-function(libtmux_resolve_tl_expected out_include_dir out_install_dir)
-  find_package(tl-expected 1.1 CONFIG QUIET)
+# Answers in three parts:
+#
+#   out_found        TRUE when a copy the system already has was accepted. The
+#                    caller links its imported target `tl::expected`, and the
+#                    installed package config finds it again for a consumer.
+#                    Linking is the only way to carry it: the target's include
+#                    list can hold several directories (v1.1.0 installs
+#                    <prefix>/include and <prefix>/share), and copying that list
+#                    into a generator expression breaks it into pieces.
+#   out_include_dir  Otherwise, the include directory of the copy this build
+#                    fetched, to be added by hand.
+#   out_install_dir  The directory of that fetched copy to install, so a
+#                    consumer finds `<tl/expected.hpp>` under this prefix.
+#
+# The version is not asked of find_package. The v1.1.0 release declares
+# `VERSION 1.0.0` in its own `project()`, so `find_package(tl-expected 1.1)`
+# rejects that release's own install. What the library needs is not a number but
+# an API, and the number cannot say whether it is there, so the found copy is
+# compiled against the two members the public surface and the examples use and
+# is refused, with the reason, if either is missing.
+function(libtmux_resolve_tl_expected out_found out_include_dir out_install_dir)
+  set(${out_found} FALSE PARENT_SCOPE)
+  set(${out_include_dir} "" PARENT_SCOPE)
+  set(${out_install_dir} "" PARENT_SCOPE)
+
+  find_package(tl-expected CONFIG QUIET)
   if(TARGET tl::expected)
-    get_target_property(resolved tl::expected INTERFACE_INCLUDE_DIRECTORIES)
-    set(${out_include_dir} "${resolved}" PARENT_SCOPE)
-    # Found on the system, so it is already installed and must not be
-    # installed again under this prefix.
-    set(${out_install_dir} "" PARENT_SCOPE)
-    return()
+    include(CheckCXXSourceCompiles)
+    set(CMAKE_CXX_STANDARD 20)
+    set(CMAKE_REQUIRED_LIBRARIES tl::expected)
+    # The cache would otherwise keep the answer for a copy that has since been
+    # replaced.
+    unset(LIBTMUX_TL_EXPECTED_HAS_API CACHE)
+    check_cxx_source_compiles(
+      "#include <tl/expected.hpp>
+       int main() {
+         tl::expected<int, int> value{1};
+         auto chained = value
+             .and_then([](int v) { return tl::expected<int, int>{v + 1}; })
+             .transform([](int v) { return v + 1; });
+         return chained.value() == 3 ? 0 : 1;
+       }"
+      LIBTMUX_TL_EXPECTED_HAS_API)
+    if(LIBTMUX_TL_EXPECTED_HAS_API)
+      # Found on the system, so it is already installed and must not be
+      # installed again under this prefix.
+      set(${out_found} TRUE PARENT_SCOPE)
+      return()
+    endif()
+    message(STATUS
+      "tl-expected ${tl-expected_VERSION} was found but lacks and_then or "
+      "transform, which libtmux needs; it comes with v1.1.0")
   endif()
 
   if(NOT LIBTMUX_FETCH_DEPS)
     message(FATAL_ERROR
-      "tl::expected 1.1 is required to build with LIBTMUX_CXX_STANDARD=20; "
+      "tl::expected 1.1.0 or newer is required to build with LIBTMUX_CXX_STANDARD=20; "
       "install it, or set LIBTMUX_FETCH_DEPS=ON to use the pinned fallback, "
       "or build with the C++23 default which needs no dependency at all")
   endif()

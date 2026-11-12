@@ -260,7 +260,7 @@ The resolved path pinned by this handle, including a startable path whose server
 ```cpp
 [[nodiscard]] expected<std::string, CommandFailure> run(const CommandRequest& command, std::optional<std::chrono::milliseconds> timeout = {}, std::optional<std::size_t> output_limit = {}) const;
 ```
-Run one command and return its standard output.  The timeout still rides on the call: how long a caller will wait is a property of what they asked for, and listing sessions does not share a deadline with attaching a client. Unset takes the server's `ExecutionPolicy`, which is thirty seconds rather than forever — a floor, not a guess at what this particular command needs. `output_limit` bounds how much of tmux's answer this call will hold. Past it the command reports `truncated` rather than returning a prefix that reads like a complete answer. Unset uses the package default, which is ample for every listing and can be too small for a long scrollback.
+Run one command and return its standard output.  The timeout still rides on the call: how long a caller will wait is a property of what they asked for, and listing sessions does not share a deadline with attaching a client. Unset takes the server's `ExecutionPolicy`, which is thirty seconds rather than forever — a floor, not a guess at what this particular command needs. `output_limit` bounds how much of tmux's answer this call will hold. Past it the command reports `truncated` rather than returning a prefix that reads like a complete answer. Unset uses the package default, which is ample for every listing and can be too small for a long scrollback.  The timeout is one deadline for the whole call. The first command on a handle also asks the daemon which release it is, and that probe is paid out of the same deadline, not a second one: a call given 200 ms is over, with an answer or with `timeout`, in about 200 ms however the time is split. A probe that uses it all fails the call as `timeout` with `delivery == not_started`, before the command is written. A custom executor receives what is left of the deadline as its own timeout.
 
 <a id="libtmux-server-hpp-server-try-submit"></a>
 #### `Server::try_submit`
@@ -268,7 +268,7 @@ Run one command and return its standard output.  The timeout still rides on the 
 ```cpp
 [[nodiscard]] expected<CommandOperation, CommandFailure> try_submit(CommandRuntime& runtime, CommandRequest command, std::optional<std::chrono::milliseconds> timeout = {}, std::optional<std::size_t> output_limit = {}) const;
 ```
-Admit one command to an explicit bounded runtime without waiting for it. A refusal before admission is returned here; an admitted command carries every later transport or tmux failure in its operation.  Admission does not wait for a slot, but the daemon's release is asked before it. A submission to an endpoint whose daemon has not answered yet can block the calling thread on that probe, up to the command's timeout. An empty command is a validation error.
+Admit one command to an explicit bounded runtime without waiting for it. A refusal before admission is returned here; an admitted command carries every later transport or tmux failure in its operation.  Admission does not wait for a slot, but the daemon's release is asked before it. A submission to an endpoint whose daemon has not answered yet can block the calling thread on that probe. The probe and the command share one deadline, read when this is called: the command's timeout is what the probe left. An empty command is a validation error.
 
 <a id="libtmux-server-hpp-server-run-batch"></a>
 #### `Server::run_batch`
@@ -4521,6 +4521,9 @@ Value-semantic filter expressions over explicit snapshots.  An expression owns e
   - [`BoolFieldHandle::operator==`](#libtmux-filter-expr-hpp-boolfieldhandle-operator-2)
   - [`BoolFieldHandle::operator!=`](#libtmux-filter-expr-hpp-boolfieldhandle-operator-3)
 - [`Free symbols`](#libtmux-filter-expr-hpp-free-symbols)
+  - [`is_character_type_v`](#libtmux-filter-expr-hpp-free-symbols-is-character-type-v)
+  - [`FlagOperand`](#libtmux-filter-expr-hpp-free-symbols-flagoperand)
+  - [`NumberOperand`](#libtmux-filter-expr-hpp-free-symbols-numberoperand)
   - [`operator&&`](#libtmux-filter-expr-hpp-free-symbols-operator)
   - [`operator||`](#libtmux-filter-expr-hpp-free-symbols-operator-2)
   - [`operator!`](#libtmux-filter-expr-hpp-free-symbols-operator-3)
@@ -4994,42 +4997,42 @@ NumberField<Entity> field;
 #### `NumberFieldHandle::operator==`
 
 ```cpp
-[[nodiscard]] FilterExpr<Entity> operator==(long long operand) const;
+template <NumberOperand Operand> [[nodiscard]] FilterExpr<Entity> operator==(Operand operand) const;
 ```
 
 <a id="libtmux-filter-expr-hpp-numberfieldhandle-operator-3"></a>
 #### `NumberFieldHandle::operator!=`
 
 ```cpp
-[[nodiscard]] FilterExpr<Entity> operator!=(long long operand) const;
+template <NumberOperand Operand> [[nodiscard]] FilterExpr<Entity> operator!=(Operand operand) const;
 ```
 
 <a id="libtmux-filter-expr-hpp-numberfieldhandle-operator-4"></a>
 #### `NumberFieldHandle::operator<`
 
 ```cpp
-[[nodiscard]] FilterExpr<Entity> operator<(long long operand) const;
+template <NumberOperand Operand> [[nodiscard]] FilterExpr<Entity> operator<(Operand operand) const;
 ```
 
 <a id="libtmux-filter-expr-hpp-numberfieldhandle-operator-5"></a>
 #### `NumberFieldHandle::operator<=`
 
 ```cpp
-[[nodiscard]] FilterExpr<Entity> operator<=(long long operand) const;
+template <NumberOperand Operand> [[nodiscard]] FilterExpr<Entity> operator<=(Operand operand) const;
 ```
 
 <a id="libtmux-filter-expr-hpp-numberfieldhandle-operator-6"></a>
 #### `NumberFieldHandle::operator>`
 
 ```cpp
-[[nodiscard]] FilterExpr<Entity> operator>(long long operand) const;
+template <NumberOperand Operand> [[nodiscard]] FilterExpr<Entity> operator>(Operand operand) const;
 ```
 
 <a id="libtmux-filter-expr-hpp-numberfieldhandle-operator-7"></a>
 #### `NumberFieldHandle::operator>=`
 
 ```cpp
-[[nodiscard]] FilterExpr<Entity> operator>=(long long operand) const;
+template <NumberOperand Operand> [[nodiscard]] FilterExpr<Entity> operator>=(Operand operand) const;
 ```
 
 <a id="libtmux-filter-expr-hpp-boolfieldhandle"></a>
@@ -5066,18 +5069,42 @@ BoolField<Entity> field;
 #### `BoolFieldHandle::operator==`
 
 ```cpp
-[[nodiscard]] FilterExpr<Entity> operator==(bool expected) const;
+template <FlagOperand Operand> [[nodiscard]] FilterExpr<Entity> operator==(Operand expected) const;
 ```
 
 <a id="libtmux-filter-expr-hpp-boolfieldhandle-operator-3"></a>
 #### `BoolFieldHandle::operator!=`
 
 ```cpp
-[[nodiscard]] FilterExpr<Entity> operator!=(bool expected) const;
+template <FlagOperand Operand> [[nodiscard]] FilterExpr<Entity> operator!=(Operand expected) const;
 ```
 
 <a id="libtmux-filter-expr-hpp-free-symbols"></a>
 ### `Free symbols`
+
+<a id="libtmux-filter-expr-hpp-free-symbols-is-character-type-v"></a>
+#### `is_character_type_v`
+
+```cpp
+template <typename Type> inline constexpr bool is_character_type_v = std::same_as<Type, char> || std::same_as<Type, wchar_t> || std::same_as<Type, char8_t> || std::same_as<Type, char16_t> || std::same_as<Type, char32_t>;
+```
+Whether `Type` is a type whose purpose is to name a character. `char` is one; `signed char` and `unsigned char` (`int8_t`, `uint8_t`) are small integers and are not.
+
+<a id="libtmux-filter-expr-hpp-free-symbols-flagoperand"></a>
+#### `FlagOperand`
+
+```cpp
+template <typename Type> concept FlagOperand = std::same_as<Type, bool>;
+```
+What a flag field is compared with: a `bool`, and nothing that merely converts to one. A pointer converts to `bool`, so `field == "false"` once built a node that tested for true.
+
+<a id="libtmux-filter-expr-hpp-free-symbols-numberoperand"></a>
+#### `NumberOperand`
+
+```cpp
+template <typename Type> concept NumberOperand = std::integral<Type> && !std::same_as<Type, bool> && !is_character_type_v<Type> && std::in_range<long long>(std::numeric_limits<Type>::max()) && std::in_range<long long>(std::numeric_limits<Type>::min());
+```
+What a numeric field is compared with: an integer that is neither a `bool` nor a character type, and whose every value the field's `long long` holds. A floating-point operand would be truncated, a character would become its code, and an unsigned type as wide as `long long` could wrap to a negative number, so none of them is an operand; `std::uint8_t` and `unsigned int` are. A caller who means one of the refused types converts it first and owns the conversion.
 
 <a id="libtmux-filter-expr-hpp-free-symbols-operator"></a>
 #### `operator&&`
