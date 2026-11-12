@@ -651,7 +651,7 @@ struct CommandRuntime::State final {
       observation = std::make_shared<Observation>(
           Observation{.callback = std::move(*observer),
                       .command = detail::rendered_command(command),
-                      .argv = command.argv(),
+                      .argv = detail::redacted_argv(command),
                       .failure = accepted_internal_failure(
                           "the runtime could not translate this command result"),
                       .failed = false});
