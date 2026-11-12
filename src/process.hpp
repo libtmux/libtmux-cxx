@@ -108,6 +108,9 @@ struct ProcessTransportEntry final {
 run_process(const ProcessRequest& request);
 
 #if !defined(_WIN32)
+[[nodiscard]] int poll_timeout(std::chrono::steady_clock::time_point boundary,
+                               std::chrono::steady_clock::time_point now);
+
 using ProcessOutputObserver =
     std::function<void(std::string_view stream, std::string_view bytes)>;
 enum class DescendantPolicy { leave_running, terminate };

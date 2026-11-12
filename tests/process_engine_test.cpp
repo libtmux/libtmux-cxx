@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <semaphore>
@@ -528,3 +529,18 @@ TEST(ProcessEngine, ShutdownWaitsForALaunchAlreadyInFlight) {
 }
 
 } // namespace
+
+TEST(ProcessTimeout, ExpiresRoundsUpAndSaturates) {
+  using namespace std::chrono;
+  const steady_clock::time_point now{};
+  const auto timeout = [&](nanoseconds remaining) {
+    return libtmux::detail::poll_timeout(now + remaining, now);
+  };
+  EXPECT_EQ(timeout(-1ns), 0);
+  EXPECT_EQ(timeout(0ns), 0);
+  EXPECT_EQ(timeout(1ns), 1);
+  EXPECT_EQ(timeout(1000001ns), 2);
+  constexpr auto maximum = std::numeric_limits<int>::max();
+  EXPECT_EQ(timeout(milliseconds{maximum}), maximum);
+  EXPECT_EQ(timeout(milliseconds{static_cast<long long>(maximum) + 1}), maximum);
+}
