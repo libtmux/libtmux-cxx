@@ -1,0 +1,6 @@
+{
+  "tools/schema/generate_records.cpp": "4d1c34eff610464b0cd2c402c25f487918965103e1a42285b2035917b12225d2",
+  ".clang-format": "fc54cc53943a9884807d139a25df7bc88f15b11573f5a36f429d748f78ea076b",
+  "tools/schema/generate_records.py": "c4858f430026f42af85545c6813a41d0ecf679165d5d648e78565716c1b417f3",
+  "apps/mcp/src/output_records.generated.hpp": "f7b9b7c06065bba8a457c7850ff7c074cd5d309eee5847b38cbcd732337a3c13"
+}
