@@ -21,6 +21,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -589,6 +590,56 @@ TEST(ControlBackedServer, RefusesInTheShapeALaunchDoes) {
   EXPECT_EQ(wire.error().delivery, launched.error().delivery);
   EXPECT_EQ(wire.error().exit_code, launched.error().exit_code);
   EXPECT_EQ(wire.error().diagnostic, launched.error().diagnostic);
+}
+
+// The control transport quotes every argument, so a `;` that is data needs no
+// escape there; what it needs is to be told apart from a batch's separator.
+TEST(ControlBackedServer, DeliversALoneSeparatorAndATrailingOneAsText) {
+  LIBTMUX_REQUIRES_TMUX(3, 7, "library-managed control mode");
+  auto fixture = libtmux::test::ScopedTmuxServer::start();
+  ASSERT_TRUE(fixture.has_value()) << fixture.error();
+  auto launching = Server::at_socket_path(fixture->socket_path().string());
+  ASSERT_TRUE(launching.has_value()) << launching.error().diagnostic;
+  auto controlled = launching->over_control(fixture->session_name());
+  ASSERT_TRUE(controlled.has_value()) << controlled.error().message;
+  ASSERT_EQ(controlled->capabilities().backend, libtmux::BackendKind::control);
+
+  const auto session = controlled->session(fixture->session_name());
+  ASSERT_TRUE(session.has_value()) << session.error().diagnostic;
+  const auto window = session->new_window({.name = "echo", .shell_command = "cat"});
+  ASSERT_TRUE(window.has_value()) << window.error().diagnostic;
+  const auto panes = window->panes();
+  ASSERT_TRUE(panes.has_value() && !panes->empty());
+  const libtmux::Pane& pane = panes->front();
+
+  for (const std::string_view text : {"C;", ";", "D"}) {
+    ASSERT_TRUE(pane.send_text(text).has_value()) << text;
+  }
+  ASSERT_TRUE(pane.send_key("Enter").has_value());
+
+  std::string captured;
+  for (int attempt = 0; attempt < 200; ++attempt) {
+    const auto text = pane.capture();
+    captured = text.has_value() ? *text : std::string{};
+    if (std::ranges::count(captured, 'D') >= 2) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds{25});
+  }
+  EXPECT_NE(captured.find("C;;D"), std::string::npos) << captured;
+
+  // Two commands in one group: the data stays in its command, and the
+  // separator still splits them.
+  libtmux::CommandBatch batch;
+  ASSERT_TRUE(batch.add({"set-option", "-g", "@first", ";"}));
+  ASSERT_TRUE(batch.add({"set-option", "-g", "@second", "kept;"}));
+  ASSERT_TRUE(controlled->run_batch(batch).has_value());
+  const auto first = launching->run({"show-options", "-gv", "@first"});
+  ASSERT_TRUE(first.has_value()) << first.error().diagnostic;
+  EXPECT_EQ(*first, ";\n");
+  const auto second = launching->run({"show-options", "-gv", "@second"});
+  ASSERT_TRUE(second.has_value()) << second.error().diagnostic;
+  EXPECT_EQ(*second, "kept;\n");
 }
 
 // Each client is attached, so a caller counting clients sees them.

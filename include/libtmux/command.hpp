@@ -119,6 +119,8 @@ struct CommandFailure {
   return text;
 }
 
+class CommandBatch;
+
 /// Whether an argument may appear in a diagnostic, a log, or an error message.
 enum class ArgumentSensitivity : std::uint8_t { public_value, secret };
 
@@ -165,15 +167,30 @@ public:
     return sensitive_parts_;
   }
 
+  /// Whether this is the `;` a `CommandBatch` puts between its commands. Every
+  /// other argument, including one that is exactly `;` or ends in one, is data.
+  [[nodiscard]] bool is_separator() const noexcept { return separator_; }
+
 private:
+  friend class CommandBatch;
+
+  [[nodiscard]] static CommandArgument separator() {
+    CommandArgument argument{";"};
+    argument.separator_ = true;
+    return argument;
+  }
+
   std::string value_;
   std::vector<std::string> sensitive_parts_;
+  bool separator_{false};
 };
 
 /// One tmux command as argv, with no shell between it and tmux.
 ///
 /// Arguments are passed as separate words, so a value holding a space, a quote
-/// or a `;` arrives whole and nothing here needs escaping.
+/// or a `;` arrives whole and nothing here needs escaping. That includes an
+/// argument that is exactly `;`: only the separator a `CommandBatch` adds
+/// between its commands is one, and `CommandArgument::is_separator` says which.
 class CommandRequest {
 public:
   CommandRequest() = default;
@@ -300,6 +317,11 @@ struct ExecutionPolicy {
 /// grouped commands — there is no second method to implement, but the
 /// separators must reach tmux as they are. A transport that interprets or drops
 /// them turns one fail-fast group into something else without saying so.
+///
+/// Only an argument for which `CommandArgument::is_separator` holds is a
+/// separator. A data argument that is `;` or ends in one reaches tmux with a
+/// backslash before that `;`, or tmux reads it as the end of the command, and a
+/// transport that sends `argv()` as it stands loses the character.
 class CommandExecutor {
 public:
   CommandExecutor() = default;

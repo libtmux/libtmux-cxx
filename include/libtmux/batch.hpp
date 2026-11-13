@@ -4,8 +4,8 @@
 //
 // tmux accepts multiple commands in a single invocation separated by a `;`
 // argument. Because the core execs argv directly and never goes through a
-// shell, the separator is a bare `;` element — there is no backslash to escape
-// and no quoting to get wrong.
+// shell, the separator is a bare `;` element, marked as one so a data argument
+// that is also `;` is never mistaken for it.
 //
 // A batch is one fail-fast group: tmux stops at the first command that errors.
 // That is why a batch is a distinct type from a list of independent requests,
@@ -23,6 +23,8 @@ LIBTMUX_NAMESPACE_BEGIN
 inline constexpr std::string_view kCommandSeparator = ";";
 
 /// The argv a chain becomes: commands joined by tmux's separator.
+///
+/// A `;` inside a command is data, however it is spelled, and never ends it.
 ///
 /// An empty command is rejected rather than emitted, because tmux reads two
 /// adjacent separators as the next command's first argument.
@@ -48,7 +50,7 @@ public:
     CommandRequest result;
     for (const CommandRequest& command : commands_) {
       if (!result.empty()) {
-        result.emplace_back(kCommandSeparator);
+        result.push_back(CommandArgument::separator());
       }
       for (const CommandArgument& argument : command.arguments()) {
         result.push_back(argument);

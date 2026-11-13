@@ -1,4 +1,5 @@
 #include "libtmux/server.hpp"
+#include "libtmux/batch.hpp"
 #include "libtmux/format.hpp"
 
 #include <algorithm>
@@ -272,8 +273,8 @@ public:
           const std::lock_guard guard{version_cache_mutex_};
           known = checked_version_;
         }
-        if (auto refusal =
-                support::commands::refuse_literal(command.argv(), known, true)) {
+        if (auto refusal = support::commands::refuse_literal(detail::wire_argv(command),
+                                                             known, true)) {
           return report_failure(command, std::move(*refusal));
         }
       }
@@ -290,13 +291,17 @@ public:
     const CommandRequest* sent = &command;
     CommandRequest fenced;
     if (!fenced_token.empty()) {
-      for (const detail::Argument& argument :
-           support::versions::version_fence(fenced_token, fence_marker_)) {
-        fenced.push_back(argument.value);
+      // The fence ends in the separator, which only a batch can write.
+      auto fence_words = support::versions::version_fence(fenced_token, fence_marker_);
+      fence_words.pop_back();
+      CommandRequest fence;
+      for (const detail::Argument& argument : fence_words) {
+        fence.push_back(argument.value);
       }
-      for (const CommandArgument& argument : command.arguments()) {
-        fenced.push_back(argument);
-      }
+      CommandBatch fenced_batch;
+      static_cast<void>(fenced_batch.add(std::move(fence)));
+      static_cast<void>(fenced_batch.add(command));
+      fenced = fenced_batch.request();
       sent = &fenced;
     }
     const auto started = std::chrono::steady_clock::now();
@@ -511,21 +516,17 @@ constexpr std::array kAnsweredInBlock{
   return std::ranges::find(kAnsweredInBlock, name) != kAnsweredInBlock.end();
 }
 
-// Splits a flattened batch at its `;` elements. Absent when an argument ends in
-// `;` without being one: tmux would split there too, and this cannot tell a
-// separator from data the way tmux's own parser does.
-[[nodiscard]] std::optional<std::vector<std::vector<std::string>>>
-commands_in(const std::vector<std::string>& argv) {
+// Splits a flattened batch at its separators. A `;` anywhere else is data, and
+// stays in its command: the control line quotes every argument.
+[[nodiscard]] std::vector<std::vector<std::string>>
+commands_in(const CommandRequest& request) {
   std::vector<std::vector<std::string>> commands(1);
-  for (const std::string& argument : argv) {
-    if (argument == ";") {
+  for (const CommandArgument& argument : request.arguments()) {
+    if (argument.is_separator()) {
       commands.emplace_back();
       continue;
     }
-    if (argument.ends_with(';')) {
-      return std::nullopt;
-    }
-    commands.back().push_back(argument);
+    commands.back().push_back(argument.value());
   }
   return commands;
 }
@@ -539,15 +540,13 @@ public:
   [[nodiscard]] expected<std::string, CommandFailure>
   run(const CommandRequest& command, std::optional<std::chrono::milliseconds> timeout,
       std::optional<std::size_t> output_limit) const override {
-    const std::vector<std::string> argv = command.argv();
-    const auto commands = commands_in(argv);
-    if (!commands.has_value() || !std::ranges::all_of(*commands, [](const auto& each) {
-          return answered_in_block(each);
-        })) {
+    const auto commands = commands_in(command);
+    if (!std::ranges::all_of(
+            commands, [](const auto& each) { return answered_in_block(each); })) {
       return launching_.run(command, timeout, output_limit);
     }
     ControlRequest request;
-    for (const auto& each : *commands) {
+    for (const auto& each : commands) {
       request.group.push_back(ControlCommand{.argv = each});
     }
     Connection& connection =

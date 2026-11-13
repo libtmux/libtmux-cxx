@@ -19,6 +19,23 @@ was recorded as it landed.
 
 ## Unreleased
 
+### Breaking
+
+- A `;` argument is data. `Pane::send_text(";")`, `Session::set_option` and
+  every other call that passes caller text now deliver an argument that is
+  exactly `;`, or ends in one, to tmux as text, on the subprocess and control
+  transports. Before, a lone `;` ended the tmux command, so `send_text(";")`
+  returned success and sent nothing. Only the separator a `CommandBatch`
+  places between its commands separates them, and `CommandArgument::is_separator`
+  tells the two apart, so a custom executor that forwards `argv()` to tmux
+  escapes a data `;` itself. A `;` written by hand into a `CommandRequest`
+  passed to `Server::run` no longer chains commands. Behaviour-breaking;
+  ABI-breaking, since `CommandArgument` gains a member; source-compatible. (#152)
+
+  Before: `server.run({"list-buffers", ";", "delete-buffer", "-b", "x"})`
+  After:  `server.run_batch(batch)` with the two commands added to a
+  `CommandBatch`
+
 ## 0.1.0 (2026-11-01)
 
 This is the first release without an `-alpha` tag. It ships the C++ library, the
