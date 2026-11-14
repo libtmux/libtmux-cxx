@@ -439,8 +439,9 @@ error ([`tests/compile/`](tests/compile/)):
 
 [`Session::new_window`][ref-session-new_window] and
 [`Window::split`][ref-window-split] build an arrangement without composing a tmux
-argument, and [`Pane::send_line`][ref-pane-send_line] types text and Enter in one
-call:
+argument, [`Window::resize`][ref-window-resize] and
+[`Pane::set_width`][ref-pane-set_width] size it, and
+[`Pane::send_line`][ref-pane-send_line] types text and Enter in one call:
 
 ```cpp
 // Given: const libtmux::Session& session
@@ -471,6 +472,9 @@ call:
 
 Every target is the id tmux gave the object, so a window called `my:window`
 cannot redirect an operation.
+
+[`Pane::kill`][ref-pane-kill], [`Window::kill`][ref-window-kill] and
+[`Session::kill`][ref-session-kill] close what they name.
 
 ### [`Pane::wait_for_text`][ref-pane-wait_for_text]: wait for what a command prints
 
@@ -651,6 +655,11 @@ if (project.has_value()) {
 ```
 
 This prints `@project is libtmux`.
+
+A hook runs a tmux command when an event fires.
+[`Session::set_hook`][ref-session-set_hook] sets one on a session and
+[`Session::hooks`][ref-session-hooks] lists them;
+[`Server::set_global_hook`][ref-server-set_global_hook] sets one for every session.
 
 More: [options and hooks][topic-options].
 
@@ -1397,8 +1406,10 @@ MIT. See [LICENSE](LICENSE).
 [ref-pane-break_out]: https://libtmux.org/en/cxx/latest/reference/libtmux-pane-break_out/
 [ref-pane-capture]: https://libtmux.org/en/cxx/latest/reference/libtmux-pane-capture/
 [ref-pane-expand]: https://libtmux.org/en/cxx/latest/reference/libtmux-pane-expand/
+[ref-pane-kill]: https://libtmux.org/en/cxx/latest/reference/libtmux-pane-kill/
 [ref-pane-send_line]: https://libtmux.org/en/cxx/latest/reference/libtmux-pane-send_line/
 [ref-pane-session]: https://libtmux.org/en/cxx/latest/reference/libtmux-pane-session/
+[ref-pane-set_width]: https://libtmux.org/en/cxx/latest/reference/libtmux-pane-set_width/
 [ref-pane-wait_for_text]: https://libtmux.org/en/cxx/latest/reference/libtmux-pane-wait_for_text/
 [ref-pane-window]: https://libtmux.org/en/cxx/latest/reference/libtmux-pane-window/
 [ref-pane]: https://libtmux.org/en/cxx/latest/reference/libtmux-pane/
@@ -1417,14 +1428,18 @@ MIT. See [LICENSE](LICENSE).
 [ref-server-run_batch]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-run_batch/
 [ref-server-run_chain]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-run_chain/
 [ref-server-sessions]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-sessions/
+[ref-server-set_global_hook]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-set_global_hook/
 [ref-server-startable_at_socket_path]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-startable_at_socket_path/
 [ref-server-try_submit]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-try_submit/
 [ref-server-windows]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-windows/
 [ref-server]: https://libtmux.org/en/cxx/latest/reference/libtmux-server/
 [ref-servercapabilities]: https://libtmux.org/en/cxx/latest/reference/libtmux-servercapabilities/
 [ref-serverfeature]: https://libtmux.org/en/cxx/latest/reference/libtmux-serverfeature/
+[ref-session-hooks]: https://libtmux.org/en/cxx/latest/reference/libtmux-session-hooks/
+[ref-session-kill]: https://libtmux.org/en/cxx/latest/reference/libtmux-session-kill/
 [ref-session-new_window]: https://libtmux.org/en/cxx/latest/reference/libtmux-session-new_window/
 [ref-session-option]: https://libtmux.org/en/cxx/latest/reference/libtmux-session-option/
+[ref-session-set_hook]: https://libtmux.org/en/cxx/latest/reference/libtmux-session-set_hook/
 [ref-session-set_option]: https://libtmux.org/en/cxx/latest/reference/libtmux-session-set_option/
 [ref-session-windows]: https://libtmux.org/en/cxx/latest/reference/libtmux-session-windows/
 [ref-session]: https://libtmux.org/en/cxx/latest/reference/libtmux-session/
@@ -1437,8 +1452,10 @@ MIT. See [LICENSE](LICENSE).
 [ref-waitoptions]: https://libtmux.org/en/cxx/latest/reference/libtmux-waitoptions/
 [ref-waitpath]: https://libtmux.org/en/cxx/latest/reference/libtmux-waitpath/
 [ref-waitresult]: https://libtmux.org/en/cxx/latest/reference/libtmux-waitresult/
+[ref-window-kill]: https://libtmux.org/en/cxx/latest/reference/libtmux-window-kill/
 [ref-window-panes]: https://libtmux.org/en/cxx/latest/reference/libtmux-window-panes/
 [ref-window-refresh]: https://libtmux.org/en/cxx/latest/reference/libtmux-window-refresh/
+[ref-window-resize]: https://libtmux.org/en/cxx/latest/reference/libtmux-window-resize/
 [ref-window-split]: https://libtmux.org/en/cxx/latest/reference/libtmux-window-split/
 [ref-window]: https://libtmux.org/en/cxx/latest/reference/libtmux-window/
 [tmux]: https://github.com/tmux/tmux
