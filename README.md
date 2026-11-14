@@ -1172,6 +1172,10 @@ orders releases: `3.7 < 3.7a < 3.7b`, and `next-X.Y` and `X.Y-rcN` precede
   an undated `master` are refused with
   [`FailureKind::unsupported`][ref-failurekind] before the command has any
   effect.
+- **Literal commands** are read the way tmux reads them, under an alias or any
+  unique prefix. A command inside a string tmux parses itself, such as an
+  `if-shell` body, is sent as written
+  ([details](docs/compatibility.md#commands-the-checks-do-not-read)).
 - **Known tmux defects** are refused before dispatch, or avoided by typed calls
   such as [`Pane::break_out`][ref-pane-break_out].
 - [`docs/compatibility.md`](docs/compatibility.md) covers the probe, older
