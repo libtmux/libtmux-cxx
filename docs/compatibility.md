@@ -1,8 +1,8 @@
 # Compatibility
 
 The tmux releases the library accepts, how it refuses the rest, and what it
-cannot promise. The [README](../README.md#compatibility) keeps the floor, the
-capability table and the known defects; this page is the rest of the contract.
+cannot promise. The [README](../README.md#compatibility) keeps the floor; this
+page holds the rest.
 
 ## The floor
 
@@ -41,10 +41,59 @@ This assumes tmux's built-in commands keep their meaning: a `command-alias`
 that redefines one of the commands the library uses to ask is outside what is
 qualified.
 
+## Optional features by release
+
+A feature that needs a newer daemon says so, is refused before it has an
+effect, and does not raise the floor for anything else. The daemon decides, not
+the client executable.
+
+| Feature | Daemon | Below it |
+|---|---|---|
+| Control mode: `Server::control`, `control_with_options`, `over_control`, `Connection::connect` | 3.7 | Refused, naming 3.7, before any client attaches ([why](#control-mode)). Attach on 3.7 and newer, idle only |
+| `wait_for_text` streaming | 3.7 | Polls the pane; control mode is never tried |
+| `Buffer::remove`, a literal `delete-buffer -b` or `set-buffer -b -n`, the MCP `paste_text` staging buffer | 3.4 | `FailureKind::unsupported`, before any buffer is touched ([why](#named-buffers)) |
+| `:` or `.` in session and window names, typed or literal | not exactly 3.7 | `FailureKind::validation`, before dispatch ([why](#names-with-a-colon-or-a-period)) |
+| Mirrored `main-*` presets, typed or in a literal `select-layout` | 3.5 | `FailureKind::validation`, before dispatch |
+| JSON layouts, typed or in a literal `select-layout` | 3.8 | `FailureKind::validation`, before dispatch |
+| A layout string tmux cannot read, typed or literal | never sent | `FailureKind::validation` on every release, before dispatch ([why](#unreadable-layout-strings)) |
+| A literal `refresh-client -l`, under any alias or unique prefix | 3.6a | `FailureKind::unsupported`, before dispatch; no typed call ([why](#clipboard-query)) |
+| A literal `break-pane` without `-n`, through `Server::run`, a batch or `Connection::execute` | not exactly 3.7 | `FailureKind::validation`, in any spelling and in a `;` list; `Pane::break_out` names the window itself ([why](#break-pane)) |
+
+The gates that have a machine-readable entry are in
+[`capabilities.json`](../capabilities.json).
+
+## What differs across the range
+
+tmux does not answer identically across the range, and where it cannot the
+library cannot either. Each of these is tested only from the release that
+provides it:
+
+| Needs | Capability |
+|---|---|
+| tmux 3.4 | `%message` delivered to an attached control client |
+| tmux 3.4 | Notification-shaped command output kept in the block body |
+| tmux 3.6 | The created-window report when breaking a window's only pane |
+| tmux 3.8 | JSON saved layouts, `{"V":2,...` |
+
+Two are tmux defects that a later release fixed, so the affected window is
+closed at both ends:
+
+| Broken on | What tmux does |
+|---|---|
+| tmux 3.4 – 3.5 | Echoes a non-UTF-8 byte back as its octal escape rather than the byte |
+| tmux 3.4 | Adds a backslash before `$` when an option value it printed is set again |
+
+A split carrying a percentage is spelled `-l 25%` rather than the `-p 25` that
+tmux 3.4 removed, so it works on every supported release. Python libtmux still
+emits `-p`.
+
+`Server::run_shell` does not capture the job's output, so the 3.3 to 3.4
+`run-shell` stdout defect does not reach it.
+
 ## Why a feature is refused
 
-The README lists each optional feature and the release it needs. The causes
-sit here, one per section.
+The table above lists each optional feature and the release it needs. The
+causes sit here, one per section.
 
 ### Control mode
 
@@ -88,11 +137,15 @@ ignored. 3.7a fixes both ([`CHANGES`](https://github.com/tmux/tmux/blob/3.7a/CHA
 
 ## Commands the checks do not read
 
-The literal-command checks read a command's own words. A command carried inside
-a string that tmux parses itself is sent as written: the body of `if-shell`,
-the argument of `run-shell -C`, a brace block, a hook, a key binding or a
-sourced file. For example, `if-shell -F 1 'break-pane -d'` passes the checks
-unchanged. The affected commands:
+A literal command is read the way tmux reads it: under its alias or any unique
+prefix, and in each position of a `;` list. That holds for `Server::run`,
+batches and chains, asynchronous submissions, `Server::over_control` and
+`Connection::execute`.
+
+A command carried inside a string that tmux parses itself is sent as written:
+the body of `if-shell`, the argument of `run-shell -C`, a brace block, a hook, a
+key binding or a sourced file. For example, `if-shell -F 1 'break-pane -d'`
+passes the checks unchanged. The affected commands:
 
 | Command | Releases | What happens |
 |---|---|---|
