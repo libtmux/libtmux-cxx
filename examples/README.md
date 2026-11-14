@@ -1,11 +1,9 @@
 # Examples
 
 Programs that read top to bottom, plus larger consumers. The POSIX examples
-run against a real tmux server of their own as CTest cases. The native Windows
-psmux example uses only that preview's safe typed surface and has a separate
-[native runner](windows/README.md).
-[`consume/`](consume/README.md) is the exception, and deliberately never
-contacts tmux; CI builds and runs it against a real install.
+are CTest cases that run against a tmux server of their own. The Windows psmux
+example has a [native runner](windows/README.md), and
+[`consume/`](consume/README.md) never contacts tmux.
 
 ```console
 $ cmake --build --preset cxx-dev --target libtmux_example_01_tour
@@ -22,23 +20,15 @@ $ ctest --preset cxx-dev -R example
 ```
 
 Each starts a private server through
-[`scratch_server.hpp`](scratch_server.hpp) and kills it on the way out, so
-running one never touches a tmux you are using. That header is four lines over
-`libtmux::testing`, the same fixture the library's own suite runs on — if you
-plan to write tests of your own, that is the thing to read, and
-[`tests/`](tests/README.md) here is a worked example of using it from outside
-the package.
+[`scratch_server.hpp`](scratch_server.hpp) and kills it on the way out, so your
+own tmux is untouched. The header is four lines over `libtmux::testing`;
+[`tests/`](tests/README.md) shows using it from outside the package.
 
-These also build as their own project, against an install rather than this
-build tree:
+These also build as their own project, against an install:
 
 ```console
 $ cmake -S examples -B build/examples -DCMAKE_PREFIX_PATH="$PWD/build/prefix"
 ```
-
-That is the only way to prove an example compiles against what a reader would
-actually install, rather than against a build tree with this repository's
-include paths and warning flags leaking into it.
 
 ## Complete API programs
 
@@ -54,22 +44,19 @@ and error handling and can be built against an installed package.
 | [`02-workspace.cpp`](02-workspace.cpp) | Building an arrangement | Windows, splits, layouts, options, environment — without composing a single tmux argument. |
 | [`03-filter.cpp`](03-filter.cpp) | Finding things | Typed fields, standard ranges, and cardinality that cannot throw. |
 | [`04-errors.cpp`](04-errors.cpp) | What failure looks like | Every way a call can fail and what each one tells you. Nothing throws. |
-| [`05-readme.cpp`](05-readme.cpp) | The README, compiled | Every C++ sample in the top-level README lives here, so none of them can stop working. |
+| [`05-readme.cpp`](05-readme.cpp) | The README, compiled | Every C++ sample in the top-level README lives here. |
 | [`06-streaming.cpp`](06-streaming.cpp) | Watching instead of asking | A control connection held open, tmux's events read as they happen, and pane output as it is printed. Then the same stream from a program that owns its event loop, through the descriptor that goes readable when a take would return something. |
 | [`07-windows-psmux.cpp`](07-windows-psmux.cpp) | The Windows preview | Connect to an existing session and make exact, read-only entity queries. Its [native runner](windows/README.md) also wraps the MCP server in an isolated fixture. |
 | [`08-quickstart.cpp`](08-quickstart.cpp) | The README's quick start | A whole program on a private server: start a session, type a command, wait for its answer. Its output is compared with [`08-quickstart.out`](08-quickstart.out). |
 
 If you read one, read [`04-errors.cpp`](04-errors.cpp) second. The error model
-is the part of this library least like the Python one, and it is easier to see
-in a program than in prose.
+is the part of this library least like the Python one.
 
 ### Quoting code in the README
 
 The top-level README quotes [`08-quickstart.cpp`](08-quickstart.cpp) whole and
 named regions of [`05-readme.cpp`](05-readme.cpp) verbatim. A region is a span
-between two markers carrying the same name, unique in the file. It is dedented
-before comparing, so a region nested inside `main` matches the block the README
-shows at column zero:
+between two markers carrying the same name, unique in the file:
 
 ```cpp
   // #region chain
@@ -77,15 +64,13 @@ shows at column zero:
   // so a malformed batch costs nothing.
   libtmux::Chain chain;
   chain.new_window("a:b", "unreachable");
-  std::printf("chain valid: %s\n", chain.valid() ? "yes" : "no"); // no
+  std::cout << std::format("chain valid: {}\n", chain.valid()); // false
   // #endregion chain
 ```
 
-[`check_readme.py`](../tools/docs/check_readme.py) fails the build when a block
-matches no region, and equally when a region nothing quotes goes stale — code
-that compiles but that no reader ever sees is the other way a sample rots.
-
-The loop runs one way. Edit the example, run it, then bring the quote across:
+[`check_readme.py`](../tools/docs/check_readme.py) fails when a block matches no
+region, and when a region nothing quotes goes stale. Edit the example, run it,
+then bring the quote across:
 
 ```console
 $ python3 tools/docs/check_readme.py \
@@ -95,9 +80,8 @@ $ python3 tools/docs/check_readme.py \
     --readme docs/runtime.md
 ```
 
-`--fix` matches a block to a region by its first line, so a block that has
-drifted past recognition is left alone and reported rather than quietly
-replaced with the wrong region.
+`--fix` matches a block to a region by its first line; a block that matches
+none is left alone and reported.
 
 ## Consuming the package from outside
 
@@ -110,9 +94,6 @@ find_package(libtmux REQUIRED)
 target_link_libraries(your_target PRIVATE libtmux::libtmux)
 ```
 
-It is built against a real install in CI, so the package config it relies on
-cannot rot.
-
 ## The workspace builder
 
 [`workspace/`](workspace/README.md) is larger, and is not really an example: it is a
@@ -120,12 +101,8 @@ consumer that exists to put weight on the public surface and report where that
 surface is awkward. It builds a described session, and reads
 [tmuxp](https://tmuxp.git-pull.com) documents.
 
-It keeps its YAML parser to itself, so the library links none of it.
-
-That pressure has paid: running tmuxp's own example documents through it
-found `environment:` and `window_index:` missing from the C++ surface, and a
-bug where every creation call carrying a shell command came back unreadable.
-The findings and what remains unread are in
+It keeps its YAML parser to itself, so the library links none of it. What
+tmuxp's own documents found is in
 [`docs/design/workspace-corpus.md`](../docs/design/workspace-corpus.md).
 
 ```console

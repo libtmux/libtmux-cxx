@@ -2,12 +2,9 @@
 
 A separate project, on purpose.
 
-Everything here arrives through `find_package(libtmux COMPONENTS testing)`.
-There is no path into the library's build tree, no private header, and no
-compile definition carrying an answer the library's own configure step already
-worked out. If this suite can test tmux code with nothing but the installed
-package, so can anybody — and that claim is only worth something if it is
-checked the hard way, from outside.
+Everything here arrives through `find_package(libtmux COMPONENTS testing)`: no
+path into the library's build tree, no private header. If this suite can test
+tmux code with nothing but the installed package, so can anybody.
 
 ```console
 $ cmake -S examples -B build/examples -DCMAKE_PREFIX_PATH="$PWD/build/prefix"

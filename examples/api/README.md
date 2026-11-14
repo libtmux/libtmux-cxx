@@ -5,9 +5,8 @@ checked errors, and cleanup. They use the public `libtmux::testing` fixture to
 own a private tmux server. Application code uses `libtmux::Server` to address
 its server; the fixture only supplies the isolated daemon for these examples.
 
-Use Clang 18 with libc++ 18, CMake 3.25 or newer, Ninja, and tmux 3.3a or newer.
-The fixture requires POSIX; these programs do not describe the Windows psmux
-preview.
+Needs clang with libc++, CMake 3.25 or newer, Ninja and tmux 3.3a or newer. The
+fixture requires POSIX; the Windows psmux preview is not covered.
 
 | Program | Behavior |
 | --- | --- |
@@ -56,23 +55,17 @@ $ cmake -S build/api-consumer -B build/api-consumer/out -G Ninja \
     && ./build/api-consumer/out/api_example
 ```
 
-The capture program prints `got:hello C++`. Its shell reader disables terminal
-echo before accepting input. The five-second readiness and response waits
-ensure the captured text came from the program. Its final `cat` keeps the pane
-alive until the fixture removes the owned server.
+The capture program prints `got:hello C++`.
 
 ## Verification
 
-The normal example build compiles these same files. Each CTest case checks the
-exact expected output, injects a tmux operation failure, and verifies that the
-private daemon and directory are gone on both paths:
+CTest runs these same files:
 
 ```console
 $ ctest --preset cxx-dev -R '^example\.api\.' --output-on-failure
 ```
 
-To record commands, source and executable hashes, tmux identity, output, and
-cleanup separately:
+To write a JSON report of each run:
 
 ```console
 $ python3 tools/docs/check_api_examples.py \
@@ -80,6 +73,5 @@ $ python3 tools/docs/check_api_examples.py \
     --report build/api-example-results.json
 ```
 
-[`api-examples.json`](api-examples.json) associates each whole program with its
-API declarations and expected output. The documentation site verifies those
-targets against its source-bound API model before attaching the programs.
+[`api-examples.json`](api-examples.json) maps each program to its API
+declarations and expected output.

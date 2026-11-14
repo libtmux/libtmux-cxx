@@ -13,20 +13,19 @@ Nothing here is part of the public interface except
 | [`NlohmannJson.cmake`](NlohmannJson.cmake) | The same, for the JSON parser the MCP server needs |
 | [`Tomlplusplus.cmake`](Tomlplusplus.cmake) | The same, for the private TOML validator used by `mcp-swap` |
 | [`YamlCpp.cmake`](YamlCpp.cmake) | The same, for the parser the workspace consumer needs |
-| [`toolchains/clang-libcxx.cmake`](toolchains/clang-libcxx.cmake) | The pinned clang-with-libc++ pairing the presets use |
+| [`toolchains/clang-libcxx.cmake`](toolchains/clang-libcxx.cmake) | The clang-with-libc++ pairing the presets use |
 
 ## The resolve-or-fetch pattern
 
-The dependency modules use the same shape, and the shape is deliberate:
+The dependency modules share one shape:
 
 1. `find_package(... QUIET)` — use what the system has
 2. If it is missing and `LIBTMUX_FETCH_DEPS` is off, **fail with a message
    naming the flag**
 3. Otherwise fetch a pinned version by hash
 
-A build that would reach the network says so and stops, rather than downloading
-quietly. None of it affects the library itself, which depends on nothing: these
-are for the tests, the examples, the MCP server, and repository tooling.
+A build that needs the network says so and stops. The library depends on
+nothing; these serve the tests, examples, MCP server and tooling.
 
 ## Related
 

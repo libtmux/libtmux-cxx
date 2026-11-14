@@ -24,8 +24,8 @@ Load, capture and convert tmuxp-style workspace files from the command line.
   [`examples/workspace/`](../../examples/workspace/README.md), so a program
   calling that builder and this command build a workspace the same way.
 
-Reference: the [command manual][ws-cli], the [guides][ws-guides] and the
-[workspace configuration][ws-configuration]. The contract is in
+Reference: [command manual][ws-cli], [guides][ws-guides],
+[workspace configuration][ws-configuration],
 [`docs/workspace-cli.md`](../../docs/workspace-cli.md).
 
 ## Quick start
@@ -123,9 +123,9 @@ $ tmux-workspace load \
     example
 ```
 
-A session already running under the name a document asks for is compared with
-the document and left as found; one missing a described window stops the load. [Current commands][docs-current] has the
-rules for attaching, appending and scripts.
+A session already running under the document's name is compared with it and
+left as found; one missing a described window stops the load. More:
+[current commands][docs-current].
 
 ## Capture, convert and import
 
@@ -239,20 +239,16 @@ $ tmux-workspace load \
 
 ## Support and status
 
-- [Changelog](CHANGELOG.md) lists what each release changed in `tmux-workspace`.
-  An install puts it in `share/doc/tmux-workspace/`.
-- Requires POSIX tmux; tests run only on private sockets, and the workspace
-  fixture never reaches the default server.
-- Plugins and custom builders are rejected, and some configuration, import and
-  capture coverage is incomplete: see
+- **Changelog.** [What each release changed](CHANGELOG.md).
+- **Platform.** POSIX tmux only.
+- **Incomplete.** Plugins and custom builders are rejected, and some
+  configuration, import and capture coverage is partial:
   [what remains](../../docs/workspace-cli.md#remaining-work).
-- [Verification](../../docs/workspace-cli.md#verification) runs the CLI and process
-  verifiers, and the cases that prove each still reports a failure.
 
 ## Develop
 
-Build with the pinned development toolchain, and inspect the command reference
-without starting tmux:
+Build with the development preset, and inspect the command reference without
+starting tmux:
 
 ```console
 $ cmake --preset cxx-dev \

@@ -24,9 +24,8 @@ ships as one native executable.
   POSIX and native Windows.
 - On Windows, psmux support is command-dependent: unsupported operations fail
   at dispatch, and every tool stays in the manifest.
-- Full contract: the [C++ MCP overview][mcp-index], the [tool pages][mcp-tools]
-  and the [topics][mcp-topics]; the protocol, failure semantics and Windows
-  wrapper are in [`docs/mcp-server.md`](../../docs/mcp-server.md).
+- Reference: [overview][mcp-index], [tools][mcp-tools], [topics][mcp-topics],
+  and [protocol, failures and Windows](../../docs/mcp-server.md).
 
 ## Quick start
 
@@ -228,8 +227,7 @@ per-call override:
   picks one. The server starts no server of its own and ends none.
 - A variable that is empty or only whitespace counts as unset, each one alone.
 - A relative `LIBTMUX_SOCKET_PATH` reaches what `tmux -S` reaches from the
-  server's working directory. It is reported as an absolute path when that
-  fits a socket address.
+  server's working directory.
 - `--socket SELECTOR` takes `name:NAME`, `path:/ABSOLUTE/PATH` or `inherit`;
   `--socket-path PATH` is tmux `-S` on POSIX, `--socket-name NAME` is `-L`, and
   one positional `PATH` stays as a POSIX spelling.
@@ -240,7 +238,7 @@ per-call override:
   only by a server this process starts.
 - Conflicting options, an empty option value, a variable tmux cannot use, and an
   empty or relative `LIBTMUX_TMUX_CONFIG` fail before tmux opens. The message
-  names the variable and never quotes its value.
+  names the variable, never its value.
 - [`tmux://capabilities`][mcp-capabilities] reports the selector, its
   provenance, the server state and the effective tools.
 
@@ -303,8 +301,8 @@ For Claude Desktop, the equivalent entry carries the same variables in `env`:
   unsupported psmux commands fail explicitly.
 - Build the `windows-psmux` preset with the audited psmux version in
   [the library README](../../README.md#windows-through-psmux).
-- psmux 3.3.7 ignores `PSMUX_DATA_DIR`: use a high-entropy `--socket-name`, and
-  set `PSMUX_CONFIG_FILE` to an explicit audited file.
+- The verified psmux build ignores `PSMUX_DATA_DIR`: use a high-entropy
+  `--socket-name`, and set `PSMUX_CONFIG_FILE` to an explicit file.
 - The audited PowerShell fixture creates the socket, configuration and state
   file before an agent connects:
   [`docs/mcp-server.md`](../../docs/mcp-server.md#native-windows-with-psmux).
@@ -314,8 +312,7 @@ For Claude Desktop, the equivalent entry carries the same variables in `env`:
 ## Protocol and failures
 
 - The server speaks newline-delimited JSON-RPC over stdio: the current
-  `2026-07-28` protocol, plus the `2025-11-25`, `2025-06-18`, `2025-03-26` and
-  `2024-11-05` initialize lifecycles.
+  protocol revision, plus four older initialize lifecycles.
 - It advertises tools and one static resource, `tmux://capabilities`; there are
   no prompts, dynamic resources or subscriptions.
 - Tool calls run on four workers, at most 64 in flight; replies may arrive out
@@ -352,9 +349,7 @@ For Claude Desktop, the equivalent entry carries the same variables in `env`:
 ## Related
 
 - [libtmux (C++)](../../README.md) — the library and Windows psmux boundary
-- [Changelog](CHANGELOG.md) — what each release changed in the server; a
-  release attaches it beside the binaries, and an install puts it in
-  `share/doc/libtmux-mcp-server/`
+- [Changelog](CHANGELOG.md) — what each release changed in the server
 - [libtmux-mcp](https://github.com/tmux-python/libtmux-mcp) — the broader
   Python MCP server
 - [libtmux (Python)](https://libtmux.git-pull.com) — the original library

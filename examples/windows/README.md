@@ -2,12 +2,13 @@
 
 The runner gives the example or MCP server a high-entropy `-L` namespace, an
 empty configuration file created for that run, and no inherited tmux or psmux
-routing variables. After a fixture launch is attempted, it kills only the exact
-fixture session and waits for that session's exact registry files to disappear.
-It removes the configuration file only after both steps are proven; otherwise
-the error reports the exact socket, session, and config path needed for recovery.
-It never invokes psmux session cleanup before a launch attempt, never runs
-`kill-server`, and never deletes the `.psmux` directory.
+routing variables. Then it cleans up:
+
+- It kills only the exact fixture session, waits for that session's registry
+  files to disappear, then removes the configuration file. If a step fails, the
+  error names the socket, session and config path to recover.
+- It never runs psmux session cleanup before a launch attempt, never runs
+  `kill-server`, and never deletes the `.psmux` directory.
 
 Build the `windows-psmux` preset from a Developer PowerShell, then run the
 native example through the fixture:
@@ -46,7 +47,8 @@ relative path would make the trusted wrapper or binary depend on that client.
 ```
 
 The wrapper's empty `PSMUX_CONFIG_FILE` is the explicit trusted configuration
-for the fixture it creates. Supplying only a private socket name is not enough:
-psmux expands aliases from server configuration, and psmux 3.3.7 scans its
-shared registry before it parses `-L`. Use the pinned binary documented by the
-project, and do not point this wrapper at a pre-existing namespace.
+for the fixture it creates. A private socket name alone is not enough: psmux
+expands aliases from server configuration and scans its shared registry before
+it parses `-L`. Use the verified binary named in
+[`docs/windows.md`](../../docs/windows.md), and do not point this wrapper at a
+pre-existing namespace.

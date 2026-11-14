@@ -9,14 +9,9 @@ own package with its own dependencies, and none of them is built by default.
 | [`workspace/`](workspace/README.md) | `tmux-workspace`, a command that loads, captures and converts tmuxp-style workspace files ([changelog](workspace/CHANGELOG.md)) |
 | [`matrix/`](matrix/README.md) | `libtmux_matrix`, a benchmark that prints what each way of reaching tmux costs |
 
-They exist for two reasons. The obvious one is that they are useful. The other
-is that a library is best judged by something that has to use it: the MCP
-server takes every argument as an untyped string from a model, which puts
-weight on validation and error reporting that no unit test thought to apply.
-
-The other consumer lives in
-[`examples/workspace/`](../examples/workspace/README.md), and pushes on
-composition rather than validation.
+Each also puts weight on the library. The MCP server takes untyped string
+arguments from a model, which exercises validation and error reporting;
+[`examples/workspace/`](../examples/workspace/README.md) pushes on composition.
 
 ## Related
 

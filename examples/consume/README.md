@@ -8,8 +8,7 @@ find_package(libtmux REQUIRED)
 target_link_libraries(your_target PRIVATE libtmux::libtmux)
 ```
 
-That is the whole integration. The library has no dependencies, so nothing else
-has to be found, fetched or forwarded.
+That is the whole integration: the library has no dependencies.
 
 ## Running it
 
@@ -71,21 +70,12 @@ the separate runtime gate documented in the
 
 ## Why it exists
 
-This is the only thing here that tests the **package** rather than the build
-tree — whether the installed headers, the compiled library and the exported
-CMake config actually work together from outside. Continuous integration builds
-it against a real install on every change, in both the C++23 and C++20
-configurations, which is how the package config is kept from rotting.
-
-It deliberately **never contacts tmux**. Whether the library talks to tmux
-correctly is what the [test suite](../../tests/README.md) and the other
-[examples](../README.md) are for; this one answers a different question, and
-answering only that question is what makes a failure here easy to read.
-
-It does exercise a real slice of the surface without a server: version parsing,
-a filter over a recorded snapshot, and a chain refusing a target it cannot
-address. Each is a compiled call into the installed library, so a package that
-exported the wrong thing fails here rather than in someone else's project.
+- **It tests the package,** not the build tree: whether the installed headers,
+  the compiled library and the exported CMake config work together from outside.
+- **It never contacts tmux.** The [test suite](../../tests/README.md) and the
+  other [examples](../README.md) cover that, so a failure here is easy to read.
+- **It still calls the library:** version parsing, a filter over a recorded
+  snapshot, and a chain refusing a target it cannot address.
 
 ## Related
 

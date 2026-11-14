@@ -27,9 +27,8 @@ $ cmake --build build/matrix --target libtmux_matrix
 $ ./build/matrix/apps/matrix/libtmux_matrix
 ```
 
-The compilers are named because the toolchain adds `-stdlib=libc++`, which
-GCC rejects: left to itself CMake can pick the system `c++` and stop at its
-compiler check.
+The compilers are named because the toolchain adds `-stdlib=libc++`, which GCC
+rejects.
 
 ```
 
@@ -62,14 +61,12 @@ as integer nanoseconds, or `--check` to assert the claims the table makes.
 The three connection lanes run the same build through
 [`Server::over_control`][ref-server-over_control]:
 
-- over one held-open control client, over a pool of four as the Go port's
-  `concurrent x4` does, and chained over one;
-- every command in this workload is one tmux answers completely inside its
-  guarded block (`split-window` defers only under `-I` or `-W`, and nothing here
-  sends either), so none launches and `--check` requires exactly zero;
-- a lane that fell back to launching would show its invocations there, and the
-  clients are opened before the measured build, as the server is started before
-  it.
+- One held-open control client, a pool of four as the Go port's `concurrent x4`
+  does, and chained over one.
+- tmux answers every command here inside its guarded block, so no lane launches
+  a process and `--check` requires exactly zero.
+- The clients are opened before the measured build, as the server is started
+  before it.
 
 ### The process counter
 
@@ -78,9 +75,7 @@ The three connection lanes run the same build through
 - It names the proxy twice: to the fixture as `tmux_binary`, so the server it
   starts runs through it, and to the [`Server`][ref-server] as
   [`ExecutionPolicy::tmux_binary`][ref-executionpolicy], so every measured
-  command does too.
-- Naming it to the fixture alone covers only the server it starts, and every
-  measured command then bypasses the counter.
+  command does too. The fixture alone would leave the commands uncounted.
 
 [ref-server]: https://libtmux.org/en/cxx/latest/reference/libtmux-server/
 [ref-server-over_control]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-over_control/

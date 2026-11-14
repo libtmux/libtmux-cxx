@@ -26,8 +26,6 @@ $ ctest --preset cxx-dev -R consumer.workspace --output-on-failure
 
 The YAML parser is linked by this consumer and the optional
 [`tmux-workspace`](../../apps/workspace/README.md) CLI, not the core library.
-A consumer's parser choice is not the library's business, which is the point
-of keeping this in its own directory with its own dependency.
 
 ## Running the corpus probe
 
@@ -40,14 +38,8 @@ $ ./build/cxx-dev/examples/workspace/tmuxp_corpus_probe ~/src/tmuxp/examples/*.y
 
 ## What the pressure found
 
-This is the part that justifies the directory. Running real tmuxp documents
-through a typed C++ surface found things no unit test was going to:
-
-- `environment:` and `window_index:` were missing from the C++ surface entirely
-- every creation call carrying a shell command came back unreadable — a bug in
-  the library, found by a consumer rather than by the suite
-
-Both are fixed. What remains unexpressed, and why, is written down in
+What real tmuxp documents found in the typed C++ surface, and what remains
+unexpressed, is written down in
 [`docs/design/workspace-corpus.md`](../../docs/design/workspace-corpus.md).
 
 ## Related

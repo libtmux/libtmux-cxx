@@ -22,14 +22,17 @@ is what a consumer may depend on.
 ## Start here
 
 ```cpp
+#include <format>
+#include <iostream>
+
 #include <libtmux/libtmux.hpp>
 ```
 
-- One include is enough: [`libtmux.hpp`](libtmux.hpp) pulls in the rest. The
-  tables below say what each header holds.
+- One library include is enough: [`libtmux.hpp`](libtmux.hpp) pulls in the
+  rest. The tables below say what each header holds.
 - The [generated API reference](../../docs/api.md) has every public type and
-  call with the prose from its header, and CI fails when it drifts. The same
-  pages are on [libtmux.org][ref-index].
+  call with the prose from its header. The same pages are on
+  [libtmux.org][ref-index].
 
 ### [`Server::sessions`][ref-server-sessions]: a first call
 
@@ -55,7 +58,7 @@ for (const libtmux::Session& session : *sessions) {
 ```
 
 This prints one line per session. If tmux cannot answer, the call returns a
-[`CommandFailure`][ref-commandfailure]; nothing is thrown.
+[`CommandFailure`][ref-commandfailure].
 
 ## What is where
 
@@ -98,7 +101,7 @@ This prints one line per session. If tmux cannot answer, the call returns a
 
 | Header | Holds |
 |---|---|
-| [`expected.hpp`](expected.hpp) | `expected` — `std::expected`, or pinned `tl::expected` under C++20 |
+| [`expected.hpp`](expected.hpp) | `expected` — `std::expected`, or `tl::expected` under C++20 |
 | [`abi.hpp`](abi.hpp) | The inline namespace that keeps the two builds from linking together |
 | [`version.hpp`](version.hpp) | `Version`, `parse_version`, `is_supported` — tmux release ordering |
 | [`lowering.hpp`](lowering.hpp), [`lowered_node.hpp`](lowered_node.hpp) | Turning a filter into something another process could evaluate |
@@ -106,14 +109,13 @@ This prints one line per session. If tmux cannot answer, the call returns a
 
 ## Windows through psmux
 
-- The core uses a `tmux.exe` alias from psmux and starts one bounded subprocess
-  per call.
-- Persistent control connections and `libtmux::testing` are unavailable, and
-  unsafe creation and mutation fail before dispatch.
-- The [Windows preview details][windows-boundary] list the supported surface and
-  the raw-command hazards.
-- Typed safety assumes a trusted server configuration: tmux and psmux both let a
-  server-side `command-alias` redefine a built-in command.
+- **One subprocess per call,** through psmux's `tmux.exe` alias.
+- **Unavailable:** persistent control connections and `libtmux::testing`. Unsafe
+  creation and mutation fail before dispatch.
+- **Trust the server.** A server-side `command-alias` can redefine a built-in
+  command.
+
+More: the [Windows preview details][windows-boundary].
 
 ## What the headers promise
 
@@ -129,8 +131,7 @@ This prints one line per session. If tmux cannot answer, the call returns a
   descriptors for event-loop integration.
 - **Fields are typed.** A flag offers no string operations and a size compares
   as a number, so those mistakes are build errors on a
-  [`FilterExpr`][ref-filterexpr]; [`tests/compile/`](../../tests/compile/)
-  proves each refusal stays one.
+  [`FilterExpr`][ref-filterexpr] ([`tests/compile/`](../../tests/compile/)).
 - **Two ABIs.** The C++23 and C++20 builds live in different inline namespaces,
   so mixing them fails at the link step instead of corrupting memory at run
   time.
@@ -146,9 +147,8 @@ runs on:
 find_package(libtmux REQUIRED COMPONENTS testing)
 ```
 
-Asking is the only way to get it. `find_package(libtmux)` alone leaves the target
-undefined, so a program that would link a test archive by accident fails at
-configure time.
+`find_package(libtmux)` alone leaves the target undefined, so nothing links the
+fixture by accident.
 
 ## Packages
 
@@ -164,8 +164,9 @@ configure time.
 ### [`libtmux`](https://github.com/libtmux/libtmux-cxx/tree/master/include/libtmux)
 
 Typed, value-semantic control of tmux servers, sessions, windows and panes.
-Reference: the [API reference][ref-index], [getting started][guide-start] and
-[concepts][guide-concepts].
+
+Reference: [API][ref-index], [getting started][guide-start],
+[concepts][guide-concepts], [changelog](../../CHANGELOG.md).
 
 [`Server::capabilities`][ref-server-capabilities] reports what a
 [`Server`][ref-server] handle can promise without starting tmux, so a program
@@ -187,13 +188,25 @@ std::cout << std::format("{} over {}: pane input and output supported: {}\n",
 ### [`libtmux::testing`](https://github.com/libtmux/libtmux-cxx/tree/master/include/libtmux/testing)
 
 A private tmux server for your own tests, removed when the scope ends. POSIX
-only. Reference: [Testing with libtmux][guide-testing] and the
-[`ScopedTmuxServer`][ref-test-scopedtmuxserver] page. [`testing/`](testing/) holds
-the headers; the section above shows how to ask for the component.
+only.
+
+Reference: [Testing with libtmux][guide-testing],
+[`ScopedTmuxServer`][ref-test-scopedtmuxserver],
+[headers](testing/), [changelog](../../CHANGELOG.md).
 
 A [`TeardownReport`][ref-test-teardownreport] passed to
-[`ScopedTmuxServer::start`][ref-test-scopedtmuxserver-start] collects what teardown
-did, including anything it could not clean up:
+[`ScopedTmuxServer::start`][ref-test-scopedtmuxserver-start] collects what
+teardown did, including anything it could not clean up:
+
+```cpp
+#include <format>
+#include <iostream>
+#include <memory>
+#include <string>
+
+#include <libtmux/libtmux.hpp>
+#include <libtmux/testing/scoped_server.hpp>
+```
 
 ```cpp
 // A private server, and the messages its teardown recorded.
@@ -218,10 +231,12 @@ did, including anything it could not clean up:
 ### [`tmux-workspace`](https://github.com/libtmux/libtmux-cxx/tree/master/apps/workspace)
 
 Loads, captures, converts and imports tmuxp-style workspace files from the
-command line. Optional and POSIX only. Reference: the [command manual][ws-cli],
-[`load`][ws-load] and [workspace configuration][ws-configuration]. The
-[`apps/workspace/` README](../../apps/workspace/README.md) walks through each
-command.
+command line. Optional; POSIX only.
+
+Reference: [command manual][ws-cli], [`load`][ws-load],
+[workspace configuration][ws-configuration],
+[README](../../apps/workspace/README.md),
+[changelog](../../apps/workspace/CHANGELOG.md).
 
 Build and install it:
 
@@ -248,10 +263,10 @@ $ tmux-workspace load \
 ### [`libtmux-mcp-server`](https://github.com/libtmux/libtmux-cxx/tree/master/apps/mcp)
 
 A Model Context Protocol server over stdio, so an agent can drive tmux.
-Reference: the [MCP overview][mcp-index], the [tool reference][mcp-tools] and
-[connecting a client][mcp-guide]. The
-[`apps/mcp/` README](../../apps/mcp/README.md) lists the toolsets and the socket
-options.
+
+Reference: [overview][mcp-index], [tool reference][mcp-tools],
+[connecting a client][mcp-guide], [README](../../apps/mcp/README.md),
+[changelog](../../apps/mcp/CHANGELOG.md).
 
 Register it with Claude Code, limited to the
 [`inspect`][mcp-toolset-inspect] toolset:
