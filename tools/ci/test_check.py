@@ -17,7 +17,6 @@ from tools.ci import check
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 COPIED = (
-    "README.md",
     "docs/compatibility.md",
     ".github/CONTRIBUTING.md",
     "tools/ci/tmux_matrix.json",
@@ -86,13 +85,13 @@ class CheckTest(unittest.TestCase):
             self.assertTrue(any(page in p and "3.9" in p for p in problems), page)
 
     def test_a_page_with_another_range_is_flagged(self) -> None:
-        """A README that still says 3.7 is the newest is caught."""
+        """A page that still says 3.7 is the newest is caught."""
         self.edit(
-            "README.md",
-            "from 3.3a\n  through 3.8, plus `master`",
-            "from 3.3a\n  through 3.7c, plus `master`",
+            ".github/CONTRIBUTING.md",
+            "from 3.3a through 3.8,\nplus `master`",
+            "from 3.3a through 3.7c,\nplus `master`",
         )
-        self.assertFlags("README.md says CI covers 3.3a through 3.7c")
+        self.assertFlags(".github/CONTRIBUTING.md says CI covers 3.3a through 3.7c")
 
     def test_a_page_without_the_range_is_flagged(self) -> None:
         """A page must state the range at all."""

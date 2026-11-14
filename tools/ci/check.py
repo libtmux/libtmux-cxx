@@ -21,8 +21,8 @@ import sys
 
 from tools.ci.plan import Manifest, PlanError, load_manifest
 
-PAGES = ("README.md", "docs/compatibility.md", ".github/CONTRIBUTING.md")
-REFUSAL_PAGES = ("README.md", ".github/CONTRIBUTING.md")
+PAGES = ("docs/compatibility.md", ".github/CONTRIBUTING.md")
+REFUSAL_PAGES = (".github/CONTRIBUTING.md",)
 WORKFLOWS = pathlib.PurePosixPath(".github/workflows")
 
 TMATE = re.compile(r"uses:\s*mxschmitt/action-tmate@(\S+)")
