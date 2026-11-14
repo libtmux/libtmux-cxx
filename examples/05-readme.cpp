@@ -66,12 +66,39 @@ int main() {
       return 1;
     }
 
+    // A window and a pane are sized by separate calls.
+    (void)editor->resize(120, 40);
+    (void)logs->set_width(40);
+
     // Text and Enter in one invocation, which is what running a command in a
     // pane means. `send_text` and `send_key` stay available for the times the
     // two halves are separate acts.
     (void)logs->send_line("journalctl -f");
   }
   // #endregion build
+
+  // The block above leaves its results unread to stay short. Read what tmux
+  // did, so a resize that stops working fails this program.
+  {
+    const auto windows = session.windows();
+    if (!windows.has_value()) {
+      std::cerr << std::format("{}\n", windows.error());
+      return 1;
+    }
+    bool resized = false;
+    for (const libtmux::Window& window : *windows) {
+      if (window.name() != "editor") {
+        continue;
+      }
+      const auto panes = window.panes();
+      resized = panes.has_value() && panes->size() == 2 && window.width() == 120 &&
+                window.height() == 40 && panes->at(1).width() == 40;
+    }
+    if (!resized) {
+      std::cerr << "the editor window was not resized\n";
+      return 1;
+    }
+  }
 
   // Something for the filter below to actually find, so the snippet the README
   // opens with runs its action rather than only compiling. tmux names a pane by

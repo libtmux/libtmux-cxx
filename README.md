@@ -458,6 +458,10 @@ call:
     return 1;
   }
 
+  // A window and a pane are sized by separate calls.
+  (void)editor->resize(120, 40);
+  (void)logs->set_width(40);
+
   // Text and Enter in one invocation, which is what running a command in a
   // pane means. `send_text` and `send_key` stay available for the times the
   // two halves are separate acts.
