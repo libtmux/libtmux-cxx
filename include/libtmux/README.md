@@ -15,6 +15,8 @@ If it is not in this directory, it is not the contract. Everything under
 [`src/`](../../src/README.md) is free to change without notice; everything here
 is what a consumer may depend on.
 
+[![libtmux.org](https://img.shields.io/badge/docs-libtmux.org-0b7285)](https://libtmux.org/en/cxx/)
+
 </div>
 
 ## Start here
