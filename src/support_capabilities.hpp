@@ -86,6 +86,9 @@ struct Workaround {
 /// Whether `running` is a release on which the defect exists.
 [[nodiscard]] bool affects(WorkaroundId id, const Version& running) noexcept;
 
+/// Whether `running` is a release from which the capability works.
+[[nodiscard]] bool meets(CapabilityId id, const Version& running) noexcept;
+
 /// The manifest `libtmux-capabilities/1`, byte for byte what the root
 /// `capabilities.json` holds.
 [[nodiscard]] std::string manifest_json();

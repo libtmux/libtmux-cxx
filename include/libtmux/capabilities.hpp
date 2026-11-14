@@ -78,7 +78,9 @@ enum class ServerFeature {
   server_state,
   /// Latched `wait-for` channels.
   wait_channels,
-  /// This Server can open a persistent control connection.
+  /// This backend can carry a persistent control connection. The tmux behind it
+  /// must also be new enough, which `Server::available` reads and
+  /// `ServerCapabilities` does not.
   control_mode,
 };
 
@@ -120,7 +122,10 @@ struct ServerCapabilities {
   ServerImplementation implementation{ServerImplementation::unknown};
   BackendKind backend{BackendKind::custom};
 
-  /// Purely local: this never launches tmux or touches a server.
+  /// Purely local: this never launches tmux or touches a server, and it never
+  /// reads the tmux release. For `ServerFeature::control_mode` it says whether
+  /// the backend can carry control mode; `Server::available` says whether the
+  /// tmux behind it is new enough.
   [[nodiscard]] constexpr bool supports(ServerFeature feature) const noexcept {
     if (implementation == ServerImplementation::unknown) {
       return false;

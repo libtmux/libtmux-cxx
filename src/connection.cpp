@@ -1057,7 +1057,9 @@ expected<Connection, ProtocolError> Connection::connect(ConnectionOptions option
   // has nothing to crash and is left to the attach to report.
   const auto& control = support::capabilities::capability(
       support::capabilities::CapabilityId::control_mode);
-  if (endpoint->live && endpoint->version < control.since.version) {
+  if (endpoint->live &&
+      !support::capabilities::meets(support::capabilities::CapabilityId::control_mode,
+                                    endpoint->version)) {
     return unexpected(not_started_error(
         "library-managed control mode needs tmux " + std::string{control.since.text} +
         " or newer; the daemon reports " + endpoint->token));

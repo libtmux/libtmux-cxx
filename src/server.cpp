@@ -778,6 +778,35 @@ ServerCapabilities Server::capabilities() const noexcept {
   return backend_->capabilities();
 }
 
+expected<bool, CommandFailure> Server::available(ServerFeature feature) const {
+  if (!capabilities().supports(feature)) {
+    return false;
+  }
+  switch (feature) {
+  case ServerFeature::control_mode: {
+    const auto running = backend_->version();
+    if (!running.has_value()) {
+      return unexpected(running.error());
+    }
+    return support::capabilities::meets(
+        support::capabilities::CapabilityId::control_mode, *running);
+  }
+  case ServerFeature::exact_inspection:
+  case ServerFeature::server_cleanup:
+  case ServerFeature::server_entity_lookup:
+  case ServerFeature::session_creation:
+  case ServerFeature::window_creation:
+  case ServerFeature::captured_mutation:
+  case ServerFeature::pane_io:
+  case ServerFeature::terminal_attach:
+  case ServerFeature::reusable_window_target:
+  case ServerFeature::server_state:
+  case ServerFeature::wait_channels:
+    return true;
+  }
+  return false;
+}
+
 std::string_view Server::socket_path() const noexcept {
   return backend_ == nullptr ? std::string_view{} : backend_->selected_socket_path();
 }

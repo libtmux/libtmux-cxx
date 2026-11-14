@@ -276,6 +276,10 @@ bool affects(WorkaroundId id, const Version& running) noexcept {
       releases, [&](const Release& release) { return release.version == running; });
 }
 
+bool meets(CapabilityId id, const Version& running) noexcept {
+  return running >= capability(id).since.version;
+}
+
 std::string manifest_json() {
   Writer w;
   w.open('{');

@@ -96,8 +96,9 @@ struct ExecutorOptions {
 /// and runs no command; on psmux that is exact inspection and namespace cleanup
 /// only. Most typed calls outside it report `FailureKind::unsupported` there;
 /// `control()` and `over_control()` report a `ProtocolError` instead, and the
-/// environment calls and raw commands are not checked. `tmux_version()` reports
-/// the tmux release, and `socket_path()` reports the resolved socket.
+/// environment calls and raw commands are not checked. `available()` adds the
+/// tmux release to that answer for a feature that needs one. `tmux_version()`
+/// reports the tmux release, and `socket_path()` reports the resolved socket.
 /// `control()` and `control_with_options()` open a control-mode connection to
 /// one session, and `over_control()` returns a Server whose commands travel
 /// over held-open control clients.
@@ -105,8 +106,8 @@ struct ExecutorOptions {
 /// `at_socket_path()`, `at_socket_name()`, `at_default()`, `from_env()`,
 /// `startable_at_socket_path()`, `startable_at_socket_name()`,
 /// `startable_at_default()`, `over()`, `is_alive()`, `check_alive()`,
-/// `capabilities()`, `control()`, `over_control()`, `tmux_version()`,
-/// `socket_path()` and `control_with_options()`
+/// `capabilities()`, `available()`, `control()`, `over_control()`,
+/// `tmux_version()`, `socket_path()` and `control_with_options()`
 ///
 /// **Finding one thing.** Look up a session, window or pane by a target, such
 /// as an id or a `session:window` path. The lookup resolves the target the way
@@ -294,9 +295,28 @@ public:
   over(std::shared_ptr<const CommandExecutor> executor, ExecutorOptions options = {},
        CommandObserver observer = {}, ExecutionPolicy policy = {});
 
-  /// The local backend contract; no command runs. `tmux_version()` separately
-  /// queries the executable or the connected control server.
+  /// The local backend contract; no command runs. It never reads the tmux
+  /// release, which `available()` does. `tmux_version()` separately queries the
+  /// executable or the connected control server.
   [[nodiscard]] ServerCapabilities capabilities() const noexcept;
+
+  /// Whether the tmux this handle reaches provides `feature`: what
+  /// `capabilities().supports(feature)` says, and for a feature that needs a
+  /// tmux release, that release too.
+  ///
+  /// `ServerFeature::control_mode` needs one. This answers `false` exactly where
+  /// `control()`, `control_with_options()`, `over_control()` and
+  /// `Connection::connect` refuse the daemon for its release, because the
+  /// answer and the refusal read one release table. `true` means the release
+  /// does not stand in the way, not that a daemon is listening.
+  ///
+  /// The release is read as `tmux_version()` reads it: the daemon's when one
+  /// answers, otherwise the executable's, and `ExecutorOptions::version` when
+  /// the transport declares one. That can run tmux, so the call can fail, with
+  /// the failure `tmux_version()` reports. A backend that settles the answer
+  /// alone runs nothing: `false` for psmux and for an implementation nobody
+  /// recognises, `true` for a feature with no release floor.
+  [[nodiscard]] expected<bool, CommandFailure> available(ServerFeature feature) const;
 
   /// The resolved path pinned by this handle, including a startable path whose
   /// server has not been created yet. Empty only when the backend has no socket
