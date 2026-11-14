@@ -108,7 +108,7 @@ namespace {
 // Stops the server on every path out of `run`.
 struct StopOnExit {
   const libtmux::Server& server;
-  ~StopOnExit() { (void)server.run({"kill-server"}); }
+  ~StopOnExit() { (void)server.kill(); }
 };
 
 int run(const std::filesystem::path& socket) {
@@ -179,8 +179,9 @@ $ cmake -S . -B build && cmake --build build && ./build/quickstart
   names a socket of its own and `/dev/null` as the configuration, so your own
   tmux is untouched.
 - [`Server::new_session`][ref-server-new_session] starts that server;
-  [`Pane::send_line`][ref-pane-send_line] types, and
-  [`Pane::wait_for_text`][ref-pane-wait_for_text] waits for the output.
+  [`Pane::send_line`][ref-pane-send_line] types,
+  [`Pane::wait_for_text`][ref-pane-wait_for_text] waits for the output, and
+  [`Server::kill`][ref-server-kill] stops it.
 - [`Server::at_default()`][ref-server-at_default] drives the server your own
   `tmux` command does, or the one `LIBTMUX_SOCKET_PATH` or `LIBTMUX_SOCKET`
   names.
@@ -679,6 +680,30 @@ std::cout << std::format("chain valid: {}\n", chain.valid()); // false
 
 This prints `chain valid: false`.
 
+### [`Server::run_chain`][ref-server-run_chain]: several commands, one process
+
+[`Server::run_chain`][ref-server-run_chain] sends a chain as one tmux
+invocation, and [`Server::run_batch`][ref-server-run_batch] does the same for a
+[`CommandBatch`][ref-commandbatch]:
+
+```cpp
+// Given: const libtmux::Server& server; const libtmux::Session& session
+// A chain that passes validation is one tmux process, its commands run in
+// order. tmux stops at the first one that fails, so a failed chain is
+// partly applied, not rolled back.
+libtmux::Chain setup;
+setup.new_window(session.name(), "chained").split_window(session.name(), "chained");
+
+const auto applied = server.run_chain(setup);
+if (!applied.has_value()) {
+  std::cerr << std::format("{}\n", applied.error());
+  return 1;
+}
+std::cout << std::format("{} commands, one tmux process\n", setup.batch().size());
+```
+
+This prints `2 commands, one tmux process`.
+
 ### [`Server::control`][ref-server-control]: hear changes as they happen
 
 [`Server::control`][ref-server-control] opens a [`Connection`][ref-connection]
@@ -723,6 +748,30 @@ This prints `window added:` and the id tmux gave the new window.
 - **Windows.** psmux rejects control mode.
 
 More: the [control transport design](docs/design/control-transport.md).
+
+### [`Server::over_control`][ref-server-over_control]: no process per call
+
+[`Server::over_control`][ref-server-over_control] returns a
+[`Server`][ref-server] whose commands travel over held-open control clients.
+The calls stay the same:
+
+```cpp
+// Given: const libtmux::Server& server
+// The same Server calls, sent over held-open control clients instead of
+// starting a tmux process for each one.
+const auto controlled = server.over_control("example");
+if (!controlled.has_value()) {
+  std::cerr << std::format("{}\n", controlled.error().message);
+  return 1;
+}
+const auto listed = controlled->sessions();
+if (listed.has_value()) {
+  std::cout << std::format("{} session(s) listed over control\n", listed->size());
+}
+```
+
+This prints `1 session(s) listed over control`. It needs tmux 3.7, like
+[`Server::control`][ref-server-control].
 
 ## Bounded asynchronous commands
 
@@ -1352,10 +1401,13 @@ MIT. See [LICENSE](LICENSE).
 [ref-server-check_release]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-check_release/
 [ref-server-control]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-control/
 [ref-server-from_env]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-from_env/
+[ref-server-kill]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-kill/
 [ref-server-new_session]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-new_session/
 [ref-server-over_control]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-over_control/
 [ref-server-panes]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-panes/
 [ref-server-run]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-run/
+[ref-server-run_batch]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-run_batch/
+[ref-server-run_chain]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-run_chain/
 [ref-server-sessions]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-sessions/
 [ref-server-startable_at_socket_path]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-startable_at_socket_path/
 [ref-server-try_submit]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-try_submit/

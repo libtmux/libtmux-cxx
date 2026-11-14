@@ -359,6 +359,21 @@ int main() {
     }
     std::cout << std::format("window added: {}\n", added);
     // #endregion watch
+
+    // #region over_control
+    // Given: const libtmux::Server& server
+    // The same Server calls, sent over held-open control clients instead of
+    // starting a tmux process for each one.
+    const auto controlled = server.over_control("example");
+    if (!controlled.has_value()) {
+      std::cerr << std::format("{}\n", controlled.error().message);
+      return 1;
+    }
+    const auto listed = controlled->sessions();
+    if (listed.has_value()) {
+      std::cout << std::format("{} session(s) listed over control\n", listed->size());
+    }
+    // #endregion over_control
   } else {
     std::cout << "control mode needs tmux 3.7 or newer\n";
   }
@@ -493,6 +508,22 @@ int main() {
   chain.new_window("a:b", "unreachable");
   std::cout << std::format("chain valid: {}\n", chain.valid()); // false
   // #endregion chain
+
+  // #region chain_run
+  // Given: const libtmux::Server& server; const libtmux::Session& session
+  // A chain that passes validation is one tmux process, its commands run in
+  // order. tmux stops at the first one that fails, so a failed chain is
+  // partly applied, not rolled back.
+  libtmux::Chain setup;
+  setup.new_window(session.name(), "chained").split_window(session.name(), "chained");
+
+  const auto applied = server.run_chain(setup);
+  if (!applied.has_value()) {
+    std::cerr << std::format("{}\n", applied.error());
+    return 1;
+  }
+  std::cout << std::format("{} commands, one tmux process\n", setup.batch().size());
+  // #endregion chain_run
 
   // #region fixture
   // A private tmux for a suite of your own, gone when the scope ends.

@@ -14,7 +14,7 @@ namespace {
 // Stops the server on every path out of `run`.
 struct StopOnExit {
   const libtmux::Server& server;
-  ~StopOnExit() { (void)server.run({"kill-server"}); }
+  ~StopOnExit() { (void)server.kill(); }
 };
 
 int run(const std::filesystem::path& socket) {
