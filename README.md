@@ -35,8 +35,8 @@ parsing its output.
 - **Queries are typed.** A [`FilterExpr`][ref-filterexpr] is built from typed
   fields, so a filter that asks a number whether it starts with a string does
   not compile.
-- **Nothing to link.** The core has no dependencies, in C++23 over
-  `std::expected` or C++20 over a pinned `tl::expected`.
+- **Nothing to link.** The core has no dependencies: C++23 uses
+  `std::expected`, C++20 uses `tl::expected`.
 - **Value semantics.** An entity copies, compares, hashes, prints and formats:
   `std::format("{}", window)` writes [`Window(@1 2:editor)`][ref-window].
 
@@ -52,22 +52,18 @@ tmux, and agents.
 
 | | |
 |---|---|
-| **tmux** | 3.3a or newer, through `master` — [with these exceptions](#compatibility) |
+| **tmux** | 3.3a or newer ([exceptions](#compatibility)) |
 | **C++** | C++23 (clang 17+, GCC 13+, Visual Studio 2022 17.3+), or C++20 with `LIBTMUX_CXX_STANDARD=20` |
-| **CMake** | 3.25 |
-| **Platforms** | Linux, including WSL; macOS; experimental x64 desktop Windows support with Visual Studio 2022 through [psmux] |
+| **CMake** | 3.25 or newer |
+| **Platforms** | Linux (WSL included) and macOS; a [Windows preview](#windows-through-psmux) through [psmux] |
 | **Dependencies** | None for the library |
 
-- tmux releases below 3.3a are refused with
-  [`FailureKind::unsupported`][ref-failurekind] before a command has any effect.
-- tmux release candidates are not supported: a feature can require one only
-  until its release ships, and a candidate such as `X.Y-rcN` parses and ranks
-  below `X.Y`. See
-  [Release candidates](https://libtmux.org/en/tmux/guides/tmux-support/#release-candidates).
-- The library and its examples need POSIX tmux; the
-  [Windows preview](#windows-through-psmux) is read-mostly.
-- Child launches do not inherit unrelated descriptors; the
-  [details](docs/runtime.md#child-process-descriptors) cover each platform.
+- **Older tmux** is refused with [`FailureKind::unsupported`][ref-failurekind]
+  before a command has any effect.
+- **Release candidates** are not supported
+  ([tmux support](https://libtmux.org/en/tmux/guides/tmux-support/#release-candidates)).
+- **Child processes** do not inherit unrelated descriptors:
+  [details](docs/runtime.md#child-process-descriptors).
 
 ## Packages
 
@@ -180,19 +176,31 @@ $ cmake -S . -B build && cmake --build build && ./build/quickstart
 ```
 
 - [`Server::startable_at_socket_path`][ref-server-startable_at_socket_path]
-  names a socket of its own and `/dev/null` as the configuration, so the
-  program neither touches nor is changed by a tmux you already use.
+  names a socket of its own and `/dev/null` as the configuration, so your own
+  tmux is untouched.
 - [`Server::new_session`][ref-server-new_session] starts that server;
   [`Pane::send_line`][ref-pane-send_line] types, and
   [`Pane::wait_for_text`][ref-pane-wait_for_text] waits for the output.
-- Use [`Server::at_default()`][ref-server-at_default] to drive the server your
-  own `tmux` command does, or the one `LIBTMUX_SOCKET_PATH` or `LIBTMUX_SOCKET`
+- [`Server::at_default()`][ref-server-at_default] drives the server your own
+  `tmux` command does, or the one `LIBTMUX_SOCKET_PATH` or `LIBTMUX_SOCKET`
   names.
 
-Every C++ block below is quoted from a program the suite compiles and runs
-against a real tmux, in
-[`examples/05-readme.cpp`](examples/05-readme.cpp), and
-[a check](tools/docs/check_readme.py) fails the build if they drift apart.
+The blocks below continue from this program. Each names what it is given in
+its first line, and they use these includes
+([`examples/05-readme.cpp`](examples/05-readme.cpp) runs them all):
+
+```cpp
+#include <algorithm>
+#include <chrono>
+#include <format>
+#include <iostream>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <libtmux/libtmux.hpp>
+```
 
 ## Find sessions, windows and panes
 
@@ -225,8 +233,8 @@ for (const libtmux::Session& session : *sessions) {
 }
 ```
 
-This runs against a private server and prints one line per session. A
-[`Session`][ref-session] holds what tmux said when you listed it;
+This prints one line per session. A [`Session`][ref-session] holds what tmux
+said when you listed it;
 [`Window::refresh`](#windowrefresh-read-an-entity-again) reads it again.
 
 ### [`Pane::window`][ref-pane-window]: walk up and down
@@ -248,7 +256,7 @@ if (window.has_value() && owner.has_value()) {
 ```
 
 This prints which window and session a pane is in. Each relation call is a new
-read; the entity you started from still holds its earlier snapshot.
+read.
 
 ### [`Window::refresh`][ref-window-refresh]: read an entity again
 
@@ -276,8 +284,7 @@ if (now.has_value()) {
 }
 ```
 
-This prints `held: editor`, then `now: renamed`. It is the one thing most likely
-to surprise.
+This prints `held: editor`, then `now: renamed`.
 
 ## Query with typed filters
 
@@ -417,7 +424,7 @@ take ownership instead.
 ### Fields refuse the wrong question
 
 The compiler rejects a question a field cannot answer. Each of these is a build
-error, and a test in [`tests/compile/`](tests/compile/) proves it stays one:
+error ([`tests/compile/`](tests/compile/)):
 
 | Will not compile | Why |
 |---|---|
@@ -482,12 +489,9 @@ if (!answered.has_value() || !answered->matched) {
 std::cout << "the pane answered 6 x 7 = 42\n";
 ```
 
-This runs against a pane running `sh` and prints `the pane answered 6 x 7 = 42`.
-The terminal echoes the typed line, so the example waits for the answer, which
-the typed line never contains.
+This prints `the pane answered 6 x 7 = 42`.
 
-[Pane interaction][topic-pane] and [waiting and retrying][topic-waiting] cover
-the rest.
+More: [pane interaction][topic-pane] and [waiting and retrying][topic-waiting].
 
 ### [`Pane::capture`][ref-pane-capture]: read what a pane shows
 
@@ -641,8 +645,9 @@ if (project.has_value()) {
 }
 ```
 
-This prints `@project is libtmux`. POSIX tmux preserves arbitrary option text;
-[options and hooks][topic-options] has the rest.
+This prints `@project is libtmux`.
+
+More: [options and hooks][topic-options].
 
 ## Batches, chains and control mode
 
@@ -709,15 +714,15 @@ std::cout << std::format("window added: {}\n", added);
 
 This prints `window added:` and the id tmux gave the new window.
 
-- Library-managed control mode needs tmux 3.7. An older daemon is refused
-  before any client attaches; see
-  [optional features by release](#optional-features-by-release).
-- A `Server` runs ordinary tmux client processes, which return tmux's final exit
-  status; use a `Connection` for notification streams and protocol tooling.
-- `take_notifications` is a single draining cursor. For two independent
+- **Needs tmux 3.7.** An older daemon is refused before any client attaches
+  ([why](docs/compatibility.md#control-mode)).
+- **Notifications.** `take_notifications` is a single draining cursor; for two
   consumers, open a [`NotificationWatch`][ref-notificationwatch].
-- The [control transport design](docs/design/control-transport.md) has the
-  rest. Windows psmux rejects control mode before launching a client.
+- **One-shot commands.** A `Server` call runs a tmux client process; use a
+  `Connection` for notification streams.
+- **Windows.** psmux rejects control mode.
+
+More: the [control transport design](docs/design/control-transport.md).
 
 ## Bounded asynchronous commands
 
@@ -756,27 +761,27 @@ if (const auto shutdown = pool.close(); shutdown.failure.has_value()) {
 }
 ```
 
-This prints `answered: submitted`. What a caller acts on:
+This prints `answered: submitted`.
 
-- A refusal before admission (a full, stopped or moved-from runtime, an invalid
-  command) is the outer `unexpected`, and safe to retry once its cause is fixed.
-- After admission, every failure is the operation's eventual result; its
+- **Refused before admission** (a full, stopped or moved-from runtime, an
+  invalid command): the outer `unexpected`, safe to retry once fixed.
+- **Failed after admission:** the operation's result; its
   [`DeliveryStatus`][ref-deliverystatus] says what the transport can prove.
-- [`CommandOperation::wait_for`][ref-commandoperation-wait_for] expiring leaves
-  the command running; [`request_cancel`][ref-commandoperation-request_cancel]
-  asks the transport to withdraw it.
-- Observers run only when you call
-  [`CommandRuntime::dispatch_ready`][ref-commandruntime-dispatch_ready].
-- [`CommandRuntime::close`][ref-commandruntime-close] blocks until the threads
-  stop; `safe_to_unload` is true only once pending work is discharged.
+- **An expired [`wait_for`][ref-commandoperation-wait_for]** leaves the command
+  running; [`request_cancel`][ref-commandoperation-request_cancel] asks the
+  transport to withdraw it.
+- **Observers** run only when you call
+  [`CommandRuntime::dispatch_ready`][ref-commandruntime-dispatch_ready];
+  [`CommandRuntime::close`][ref-commandruntime-close] blocks until the threads
+  stop.
 
-[`docs/runtime.md`](docs/runtime.md) is the full contract: admission, the
-three capacity legs, cancellation, counters and shutdown.
+More: [`docs/runtime.md`](docs/runtime.md) covers admission, capacity,
+cancellation, counters and shutdown.
 
 ## Testing your own tmux tools
 
 Writing something that drives tmux on POSIX? The fixture this project's own
-suite runs on is installed with the package. Ask for it by name:
+suite runs on ships with the package. Ask for it by name:
 
 ```cmake
 find_package(libtmux REQUIRED COMPONENTS testing)
@@ -788,6 +793,14 @@ target_link_libraries(your_tests PRIVATE libtmux::testing)
 [`ScopedTmuxServer`][ref-test-scopedtmuxserver] gives a suite a server on its own
 socket, and [`SocketNamespace::consumer`][ref-test-socketnamespace] names the
 suite that left a stray directory:
+
+```cpp
+#include <format>
+#include <iostream>
+
+#include <libtmux/libtmux.hpp>
+#include <libtmux/testing/scoped_server.hpp>
+```
 
 ```cpp
 // A private tmux for a suite of your own, gone when the scope ends.
@@ -804,12 +817,11 @@ std::cout << std::format("sessions on it: {}\n", under_test->sessions()->size())
 
 This prints the number of sessions on the private server.
 
-- The server has its own `TMUX_TMPDIR`, with `TMUX` and `TMUX_PANE` erased from
-  the child environment, and is killed with its tree removed when the scope
-  ends, including when the test fails.
-- A suite that uses the default server ends somebody else's session, and the
-  failure looks like a bug in whatever noticed first.
-- It links no test framework, so GoogleTest, Catch2 and doctest all work.
+- **Cleanup.** The server has its own `TMUX_TMPDIR` and is killed, its tree
+  removed, when the scope ends, even when the test fails.
+- **Never the default server.** A suite that uses it ends somebody else's
+  session.
+- **Any framework.** It links none: GoogleTest, Catch2 and doctest all work.
 
 **[Testing API reference →](docs/api-testing.md)** ·
 **[How this project tests →](tests/README.md)** ·
@@ -817,8 +829,7 @@ This prints the number of sessions on the private server.
 
 ## Installation
 
-Nothing to install alongside it: the library has no dependencies. Pick whichever
-of these your project already uses.
+The library has no dependencies. Pick what your project already uses.
 
 ### CMake FetchContent
 
@@ -835,14 +846,7 @@ FetchContent_MakeAvailable(libtmux)
 target_link_libraries(your_target PRIVATE libtmux::libtmux)
 ```
 
-- Embedded this way the library builds alone: its tests, examples and the MCP
-  server all default off when it is not the top-level project.
-- `v0.1.0` requires tmux 3.3a and carries the optional `tmux-workspace`
-  CLI and saved-layout validation.
-- It also carries the experimental x64 desktop Windows preview for Visual Studio
-  2022 and the audited psmux build in its source.
-- Whether a release's vcpkg port carries Windows is a separate transition its
-  tagged gates must clear, so check the `supports` field of the version you pin.
+Embedded this way, its tests, examples and MCP server default off.
 
 ### Build and install from source
 
@@ -865,8 +869,7 @@ find_package(libtmux REQUIRED)
 target_link_libraries(your_target PRIVATE libtmux::libtmux)
 ```
 
-[`examples/consume/`](examples/consume/) is exactly that project, three files
-long, and CI builds it against a real install so the package config cannot rot.
+[`examples/consume/`](examples/consume/) is that project, three files long.
 
 ### Git submodule
 
@@ -881,12 +884,8 @@ target_link_libraries(your_target PRIVATE libtmux::libtmux)
 
 ### vcpkg
 
-This repository is a [vcpkg git registry](docs/vcpkg-registry.md), so vcpkg
-resolves `libtmux` by version the way it resolves anything else.
-
-It is not in the curated registry: the project is far too new to meet vcpkg's
-maturity bar, and serving your own registry is what vcpkg's documentation
-recommends instead.
+This repository is a [vcpkg git registry](docs/vcpkg-registry.md): vcpkg
+resolves `libtmux` by version from it. It is not in vcpkg's curated registry.
 
 Declare the dependency in `vcpkg.json` first, with no registry file yet:
 
@@ -898,10 +897,9 @@ Declare the dependency in `vcpkg.json` first, with no registry file yet:
 }
 ```
 
-Pin vcpkg's own baseline before naming any registry. **The order matters**:
-once a configuration names a registry, vcpkg refuses to load it until the
-default registry has a baseline — including when you run the command that
-would add one.
+Pin vcpkg's own baseline before naming a registry. **Order matters:** vcpkg
+refuses a registry until the default registry has a baseline, even for the
+command that adds one.
 
 ```console
 $ vcpkg x-update-baseline --add-initial-baseline
@@ -927,16 +925,16 @@ empty for the next command to fill:
 $ vcpkg x-update-baseline
 ```
 
-That writes a commit of this repository into `baseline`, which is what your
-build resolves against from then on. Re-run it to move to a newer release.
+That writes a commit of this repository into `baseline`. Re-run it to move to
+a newer release.
 
 ```cmake
 find_package(libtmux CONFIG REQUIRED)
 target_link_libraries(your_target PRIVATE libtmux::libtmux)
 ```
 
-The [MCP server](#libtmux-mcp-server) is a vcpkg feature of `libtmux`, since it
-ships from this same source. Ask for it by name:
+The [MCP server](#libtmux-mcp-server) is a vcpkg feature of `libtmux`. Ask for
+it by name:
 
 ```json
 {
@@ -989,19 +987,18 @@ the program installs, its socket options, and the Windows triplets.
 | [libtmux (Python)][libtmux] | The original | The same, from Python |
 | [tmuxp] | An app on libtmux | Declarative workspaces from YAML |
 
-This port aims at practical parity with the Python library. Where they differ
-the difference is written down — see [`tools/`](tools/README.md) for the ledger
-that records what maps to what, and the evidence for each entry.
+This port aims at parity with the Python library; the
+[parity ledger](tools/README.md) records where it differs.
 
 ## Package guides
 
 ### [`libtmux`](https://github.com/libtmux/libtmux-cxx/tree/master/include/libtmux)
 
 Typed, value-semantic control of tmux servers, sessions, windows and panes.
-Reference: the [API reference][ref-index], [getting started][guide-start] and
-[concepts][guide-concepts]. The
-[`include/libtmux/` README](include/libtmux/README.md) says what each public
-header holds.
+
+Reference: [API][ref-index], [getting started][guide-start],
+[concepts][guide-concepts], [public headers](include/libtmux/README.md),
+[changelog](CHANGELOG.md).
 
 [`Server::capabilities`][ref-server-capabilities] reports what a
 [`Server`][ref-server] handle can promise without starting tmux, so a program
@@ -1023,9 +1020,13 @@ std::cout << std::format("{} over {}: pane input and output supported: {}\n",
 ### [`libtmux::testing`](https://github.com/libtmux/libtmux-cxx/tree/master/include/libtmux/testing)
 
 A private tmux server for your own tests, removed when the scope ends. POSIX
-only. Reference: [Testing with libtmux][guide-testing] and the
-[`ScopedTmuxServer`][ref-test-scopedtmuxserver] page;
-[Testing your own tmux tools](#testing-your-own-tmux-tools) shows it in a suite.
+only.
+
+Reference: [Testing with libtmux][guide-testing],
+[`ScopedTmuxServer`][ref-test-scopedtmuxserver],
+[testing API](docs/api-testing.md),
+[a suite that uses it](#testing-your-own-tmux-tools),
+[changelog](CHANGELOG.md).
 
 A [`TeardownReport`][ref-test-teardownreport] passed to
 [`ScopedTmuxServer::start`][ref-test-scopedtmuxserver-start] collects what teardown
@@ -1054,9 +1055,11 @@ did, including anything it could not clean up:
 ### [`tmux-workspace`](https://github.com/libtmux/libtmux-cxx/tree/master/apps/workspace)
 
 Loads, captures, converts and imports tmuxp-style workspace files from the
-command line. Optional and POSIX only. Reference: the [command manual][ws-cli],
-[`load`][ws-load] and [workspace configuration][ws-configuration]. The
-[`apps/workspace/` README](apps/workspace/README.md) walks through each command.
+command line. Optional; POSIX only.
+
+Reference: [command manual][ws-cli], [`load`][ws-load],
+[workspace configuration][ws-configuration],
+[README](apps/workspace/README.md), [changelog](apps/workspace/CHANGELOG.md).
 
 Build and install it:
 
@@ -1083,10 +1086,11 @@ $ tmux-workspace load \
 ### [`libtmux-mcp-server`](https://github.com/libtmux/libtmux-cxx/tree/master/apps/mcp)
 
 A [Model Context Protocol](https://modelcontextprotocol.io) server over stdio,
-so an agent can drive tmux. Reference: the [MCP overview][mcp-index], the
-[tool reference][mcp-tools] and [connecting a client][mcp-guide]. The
-[`apps/mcp/` README](apps/mcp/README.md) lists the toolsets and the socket
-options.
+so an agent can drive tmux.
+
+Reference: [overview][mcp-index], [tool reference][mcp-tools],
+[connecting a client][mcp-guide], [README](apps/mcp/README.md),
+[changelog](apps/mcp/CHANGELOG.md).
 
 Build and install it:
 
@@ -1111,138 +1115,59 @@ $ claude mcp add tmux \
 
 ## Compatibility
 
-tmux 3.3a and newer. The floor is the complete release: tmux 3.3 is below it.
+tmux 3.3a and newer; tmux 3.3 is below the floor. [`Version`][ref-version]
+orders releases: `3.7 < 3.7a < 3.7b`, and `next-X.Y` and `X.Y-rcN` precede
+`X.Y`.
 
-- [`Version`][ref-version] orders releases correctly: `3.7 < 3.7a < 3.7b`, and
-  `next-X.Y` and `X.Y-rcN` precede `X.Y`.
-- CI tests the oldest and newest released tmux, 3.3a and 3.8, on every pull
-  request and master change. A release builds and tests pinned cells from 3.3a
-  through 3.8, plus `master`.
-  [Any tmux can run on demand](.github/CONTRIBUTING.md#running-ci-against-any-tmux).
-- The daemon a command reaches decides: a release below the floor, an unreadable
-  version and an undated `master` are refused with
+- **The daemon decides.** A release below the floor, an unreadable version and
+  an undated `master` are refused with
   [`FailureKind::unsupported`][ref-failurekind] before the command has any
   effect.
+- **Known tmux defects** are refused before dispatch, or avoided by typed calls
+  such as [`Pane::break_out`][ref-pane-break_out].
 - [`docs/compatibility.md`](docs/compatibility.md) covers the probe, older
-  daemons, [`Server::check_release()`][ref-server-check_release] and the
-  `command-alias` caveat.
-
-Across that range tmux does not answer identically, and where it cannot the
-library cannot either. Each exception is covered by a test that skips below the
-release that provides it:
-
-| Needs | Capability |
-|---|---|
-| tmux 3.4 | `%message` delivered to an attached control client |
-| tmux 3.4 | notification-shaped command output kept in the block body |
-| tmux 3.6 | The created-window report when breaking a window's only pane |
-| tmux 3.8 | JSON saved layouts, `{"V":2,...` |
-
-Two are tmux defects that a later release fixed, so the affected window is
-closed at both ends:
-
-| Broken on | What tmux does |
-|---|---|
-| tmux 3.4 – 3.5 | Echoes a non-UTF-8 byte back as its octal escape rather than the byte |
-| tmux 3.4 | Adds a backslash before `$` when an option value it printed is set again |
-
-- Raw tmux 3.7 crashes an unnamed multi-pane `break-pane` and ignores an
-  explicit name there. [`Pane::break_out`][ref-pane-break_out] selects the safe
-  unnamed form and repairs a requested name by stable window ID; tmux 3.7a
-  fixes both upstream.
-- A `split` carrying a percentage is spelled `-l 25%` rather than the `-p 25`
-  that tmux 3.4 removed, so it works on every supported release. Python libtmux
-  still emits `-p`.
+  daemons, [`Server::check_release()`][ref-server-check_release], the defects
+  and the `command-alias` caveat.
 
 ### Optional features by release
 
-The floor above is for ordinary commands. A feature that needs a newer daemon
-says so itself, is refused before it has an effect, and does not raise the floor
-for anything else. The daemon decides, not the client executable.
+A feature that needs a newer daemon is refused before it has an effect, and
+does not raise the floor for anything else.
 
-| Feature | Daemon | Below it | State |
-|---|---|---|---|
-| Control mode: `Server::control`, `control_with_options`, `over_control`, `Connection::connect` | 3.7 | Refused, naming 3.7, before any client attaches ([why](docs/compatibility.md#control-mode)) | Qualified; attach on 3.7 and newer, idle only |
-| `wait_for_text` streaming | 3.7 | Polls the pane; control mode is never tried | Operative with synchronization |
-| `Buffer::remove`, a literal `delete-buffer -b` or `set-buffer -b -n`, the MCP `paste_text` staging buffer | 3.4 | `FailureKind::unsupported`, before any buffer is touched ([why](docs/compatibility.md#named-buffers)) | Qualified |
-| `:` or `.` in session and window names, typed or literal | not exactly 3.7 | `FailureKind::validation`, before dispatch ([why](docs/compatibility.md#names-with-a-colon-or-a-period)) | Qualified |
-| Mirrored `main-*` presets, typed or in a literal `select-layout` | 3.5 | `FailureKind::validation`, before dispatch | Qualified |
-| JSON layouts, typed or in a literal `select-layout` | 3.8 | `FailureKind::validation`, before dispatch | Qualified |
-| A layout string tmux cannot read, typed or literal | never sent | `FailureKind::validation` on every release, before dispatch ([why](docs/compatibility.md#unreadable-layout-strings)) | Qualified |
-| A literal `refresh-client -l`, under any alias or unique prefix | 3.6a | `FailureKind::unsupported`, before dispatch; no typed call ([why](docs/compatibility.md#clipboard-query)) | Qualified |
-| A literal `break-pane` without `-n`, through `Server::run`, a batch or `Connection::execute` | not exactly 3.7 | `FailureKind::validation`, in any spelling and in a `;` list; `Pane::break_out` names the window itself ([why](docs/compatibility.md#break-pane)) | Qualified on 3.7 |
+| Feature | Needs |
+|---|---|
+| Control mode, and `wait_for_text` streaming | tmux 3.7 |
+| Named buffer operations, such as `Buffer::remove` | tmux 3.4 |
+| Mirrored `main-*` layout presets | tmux 3.5 |
+| JSON saved layouts | tmux 3.8 |
 
-The gates that have a machine-readable entry are in
-[`capabilities.json`](capabilities.json).
-
-A literal command is read the way tmux reads it: under its alias or any unique
-prefix, and in each position of a `;` list. That holds for
-[`Server::run`][ref-server-run], batches and chains, asynchronous submissions,
-[`Server::over_control`][ref-server-over_control] and
-[`Connection::execute`][ref-connection-execute].
-
-A command carried inside a string that tmux parses itself is sent as written.
-That covers:
-
-- the body of `if-shell`, the argument of `run-shell -C`, and a brace block;
-- a command stored in a hook, a key binding or a sourced file.
-
-These are the refused commands, the releases they affect, and what happens:
-
-- `break-pane` without `-n`: exact tmux 3.7 only. The server exits. 3.7a fixes
-  it ([`CHANGES`](https://github.com/tmux/tmux/blob/3.7a/CHANGES#L3), [the
-  inverted name test in 3.7](https://github.com/tmux/tmux/blob/3.7/cmd-break-pane.c#L117-L124)).
-- `select-layout` with a string tmux cannot parse: tmux 3.3 and 3.3a. The
-  server exits. 3.4 answers "invalid layout".
-- `refresh-client -l`: below 3.6a, with an attached client. The server exits at
-  once on 3.3a, and on 3.4 to 3.6 when the client leaves before its terminal
-  answers ([why](docs/compatibility.md#clipboard-query)).
-- `delete-buffer -b NAME`, and `set-buffer -b NAME -n`: below 3.4. No crash;
-  the wrong buffer is changed ([why](docs/compatibility.md#named-buffers)).
-- `split-window -p`: exactly 3.4. tmux answers "size missing" and changes
-  nothing. This port does not refuse a raw `-p`; typed splits send `-l N%`.
-- Names containing `:` or `.`: exactly 3.7. tmux answers "invalid session name"
-  or "invalid window name" and changes nothing.
-
-On exact tmux 3.7, name every `break-pane`, nested or not, or upgrade to 3.7a.
-The [default `prefix !` binding](https://github.com/tmux/tmux/blob/3.7/key-bindings.c#L358)
-is itself a nameless `break-pane`, which no library check can reach.
-
-[`Server`][ref-server]`::run_shell` does not capture the job's output, so the
-3.3 to 3.4 `run-shell` stdout defect does not reach it. Percentage splits are
-always `-l N%`, and layout strings are validated before dispatch.
+[Every gate and why](docs/compatibility.md#optional-features-by-release);
+[`capabilities.json`](capabilities.json) is the machine-readable list.
 
 ### Windows through psmux
 
-An experimental x64 desktop preview, built with Visual Studio 2022, reaching a
-Windows terminal through [psmux]. It serves what it can prove and refuses the
-rest; [`docs/windows.md`](docs/windows.md) lists what it serves and what fails
-before dispatch.
+An experimental x64 desktop preview, built with Visual Studio 2022, that
+reaches a Windows terminal through [psmux]. It serves what it can prove and
+refuses the rest; [`docs/windows.md`](docs/windows.md) lists both.
 
-- Install psmux with its `tmux.exe` alias, and use
-  [`Server::at_default()`][ref-server-at_default] or
-  [`Server::at_socket_name(...)`][ref-server-at_socket_name].
-- The verified target is psmux 3.3.7; any other binary is a new compatibility
-  target until the native smoke passes against it.
-- Ask [`Server::capabilities()`][ref-server-capabilities] first: a typed call
-  psmux cannot target safely returns
+- **Use** [`Server::at_default()`][ref-server-at_default] or
+  [`Server::at_socket_name(...)`][ref-server-at_socket_name], with psmux's
+  `tmux.exe` alias installed.
+- **Ask first.** [`Server::capabilities()`][ref-server-capabilities] says what
+  is served; a typed call psmux cannot target safely returns
   [`FailureKind::unsupported`][ref-failurekind] with `delivery == not_started`.
-- Not available there: `-S` socket paths, persistent control mode, clients,
-  buffers, options and hooks, session and window creation, and pane input and
+- **Not available:** `-S` socket paths, persistent control mode, clients,
+  buffers, options and hooks, session and window creation, pane input and
   capture.
-- [`Server::run`][ref-server-run], batches and chains stay raw escape hatches;
-  psmux joins raw argv into a line protocol, so a semicolon can start another
+- **Raw escape hatches.** [`Server::run`][ref-server-run], batches and chains
+  pass argv through psmux's line protocol, where a semicolon can start another
   command.
-- A server-side `command-alias` can redefine a command, so `readOnlyHint` and a
-  typed method name do not guarantee a read is a read; use only servers you
-  trust.
+- **Trust the server.** A server-side `command-alias` can redefine a command,
+  so a read method is not guaranteed to read.
+- **Best effort.** CI builds the preview and runs no psmux test.
 
-psmux is supported on a best-effort basis, and CI coverage for it is highly
-limited: CI builds the Windows preview but runs no psmux test.
-
-To check a build, run the native smoke. It needs the Visual Studio 2022 C++
-workload and a psmux `tmux.exe` on `PATH`. Run the preset with Windows CMake
-from a Developer PowerShell in a Windows-path checkout:
+To check a build, run the native smoke from a Developer PowerShell in a
+Windows-path checkout, with a psmux `tmux.exe` on `PATH`:
 
 ```console
 $ cmake --preset windows-psmux
@@ -1278,24 +1203,13 @@ $ ctest --preset windows-psmux --no-tests=error
 
 - Alpha: any release may change or remove exported identifiers without a
   deprecation period. Pin an exact version.
-- tmux 3.3a through `master`, on Linux (including WSL) and macOS; experimental
-  x64 desktop Windows through psmux.
-- CI runs Linux on `ubuntu-latest` and builds the Windows preview with MSVC on
-  `windows-2022` without starting psmux. macOS and psmux are supported on a
-  best-effort basis, and CI coverage for them is highly limited.
-- C++23 (clang 17+, GCC 13+, Visual Studio 2022 17.3+), or C++20 with
-  `LIBTMUX_CXX_STANDARD=20`. The core links nothing.
-- Every pull request runs against real tmux under clang with libc++, GCC with
-  libstdc++, the C++20 build over `tl::expected`, the sanitizers and a locale
-  that is not UTF-8.
-- A pull request runs tmux 3.3a and 3.8. The full tmux matrix, run for a
-  release, spans pinned cells from 3.3a through 3.8, plus `master`, and
-  refusal cells for 3.0a, 3.1c, 3.2a and 3.3.
-- Four parsers for tmux-controlled text have fuzz harnesses, and
-  [a mutation catalogue](tools/README.md#the-mutation-catalogue) breaks one guard
-  at a time and reports any that nothing notices.
-- [The design commitments](docs/design/commitments.md) and
-  [what was measured](docs/README.md) are in `docs/`.
+- **tmux.** 3.3a or newer. [Compatibility](#compatibility).
+- **Platforms.** Linux (WSL included) and macOS. The Windows preview through
+  psmux, and macOS, are best effort.
+- **C++.** C++23, or C++20 with `LIBTMUX_CXX_STANDARD=20`. The core links
+  nothing.
+- **Design.** [The design commitments](docs/design/commitments.md) and
+  [what was measured](docs/README.md).
 
 ## Repository layout
 
@@ -1314,8 +1228,7 @@ $ ctest --preset windows-psmux --no-tests=error
 
 ### What it is called
 
-One artifact, four spellings, because each namespace has its own rules and
-none of them can be the same string.
+One artifact, four spellings:
 
 | Spelling | Where it is the name |
 |---|---|
@@ -1327,9 +1240,7 @@ none of them can be the same string.
 Link the target, not the file: `find_package(libtmux)` then
 `target_link_libraries(you PRIVATE libtmux::libtmux)`.
 
-Outside CMake the
-installed `libtmux.pc` carries the same answer, including the standard and the
-`LIBTMUX_USE_TL_EXPECTED` the C++20 build needs.
+Outside CMake, the installed `libtmux.pc` carries the same flags.
 
 ## Project links
 
