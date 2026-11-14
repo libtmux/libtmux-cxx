@@ -88,6 +88,52 @@ The alpha warning states these terms:
 > deprecation period. Pin an exact version. Not recommended for production.
 ```
 
+## README shape
+
+The README is scanned, not read. The root `README.md` and each package README
+follow one shape:
+
+- **Header.** The logo, a centred title and a badge row: CI, docs on
+  libtmux.org, licence. A registry badge waits for a published package. No
+  badge or link points at a page that does not answer 200.
+- **Tasks.** A `##` heading names a task in the reader's words, such as "Find
+  sessions, windows and panes".
+- **APIs.** A `###` heading is the API, linked to its libtmux.org reference
+  page, then a colon and its job in plain words:
+
+  ```markdown
+  ### [`Server::run_chain`](https://libtmux.org/en/cxx/latest/reference/libtmux-server-run_chain/): several commands, one process
+  ```
+
+- **Under a heading.** A line or two linking the sibling APIs, the example,
+  what it prints, at most one short note, and a `More:` link to the guide.
+- **No paragraph over three lines.** A list of facts is a bullet list.
+- **No feature inventory.** The sections and their examples show what exists.
+- **Floors, not build logs.** Requirements are floors a reader can act on:
+  "tmux 3.3a or newer", "CMake 3.25 or newer". No patch version of a toolchain
+  you happened to build with, no CI matrix, no kernel or glibc trivia. Link the
+  page that holds it.
+- **Cut what a reader would assume.** That examples are tested, how the docs
+  are built, what the checks cover, "evidence", "qualified", "contract".
+- **Packages.** Keep the table or list. Under it, one heading per package
+  linking its directory on the trunk branch, a one-line description, then a
+  link line: reference, registry, changelog.
+- **Support and status, and what it leaves out.** Short bold-lead bullets.
+- **Imports first.** A displayed example starts with its `#include` lines, so
+  pasting it into a file builds. Where the README quotes a region of a larger
+  program, the first example of each section shows the includes and later ones
+  may continue from it.
+- **Examples own their server.** An example starts its private tmux server
+  through the library and stops it through the library, never with a shell
+  `tmux` command before it or `kill-server` after. Where the library lacks the
+  call, say so under what it leaves out and keep the shell step.
+- **CI runs every example.** A displayed example comes from a file the CI
+  workflow builds and runs. The README quotes it and holds no second copy.
+- **Headline features.** Show the query, planner, chaining and control-mode
+  features the port has, each under its API-linked heading with an example:
+  here the typed filters, `Chain` and `Server::run_chain`,
+  `Server::over_control` and `Server::control`. This port has no planner.
+
 ## Changelog
 
 A ledger, not a narrative. It is scanned, and the question a reader arrives
