@@ -1079,6 +1079,11 @@ std::cout << std::format("{} over {}: pane input and output supported: {}\n",
                          libtmux::to_string(capabilities.backend), pane_io);
 ```
 
+[`Server::available`][ref-server-available] adds the tmux release, which
+`supports` never reads: it answers `false` for control mode where
+[`Server::control`][ref-server-control] refuses the daemon's release. It can run
+tmux, so it returns an `expected`.
+
 ### [`libtmux::testing`](https://github.com/libtmux/libtmux-cxx/tree/master/include/libtmux/testing)
 
 A private tmux server for your own tests, removed when the scope ends. POSIX
@@ -1416,6 +1421,7 @@ MIT. See [LICENSE](LICENSE).
 [ref-server-at_default]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-at_default/
 [ref-server-at_socket_name]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-at_socket_name/
 [ref-server-at_socket_path]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-at_socket_path/
+[ref-server-available]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-available/
 [ref-server-capabilities]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-capabilities/
 [ref-server-check_release]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-check_release/
 [ref-server-control]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-control/
