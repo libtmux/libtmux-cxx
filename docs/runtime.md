@@ -1,16 +1,24 @@
 # Bounded asynchronous commands
 
 The contract of [`CommandRuntime`][ref-commandruntime] and
-[`CommandOperation`][ref-commandoperation], which the
-[README](../README.md#bounded-asynchronous-commands) summarises in a few
-bullets: how a command is admitted, observed, waited on, cancelled and retired,
-and what shutdown promises. The reference pages for each type are on
-[libtmux.org][ref-index].
+[`CommandOperation`][ref-commandoperation]: how a command is admitted,
+observed, waited on, cancelled and retired, and what shutdown promises. The
+[README](../README.md#bounded-asynchronous-commands) has the short version;
+[libtmux.org][ref-index] has the reference.
 
 ## A complete program
 
-The complete program is [`examples/05-readme.cpp`](../examples/05-readme.cpp).
-This excerpt uses the `server` created there:
+The program is [`examples/05-readme.cpp`](../examples/05-readme.cpp). This
+excerpt continues from the `server` created there:
+
+```cpp
+#include <chrono>
+#include <format>
+#include <iostream>
+#include <utility>
+
+#include <libtmux/libtmux.hpp>
+```
 
 ```cpp
 // Given: const libtmux::Server& server
@@ -95,19 +103,24 @@ submission. Admission itself never waits for a slot.
 
 ## Admission
 
-`Server::try_submit` also returns an outer `unexpected` before admission for a
-moved-from or stopped runtime, an invalid or empty command, a daemon below the
-floor, an unsupported custom backend, a `Server` opened before its socket
-existed, a full capacity, or a failure to register its observer. These create
-no operation or observer record; refusals against a live runtime increment
-`refused`, while a moved-from runtime has no counters. They are safe to retry
-when their cause is fixed. Once it
-returns a [`CommandOperation`][ref-commandoperation], every tmux, transport, cancellation, or runtime
-publication failure is that operation's eventual result. A server that dies
-after its handle captured the socket can therefore be admitted and fail through
-`wait`; its [`DeliveryStatus`][ref-deliverystatus] says what the transport can prove. The runtime also
-preserves its first lifecycle failure in `close().failure`, the only channel
-available when no operation can carry it.
+`Server::try_submit` returns an outer `unexpected` before admission for:
+
+- a moved-from or stopped runtime;
+- an invalid or empty command;
+- a daemon below the floor, or an unsupported custom backend;
+- a `Server` opened before its socket existed;
+- a full capacity, or a failure to register its observer.
+
+These create no operation or observer record, and are safe to retry once the
+cause is fixed. Refusals against a live runtime increment `refused`; a
+moved-from runtime has no counters.
+
+After it returns a [`CommandOperation`][ref-commandoperation], every tmux,
+transport, cancellation or runtime publication failure is that operation's
+eventual result. A server that dies after its handle captured the socket is
+admitted and fails through `wait`; its [`DeliveryStatus`][ref-deliverystatus]
+says what the transport can prove. The runtime keeps its first lifecycle
+failure in `close().failure`, the only channel when no operation can carry it.
 
 ## Observers
 
@@ -144,8 +157,8 @@ When the standard library defines `__cpp_lib_jthread`, the operation's `wait`,
 `wait_for` and `wait_until` also accept `std::stop_token`. A stop request invokes
 the same transport cancellation while that wait is active. A completed result
 still wins over a later stop request. libc++ 18 requires an experimental library
-mode for stop tokens; the ordinary pinned build keeps `request_cancel` available
-and does not enable that mode implicitly.
+mode for stop tokens; the default build leaves it off, and `request_cancel`
+always works.
 
 ## Waiting for observers
 
@@ -186,10 +199,8 @@ when shutdown or module-unload status matters.
 
 ## Where it runs
 
-The ordinary Linux test presets execute this runtime. macOS and the
-C++20/C++23 experimental Windows path against pinned psmux are supported on a
-best-effort basis, and CI coverage for them is highly limited. Windows retains
-the narrower typed-operation limits described in
+Linux is the supported platform. macOS and the Windows psmux preview are best
+effort; Windows keeps the narrower typed-operation limits in
 [Windows through psmux](windows.md).
 
 ## Child process descriptors

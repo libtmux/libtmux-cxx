@@ -46,7 +46,7 @@ behind a few bullets there.
 | Page | Covers |
 |---|---|
 | [`runtime.md`](runtime.md) | `CommandRuntime`: admission, observers, capacity, cancellation, counters and shutdown |
-| [`compatibility.md`](compatibility.md) | The tmux floor, how a release is refused, and what is not qualified |
+| [`compatibility.md`](compatibility.md) | The tmux floor, how a release is refused, and what each release gates |
 | [`windows.md`](windows.md) | The Windows preview through psmux: what it serves and what fails before dispatch |
 | [`workspace-cli.md`](workspace-cli.md) | `tmux-workspace`: commands, imports, scripts, progress, the optional tmuxp shell |
 | [`mcp-server.md`](mcp-server.md) | `libtmux-mcp-server`: the tool catalog, protocol, sockets, failures and the Windows wrapper |

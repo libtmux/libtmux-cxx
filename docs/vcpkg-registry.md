@@ -5,13 +5,11 @@ ship a port. A consumer names this repository's URL and a commit of it, and
 vcpkg resolves `libtmux` the same way it resolves anything from the curated
 registry — versions, features, and binary caching included.
 
-It serves the port itself because the curated registry is not open to it yet.
-vcpkg requires a packaged project to be [mature]: a release six months old, six
-months of public development, or official membership of something that already
-qualifies. This project is none of those, and
+It serves the port itself because the curated registry is not open to it yet:
+vcpkg requires a [mature] project, meaning a six-month-old release, six months
+of public development, or official membership of one that qualifies.
 [microsoft/vcpkg#53458](https://github.com/microsoft/vcpkg/pull/53458) was
-closed for that reason rather than a technical one. Nothing here is a
-workaround — a registry is the answer vcpkg's own documentation gives.
+closed for that reason.
 
 ## The order a consumer has to keep
 
