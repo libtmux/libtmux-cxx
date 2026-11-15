@@ -99,6 +99,9 @@ causes sit here, one per section.
 
 Short-lived control attaches crash 3.2a and 3.6b servers. Control mode is
 refused below 3.7, so no such attach is made, and `wait_for_text` polls there.
+`Server::available(ServerFeature::control_mode)` reads the same release and
+answers `false` below it. `ServerCapabilities::supports` never reads the
+release, so it cannot say.
 
 ### Named buffers
 

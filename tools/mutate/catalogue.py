@@ -92,6 +92,17 @@ CATALOGUE: t.Final = (
         "contract without launching a process",
     ),
     Mutation(
+        mutation_id="available-reads-the-release",
+        path="src/server.cpp",
+        find="    return support::capabilities::meets(\n"
+        "        support::capabilities::CapabilityId::control_mode, *running);",
+        replace="    static_cast<void>(running);\n    return true;",
+        target="libtmux_support_versions_test",
+        test_regex=r"^libtmux[.]support_versions[.]ControlModeRelease[.]",
+        guards="Server::available answers false for control mode on a tmux below "
+        "the release Connection::connect refuses",
+    ),
+    Mutation(
         mutation_id="tmux37-unnamed-break-guard",
         path="src/entities.cpp",
         find=(

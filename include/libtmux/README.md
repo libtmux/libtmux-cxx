@@ -185,6 +185,11 @@ std::cout << std::format("{} over {}: pane input and output supported: {}\n",
                          libtmux::to_string(capabilities.backend), pane_io);
 ```
 
+[`Server::available`][ref-server-available] adds the tmux release, which
+`supports` never reads: it answers `false` for control mode where
+[`Server::control`][ref-server-control] refuses the daemon's release. It can run
+tmux, so it returns an `expected`.
+
 ### [`libtmux::testing`](https://github.com/libtmux/libtmux-cxx/tree/master/include/libtmux/testing)
 
 A private tmux server for your own tests, removed when the scope ends. POSIX
@@ -288,7 +293,9 @@ $ claude mcp add tmux \
 
 [ref-index]: https://libtmux.org/en/cxx/latest/reference/
 [ref-server]: https://libtmux.org/en/cxx/latest/reference/libtmux-server/
+[ref-server-available]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-available/
 [ref-server-capabilities]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-capabilities/
+[ref-server-control]: https://libtmux.org/en/cxx/latest/reference/libtmux-server-control/
 [ref-servercapabilities]: https://libtmux.org/en/cxx/latest/reference/libtmux-servercapabilities/
 [ref-serverfeature]: https://libtmux.org/en/cxx/latest/reference/libtmux-serverfeature/
 [ref-test-scopedtmuxserver]: https://libtmux.org/en/cxx/latest/reference/libtmux-test-scopedtmuxserver/

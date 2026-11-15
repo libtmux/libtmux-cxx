@@ -19,6 +19,16 @@ was recorded as it landed.
 
 ## Unreleased
 
+### Server
+
+- Add `Server::available(ServerFeature)`, which answers whether the tmux a
+  handle reaches provides a feature. `ServerFeature::control_mode` is `false`
+  below the release that `Server::control`, `control_with_options`,
+  `over_control` and `Connection::connect` accept, read from the same table.
+  `ServerCapabilities::supports` still reads the backend and never the release,
+  so it still answers `true` for control mode on an older tmux. Source- and
+  ABI-compatible. (#169)
+
 ## 0.1.0 (2026-11-01)
 
 This is the first release without an `-alpha` tag. It ships the C++ library, the

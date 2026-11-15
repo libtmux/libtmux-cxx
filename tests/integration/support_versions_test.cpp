@@ -466,6 +466,124 @@ TEST(PreThreeTwoAnswers, AnExecutorsFailureWithTheSameWordsIsTheVersionRefusal) 
 }
 
 // ---------------------------------------------------------------------------
+// Control mode, and the release it needs.
+// ---------------------------------------------------------------------------
+
+// A client that answers the version probe as a daemon of `release` does, and
+// finds no server for anything else, so a control client started from it ends
+// at once.
+std::filesystem::path daemon_reporting(const PrivateDirectory& directory,
+                                       const std::string& release) {
+  const auto script = directory.path() / "tmux-reporting";
+  std::ofstream file{script};
+  file << "#!/bin/sh\n"
+          "for argument in \"$@\"; do\n"
+          "  [ \"$argument\" = run-shell ] && probing=1\n"
+          "  last=$argument\n"
+          "done\n"
+          "if [ -n \"$probing\" ]; then\n"
+          "  printf 'unknown command: %s%s\\n' \"${last%'#{version}'}\" "
+       << shell_quote(release)
+       << " >&2\n"
+          "  exit 1\n"
+          "fi\n"
+          "echo 'no server running' >&2\n"
+          "exit 1\n";
+  file.close();
+  ::chmod(script.c_str(), 0700);
+  return script;
+}
+
+constexpr std::string_view kControlRefusal = "library-managed control mode needs";
+
+// What `available` says and what `Connection::connect` does are read from one
+// table, and this holds them to it on a daemon either side of the floor.
+TEST(ControlModeRelease, TheAnswerAgreesWithWhatConnectDoes) {
+  const std::vector<std::pair<std::string, bool>> daemons{{"3.6b", false},
+                                                          {"3.7", true}};
+  for (const auto& [release, supported] : daemons) {
+    SCOPED_TRACE(release);
+    PrivateDirectory directory;
+    ASSERT_FALSE(directory.path().empty());
+    ExecutionPolicy policy;
+    policy.tmux_binary = daemon_reporting(directory, release);
+    auto server = Server::startable_at_socket_path((directory.path() / "s").string(),
+                                                   std::nullopt, {}, policy);
+    ASSERT_TRUE(server.has_value());
+
+    const auto answer = server->available(libtmux::ServerFeature::control_mode);
+    ASSERT_TRUE(answer.has_value()) << answer.error().diagnostic;
+    EXPECT_EQ(*answer, supported);
+
+    const auto connection = server->control("main");
+    ASSERT_FALSE(connection.has_value()) << "the stand-in never serves a client";
+    const bool refused_for_release =
+        connection.error().message.find(kControlRefusal) != std::string::npos;
+    EXPECT_EQ(refused_for_release, !*answer) << connection.error().message;
+    if (refused_for_release) {
+      EXPECT_EQ(connection.error().delivery, DeliveryStatus::not_started);
+    }
+  }
+}
+
+// The release comes from the options when they declare one, so the executor is
+// never asked; an answer the backend settles alone needs no release at all.
+TEST(ControlModeRelease, ADeclaredReleaseIsReadWithoutAskingTheExecutor) {
+  class Counting final : public libtmux::CommandExecutor {
+  public:
+    libtmux::expected<std::string, CommandFailure>
+    run(const libtmux::CommandRequest&, std::optional<std::chrono::milliseconds>,
+        std::optional<std::size_t>) const override {
+      ++calls;
+      return libtmux::unexpected(CommandFailure{.kind = FailureKind::refused,
+                                                .delivery = DeliveryStatus::replied,
+                                                .exit_code = 1,
+                                                .diagnostic = "no answer"});
+    }
+    mutable int calls{};
+  };
+  const auto over = [](libtmux::ExecutorOptions options) {
+    auto executor = std::make_shared<Counting>();
+    auto server = Server::over(executor, std::move(options));
+    EXPECT_TRUE(server.has_value());
+    return std::pair{executor, *std::move(server)};
+  };
+  constexpr auto control = libtmux::ServerFeature::control_mode;
+
+  for (const auto& [release, supported] : std::vector<std::pair<std::string, bool>>{
+           {"3.6b", false}, {"next-3.7", false}, {"3.7", true}, {"3.8", true}}) {
+    SCOPED_TRACE(release);
+    const auto [executor, server] =
+        over({.implementation = libtmux::ServerImplementation::tmux,
+              .version = parsed(release)});
+    const auto answer = server.available(control);
+    ASSERT_TRUE(answer.has_value()) << answer.error().diagnostic;
+    EXPECT_EQ(*answer, supported);
+    EXPECT_EQ(executor->calls, 0);
+  }
+
+  for (const auto implementation :
+       {libtmux::ServerImplementation::psmux, libtmux::ServerImplementation::unknown}) {
+    const auto [executor, server] = over({.implementation = implementation});
+    const auto answer = server.available(control);
+    ASSERT_TRUE(answer.has_value()) << answer.error().diagnostic;
+    EXPECT_FALSE(*answer) << libtmux::to_string(implementation);
+    EXPECT_EQ(executor->calls, 0) << libtmux::to_string(implementation);
+  }
+
+  const auto [silent, unreadable] =
+      over({.implementation = libtmux::ServerImplementation::tmux});
+  const auto inspection =
+      unreadable.available(libtmux::ServerFeature::exact_inspection);
+  ASSERT_TRUE(inspection.has_value()) << "a feature with no floor needs no release";
+  EXPECT_TRUE(*inspection);
+  EXPECT_EQ(silent->calls, 0);
+  const auto undeclared = unreadable.available(control);
+  ASSERT_FALSE(undeclared.has_value()) << "a release nobody reported is not guessed";
+  EXPECT_EQ(undeclared.error().diagnostic, "no answer");
+}
+
+// ---------------------------------------------------------------------------
 // The same commands on a qualifying daemon.
 // ---------------------------------------------------------------------------
 
