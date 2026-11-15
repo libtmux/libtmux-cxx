@@ -257,34 +257,20 @@ if(LIBTMUX_BUILD_MCP_SERVER)
   endif()
 
   if(WIN32 AND LIBTMUX_BUILD_TESTS)
-    find_program(
-      LIBTMUX_POWERSHELL_EXECUTABLE
-      NAMES powershell.exe pwsh.exe pwsh)
-    if(LIBTMUX_POWERSHELL_EXECUTABLE)
-      add_test(
-        NAME windows.mcp.registry-helper
-        COMMAND
-          "${LIBTMUX_POWERSHELL_EXECUTABLE}" -NoLogo -NoProfile -NonInteractive
-          -ExecutionPolicy Bypass -File
-          "${CMAKE_CURRENT_SOURCE_DIR}/tests/windows_psmux_smoke.ps1"
-          -RegistryHelperSelfTest)
-      set_tests_properties(
-        windows.mcp.registry-helper
-        PROPERTIES LABELS "windows;contract;mcp" TIMEOUT 30)
+    if(Python3_Interpreter_FOUND)
       add_test(
         NAME windows.mcp.psmux-smoke
         COMMAND
-          "${LIBTMUX_POWERSHELL_EXECUTABLE}" -NoLogo -NoProfile -NonInteractive
-          -ExecutionPolicy Bypass -File
-          "${CMAKE_CURRENT_SOURCE_DIR}/tests/windows_psmux_smoke.ps1" -Server
+          Python3::Interpreter
+          "${PROJECT_SOURCE_DIR}/scripts/psmux/psmux_mcp_smoke.py" --server
           "$<TARGET_FILE:libtmux_mcp_server>")
       set_tests_properties(
         windows.mcp.psmux-smoke
         PROPERTIES LABELS "windows;psmux;real-tmux;mcp" TIMEOUT 120)
     elseif(CMAKE_CROSSCOMPILING)
-      message(STATUS "PowerShell unavailable; skipping native Windows MCP smoke")
+      message(STATUS "Python unavailable; skipping native Windows MCP smoke")
     else()
-      message(FATAL_ERROR "PowerShell is required for the native Windows MCP smoke")
+      message(FATAL_ERROR "Python is required for the native Windows MCP smoke")
     endif()
   endif()
 

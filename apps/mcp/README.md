@@ -344,7 +344,7 @@ For Claude Desktop, the equivalent entry carries the same variables in `env`:
 | [`src/server.cpp`](src/server.cpp) | Executable composition root |
 | [`tests/mcp_test.cpp`](tests/mcp_test.cpp) | Direct tool tests against deterministic seams and isolated real tmux |
 | [`tests/protocol_test.cpp`](tests/protocol_test.cpp) | Both protocol eras, schemas, backpressure, concurrency, cancellation, framing, and selectors |
-| [`tests/windows_psmux_smoke.ps1`](tests/windows_psmux_smoke.ps1) | Native psmux fixture, pinned catalog, explicit unsupported-command behavior, and exact cleanup |
+| [`scripts/psmux/psmux_mcp_smoke.py`](../../scripts/psmux/psmux_mcp_smoke.py) | Native psmux fixture, pinned catalog, explicit unsupported-command behavior, and exact cleanup |
 
 ## Related
 

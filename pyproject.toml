@@ -35,6 +35,7 @@ pythonpath = [
   "scripts/mcp_inventory",
   "scripts/workspace_cli",
   "scripts/installed_probe",
+  "scripts/psmux",
 ]
 
 [tool.ruff]
@@ -85,4 +86,5 @@ extra-paths = [
   "scripts/mcp_inventory",
   "scripts/workspace_cli",
   "scripts/installed_probe",
+  "scripts/psmux",
 ]

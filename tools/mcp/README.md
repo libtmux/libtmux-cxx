@@ -72,8 +72,9 @@ stays in the proposed definition so preflight can report the required migration.
 The tool is intentionally narrow:
 
 - **POSIX client configs only.** The Windows psmux setup carries a task-owned
-  config and high-entropy `--socket-name` through a PowerShell wrapper. This
-  tool neither models nor rewrites that wrapper.
+  config and high-entropy `--socket-name` through
+  [a runner](../../scripts/psmux/psmux_example.py). This tool neither models nor
+  rewrites that runner.
 
 - **Global configs only.** It writes `~/.cursor/mcp.json`, `~/.claude.json`,
   `~/.codex/config.toml`, `~/.gemini/settings.json`,

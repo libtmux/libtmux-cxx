@@ -21,30 +21,14 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 
 if(NOT CMAKE_CROSSCOMPILING)
-  find_program(
-    LIBTMUX_EXAMPLE_POWERSHELL
-    NAMES powershell.exe pwsh.exe pwsh
-    REQUIRED)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_test(
     NAME example.07-windows-psmux
     COMMAND
-      "${LIBTMUX_EXAMPLE_POWERSHELL}" -NoLogo -NoProfile -NonInteractive
-      -ExecutionPolicy Bypass -File
-      "${CMAKE_CURRENT_SOURCE_DIR}/run_psmux_example.ps1" -Example
-      "$<TARGET_FILE:libtmux_example_07_windows_psmux>")
+      Python3::Interpreter
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/psmux/psmux_example.py"
+      --example "$<TARGET_FILE:libtmux_example_07_windows_psmux>")
   set_tests_properties(
     example.07-windows-psmux
     PROPERTIES LABELS "example;windows;psmux;real-tmux" TIMEOUT 120)
-
-  add_test(
-    NAME example.windows-psmux-runner-safety
-    COMMAND
-      "${LIBTMUX_EXAMPLE_POWERSHELL}" -NoLogo -NoProfile -NonInteractive
-      -ExecutionPolicy Bypass -File
-      "${CMAKE_CURRENT_SOURCE_DIR}/run_psmux_example_test.ps1" -Runner
-      "${CMAKE_CURRENT_SOURCE_DIR}/run_psmux_example.ps1" -PowerShellExecutable
-      "${LIBTMUX_EXAMPLE_POWERSHELL}")
-  set_tests_properties(
-    example.windows-psmux-runner-safety
-    PROPERTIES LABELS "example;windows;contract" TIMEOUT 30)
 endif()
