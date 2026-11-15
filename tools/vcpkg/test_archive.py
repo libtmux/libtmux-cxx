@@ -15,7 +15,7 @@ import subprocess
 import tarfile
 import unittest
 
-EXCLUDED = ("tools/", ".github/")
+EXCLUDED = ("tools/", "scripts/", ".github/")
 REQUIRED = (
     "CMakeLists.txt",
     "LICENSE",
@@ -43,7 +43,7 @@ class ArchiveContents(unittest.TestCase):
     """What the release tarball carries, and what it does not."""
 
     def test_the_research_record_does_not_ship(self) -> None:
-        """The parity ledger and the CI definitions are not part of the library."""
+        """The tooling and the CI definitions are not part of the library."""
         paths = archived_paths()
         for prefix in EXCLUDED:
             carried = sorted(path for path in paths if path.startswith(prefix))

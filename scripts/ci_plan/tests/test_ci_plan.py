@@ -13,7 +13,7 @@ import tempfile
 import unittest.mock
 from typing import ClassVar
 
-from tools.ci import plan
+import ci_plan as plan
 
 FIXTURE = plan.parse_manifest(
     {
@@ -34,7 +34,7 @@ def make(**kwargs: str) -> plan.Plan:
 
 def tmux_of(result: plan.Plan) -> list[str]:
     """Return the tmux refs of the compatibility legs."""
-    return [leg["tmux"] for leg in result.compat]
+    return [str(leg["tmux"]) for leg in result.compat]
 
 
 def check_push_runs_edges() -> None:
@@ -366,7 +366,7 @@ class ScopeAndInputTest(unittest.TestCase):
         )
         clang = result.compat[1]
         self.assertEqual(clang["preset"], "cxx-dev")
-        self.assertIn("clang++-19", clang["cmake_args"])
+        self.assertIn("clang++-19", str(clang["cmake_args"]))
 
     def test_the_default_compiler_passes_no_arguments(self) -> None:
         """The normal stack is the preset as written."""
@@ -501,7 +501,3 @@ class CommandLineTest(unittest.TestCase):
         bad = json.dumps({"lint": {"result": "failure"}})
         self.assertEqual(plan.main(["verify", "--needs", good]), 0)
         self.assertEqual(plan.main(["verify", "--needs", bad]), 1)
-
-
-if __name__ == "__main__":
-    unittest.main()

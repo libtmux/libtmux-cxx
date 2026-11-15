@@ -1,3 +1,8 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = []
+# ///
 """Check that the docs and the workflows follow the CI manifest.
 
 ``tmux_matrix.json`` is the one list of tmux versions. This fails when a page
@@ -10,7 +15,7 @@ action, a shared action that is not pinned to a full commit.
 
 Run from the repository root::
 
-    python3 -m tools.ci.check
+    uv run scripts/ci_plan/ci_check.py
 """
 
 from __future__ import annotations
@@ -20,7 +25,7 @@ import pathlib
 import re
 import sys
 
-from tools.ci.plan import Manifest, PlanError, load_manifest
+from ci_plan import Manifest, PlanError, load_manifest
 
 PAGES = ("docs/compatibility.md", ".github/CONTRIBUTING.md")
 REFUSAL_PAGES = (".github/CONTRIBUTING.md",)
@@ -95,8 +100,9 @@ def _where(lines: list[str], number: int) -> str:
     job = next((m[1] for i in before if (m := JOB_HEAD.match(lines[i]))), "")
     head = next((i for i in before if STEP_HEAD.match(lines[i])), None)
     step = ""
-    if head is not None:
-        indent = len(STEP_HEAD.match(lines[head])[1])
+    opening = STEP_HEAD.match(lines[head]) if head is not None else None
+    if head is not None and opening:
+        indent = len(opening[1])
         for offset, line in enumerate(lines[head:]):
             later = STEP_HEAD.match(line)
             if offset and later and len(later[1]) <= indent:
@@ -227,7 +233,10 @@ def check_ci(text: str, manifest: Manifest) -> list[str]:
 
 
 def _check_tmate_step(step: str) -> str:
-    pin = TMATE.search(step)[1]
+    found = TMATE.search(step)
+    if found is None:
+        return "an action-tmate step is not recognised"
+    pin = found[1]
     if re.fullmatch(r"[0-9a-f]{40}", pin) is None:
         return f"action-tmate is pinned to {pin}, not a full commit"
     if "limit-access-to-actor: true" not in step:
@@ -255,7 +264,7 @@ def check_release(text: str) -> list[str]:
 
 def check(root: pathlib.Path) -> list[str]:
     """Return every disagreement between the manifest, the docs and the workflows."""
-    manifest = load_manifest(root / "tools/ci/tmux_matrix.json")
+    manifest = load_manifest(root / "scripts/ci_plan/tmux_matrix.json")
     problems = check_docs(root, manifest)
     workflows = root / WORKFLOWS
     problems += check_ci((workflows / "ci.yml").read_text(), manifest)

@@ -13,13 +13,13 @@ import shutil
 import tempfile
 import unittest
 
-from tools.ci import check
+import ci_check as check
 
-ROOT = pathlib.Path(__file__).resolve().parents[2]
+ROOT = pathlib.Path(__file__).resolve().parents[3]
 COPIED = (
     "docs/compatibility.md",
     ".github/CONTRIBUTING.md",
-    "tools/ci/tmux_matrix.json",
+    "scripts/ci_plan/tmux_matrix.json",
 )
 SHA = "35b54afac29c97fb54faba5b513f8fbd1882f113"
 ACTION_SHA = "30f81842b1e639ea4e25f93f1f2543504178e228"
@@ -77,7 +77,7 @@ class CheckTest(unittest.TestCase):
 
     def test_a_new_release_in_the_manifest_reaches_every_page(self) -> None:
         """Adding 3.9 without editing the docs names each page."""
-        path = self.root / "tools/ci/tmux_matrix.json"
+        path = self.root / "scripts/ci_plan/tmux_matrix.json"
         manifest = json.loads(path.read_text())
         manifest["released"].append("3.9")
         path.write_text(json.dumps(manifest))
@@ -333,7 +333,3 @@ class CheckTest(unittest.TestCase):
                     ".github/workflows/action.yml:4 pins "
                     f"libtmux/.github/actions/build-tmux to {ref}, not a full commit"
                 )
-
-
-if __name__ == "__main__":
-    unittest.main()

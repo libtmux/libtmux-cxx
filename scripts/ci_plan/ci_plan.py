@@ -1,3 +1,8 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = []
+# ///
 r"""Plan the tmux axis of the CI matrix from one manifest and the triggering event.
 
 ``tmux_matrix.json`` is the only list of tmux versions CI uses. A push or pull
@@ -8,9 +13,9 @@ here touches the network, so the same plan can be reproduced locally.
 
 Run from the repository root::
 
-    python3 -m tools.ci.plan matrix --event push
-    python3 -m tools.ci.plan matrix --event workflow_dispatch --scope custom \\
-        --tmux-ref 3.6b,master --tmate on-failure
+    uv run scripts/ci_plan/ci_plan.py matrix --event push
+    uv run scripts/ci_plan/ci_plan.py matrix --event workflow_dispatch \\
+        --scope custom --tmux-ref 3.6b,master --tmate on-failure
 """
 
 from __future__ import annotations
@@ -21,6 +26,7 @@ import json
 import pathlib
 import re
 import sys
+from collections.abc import Mapping
 
 MANIFEST_PATH = pathlib.Path(__file__).with_name("tmux_matrix.json")
 
@@ -199,7 +205,11 @@ def _slug(ref: str) -> str:
 
 
 def _leg(ref: str, compiler: str, manifest: Manifest) -> dict[str, object]:
-    family, version = COMPILER_PATTERN.fullmatch(compiler).groups()
+    parsed = COMPILER_PATTERN.fullmatch(compiler)
+    if parsed is None:
+        message = f"compiler {compiler!r} must look like clang-19 or gcc-14"
+        raise PlanError(message)
+    family, version = parsed.groups()
     args = ""
     if compiler != manifest.compiler:
         cc, cxx = ("clang", "clang++") if family == "clang" else ("gcc", "g++")
@@ -311,7 +321,7 @@ def expected_result(job: str, *, rejection_planned: bool) -> str:
 
 
 def verify_needs(
-    needs: dict[str, dict[str, object]], *, rejection_planned: bool
+    needs: Mapping[str, Mapping[str, object]], *, rejection_planned: bool
 ) -> list[str]:
     """Return what is wrong with the results the aggregate job saw."""
     problems = []

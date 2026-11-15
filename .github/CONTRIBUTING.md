@@ -233,11 +233,11 @@ $ python3 -m tools.docs.check_changelogs
 ```
 
 The tmux versions CI runs come from one manifest,
-[`tools/ci/tmux_matrix.json`](../tools/ci/tmux_matrix.json). Adding a release
+[`scripts/ci_plan/tmux_matrix.json`](../scripts/ci_plan/tmux_matrix.json). Adding a release
 there is the whole change to CI, and this names each page that has to say so:
 
 ```console
-$ python3 -m tools.ci.check
+$ uv run scripts/ci_plan/ci_check.py
 ```
 
 ### Running CI against any tmux
@@ -275,7 +275,7 @@ The dispatch form is only available once `ci.yml` carries the inputs on the
 default branch. This prints the legs a dispatch would run, without a runner:
 
 ```console
-$ python3 -m tools.ci.plan matrix --event workflow_dispatch --scope custom --tmux-ref 3.6b,master
+$ uv run scripts/ci_plan/ci_plan.py matrix --event workflow_dispatch --scope custom --tmux-ref 3.6b,master
 ```
 
 Each dispatch is its own run: it does not cancel the push run on its branch,

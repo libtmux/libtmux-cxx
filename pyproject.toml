@@ -1,22 +1,32 @@
 [project]
-name = "libtmux-cxx-tools"
-version = "0.1.0a1"
-description = "Development tooling for the libtmux C++ port: the mutation catalogue and the API reference generator."
+name = "libtmux-cxx-scripts"
+version = "0"
+description = "Support scripts for the libtmux C++ port: CI planning, documentation checks, the vcpkg registry tooling and the mutation catalogue."
 authors = [{ name = "Tony Narlock", email = "tony@git-pull.com" }]
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
-dependencies = ["jsonschema", "referencing"]
 
-# Not published. This exists so `python3 -m tools.mutate` resolves as a real
-# package rather than by whatever happens to be on the path, and so the lint
-# contract below travels with the code it governs.
-[build-system]
-requires = ["setuptools>=77"]
-build-backend = "setuptools.build_meta"
+# Not published, and not a package: this file holds the checks that govern
+# `scripts/` and the dependency group that runs them. Each script declares its
+# own dependencies inline (PEP 723) and runs with `uv run scripts/<name>/...`.
+[dependency-groups]
+dev = [
+  "jsonschema==4.26.0",
+  "pytest==9.2.0",
+  "pytest-asyncio==1.5.0",
+  "ruff==0.17.4",
+  "ty==0.0.101",
+]
 
-[tool.setuptools.packages.find]
-include = ["tools*"]
+[tool.pytest.ini_options]
+testpaths = ["scripts"]
+addopts = "--doctest-modules --import-mode=importlib -p no:cacheprovider"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+pythonpath = [
+  "scripts/ci_plan",
+]
 
 [tool.ruff]
 target-version = "py310"
@@ -51,3 +61,9 @@ ignore = [
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
+
+[tool.ty.environment]
+python-version = "3.10"
+extra-paths = [
+  "scripts/ci_plan",
+]
