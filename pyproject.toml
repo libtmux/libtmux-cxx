@@ -30,6 +30,7 @@ pythonpath = [
   "scripts/mutate",
   "scripts/coverage",
   "scripts/include_cost",
+  "scripts/schema",
 ]
 
 [tool.ruff]
@@ -74,4 +75,5 @@ extra-paths = [
   "scripts/mutate",
   "scripts/coverage",
   "scripts/include_cost",
+  "scripts/schema",
 ]

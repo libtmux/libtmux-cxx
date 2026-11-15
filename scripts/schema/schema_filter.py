@@ -1,3 +1,8 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["jsonschema==4.26.0"]
+# ///
 """Check emitted filter-expression documents against the published schema.
 
 The C++ side writes a corpus of real lowered expressions; this reads the schema

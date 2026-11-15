@@ -5,7 +5,7 @@
 // conformance. It was not: nothing here read the schema, so the two could
 // disagree freely, and they did. The schema is now checked by validating real
 // emitted documents against it — `apps/mcp/tests/filter_json_test.cpp` writes
-// them and `tools/schema` reads the published file — which leaves this test
+// them and `scripts/schema` reads the published file — which leaves this test
 // the part that was always its own: a reader of the flat sequence must be able
 // to find every operand without counting.
 #include <string>

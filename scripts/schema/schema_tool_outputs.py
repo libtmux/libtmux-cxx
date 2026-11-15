@@ -1,3 +1,8 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["jsonschema==4.26.0"]
+# ///
 """Check emitted MCP tool answers against the output schemas they ship with.
 
 The C++ side calls every tool against a real tmux and writes each answer beside
@@ -120,7 +125,6 @@ def main(argv: t.Sequence[str] | None = None) -> int:
     for number, line in enumerate(lines, start=1):
         entry = json.loads(line)
         tool, schema, document = entry["tool"], entry["schema"], entry["document"]
-        schemas.setdefault(tool, schema)
 
         validator_for = jsonschema.validators.validator_for(schema)
         try:
@@ -129,6 +133,7 @@ def main(argv: t.Sequence[str] | None = None) -> int:
             failures += 1
             sys.stderr.write(f"{tool}: published schema is invalid: {error.message}\n")
             continue
+        schemas.setdefault(tool, schema)
 
         for error in validator_for(schema).iter_errors(document):
             failures += 1

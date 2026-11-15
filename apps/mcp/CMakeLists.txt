@@ -122,8 +122,8 @@ if(LIBTMUX_BUILD_MCP_SERVER)
 
   # The validator is Python because the schema is JSON Schema and a checked
   # implementation of that already exists — `jsonschema` is a dependency of
-  # this repository's tooling. Writing a second one in C++ to check the first
-  # would be checking the checker.
+  # the validators under scripts/schema/. Writing a second one in C++ to
+  # check the first would be checking the checker.
   find_package(Python3 COMPONENTS Interpreter QUIET)
 
   if(LIBTMUX_BUILD_TESTS AND NOT WIN32 AND Python3_Interpreter_FOUND)
@@ -149,10 +149,10 @@ if(LIBTMUX_BUILD_MCP_SERVER)
     # still produces the corpus it reads instead of checking a stale one.
     add_test(
       NAME schema.conformance
-      COMMAND Python3::Interpreter -m tools.schema
+      COMMAND Python3::Interpreter
+              "${PROJECT_SOURCE_DIR}/scripts/schema/schema_filter.py"
               --schema "${PROJECT_SOURCE_DIR}/schema/filter-expression-v1.schema.json"
-              --corpus "${LIBTMUX_SCHEMA_CORPUS}"
-      WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+              --corpus "${LIBTMUX_SCHEMA_CORPUS}")
     set_tests_properties(
       schema.conformance
       PROPERTIES LABELS "schema" TIMEOUT 60 FIXTURES_REQUIRED schema_corpus)
@@ -246,9 +246,9 @@ if(LIBTMUX_BUILD_MCP_SERVER)
                    ENVIRONMENT "LIBTMUX_MCP_OUTPUT_CORPUS=${LIBTMUX_MCP_OUTPUT_CORPUS}")
       add_test(
         NAME consumer.mcp.schema.conformance
-        COMMAND Python3::Interpreter -m tools.schema.tool_outputs
-                --corpus "${LIBTMUX_MCP_OUTPUT_CORPUS}"
-        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+        COMMAND Python3::Interpreter
+                "${PROJECT_SOURCE_DIR}/scripts/schema/schema_tool_outputs.py"
+                --corpus "${LIBTMUX_MCP_OUTPUT_CORPUS}")
       set_tests_properties(
         consumer.mcp.schema.conformance
         PROPERTIES LABELS "schema;real-tmux" TIMEOUT 60

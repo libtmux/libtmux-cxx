@@ -6,7 +6,7 @@
 // anything — and it did: every node required only `kind`, which made
 // `{"kind": "string_test"}` a valid document with nothing in it.
 //
-// This writes real documents to a file. `tools/schema` validates every one of
+// This writes real documents to a file. `scripts/schema` validates every one of
 // them against `schema/filter-expression-v1.schema.json` with a real
 // validator, and separately requires a table of malformed documents to be
 // rejected. Neither half proves much alone.
@@ -159,7 +159,7 @@ TEST(FilterJson, RefusesADocumentItCannotRead) {
   }
 }
 
-// Written for `tools/schema` to validate. A test that only asserts what this
+// Written for `scripts/schema` to validate. A test that only asserts what this
 // file believes is a test of one opinion; the validator reads the published
 // schema, which is what a consumer in another language would read.
 TEST(FilterJson, WritesTheCorpusForTheSchemaValidator) {

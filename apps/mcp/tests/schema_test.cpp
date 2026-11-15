@@ -298,7 +298,7 @@ TEST(McpProtocolSchema, WaitOmitsThePaneIdItNeverResolved) {
 }
 
 // Writes what a client actually receives — the published schema beside a real
-// answer from every tool — for the validator in `tools/schema` to check.
+// answer from every tool — for the validator in `scripts/schema` to check.
 TEST(McpProtocolSchemaTmux, EmitsEveryToolAnswerBesideItsPublishedSchema) {
   const char* const destination = std::getenv("LIBTMUX_MCP_OUTPUT_CORPUS");
   ASSERT_NE(destination, nullptr)
