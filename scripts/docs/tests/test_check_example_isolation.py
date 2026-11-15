@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from tools.docs import check_example_isolation as isolation
+import check_example_isolation as isolation
 
 
 class DeclarationsTest(unittest.TestCase):
@@ -60,7 +60,3 @@ class ProgramTest(unittest.TestCase):
 
         self.assertIn("static int region(const libtmux::Server& server) {", source)
         self.assertIn("server.sessions();", source)
-
-
-if __name__ == "__main__":
-    unittest.main()

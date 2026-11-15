@@ -56,7 +56,7 @@ if(LIBTMUX_BUILD_TESTS AND NOT WIN32)
   # lacks, so the gate is shown able to fail.
   if(Python3_Interpreter_FOUND)
     set(_readme_commands
-        "${PROJECT_SOURCE_DIR}/tools/docs/check_readme_commands.py")
+        "${PROJECT_SOURCE_DIR}/scripts/docs/check_readme_commands.py")
     add_test(NAME consumer.workspace.readme_commands
       COMMAND Python3::Interpreter "${_readme_commands}"
         --root "${PROJECT_SOURCE_DIR}"
@@ -65,7 +65,7 @@ if(LIBTMUX_BUILD_TESTS AND NOT WIN32)
       COMMAND Python3::Interpreter "${_readme_commands}"
         --root "${PROJECT_SOURCE_DIR}"
         --workspace "$<TARGET_FILE:tmux-workspace>"
-        "${PROJECT_SOURCE_DIR}/tools/docs/fixtures/readme_commands_refused.md")
+        "${PROJECT_SOURCE_DIR}/scripts/docs/fixtures/readme_commands_refused.md")
     set_tests_properties(consumer.workspace.readme_commands PROPERTIES
       LABELS "consumer;contract" TIMEOUT 60)
     set_tests_properties(consumer.workspace.readme_commands.refuses PROPERTIES

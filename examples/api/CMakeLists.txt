@@ -8,7 +8,7 @@ foreach(program server listings relations new-session new-window-pane query inpu
   add_test(
     NAME example.api.${program}
     COMMAND "${Python3_EXECUTABLE}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../../tools/docs/check_api_examples.py"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/docs/check_api_examples.py"
             --binary-dir "$<TARGET_FILE_DIR:api-${program}>" --program "${program}")
   set_tests_properties(example.api.${program} PROPERTIES LABELS "example;real-tmux" TIMEOUT 90)
 endforeach()

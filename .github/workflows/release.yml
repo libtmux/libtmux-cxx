@@ -79,11 +79,16 @@ jobs:
           fi
           echo "both say ${declared}"
 
+      - name: Install the pinned Python tool runner
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.0"
+
       # The MCP server is the one program published compiled, and its users read
       # its changelog rather than the library's. This stops a release whose
       # program lost its changelog, then names the file for the release page.
       - name: Every package has its changelog
-        run: python3 -m tools.docs.check_changelogs
+        run: uv run scripts/docs/check_changelogs.py
 
       - name: Name the server's changelog for the release
         run: |

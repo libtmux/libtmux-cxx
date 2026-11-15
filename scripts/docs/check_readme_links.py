@@ -1,3 +1,8 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = []
+# ///
 """Every link in a README resolves, and an API is linked where it is introduced.
 
 A README that sends a reader to a directory, a header or a reference page that
@@ -20,8 +25,8 @@ the rule without anyone editing a list here. A page for a symbol lives at
 `libtmux.org/en/cxx/latest/reference/libtmux-<name>/`; `--online` fetches every
 external link to prove the page exists, which a checkout cannot.
 
-    python3 tools/docs/check_readme_links.py
-    python3 tools/docs/check_readme_links.py --online
+    uv run scripts/docs/check_readme_links.py
+    uv run scripts/docs/check_readme_links.py --online
 """
 
 from __future__ import annotations

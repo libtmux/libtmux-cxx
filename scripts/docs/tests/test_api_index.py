@@ -5,9 +5,9 @@ from __future__ import annotations
 import pathlib
 import unittest
 
-from tools.docs import api_index
+import api_index
 
-FIXTURE_DIR = pathlib.Path(__file__).with_name("fixtures")
+FIXTURE_DIR = pathlib.Path(__file__).resolve().parents[1] / "fixtures"
 FIXTURE = FIXTURE_DIR / "api_index.hpp"
 EXPECTED = FIXTURE_DIR / "api_index.expected.md"
 
@@ -89,7 +89,3 @@ class ApiIndexTest(unittest.TestCase):
             "#define FIXTURE_CHECK(value) /* implementation omitted */", rendered
         )
         self.assertNotIn("if (!(value))", rendered)
-
-
-if __name__ == "__main__":
-    unittest.main()

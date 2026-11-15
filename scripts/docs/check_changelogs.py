@@ -1,3 +1,8 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = []
+# ///
 """Every package keeps a changelog of its own, and installs it.
 
 The library and its two programs are released together under one version, but a
@@ -15,7 +20,7 @@ answered from a checkout:
 - for a program, its CMake install rules put the file under `share/doc`, in a
   directory named for the program.
 
-    python3 -m tools.docs.check_changelogs
+    uv run scripts/docs/check_changelogs.py
 """
 
 from __future__ import annotations

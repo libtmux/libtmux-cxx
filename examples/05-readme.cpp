@@ -2,7 +2,7 @@
 //
 // A README is the most-read file in a repository and the least-tested, so the
 // snippets in it live here instead: each `#region` below is quoted verbatim by
-// README.md, and `tools/docs/check_readme.py` fails the build if the two ever
+// README.md, and `scripts/docs/check_readme.py` fails the build if the two ever
 // disagree. A code sample that no longer compiles is a bug that greets every
 // new reader, and this is the cheapest way to never ship one.
 //

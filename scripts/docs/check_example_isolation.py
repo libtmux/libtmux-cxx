@@ -1,3 +1,8 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = []
+# ///
 """Every README region compiles on its own, with nothing the reader cannot see.
 
 `check_readme.py` proves the README quotes the example verbatim. That makes the
@@ -22,7 +27,7 @@ knows.
 Compiling is -fsyntax-only: the point is whether the text a reader pastes is
 accepted, and nothing here needs to link or run.
 
-    python3 -m tools.docs.check_example_isolation
+    uv run scripts/docs/check_example_isolation.py
 """
 
 from __future__ import annotations
@@ -34,7 +39,7 @@ import subprocess
 import sys
 import tempfile
 
-from tools.docs.check_readme import regions
+from check_readme import regions
 
 GIVEN = re.compile(r"^//\s*Given:\s*(?P<declarations>.+?)\s*$")
 INCLUDE = re.compile(r'^\s*#include\s+([<"].+?[>"])\s*$', re.MULTILINE)

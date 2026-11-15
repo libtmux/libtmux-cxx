@@ -196,7 +196,7 @@ if(LIBTMUX_BUILD_MCP_SERVER)
   # README holding a flag the server lacks, and passes only on that refusal.
   if(LIBTMUX_BUILD_TESTS AND NOT WIN32 AND Python3_Interpreter_FOUND)
     set(_readme_commands
-        "${PROJECT_SOURCE_DIR}/tools/docs/check_readme_commands.py")
+        "${PROJECT_SOURCE_DIR}/scripts/docs/check_readme_commands.py")
     add_test(
       NAME consumer.mcp.readme_commands
       COMMAND Python3::Interpreter "${_readme_commands}"
@@ -207,7 +207,7 @@ if(LIBTMUX_BUILD_MCP_SERVER)
       COMMAND Python3::Interpreter "${_readme_commands}"
               --root "${PROJECT_SOURCE_DIR}"
               --mcp "$<TARGET_FILE:libtmux_mcp_server>"
-              "${PROJECT_SOURCE_DIR}/tools/docs/fixtures/readme_commands_refused.md")
+              "${PROJECT_SOURCE_DIR}/scripts/docs/fixtures/readme_commands_refused.md")
     set_tests_properties(
       consumer.mcp.readme_commands PROPERTIES LABELS "consumer;contract" TIMEOUT 120)
     set_tests_properties(

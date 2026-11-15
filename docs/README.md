@@ -11,14 +11,14 @@ is.
 header. Generated, and continuous integration fails if it drifts:
 
 ```console
-$ python3 tools/docs/api_index.py --include include/libtmux --output docs/api.md
+$ uv run scripts/docs/api_index.py --include include/libtmux --output docs/api.md
 ```
 
 **[`api-testing.md`](api-testing.md)** — the same for `libtmux::testing`, the
 tmux fixture installed alongside the library:
 
 ```console
-$ python3 tools/docs/api_index.py --include include/libtmux/testing --output docs/api-testing.md --page testing
+$ uv run scripts/docs/api_index.py --include include/libtmux/testing --output docs/api-testing.md --page testing
 ```
 
 ## The MCP server

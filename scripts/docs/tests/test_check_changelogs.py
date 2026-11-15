@@ -12,7 +12,7 @@ import shutil
 import tempfile
 import unittest
 
-from tools.docs import check_changelogs as changelogs
+import check_changelogs as changelogs
 
 ROOT = changelogs.ROOT
 MCP = "apps/mcp/CHANGELOG.md"
@@ -190,7 +190,3 @@ class Policy(Copy):
                 for line in self.reported()
             )
         )
-
-
-if __name__ == "__main__":
-    unittest.main()

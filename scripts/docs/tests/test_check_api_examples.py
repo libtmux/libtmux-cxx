@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tools.docs.check_api_examples import (
+from check_api_examples import (
     MANIFEST,
     ROOT,
     SERVER_SELECTORS,
@@ -102,13 +102,9 @@ class ProgramEnvironment(unittest.TestCase):
         inherited = dict.fromkeys(SERVER_SELECTORS, "decoy")
         with (
             mock.patch.dict(os.environ, inherited),
-            mock.patch("tools.docs.check_api_examples.subprocess.Popen", popen),
+            mock.patch("check_api_examples.subprocess.Popen", popen),
             self.assertRaises(Started),
         ):
             run_program({"failureCommand": ""}, Path("/none"), Path("/none"), False)
         self.assertEqual([name for name in SERVER_SELECTORS if name in seen], [])
         self.assertIn("TMUX_TMPDIR", seen)
-
-
-if __name__ == "__main__":
-    unittest.main()

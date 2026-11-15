@@ -166,7 +166,7 @@ The API reference is generated from the public headers, and CI fails when it
 drifts from them:
 
 ```console
-$ python3 tools/docs/api_index.py \
+$ uv run scripts/docs/api_index.py \
     --include include/libtmux \
     --output docs/api.md
 ```
@@ -175,7 +175,7 @@ A change to the generator's parser is checked against a focused fixture as
 well. Rewrite its golden file after reading the diff, never before:
 
 ```console
-$ python3 tools/docs/api_index.py --write-fixture
+$ uv run scripts/docs/api_index.py --write-fixture
 ```
 
 The same headers are the Doxygen input libtmux.org renders, and CI fails on a
@@ -190,7 +190,7 @@ The README's C++ is quoted from `examples/05-readme.cpp` and
 checks the quoting; the example lane checks that the code still works:
 
 ```console
-$ python3 tools/docs/check_readme.py \
+$ uv run scripts/docs/check_readme.py \
     --readme README.md \
     --readme include/libtmux/README.md \
     --readme docs/runtime.md
@@ -199,7 +199,7 @@ $ python3 tools/docs/check_readme.py \
 Edit the example, never the block in the README, then bring the quote across:
 
 ```console
-$ python3 tools/docs/check_readme.py \
+$ uv run scripts/docs/check_readme.py \
     --fix \
     --readme README.md \
     --readme include/libtmux/README.md \
@@ -214,7 +214,7 @@ line as `// Given: <type> <name>` (repeated for more than one, separated by
 `;`), which becomes that line in the README too:
 
 ```console
-$ python3 -m tools.docs.check_example_isolation
+$ uv run scripts/docs/check_example_isolation.py
 ```
 
 This repository is also a vcpkg registry, and the versions database can drift
@@ -229,7 +229,7 @@ its own under `share/doc/`. Each one opens with its package's name, holds an
 `## Unreleased` section and lists the same releases as the root file:
 
 ```console
-$ python3 -m tools.docs.check_changelogs
+$ uv run scripts/docs/check_changelogs.py
 ```
 
 The tmux versions CI runs come from one manifest,

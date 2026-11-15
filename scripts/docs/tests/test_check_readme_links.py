@@ -11,7 +11,7 @@ import tempfile
 import textwrap
 import unittest
 
-from tools.docs import check_readme_links as links
+import check_readme_links as links
 
 REFERENCE = links.REFERENCE
 KNOWN = {"Server": "libtmux-server", "Pane": "libtmux-pane"}
@@ -450,7 +450,3 @@ class OnlineTest(unittest.TestCase):
 
         self.assertEqual(len(found), 1)
         self.assertIn("https://example.org/gone answered 404", found[0].message)
-
-
-if __name__ == "__main__":
-    unittest.main()

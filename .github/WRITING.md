@@ -66,7 +66,7 @@ order, and none of them interrupts the first thing a reader needs.
 Examples compile, and the README is not trusted to say so. Its `cpp` blocks
 quote named regions of `examples/05-readme.cpp` or the complete
 `examples/08-quickstart.cpp`. Both build and run against real tmux, and
-[`tools/docs/check_readme.py`](../tools/docs/check_readme.py) fails the build
+[`scripts/docs/check_readme.py`](../scripts/docs/check_readme.py) fails the build
 when a block and its region drift apart, or when a region nothing quotes goes
 stale. Never write a signature that does not exist to make a point read better.
 
@@ -420,7 +420,7 @@ The subjects worth the space, roughly in the order they bite:
 The reference is generated, and CI fails when it drifts from the headers:
 
 ```console
-$ python3 tools/docs/api_index.py \
+$ uv run scripts/docs/api_index.py \
     --include include/libtmux \
     --output docs/api.md
 ```

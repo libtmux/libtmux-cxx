@@ -744,9 +744,9 @@ jobs:
 
       - name: Check the API reference is current
         run: |
-          python3 tools/docs/api_index.py \
+          uv run scripts/docs/api_index.py \
             --include include/libtmux --output docs/api.md --check
-          python3 tools/docs/api_index.py \
+          uv run scripts/docs/api_index.py \
             --include include/libtmux/testing --output docs/api-testing.md \
             --page testing --check
 
@@ -783,11 +783,6 @@ jobs:
           uv run --group dev ty check scripts
           uv run --group dev pytest
           uv run --no-project python -m unittest \
-            tools.docs.test_api_index tools.docs.test_check_readme \
-            tools.docs.test_check_readme_links \
-            tools.docs.test_check_readme_commands \
-            tools.docs.test_check_api_examples \
-            tools.docs.test_check_changelogs \
             tools.coverage.test_report \
             tools.mutate.test_main tools.mutate.test_runner \
             tools.vcpkg.test_probe tools.vcpkg.test_release \
@@ -804,7 +799,7 @@ jobs:
       # the code still works.
       - name: Check the README quotes code that builds
         run: |
-          python3 tools/docs/check_readme.py \
+          uv run scripts/docs/check_readme.py \
             --readme README.md \
             --readme include/libtmux/README.md \
             --readme docs/runtime.md
@@ -815,17 +810,17 @@ jobs:
       # so the consumer.*.readme_commands tests run them.
       - name: Check README links and commands
         run: |
-          python3 -m tools.docs.check_readme_links
-          python3 -m tools.docs.check_readme_commands --cmake
+          uv run scripts/docs/check_readme_links.py
+          uv run scripts/docs/check_readme_commands.py --cmake
 
       - name: Check every README region compiles as its own snippet
-        run: python3 -m tools.docs.check_example_isolation
+        run: uv run scripts/docs/check_example_isolation.py
 
       # The library and each program keep a changelog of their own, and a
       # program installs its changelog beside it. Nothing else notices one
       # going missing, or a release that one forgot to list.
       - name: Check every package keeps and installs its changelog
-        run: python3 -m tools.docs.check_changelogs
+        run: uv run scripts/docs/check_changelogs.py
 
       - name: Run clang-tidy over the library
         run: |

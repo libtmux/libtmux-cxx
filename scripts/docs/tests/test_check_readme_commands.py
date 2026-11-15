@@ -12,7 +12,7 @@ import tempfile
 import textwrap
 import unittest
 
-from tools.docs import check_readme_commands as commands
+import check_readme_commands as commands
 
 README = pathlib.Path("README.md")
 
@@ -171,7 +171,7 @@ class ExtractionTest(unittest.TestCase):
         (registration,) = commands.console_commands(README, text)
         server = commands.registered_server(registration)
 
-        self.assertIsNotNone(server)
+        assert server is not None
         self.assertEqual(server.program, "libtmux-mcp-server")
         self.assertEqual(server.arguments[1:], ("--socket-name", "agent"))
         self.assertEqual(server.environment, {"LIBTMUX_TOOLSETS": "inspect"})
@@ -326,7 +326,3 @@ class ServerCommandTest(unittest.TestCase):
         )
         self.assertEqual(len(found), 1)
         self.assertIn("unknown LIBTMUX_TOOLSETS", found[0])
-
-
-if __name__ == "__main__":
-    unittest.main()

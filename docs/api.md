@@ -4,7 +4,7 @@ The full surface targets tmux on POSIX. Windows uses the bounded psmux
 preview documented in the project README; unsupported operations fail
 before dispatch rather than approximating tmux semantics.
 
-Generated from the headers by `tools/docs/api_index.py`; the prose here
+Generated from the headers by `scripts/docs/api_index.py`; the prose here
 is the prose there. Run it with `--check` to prove this page is current.
 
 ## Headers

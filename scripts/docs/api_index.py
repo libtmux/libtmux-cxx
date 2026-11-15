@@ -1,3 +1,8 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = []
+# ///
 """Render the public C++ surface as one browsable page.
 
 The headers are the source of truth. This walks them, keeps the prose already
@@ -856,7 +861,7 @@ def render(root: pathlib.Path, page: Page) -> str:
         listed = ", ".join(unplaced)
         msg = (
             f"{root} has public headers missing from {page.order_name} in "
-            f"tools/docs/api_index.py: {listed}. Add them where they should "
+            f"scripts/docs/api_index.py: {listed}. Add them where they should "
             f"read, then regenerate {page.output}."
         )
         raise SystemExit(msg)
@@ -865,7 +870,7 @@ def render(root: pathlib.Path, page: Page) -> str:
         f"# {page.title}",
         "",
         *page.preamble,
-        "Generated from the headers by `tools/docs/api_index.py`; the prose here",
+        "Generated from the headers by `scripts/docs/api_index.py`; the prose here",
         "is the prose there. Run it with `--check` to prove this page is current.",
         "",
         "## Headers",
@@ -928,7 +933,7 @@ def _check_fixture(script: pathlib.Path) -> str | None:
     if text != expected.read_text(encoding="utf-8"):
         return (
             f"{expected} is out of date; regenerate it with "
-            "`python3 tools/docs/api_index.py --write-fixture`"
+            "`uv run scripts/docs/api_index.py --write-fixture`"
         )
     return None
 

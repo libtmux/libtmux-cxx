@@ -1,3 +1,8 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = []
+# ///
 """Every command a README tells a reader to run is one the program accepts.
 
 A pasted command that fails with `unknown option` is the first thing a new user
@@ -18,8 +23,8 @@ command to the program it names:
 
 A program without a binary to hand is skipped by name, never silently passed.
 
-    python3 tools/docs/check_readme_commands.py --cmake
-    python3 tools/docs/check_readme_commands.py --workspace PATH --mcp PATH
+    uv run scripts/docs/check_readme_commands.py --cmake
+    uv run scripts/docs/check_readme_commands.py --workspace PATH --mcp PATH
 """
 
 from __future__ import annotations

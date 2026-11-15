@@ -68,7 +68,7 @@ $ ctest --preset cxx-dev -R '^example\.api\.' --output-on-failure
 To write a JSON report of each run:
 
 ```console
-$ python3 tools/docs/check_api_examples.py \
+$ uv run scripts/docs/check_api_examples.py \
     --binary-dir build/cxx-dev/examples/api \
     --report build/api-example-results.json
 ```

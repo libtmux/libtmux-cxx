@@ -1,3 +1,8 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = []
+# ///
 """Every C++ example in the README is code that compiles and runs.
 
 A README is the most-read file in a repository and the least-tested. The

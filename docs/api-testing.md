@@ -5,7 +5,7 @@ suite runs on, shipped so a consumer's suite can run on it too. Ask for
 it with `find_package(libtmux COMPONENTS testing)`; it is not part of
 the library, and a program that only uses libtmux links none of it.
 
-Generated from the headers by `tools/docs/api_index.py`; the prose here
+Generated from the headers by `scripts/docs/api_index.py`; the prose here
 is the prose there. Run it with `--check` to prove this page is current.
 
 ## Headers

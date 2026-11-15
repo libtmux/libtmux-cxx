@@ -6,7 +6,7 @@ import pathlib
 import tempfile
 import unittest
 
-from tools.docs import check_readme
+import check_readme
 
 
 class MatchingLineTest(unittest.TestCase):
@@ -213,7 +213,3 @@ class FileBlockTest(unittest.TestCase):
         text = f"<!-- cpp-file: main.cpp -->\n\n```cpp\n{self.program}```\n"
         found = self.check(text, {"main.cpp": self.program})
         self.assertFalse(any("is not any region" in p for p in found))
-
-
-if __name__ == "__main__":
-    unittest.main()

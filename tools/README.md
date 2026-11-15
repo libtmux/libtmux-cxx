@@ -20,10 +20,10 @@ It is run from the repository root.
 | Tool | Command | What it answers |
 |---|---|---|
 | [`mutate/`](mutate/) | `python3 -m tools.mutate` | Whether the tests can actually fail |
-| [`docs/`](docs/) | `python3 tools/docs/api_index.py` | Generates [`docs/api.md`](../docs/api.md) from the headers, so the reference cannot outrun them |
-| [`docs/`](docs/) | [README quoting check](../.github/CONTRIBUTING.md#checks-that-must-pass) | Whether the README's C++ still matches the example it is quoted from |
-| [`docs/`](docs/) | `python3 -m tools.docs.check_example_isolation` | Whether each quoted region compiles as the only code in its own file, the way a reader pastes it |
 | [`mcp/`](mcp/) | `./build/cxx-dev/tools/mcp/mcp-swap` | Points POSIX agent CLI configs at a chosen build of [the MCP server](../apps/mcp/README.md), and puts them back |
+| [`scripts/docs/`](../scripts/docs/) | `uv run scripts/docs/api_index.py` | Generates [`docs/api.md`](../docs/api.md) from the headers, so the reference cannot outrun them |
+| [`scripts/docs/`](../scripts/docs/) | [README quoting check](../.github/CONTRIBUTING.md#checks-that-must-pass) | Whether the README's C++ still matches the example it is quoted from |
+| [`scripts/docs/`](../scripts/docs/) | `uv run scripts/docs/check_example_isolation.py` | Whether each quoted region compiles as the only code in its own file, the way a reader pastes it |
 | [`scripts/ci_plan/`](../scripts/ci_plan/) | `uv run scripts/ci_plan/ci_plan.py matrix --event push` | Which tmux versions CI runs for an event, from one manifest |
 | [`scripts/ci_plan/`](../scripts/ci_plan/) | `uv run scripts/ci_plan/ci_check.py` | Whether the README, the compatibility page, CONTRIBUTING and the workflows still follow that manifest |
 | [`vcpkg/`](vcpkg/) | `python3 -m tools.vcpkg check` | Whether [the registry](../docs/vcpkg-registry.md) still publishes the ports beside it |

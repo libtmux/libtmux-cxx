@@ -68,12 +68,12 @@ between two markers carrying the same name, unique in the file:
   // #endregion chain
 ```
 
-[`check_readme.py`](../tools/docs/check_readme.py) fails when a block matches no
+[`check_readme.py`](../scripts/docs/check_readme.py) fails when a block matches no
 region, and when a region nothing quotes goes stale. Edit the example, run it,
 then bring the quote across:
 
 ```console
-$ python3 tools/docs/check_readme.py \
+$ uv run scripts/docs/check_readme.py \
     --fix \
     --readme README.md \
     --readme include/libtmux/README.md \

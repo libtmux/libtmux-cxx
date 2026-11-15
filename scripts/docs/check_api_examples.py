@@ -1,3 +1,8 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = []
+# ///
 """Run whole API programs and verify output, operation errors, and owned cleanup."""
 
 from __future__ import annotations
@@ -155,7 +160,7 @@ def run_program(program: dict, binary: Path, tmux: Path, failure: bool) -> dict:
                     raise ValueError(message)
                 servers.append({"socket": str(socket), "pid": command["pid"]})
         leftovers = sorted(str(path) for path in fixtures.iterdir())
-        living = [server for server in servers if alive(server["pid"])]
+        living = [server for server in servers if alive(int(server["pid"]))]
         if failure:
             expected = (
                 process.returncode != 0
