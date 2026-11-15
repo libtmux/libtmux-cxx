@@ -1,4 +1,15 @@
-"""Run the mutation catalogue."""
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = []
+# ///
+"""Run the mutation catalogue.
+
+Run from the repository root, in the project environment so a guard that lives in
+Python can run its pytest test::
+
+    uv run --group dev python scripts/mutate/mutate.py --preset cxx-dev
+"""
 
 from __future__ import annotations
 
@@ -8,8 +19,8 @@ import subprocess
 import sys
 import typing as t
 
-from .catalogue import CATALOGUE
-from .runner import failed, report, run
+from mutate_catalogue import CATALOGUE
+from mutate_runner import failed, report, run
 
 
 def main(argv: t.Sequence[str] | None = None) -> int:
@@ -18,7 +29,7 @@ def main(argv: t.Sequence[str] | None = None) -> int:
     Parameters
     ----------
     argv : Sequence[str] | None, optional
-        Arguments after the module name.
+        Arguments after the program name.
 
     Returns
     -------
@@ -31,7 +42,7 @@ def main(argv: t.Sequence[str] | None = None) -> int:
     >>> callable(main)
     True
     """
-    parser = argparse.ArgumentParser(prog="python -m tools.mutate")
+    parser = argparse.ArgumentParser(prog="mutate.py")
     parser.add_argument("--preset", default="cxx-dev")
     parser.add_argument("--repository", type=pathlib.Path, default=pathlib.Path())
     parser.add_argument("--id", dest="chosen", action="append")

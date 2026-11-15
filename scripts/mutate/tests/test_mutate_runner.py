@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 import unittest
 
-from tools.mutate.runner import Mutation, _fingerprint, run
+from mutate_runner import Mutation, _fingerprint, run
 
 
 class MutationRunnerTest(unittest.TestCase):
@@ -397,7 +397,7 @@ class MutationRunnerTest(unittest.TestCase):
                     replace="False",
                     target="unused",
                     guards="the guard",
-                    python_test="tools.mutate.guard_test",
+                    python_test="tests/guard_test.py::GuardTest",
                 ),
                 root,
                 "cxx-dev",
@@ -426,7 +426,7 @@ class MutationRunnerTest(unittest.TestCase):
                     replace="False",
                     target="unused",
                     guards="the guard nothing caught",
-                    python_test="tools.mutate.guard_test",
+                    python_test="tests/guard_test.py::GuardTest",
                 ),
                 root,
                 "cxx-dev",
@@ -454,7 +454,7 @@ class MutationRunnerTest(unittest.TestCase):
                     replace="False",
                     target="unused",
                     guards="the guard",
-                    python_test="tools.mutate.guard_test",
+                    python_test="tests/guard_test.py::GuardTest",
                 ),
                 root,
                 "cxx-dev",
@@ -493,7 +493,7 @@ class MutationRunnerTest(unittest.TestCase):
                     replace="((",
                     target="unused",
                     guards="the guard",
-                    python_test="tools.mutate.guard_test",
+                    python_test="tests/guard_test.py::GuardTest",
                 ),
                 root,
                 "cxx-dev",
@@ -504,7 +504,3 @@ class MutationRunnerTest(unittest.TestCase):
             self.assertEqual(outcome.detail, "the mutation did not parse")
             self.assertEqual(unittest_runs, 1)  # only the baseline ran
             self.assertEqual(source.read_text(encoding="utf-8"), "guard = True\n")
-
-
-if __name__ == "__main__":
-    unittest.main()

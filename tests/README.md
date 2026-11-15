@@ -137,11 +137,11 @@ remains strict despite Ubuntu's split libc++/libc++abi exception ownership.
 ## Proving a test can fail
 
 A green suite is evidence only once it has been shown capable of failing. The
-[mutation catalogue](../tools/README.md) breaks one guard at a time and reports
-any that nothing notices:
+[mutation catalogue](../scripts/mutate/README.md) breaks one guard at a time and
+reports any that nothing notices:
 
 ```console
-$ python3 -m tools.mutate --preset cxx-dev
+$ uv run --group dev python scripts/mutate/mutate.py --preset cxx-dev
 ```
 
 A survivor means something is untested. So does a mutation that would not

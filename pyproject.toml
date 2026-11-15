@@ -27,6 +27,7 @@ asyncio_default_fixture_loop_scope = "function"
 pythonpath = [
   "scripts/ci_plan",
   "scripts/docs",
+  "scripts/mutate",
 ]
 
 [tool.ruff]
@@ -68,4 +69,5 @@ python-version = "3.10"
 extra-paths = [
   "scripts/ci_plan",
   "scripts/docs",
+  "scripts/mutate",
 ]

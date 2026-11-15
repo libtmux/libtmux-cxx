@@ -143,7 +143,7 @@ builds the library a consumer links, and a test there asserts the archive
 exports no seam at all. Tests that need one skip by name when it is absent.
 
 ```console
-$ python3 -m tools.mutate --preset cxx-dev
+$ uv run --group dev python scripts/mutate/mutate.py --preset cxx-dev
 ```
 
 > [!WARNING]
@@ -289,7 +289,7 @@ back what tmux says happened. That is what makes a passing suite mean anything.
 
 **A passing gate is evidence only once it has been shown able to fail.** Pair a
 new test with a deliberate break that proves it bites; that is what
-[the mutation catalogue](../tools/README.md#the-mutation-catalogue) does for the
+[the mutation catalogue](../scripts/mutate/README.md) does for the
 suite as a whole.
 
 **Errors are returned, never thrown.** The library reports failure as

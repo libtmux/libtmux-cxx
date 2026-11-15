@@ -8,8 +8,8 @@ import subprocess
 import unittest
 from unittest import mock
 
-from tools.mutate import __main__ as mutation_main
-from tools.mutate.runner import Mutation, Outcome
+import mutate as mutation_main
+from mutate_runner import Mutation, Outcome
 
 
 class MutationMainTest(unittest.TestCase):
@@ -26,7 +26,7 @@ class MutationMainTest(unittest.TestCase):
     def mutation_source(self, mutation_id: str) -> tuple[Mutation, str]:
         """Return one mutation and the source text it must match."""
         mutation = self.operation_mutation(mutation_id)
-        repository = pathlib.Path(__file__).parents[2]
+        repository = pathlib.Path(__file__).resolve().parents[3]
         source = (repository / mutation.path).read_text(encoding="utf-8")
         return mutation, source
 
@@ -162,7 +162,7 @@ class MutationMainTest(unittest.TestCase):
         silently let a future hang wedge this lane.
         """
         cmake_lists = (
-            pathlib.Path(__file__).parents[2] / "tests" / "CMakeLists.txt"
+            pathlib.Path(__file__).resolve().parents[3] / "tests" / "CMakeLists.txt"
         ).read_text(encoding="utf-8")
         expected = {
             "libtmux_server_contract_test": 60,
@@ -174,7 +174,7 @@ class MutationMainTest(unittest.TestCase):
                 cmake_lists,
                 re.DOTALL,
             )
-            self.assertIsNotNone(match, f"no gtest_discover_tests found for {target}")
+            assert match is not None, f"no gtest_discover_tests found for {target}"
             self.assertEqual(
                 int(match.group(1)),
                 timeout,
@@ -213,7 +213,3 @@ class MutationMainTest(unittest.TestCase):
             self.assertEqual(mutation.target, "mcp_protocol_test")
             self.assertEqual(mutation.executable, "libtmux-mcp-server")
             self.assertEqual(mutation.test_regex, r"^consumer[.]mcp[.]protocol$")
-
-
-if __name__ == "__main__":
-    unittest.main()

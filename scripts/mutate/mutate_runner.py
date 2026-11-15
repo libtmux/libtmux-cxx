@@ -27,6 +27,7 @@ and reached a commit looking like ordinary work.
 
 from __future__ import annotations
 
+import collections.abc
 import contextlib
 import dataclasses
 import hashlib
@@ -34,6 +35,7 @@ import json
 import os
 import pathlib
 import subprocess
+import sys
 import typing as t
 
 
@@ -66,8 +68,8 @@ class Mutation:
         Build presets where this mutation has a target and test. Empty means
         every preset.
     python_test : str | None, optional
-        A dotted ``unittest`` test id (module, or module.Class.method) for a
-        guard that lives under ``tools/`` rather than in C++. When set, `target`
+        A pytest node id (``path::Class::method``) for a guard that lives under
+        ``scripts/`` rather than in C++. When set, `target`
         and `executable` are unused: there is nothing to build, and the
         interpreter reads `path` fresh on every run, so the fingerprint that
         proves a C++ mutation reached its binary has nothing to check here.
@@ -148,7 +150,9 @@ def _touch_forward(source: pathlib.Path, seconds: int = 2) -> None:
 
 
 @contextlib.contextmanager
-def _mutated(source: pathlib.Path, find: str, replace: str) -> t.Iterator[bool]:
+def _mutated(
+    source: pathlib.Path, find: str, replace: str
+) -> collections.abc.Generator[bool, None, None]:
     r"""Apply one edit for the duration of the block, then put it back.
 
     Parameters
@@ -295,7 +299,7 @@ def _run_python_mutation(
         Verdict and, where it matters, why.
     """
     assert mutation.python_test is not None
-    test_command = ["python3", "-m", "unittest", mutation.python_test]
+    test_command = [sys.executable, "-m", "pytest", "-q", mutation.python_test]
     baseline = execute(test_command)
     if baseline.returncode != 0:
         return Outcome(mutation, "not a result", "the selected test already fails")
@@ -307,7 +311,7 @@ def _run_python_mutation(
         # The C++ path's build step doubles as a syntax check; a mutation that
         # leaves invalid Python behind must fail the same way, not read as a
         # kill nobody earned.
-        compiled = execute(["python3", "-m", "py_compile", str(source)])
+        compiled = execute([sys.executable, "-m", "py_compile", str(source)])
         if compiled.returncode != 0:
             return Outcome(mutation, "not a result", "the mutation did not parse")
         tested = execute(test_command)

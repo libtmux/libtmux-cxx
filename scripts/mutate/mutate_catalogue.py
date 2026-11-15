@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import typing as t
 
-from .runner import Mutation
+from mutate_runner import Mutation
 
 CATALOGUE: t.Final = (
     Mutation(
@@ -801,7 +801,7 @@ CATALOGUE: t.Final = (
     ),
     Mutation(
         mutation_id="api-index-depth-tracking",
-        path="tools/docs/api_index.py",
+        path="scripts/docs/api_index.py",
         find=(
             "def _function_symbol(signature: str) -> str | None:\n"
             '    """Return the callable name from a declaration-like prefix."""\n'
@@ -835,12 +835,12 @@ CATALOGUE: t.Final = (
             "    names = list(FUNCTION_NAME.finditer(signature))\n"
             "    if not names:\n"
         ),
-        target="tools.docs.api_index",
+        target="api_index",
         guards="a callable's name is read at bracket depth zero, so a default "
         "argument that calls another function cannot steal the enclosing "
         "method's index entry",
         python_test=(
-            "tools.docs.test_api_index.ApiIndexTest."
+            "scripts/docs/tests/test_api_index.py::ApiIndexTest::"
             "test_default_argument_calls_are_not_method_names"
         ),
     ),
