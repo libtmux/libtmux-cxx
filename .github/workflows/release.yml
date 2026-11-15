@@ -134,10 +134,14 @@ jobs:
           echo "sha512=${sha512}" >> "$GITHUB_OUTPUT"
           echo "SHA512 for ports/libtmux/portfile.cmake: ${sha512}"
 
+      - name: Install Ninja and GCC
+        uses: libtmux/.github/actions/apt-get@30f81842b1e639ea4e25f93f1f2543504178e228
+        with:
+          update: "true"
+          args: install --yes ninja-build g++
+
       - name: The archive builds and installs on its own
         run: |
-          ./tools/ci/apt-get.sh update
-          ./tools/ci/apt-get.sh install -y ninja-build g++
           version="${{ steps.archive.outputs.version }}"
           tar -xzf "libtmux-cxx-${version}.tar.gz" -C /tmp
           cmake -S "/tmp/libtmux-cxx-${version}" -B /tmp/rel -G Ninja \
@@ -179,13 +183,16 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Install Ninja and GCC
+        if: runner.os == 'Linux'
+        uses: libtmux/.github/actions/apt-get@30f81842b1e639ea4e25f93f1f2543504178e228
+        with:
+          update: "true"
+          args: install --yes ninja-build g++
+
       - name: Install Ninja
-        run: |
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            ./tools/ci/apt-get.sh update && ./tools/ci/apt-get.sh install -y ninja-build g++
-          else
-            brew install ninja
-          fi
+        if: runner.os == 'macOS'
+        run: brew install ninja
 
       - name: Build the server
         run: |

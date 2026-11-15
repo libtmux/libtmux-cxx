@@ -5,7 +5,8 @@ states a range the manifest does not, when a workflow carries a version list of
 its own, and when the workflow structure the plan relies on has been undone: a
 dispatch input spliced into a script, a tmate step that is not pinned or not
 limited to the actor, an aggregate job that forgot a job, a release that no
-longer runs the whole table, a script that calls apt-get without the wrapper.
+longer runs the whole table, a script that calls apt-get instead of the shared
+action, a shared action that is not pinned to a full commit.
 
 Run from the repository root::
 
@@ -34,6 +35,7 @@ SPLICED = re.compile(
     r")"
 )
 RANGE_CLAIM = re.compile(r"(\d+\.\d+[a-z]?) through (\d+\.\d+[a-z]?), plus `")
+SHARED_ACTION = re.compile(r"uses:\s*(libtmux/\.github/actions/[\w-]+)@(\S+)")
 RUN_KEY = re.compile(r"^(\s*)(?:- )?run:\s*(.*)$")
 RAW_APT = re.compile(
     r"(?:^|[;&|(`{]|\b(?:then|do|else)\b|\bsudo\b)\s*(?:-\S+\s+)*"
@@ -113,9 +115,19 @@ def check_apt(label: str, text: str) -> list[str]:
     lines = text.splitlines()
     return [
         f"{label}:{number} ({_where(lines, number)}) calls {found['command']} "
-        "directly; run it through tools/ci/apt-get.sh"
+        "directly; use the libtmux/.github apt-get action"
         for number, body in _run_bodies(text)
         if not body.lstrip().startswith("#") and (found := RAW_APT.search(body))
+    ]
+
+
+def check_shared_actions(label: str, text: str) -> list[str]:
+    """Return each shared action that is not pinned to a full commit."""
+    return [
+        f"{label}:{number} pins {found[1]} to {found[2]}, not a full commit"
+        for number, line in enumerate(text.splitlines(), start=1)
+        if (found := SHARED_ACTION.search(line))
+        and re.fullmatch(r"[0-9a-f]{40}", found[2]) is None
     ]
 
 
@@ -255,6 +267,7 @@ def check(root: pathlib.Path) -> list[str]:
     for path in sorted([*workflows.glob("*.yml"), *actions]):
         label = path.relative_to(root).as_posix()
         problems += check_apt(label, path.read_text())
+        problems += check_shared_actions(label, path.read_text())
     return problems
 
 

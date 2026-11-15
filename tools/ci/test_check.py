@@ -22,6 +22,7 @@ COPIED = (
     "tools/ci/tmux_matrix.json",
 )
 SHA = "35b54afac29c97fb54faba5b513f8fbd1882f113"
+ACTION_SHA = "30f81842b1e639ea4e25f93f1f2543504178e228"
 
 
 class CheckTest(unittest.TestCase):
@@ -272,7 +273,7 @@ class CheckTest(unittest.TestCase):
         self.assertFlags("trusts an earlier ci run")
 
     def test_a_raw_apt_get_in_a_workflow_is_flagged(self) -> None:
-        """Every call goes through tools/ci/apt-get.sh, however it is spelled."""
+        """Every call goes through the shared action, however it is spelled."""
         for call in (
             "sudo apt-get update",
             "sudo -E apt-get install -y ninja-build",
@@ -290,7 +291,7 @@ class CheckTest(unittest.TestCase):
                 command = "apt" if " apt " in f" {call} " else "apt-get"
                 self.assertFlags(
                     f'.github/workflows/apt.yml:6 (job build, step "Install") calls '
-                    f"{command} directly; run it through tools/ci/apt-get.sh"
+                    f"{command} directly; use the libtmux/.github apt-get action"
                 )
 
     def test_a_raw_apt_get_in_a_composite_action_is_flagged(self) -> None:
@@ -302,21 +303,36 @@ class CheckTest(unittest.TestCase):
         )
         self.assertFlags(
             ".github/actions/setup/action.yml:4 (an unnamed step) calls apt-get "
-            "directly; run it through tools/ci/apt-get.sh"
+            "directly; use the libtmux/.github apt-get action"
         )
 
-    def test_the_apt_wrapper_and_prose_about_apt_pass(self) -> None:
-        """The wrapper, comments and quoted prose are not raw calls."""
+    def test_the_apt_action_and_prose_about_apt_pass(self) -> None:
+        """The shared action, comments and quoted prose are not raw calls."""
         self.write(
             ".github/workflows/apt.yml",
             "jobs:\n  build:\n    steps:\n"
-            "      - name: Install\n        run: |\n"
+            "      - name: Install\n"
+            f"        uses: libtmux/.github/actions/apt-get@{ACTION_SHA}\n"
+            "        with:\n          args: install --yes ninja-build\n"
+            "      - name: Say\n        run: |\n"
             "          # the runner's package manager -- apt on Linux -- sudo apt-get\n"
-            "          ./tools/ci/apt-get.sh update\n"
-            "          ./tools/ci/apt-get.sh install -y ninja-build\n"
             '          echo "apt-get is wrapped, apt is not called"\n',
         )
         self.assertEqual(self.problems(), [])
+
+    def test_a_shared_action_pinned_to_a_branch_or_tag_is_flagged(self) -> None:
+        """A moving ref lets the action change under a passing job."""
+        for ref in ("main", "v1", ACTION_SHA[:12]):
+            with self.subTest(ref=ref):
+                self.write(
+                    ".github/workflows/action.yml",
+                    "jobs:\n  build:\n    steps:\n"
+                    f"      - uses: libtmux/.github/actions/build-tmux@{ref}\n",
+                )
+                self.assertFlags(
+                    ".github/workflows/action.yml:4 pins "
+                    f"libtmux/.github/actions/build-tmux to {ref}, not a full commit"
+                )
 
 
 if __name__ == "__main__":

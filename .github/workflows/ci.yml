@@ -107,52 +107,38 @@ jobs:
           key: ${{ github.job }}-${{ matrix.compiler }}-tmux-${{ matrix.slug }}
           max-size: 400M
 
-      - name: Install the toolchain
+      - name: Install clang ${{ matrix.version }}
+        if: matrix.family == 'clang'
+        uses: libtmux/.github/actions/apt-get@30f81842b1e639ea4e25f93f1f2543504178e228
+        with:
+          update: "true"
+          args: install --yes clang-${{ matrix.version }} libc++-${{ matrix.version }}-dev libc++abi-${{ matrix.version }}-dev ninja-build
+
+      - name: Select clang ${{ matrix.version }}
+        if: matrix.family == 'clang'
         env:
-          FAMILY: ${{ matrix.family }}
           COMPILER_VERSION: ${{ matrix.version }}
         run: |
-          ./tools/ci/apt-get.sh update
-          if [ "$FAMILY" = clang ]; then
-            ./tools/ci/apt-get.sh install -y "clang-$COMPILER_VERSION" \
-              "libc++-$COMPILER_VERSION-dev" "libc++abi-$COMPILER_VERSION-dev" ninja-build
-            sudo update-alternatives --install /usr/bin/clang clang \
-              "/usr/bin/clang-$COMPILER_VERSION" 100
-            sudo update-alternatives --install /usr/bin/clang++ clang++ \
-              "/usr/bin/clang++-$COMPILER_VERSION" 100
-          else
-            ./tools/ci/apt-get.sh install -y "gcc-$COMPILER_VERSION" "g++-$COMPILER_VERSION" ninja-build
-          fi
+          sudo update-alternatives --install /usr/bin/clang clang \
+            "/usr/bin/clang-$COMPILER_VERSION" 100
+          sudo update-alternatives --install /usr/bin/clang++ clang++ \
+            "/usr/bin/clang++-$COMPILER_VERSION" 100
 
-      - name: Resolve the tmux revision
-        id: tmux-ref
-        env:
-          TMUX_REF: ${{ matrix.tmux }}
-        run: python3 -m tools.ci.tmux_ref resolve "$TMUX_REF" --github-output "$GITHUB_OUTPUT"
-
-      - name: Setup tmux build cache for tmux ${{ matrix.tmux }}
-        id: tmux-build-cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Install gcc ${{ matrix.version }}
+        if: matrix.family != 'clang'
+        uses: libtmux/.github/actions/apt-get@30f81842b1e639ea4e25f93f1f2543504178e228
         with:
-          path: ~/tmux-builds/tmux-${{ steps.tmux-ref.outputs.sha }}
-          # The commit, not the ref: a key of "tmux-master" would freeze this
-          # lane at whatever the first run happened to build, and keep passing.
-          key: tmux-${{ steps.tmux-ref.outputs.sha }}
+          update: "true"
+          args: install --yes gcc-${{ matrix.version }} g++-${{ matrix.version }} ninja-build
 
+      # The action keys its cache on the commit the ref resolves to, so a
+      # branch such as master is rebuilt when it moves instead of freezing the
+      # lane at whatever the first run built.
       - name: Build tmux ${{ matrix.tmux }}
-        if: steps.tmux-build-cache.outputs.cache-hit != 'true'
-        env:
-          TMUX_SHA: ${{ steps.tmux-ref.outputs.sha }}
-        run: |
-          ./tools/ci/apt-get.sh install -y libevent-dev libncurses5-dev libtinfo-dev libutempter-dev bison
-          python3 -m tools.ci.tmux_ref build "$TMUX_SHA" \
-            --prefix "$HOME/tmux-builds/tmux-$TMUX_SHA" \
-            --source "$HOME/tmux-src/tmux-$TMUX_SHA"
-
-      - name: Put tmux ${{ matrix.tmux }} on the path
-        env:
-          TMUX_SHA: ${{ steps.tmux-ref.outputs.sha }}
-        run: echo "$HOME/tmux-builds/tmux-$TMUX_SHA/bin" >> "$GITHUB_PATH"
+        uses: libtmux/.github/actions/build-tmux@30f81842b1e639ea4e25f93f1f2543504178e228
+        with:
+          ref: ${{ matrix.tmux }}
+          add-to-path: "true"
 
       # Pinned by commit: v3.24, https://github.com/mxschmitt/action-tmate/commit/35b54af.
       # Only a dispatch gets here, and the plan allows one leg to.
@@ -222,26 +208,34 @@ jobs:
           max-size: 400M
 
       - name: Install the pinned toolchain
+        uses: libtmux/.github/actions/apt-get@30f81842b1e639ea4e25f93f1f2543504178e228
+        with:
+          update: "true"
+          args: install --yes clang-18 libc++-18-dev libc++abi-18-dev ninja-build
+
+      - name: Select clang 18
         run: |
-          ./tools/ci/apt-get.sh update
-          ./tools/ci/apt-get.sh install -y clang-18 libc++-18-dev libc++abi-18-dev ninja-build
           sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
           sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
 
-      - name: Build the supported client and the rejected daemon
-        run: |
-          ./tools/ci/apt-get.sh install -y libevent-dev libncurses5-dev libtinfo-dev libutempter-dev bison
-          mkdir -p ~/tmux-builds ~/tmux-src
-          for version in ${{ matrix.client-tmux }} ${{ matrix.rejected-tmux }}; do
-            git clone --branch "$version" --depth 1 https://github.com/tmux/tmux.git "$HOME/tmux-src/tmux-$version"
-            (cd "$HOME/tmux-src/tmux-$version" && sh autogen.sh &&
-              ./configure --prefix="$HOME/tmux-builds/tmux-$version" && make && make install)
-          done
+      - name: Build the supported client
+        id: client
+        uses: libtmux/.github/actions/build-tmux@30f81842b1e639ea4e25f93f1f2543504178e228
+        with:
+          ref: ${{ matrix.client-tmux }}
+          add-to-path: "true"
+
+      - name: Build the rejected daemon
+        id: rejected
+        uses: libtmux/.github/actions/build-tmux@30f81842b1e639ea4e25f93f1f2543504178e228
+        with:
+          ref: ${{ matrix.rejected-tmux }}
 
       - name: Refuse tmux ${{ matrix.rejected-tmux }} without effects
+        env:
+          REJECTED_TMUX: ${{ steps.rejected.outputs.binary }}
         run: |
-          export PATH=$HOME/tmux-builds/tmux-${{ matrix.client-tmux }}/bin:$PATH
-          export LIBTMUX_TEST_REJECTED_TMUX=$HOME/tmux-builds/tmux-${{ matrix.rejected-tmux }}/bin/tmux
+          export LIBTMUX_TEST_REJECTED_TMUX="$REJECTED_TMUX"
           export LIBTMUX_REQUIRE_REJECTED_TMUX=1
           tmux -V
           "$LIBTMUX_TEST_REJECTED_TMUX" -V
@@ -418,9 +412,10 @@ jobs:
           max-size: 400M
 
       - name: Install GCC, tmux and Ninja
-        run: |
-          ./tools/ci/apt-get.sh update
-          ./tools/ci/apt-get.sh install -y g++ tmux ninja-build
+        uses: libtmux/.github/actions/apt-get@30f81842b1e639ea4e25f93f1f2543504178e228
+        with:
+          update: "true"
+          args: install --yes g++ tmux ninja-build
 
       - name: Build and test with GCC and libstdc++
         run: |
@@ -447,10 +442,13 @@ jobs:
           max-size: 400M
 
       - name: Install the pinned toolchain and tmux
+        uses: libtmux/.github/actions/apt-get@30f81842b1e639ea4e25f93f1f2543504178e228
+        with:
+          update: "true"
+          args: install --yes clang-18 libc++-18-dev libc++abi-18-dev ninja-build tmux
+
+      - name: Select clang 18
         run: |
-          ./tools/ci/apt-get.sh update
-          ./tools/ci/apt-get.sh install -y clang-18 libc++-18-dev libc++abi-18-dev \
-            ninja-build tmux
           sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
           sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
 
@@ -489,9 +487,13 @@ jobs:
           max-size: 400M
 
       - name: Install the pinned toolchain and tmux
+        uses: libtmux/.github/actions/apt-get@30f81842b1e639ea4e25f93f1f2543504178e228
+        with:
+          update: "true"
+          args: install --yes clang-18 libc++-18-dev libc++abi-18-dev ninja-build tmux
+
+      - name: Select clang 18
         run: |
-          ./tools/ci/apt-get.sh update
-          ./tools/ci/apt-get.sh install -y clang-18 libc++-18-dev libc++abi-18-dev ninja-build tmux
           sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
           sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
 
@@ -518,9 +520,13 @@ jobs:
           max-size: 400M
 
       - name: Install the pinned toolchain
+        uses: libtmux/.github/actions/apt-get@30f81842b1e639ea4e25f93f1f2543504178e228
+        with:
+          update: "true"
+          args: install --yes clang-18 ninja-build
+
+      - name: Select clang 18
         run: |
-          ./tools/ci/apt-get.sh update
-          ./tools/ci/apt-get.sh install -y clang-18 ninja-build
           sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
           sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
 
@@ -554,9 +560,13 @@ jobs:
           max-size: 400M
 
       - name: Install the pinned toolchain and tmux
+        uses: libtmux/.github/actions/apt-get@30f81842b1e639ea4e25f93f1f2543504178e228
+        with:
+          update: "true"
+          args: install --yes clang-18 libc++-18-dev libc++abi-18-dev ninja-build tmux
+
+      - name: Select clang 18
         run: |
-          ./tools/ci/apt-get.sh update
-          ./tools/ci/apt-get.sh install -y clang-18 libc++-18-dev libc++abi-18-dev ninja-build tmux
           sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
           sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
 
@@ -589,9 +599,13 @@ jobs:
           max-size: 400M
 
       - name: Install the pinned toolchain and tmux
+        uses: libtmux/.github/actions/apt-get@30f81842b1e639ea4e25f93f1f2543504178e228
+        with:
+          update: "true"
+          args: install --yes clang-18 libc++-18-dev libc++abi-18-dev ninja-build tmux
+
+      - name: Select clang 18
         run: |
-          ./tools/ci/apt-get.sh update
-          ./tools/ci/apt-get.sh install -y clang-18 libc++-18-dev libc++abi-18-dev ninja-build tmux
           sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
           sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
 
@@ -619,10 +633,13 @@ jobs:
           max-size: 400M
 
       - name: Install tmux and a compiler
+        uses: libtmux/.github/actions/apt-get@30f81842b1e639ea4e25f93f1f2543504178e228
+        with:
+          update: "true"
+          args: install --yes tmux ninja-build clang-18 libc++-18-dev libc++abi-18-dev
+
+      - name: Select clang 18
         run: |
-          ./tools/ci/apt-get.sh update
-          ./tools/ci/apt-get.sh install -y tmux ninja-build clang-18 libc++-18-dev \
-            libc++abi-18-dev
           for tool in clang clang++; do
             sudo update-alternatives --install "/usr/bin/$tool" "$tool" \
               "/usr/bin/$tool-18" 100
@@ -653,10 +670,13 @@ jobs:
           max-size: 400M
 
       - name: Install the pinned toolchain and tmux
+        uses: libtmux/.github/actions/apt-get@30f81842b1e639ea4e25f93f1f2543504178e228
+        with:
+          update: "true"
+          args: install --yes clang-18 libc++-18-dev libc++abi-18-dev llvm-18 ninja-build tmux
+
+      - name: Select clang 18
         run: |
-          ./tools/ci/apt-get.sh update
-          ./tools/ci/apt-get.sh install -y clang-18 libc++-18-dev libc++abi-18-dev \
-            llvm-18 ninja-build tmux
           sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
           sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
 
@@ -686,10 +706,13 @@ jobs:
           max-size: 400M
 
       - name: Install the pinned toolchain
+        uses: libtmux/.github/actions/apt-get@30f81842b1e639ea4e25f93f1f2543504178e228
+        with:
+          update: "true"
+          args: install --yes clang-18 clang-format-18 clang-tidy-18 libc++-18-dev libc++abi-18-dev ninja-build g++ doxygen
+
+      - name: Select clang 18
         run: |
-          ./tools/ci/apt-get.sh update
-          ./tools/ci/apt-get.sh install -y clang-18 clang-format-18 clang-tidy-18 \
-            libc++-18-dev libc++abi-18-dev ninja-build g++ doxygen
           for tool in clang clang++ clang-format clang-tidy; do
             sudo update-alternatives --install /usr/bin/$tool $tool /usr/bin/$tool-18 100
           done
@@ -762,7 +785,7 @@ jobs:
             tools.mutate.test_main tools.mutate.test_runner \
             tools.vcpkg.test_probe tools.vcpkg.test_release \
             tools.vcpkg.test_archive \
-            tools.ci.test_plan tools.ci.test_tmux_ref tools.ci.test_check
+            tools.ci.test_plan tools.ci.test_check
 
       # The tmux versions CI runs come from tools/ci/tmux_matrix.json. This
       # fails when the README, the compatibility page or CONTRIBUTING say
@@ -825,9 +848,13 @@ jobs:
           max-size: 400M
 
       - name: Install the pinned toolchain
+        uses: libtmux/.github/actions/apt-get@30f81842b1e639ea4e25f93f1f2543504178e228
+        with:
+          update: "true"
+          args: install --yes clang-18 libc++-18-dev libc++abi-18-dev ninja-build
+
+      - name: Select clang 18
         run: |
-          ./tools/ci/apt-get.sh update
-          ./tools/ci/apt-get.sh install -y clang-18 libc++-18-dev libc++abi-18-dev ninja-build
           sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
           sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
 
@@ -882,9 +909,13 @@ jobs:
       # tmux, because unlike every other step in this job these tests drive a
       # real server. They start it themselves, under a namespaced socket in a
       # directory they remove.
+      - name: Install tmux
+        uses: libtmux/.github/actions/apt-get@30f81842b1e639ea4e25f93f1f2543504178e228
+        with:
+          args: install --yes tmux
+
       - name: The installed package is enough to test the examples
         run: |
-          ./tools/ci/apt-get.sh install -y tmux
           cmake -S examples -B build/examples -G Ninja \
             -DCMAKE_PREFIX_PATH="$PWD/build/prefix" \
             -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CXX_FLAGS=-stdlib=libc++ \
@@ -1026,14 +1057,18 @@ jobs:
             94a541197763a4f449a1b91478df48c0584a6256
           "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
 
+      - name: Install Ninja
+        uses: libtmux/.github/actions/apt-get@30f81842b1e639ea4e25f93f1f2543504178e228
+        with:
+          update: "true"
+          args: install --yes ninja-build
+
       # The whole chain a consumer walks: baseline commit, git-tree, release
       # tarball by hash, package config, find_package. It is also the only
       # place the shipped MCP server is run from an installed tree rather than
       # a build tree.
       - name: A consumer resolves the port and builds on it
         run: |
-          ./tools/ci/apt-get.sh update
-          ./tools/ci/apt-get.sh install -y ninja-build
           python3 -m tools.vcpkg probe \
             --vcpkg "$RUNNER_TEMP/vcpkg" \
             --triplet x64-linux \

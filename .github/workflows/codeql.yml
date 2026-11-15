@@ -43,11 +43,16 @@ jobs:
           languages: ${{ matrix.language }}
           queries: security-and-quality
 
+      - name: Install Ninja and GCC
+        if: matrix.language == 'c-cpp'
+        uses: libtmux/.github/actions/apt-get@30f81842b1e639ea4e25f93f1f2543504178e228
+        with:
+          update: "true"
+          args: install --yes ninja-build g++
+
       - name: Build the library for analysis
         if: matrix.language == 'c-cpp'
         run: |
-          ./tools/ci/apt-get.sh update
-          ./tools/ci/apt-get.sh install -y ninja-build g++
           # The library alone: CodeQL wants the shipped code, and the tests
           # and examples would triple the analysis for code nobody consumes.
           cmake -S . -B build/codeql -G Ninja \
