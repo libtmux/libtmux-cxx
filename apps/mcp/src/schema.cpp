@@ -1,4 +1,5 @@
 #include "schema.hpp"
+#include "output_records.generated.hpp"
 
 #include <cstdint>
 #include <string>
@@ -75,49 +76,30 @@ template <class... Functions> struct Overloaded : Functions... {
               {"additionalProperties", false}};
 }
 
-[[nodiscard]] json session_schema() {
-  return closed_object(
-      {{"attached", {{"type", "boolean"}}},
-       {"client_count", {{"type", "integer"}, {"minimum", 0}}},
-       {"id", {{"type", "string"}, {"pattern", R"(^\$[0-9]+$)"}}},
-       {"name", {{"type", "string"}}},
-       {"path", {{"type", "string"}}},
-       {"window_count", {{"type", "integer"}, {"minimum", 0}}}},
-      {"attached", "client_count", "id", "name", "path", "window_count"});
+template <class Record> json record_schema() {
+  json properties = json::object();
+  json required = json::array();
+  visit(Record{}, [&](const char* name, const char* type, bool minimum,
+                      const char* pattern, const auto&) {
+    json field{{"type", type}};
+    if (minimum)
+      field["minimum"] = 0;
+    if (*pattern)
+      field["pattern"] = pattern;
+    properties[name] = std::move(field);
+    required.push_back(name);
+  });
+  return {{"type", "object"},
+          {"properties", std::move(properties)},
+          {"required", std::move(required)},
+          {"additionalProperties", false}};
 }
 
-[[nodiscard]] json window_schema() {
-  return closed_object(
-      {{"active", {{"type", "boolean"}}},
-       {"height", {{"type", "integer"}, {"minimum", 0}}},
-       {"id", {{"type", "string"}, {"pattern", R"(^@[0-9]+$)"}}},
-       {"index", {{"type", "integer"}}},
-       {"layout", {{"type", "string"}}},
-       {"name", {{"type", "string"}}},
-       {"pane_count", {{"type", "integer"}, {"minimum", 0}}},
-       {"session_id", {{"type", "string"}, {"pattern", R"(^\$[0-9]+$)"}}},
-       {"width", {{"type", "integer"}, {"minimum", 0}}}},
-      {"active", "height", "id", "index", "layout", "name", "pane_count", "session_id",
-       "width"});
-}
+[[nodiscard]] json session_schema() { return record_schema<wire::SessionOutput>(); }
 
-[[nodiscard]] json pane_schema() {
-  return closed_object(
-      {{"active", {{"type", "boolean"}}},
-       {"command", {{"type", "string"}}},
-       {"dead", {{"type", "boolean"}}},
-       {"height", {{"type", "integer"}, {"minimum", 0}}},
-       {"id", {{"type", "string"}, {"pattern", R"(^%[0-9]+$)"}}},
-       {"index", {{"type", "integer"}, {"minimum", 0}}},
-       {"path", {{"type", "string"}}},
-       {"pid", {{"type", "integer"}, {"minimum", 0}}},
-       {"session_id", {{"type", "string"}, {"pattern", R"(^\$[0-9]+$)"}}},
-       {"title", {{"type", "string"}}},
-       {"width", {{"type", "integer"}, {"minimum", 0}}},
-       {"window_id", {{"type", "string"}, {"pattern", R"(^@[0-9]+$)"}}}},
-      {"active", "command", "dead", "height", "id", "index", "path", "pid",
-       "session_id", "title", "width", "window_id"});
-}
+[[nodiscard]] json window_schema() { return record_schema<wire::WindowOutput>(); }
+
+[[nodiscard]] json pane_schema() { return record_schema<wire::PaneOutput>(); }
 
 [[nodiscard]] json array_property(json items) {
   return json{{"type", "array"}, {"items", std::move(items)}};

@@ -1,5 +1,6 @@
 #include "environment_value.hpp"
 #include "libtmux_consumers/mcp.hpp"
+#include "output_records.generated.hpp"
 #include "tool_support.hpp"
 
 #include <algorithm>
@@ -1088,23 +1089,27 @@ retain_run_until_proven_complete(PaneInputLease lease, Server server, Pane pane,
   }
 }
 
+struct AttachedState {
+  bool attached;
+  long long client_count;
+};
+
 // `#{session_attached}` counts every attached
 // client, including this process's own `wait_for_text` control connection.
 // Only queried when tmux's own raw count found somebody - a session nobody
 // has touched costs no extra round trip - and only the pids this process
 // itself is not currently observing through count as really attached.
-StructuredValue::Object attached_state(const Server& server, const Session& session) {
+AttachedState attached_state(const Server& server, const Session& session) {
   const long long raw_count = session.client_count();
   if (raw_count == 0) {
-    return StructuredValue::Object{{"attached", false}, {"client_count", 0LL}};
+    return {false, 0};
   }
   const auto clients = server.run(
       {"list-clients", "-t", std::string{session.id().value()}, "-F", "#{client_pid}"});
   if (!clients.has_value()) {
     // A failed query is not evidence nobody is attached; fall back to
     // tmux's own raw count rather than report a confident-looking zero.
-    return StructuredValue::Object{{"attached", session.attached()},
-                                   {"client_count", raw_count}};
+    return {session.attached(), raw_count};
   }
   long long external = 0;
   std::size_t start = 0;
@@ -1129,44 +1134,28 @@ StructuredValue::Object attached_state(const Server& server, const Session& sess
     }
     start = newline + 1U;
   }
-  return StructuredValue::Object{{"attached", external != 0},
-                                 {"client_count", external}};
+  return {external != 0, external};
 }
 
 StructuredValue session_value(const Server& server, const Session& session) {
-  StructuredValue::Object result = attached_state(server, session);
-  result.emplace("id", session.id().value());
-  result.emplace("name", session.name());
-  result.emplace("path", session.path());
-  result.emplace("window_count", session.window_count());
-  return StructuredValue{std::move(result)};
+  const auto state = attached_state(server, session);
+  return wire::encode_record(
+      wire::SessionOutput{state.attached, state.client_count, session.id().value(),
+                          session.name(), session.path(), session.window_count()});
 }
 
 StructuredValue window_value(const Window& window) {
-  return StructuredValue::Object{
-      {"active", window.active()},         {"height", window.height()},
-      {"id", window.id().value()},         {"index", window.index()},
-      {"layout", window.layout()},         {"name", window.name()},
-      {"pane_count", window.pane_count()}, {"session_id", window.session_id().value()},
-      {"width", window.width()},
-  };
+  return wire::encode_record(wire::WindowOutput{
+      window.active(), window.height(), window.id().value(), window.index(),
+      window.layout(), window.name(), window.pane_count(), window.session_id().value(),
+      window.width()});
 }
 
 StructuredValue pane_value(const Pane& pane) {
-  return StructuredValue::Object{
-      {"active", pane.active()},
-      {"command", pane.command()},
-      {"dead", pane.dead()},
-      {"height", pane.height()},
-      {"id", pane.id().value()},
-      {"index", pane.index()},
-      {"path", pane.path()},
-      {"pid", pane.pid()},
-      {"session_id", pane.session_id().value()},
-      {"title", pane.title()},
-      {"width", pane.width()},
-      {"window_id", pane.window_id().value()},
-  };
+  return wire::encode_record(wire::PaneOutput{
+      pane.active(), pane.command(), pane.dead(), pane.height(), pane.id().value(),
+      pane.index(), pane.path(), pane.pid(), pane.session_id().value(), pane.title(),
+      pane.width(), pane.window_id().value()});
 }
 
 namespace {
