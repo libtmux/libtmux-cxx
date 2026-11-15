@@ -348,19 +348,13 @@ def main():
     """Verify the installed program and write machine-readable evidence."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=pathlib.Path, required=True)
-    parser.add_argument("--reference", help="Installed tmuxp executable")
     parser.add_argument("--iterations", type=int, default=5)
     parser.add_argument("--output", type=pathlib.Path, required=True)
     args = parser.parse_args()
     if args.iterations < 1:
         parser.error("--iterations must be positive")
     binary = args.binary.resolve(strict=True)
-    reference = shutil.which(args.reference) if args.reference else None
-    if args.reference and reference is None:
-        parser.error("--reference executable was not found")
     binaries = {"cxx": str(binary)}
-    if reference:
-        binaries["tmuxp"] = reference
     report = {
         "schema_version": 1,
         "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
