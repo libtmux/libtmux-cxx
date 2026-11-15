@@ -272,8 +272,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Install the pinned Python tool runner
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.0"
+
       - name: Check Windows registry tooling
-        run: python -m unittest tools.vcpkg.test_probe tools.vcpkg.test_release
+        run: uv run --group dev pytest scripts/vcpkg/tests/test_vcpkg_probe.py scripts/vcpkg/tests/test_vcpkg_release.py
 
       - name: Build the tagged Windows release
         run: |
@@ -306,7 +311,7 @@ jobs:
           VERSION: ${{ needs.source.outputs.version }}
           PORT_SHA512: ${{ needs.source.outputs.port_sha512 }}
         run: |
-          python -m tools.vcpkg release `
+          uv run scripts/vcpkg/vcpkg_registry.py release `
             --version $env:VERSION --sha512 $env:PORT_SHA512 --enable-windows
           if ($LASTEXITCODE -ne 0) {
             throw "the vcpkg release transition failed"
@@ -651,6 +656,11 @@ jobs:
           name: validated-windows-port
           path: build/validated-port
 
+      - name: Install the pinned Python tool runner
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.0"
+
       - name: The release commit and tag still belong to master
         run: |
           event_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
@@ -742,8 +752,8 @@ jobs:
             git commit --amend --no-edit
           fi
 
-          python3 -m tools.vcpkg check
-          python3 -m tools.vcpkg probe \
+          uv run scripts/vcpkg/vcpkg_registry.py check
+          uv run scripts/vcpkg/vcpkg_registry.py probe \
             --vcpkg "$RUNNER_TEMP/vcpkg" \
             --triplet x64-linux \
             --feature mcp
@@ -781,7 +791,7 @@ jobs:
           BASELINE: ${{ steps.prepare.outputs.baseline }}
         run: |
           test "$(git rev-parse HEAD)" = "$BASELINE"
-          python3 -m tools.vcpkg probe \
+          uv run scripts/vcpkg/vcpkg_registry.py probe \
             --vcpkg "$RUNNER_TEMP/vcpkg" \
             --triplet x64-linux \
             --feature mcp \
@@ -799,6 +809,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.registry.outputs.baseline }}
+
+      - name: Install the pinned Python tool runner
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.0"
 
       - name: Bootstrap the pinned vcpkg client
         run: |
@@ -821,7 +836,7 @@ jobs:
 
       - name: Resolve and consume the published Windows baseline
         run: |
-          python -m tools.vcpkg probe `
+          uv run scripts/vcpkg/vcpkg_registry.py probe `
             --vcpkg $env:LIBTMUX_VCPKG_ROOT `
             --triplet x64-windows `
             --feature mcp `

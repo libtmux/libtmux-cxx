@@ -12,10 +12,11 @@ import sys
 import tempfile
 import threading
 import time
+import typing as t
 import unittest
 from unittest import mock
 
-from tools.vcpkg import probe
+import vcpkg_probe as probe
 
 # A modern catalog is whatever the registry says; these stand in for it here,
 # and the probe is told to expect exactly them.
@@ -624,7 +625,7 @@ class ProbeTest(unittest.TestCase):
         }
         for label, (path, expected) in unexpected_fields.items():
             broken = [json.loads(line) for line in valid.stdout.splitlines()]
-            node: object = broken
+            node: t.Any = broken
             for component in path:
                 if isinstance(component, int):
                     self.assertIsInstance(node, list)
@@ -841,8 +842,8 @@ print(json.dumps(listed), flush=True)
         )
 
         self.assertIsNone(problem)
-        self.assertIsNotNone(completed)
         assert completed is not None
+        assert list_id is not None
         self.assertNotIn("PREINITIALIZE_BYTES", completed.stderr)
         _, catalog_problem = probe._catalog_problem(
             completed.stdout,
@@ -946,7 +947,7 @@ pathlib.Path(STATE).write_text(
             .replace("STATE", repr(str(stdin_state)))
         )
         result: list[
-            tuple[subprocess.CompletedProcess[list[str]] | None, int | None, str | None]
+            tuple[subprocess.CompletedProcess[str] | None, int | None, str | None]
         ] = []
 
         def run_protocol() -> None:
@@ -1054,7 +1055,3 @@ pathlib.Path(STATE).write_text(
 
         run_command.assert_not_called()
         self.assertFalse(self.work.exists())
-
-
-if __name__ == "__main__":
-    unittest.main()

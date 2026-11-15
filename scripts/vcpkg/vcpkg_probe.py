@@ -29,9 +29,9 @@ import threading
 import time
 import typing as t
 
-from tools.vcpkg.check import port_version
-from tools.vcpkg.check import run as check_registry
-from tools.vcpkg.git import git
+from vcpkg_check import port_version
+from vcpkg_check import run as check_registry
+from vcpkg_git import git
 
 _BUILD_CONFIGURATION = "Release"
 _PORT_NAME = "libtmux"
@@ -230,7 +230,9 @@ class _WindowsJob:
                     ctypes.sizeof(information),
                 )
             )
-            process_handle = wintypes.HANDLE(int(process._handle))  # type: ignore[attr-defined]
+            process_handle = wintypes.HANDLE(
+                int(process._handle)  # ty: ignore[missing-attribute]
+            )
             require(kernel32.AssignProcessToJobObject(handle, process_handle))
         except BaseException:
             kernel32.CloseHandle(handle)
@@ -261,7 +263,7 @@ def _resume_windows_process(process: subprocess.Popen[bytes]) -> None:
     ntdll.NtResumeProcess.restype = wintypes.LONG
     status = int(
         ntdll.NtResumeProcess(
-            wintypes.HANDLE(int(process._handle)),  # type: ignore[attr-defined]
+            wintypes.HANDLE(int(process._handle)),  # ty: ignore[missing-attribute]
         )
     )
     if status != 0:
@@ -295,6 +297,32 @@ def _terminate_process_tree(
         process.wait(timeout=0.5)
 
 
+def _launch(
+    command: list[str],
+    *,
+    cwd: pathlib.Path | None,
+    stdin: int,
+) -> subprocess.Popen[bytes]:
+    """Start a child in its own process group, with both output pipes captured."""
+    if os.name == "nt":
+        return subprocess.Popen(
+            command,
+            cwd=cwd,
+            stdin=stdin,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | 0x00000004,
+        )
+    return subprocess.Popen(
+        command,
+        cwd=cwd,
+        stdin=stdin,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+
+
 def _run_expected(
     command: list[str],
     *,
@@ -303,20 +331,8 @@ def _run_expected(
     timeout: float = 30.0,
 ) -> int:
     """Run a small identity consumer with bounded time, memory, and descendants."""
-    creation: dict[str, object] = {}
-    if os.name == "nt":
-        creation["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | 0x00000004
-    else:
-        creation["start_new_session"] = True
     try:
-        process = subprocess.Popen(
-            command,
-            cwd=cwd,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            **creation,
-        )
+        process = _launch(command, cwd=cwd, stdin=subprocess.DEVNULL)
     except OSError as error:
         print(f"error: could not launch identity consumer: {error}", file=sys.stderr)
         return 1
@@ -472,22 +488,11 @@ def _run_protocol(
     *,
     version: str,
     timeout: float = 60.0,
-) -> tuple[subprocess.CompletedProcess[list[str]] | None, int | None, str | None]:
+) -> tuple[subprocess.CompletedProcess[str] | None, int | None, str | None]:
     """Run one causal stdio lifecycle with a single deadline and output bound."""
     deadline = time.monotonic() + timeout
-    creation: dict[str, object] = {}
-    if os.name == "nt":
-        creation["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | 0x00000004
-    else:
-        creation["start_new_session"] = True
     try:
-        process = subprocess.Popen(
-            command,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            **creation,
-        )
+        process = _launch(command, cwd=None, stdin=subprocess.PIPE)
     except OSError as error:
         return None, None, f"could not launch: {error}"
 

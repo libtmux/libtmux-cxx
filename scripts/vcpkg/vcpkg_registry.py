@@ -1,3 +1,8 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = []
+# ///
 """Checks for the vcpkg git registry this repository serves.
 
 ``check`` reads the repository and answers instantly. ``probe`` needs a real
@@ -5,7 +10,7 @@ vcpkg and builds a real consumer against it, which is slower and proves more.
 
 Run from the repository root::
 
-    python3 -m tools.vcpkg check
+    uv run scripts/vcpkg/vcpkg_registry.py check
 """
 
 from __future__ import annotations
@@ -13,7 +18,9 @@ from __future__ import annotations
 import argparse
 import pathlib
 
-from tools.vcpkg import check, probe, release
+import vcpkg_check as check
+import vcpkg_probe as probe
+import vcpkg_release as release
 
 
 def _run_check(args: argparse.Namespace) -> int:

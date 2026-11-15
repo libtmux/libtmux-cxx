@@ -265,8 +265,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Install the pinned Python tool runner
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.0"
+
       - name: Check Windows registry tooling
-        run: python -m unittest tools.vcpkg.test_probe tools.vcpkg.test_release
+        run: uv run --group dev pytest scripts/vcpkg/tests/test_vcpkg_probe.py scripts/vcpkg/tests/test_vcpkg_release.py
 
       # Nothing here starts psmux: this lane builds and installs, and runs the
       # steps that need no tmux. The psmux tests are run by hand.
@@ -792,9 +797,6 @@ jobs:
           uv run --group dev ruff check .
           uv run --group dev ty check scripts
           uv run --group dev pytest
-          uv run --no-project python -m unittest \
-            tools.vcpkg.test_probe tools.vcpkg.test_release \
-            tools.vcpkg.test_archive
 
       # The tmux versions CI runs come from scripts/ci_plan/tmux_matrix.json.
       # This fails when the README, the compatibility page or CONTRIBUTING say
@@ -1055,8 +1057,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install the pinned Python tool runner
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.0"
+
       - name: The versions database describes the ports
-        run: python3 -m tools.vcpkg check
+        run: uv run scripts/vcpkg/vcpkg_registry.py check
 
       - name: Install vcpkg
         run: |
@@ -1078,7 +1085,7 @@ jobs:
       # a build tree.
       - name: A consumer resolves the port and builds on it
         run: |
-          python3 -m tools.vcpkg probe \
+          uv run scripts/vcpkg/vcpkg_registry.py probe \
             --vcpkg "$RUNNER_TEMP/vcpkg" \
             --triplet x64-linux \
             --feature mcp

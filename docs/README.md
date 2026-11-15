@@ -35,7 +35,7 @@ registry. What that means, the order a release has to keep, and the check that
 catches a versions database drifting from the ports beside it:
 
 ```console
-$ python3 -m tools.vcpkg check
+$ uv run scripts/vcpkg/vcpkg_registry.py check
 ```
 
 ## Contracts

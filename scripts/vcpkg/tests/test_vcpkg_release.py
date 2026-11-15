@@ -7,12 +7,13 @@ import io
 import json
 import pathlib
 import tempfile
+import typing as t
 import unittest
 from unittest import mock
 
-from tools.vcpkg import __main__ as vcpkg_main
-from tools.vcpkg import release
-from tools.vcpkg.check import VERSION_FIELDS
+import vcpkg_registry as vcpkg_main
+import vcpkg_release as release
+from vcpkg_check import VERSION_FIELDS
 
 OLD_HASH = "1" * 128
 NEW_HASH = "2" * 128
@@ -86,7 +87,7 @@ class ReleaseTest(unittest.TestCase):
                 enable_windows=enable_windows,
             )
 
-    def assert_failed_without_writes(self, **kwargs: object) -> None:
+    def assert_failed_without_writes(self, **kwargs: t.Any) -> None:
         """Assert a rejected transition leaves both inputs byte-for-byte intact."""
         before = self.snapshot()
         with mock.patch.object(release, "_commit_outputs") as commit_outputs:
@@ -450,7 +451,7 @@ class ReleaseTest(unittest.TestCase):
                 mock.patch(
                     "sys.argv",
                     [
-                        "tools.vcpkg",
+                        "vcpkg_registry.py",
                         "--root",
                         str(self.root),
                         "release",
@@ -473,7 +474,7 @@ class ReleaseTest(unittest.TestCase):
             mock.patch(
                 "sys.argv",
                 [
-                    "tools.vcpkg",
+                    "vcpkg_registry.py",
                     "--root",
                     str(self.root),
                     "release",
@@ -494,11 +495,7 @@ class ReleaseTest(unittest.TestCase):
 
     def test_checkout_manifest_uses_the_release_support_policy(self) -> None:
         """Keep source-tree and released Windows package scope identical."""
-        root = pathlib.Path(__file__).resolve().parents[2]
+        root = pathlib.Path(__file__).resolve().parents[3]
         manifest = json.loads((root / "vcpkg.json").read_text(encoding="utf-8"))
 
         self.assertEqual(manifest["supports"], release.WINDOWS_SUPPORTS)
-
-
-if __name__ == "__main__":
-    unittest.main()

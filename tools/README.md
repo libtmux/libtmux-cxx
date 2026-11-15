@@ -20,7 +20,7 @@ alongside the tests.
 | [`scripts/docs/`](../scripts/docs/) | `uv run scripts/docs/check_example_isolation.py` | Whether each quoted region compiles as the only code in its own file, the way a reader pastes it |
 | [`scripts/ci_plan/`](../scripts/ci_plan/) | `uv run scripts/ci_plan/ci_plan.py matrix --event push` | Which tmux versions CI runs for an event, from one manifest |
 | [`scripts/ci_plan/`](../scripts/ci_plan/) | `uv run scripts/ci_plan/ci_check.py` | Whether the README, the compatibility page, CONTRIBUTING and the workflows still follow that manifest |
-| [`vcpkg/`](vcpkg/) | `python3 -m tools.vcpkg check` | Whether [the registry](../docs/vcpkg-registry.md) still publishes the ports beside it |
+| [`scripts/vcpkg/`](../scripts/vcpkg/) | `uv run scripts/vcpkg/vcpkg_registry.py check` | Whether [the registry](../docs/vcpkg-registry.md) still publishes the ports beside it |
 | [`scripts/coverage/`](../scripts/coverage/) | `uv run scripts/coverage/coverage_report.py` | How much of the shipped surface the tests reach |
 | [`scripts/include_cost/`](../scripts/include_cost/) | `uv run scripts/include_cost/include_cost.py --check` | What including the umbrella header costs a translation unit |
 

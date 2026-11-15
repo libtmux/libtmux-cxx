@@ -113,7 +113,7 @@ version is the git-tree of that port at `HEAD`. When it is not, the registry
 serves the old port while the repository shows the new one.
 
 ```console
-$ python3 -m tools.vcpkg check
+$ uv run scripts/vcpkg/vcpkg_registry.py check
 ```
 
 This check exists because `x-add-version` does not fail loudly enough to gate
@@ -128,7 +128,7 @@ writes, points them at this checkout, and builds
 through the vcpkg toolchain:
 
 ```console
-$ python3 -m tools.vcpkg probe \
+$ uv run scripts/vcpkg/vcpkg_registry.py probe \
     --vcpkg ~/vcpkg \
     --triplet x64-linux \
     --feature mcp

@@ -31,7 +31,7 @@ REQUIRED = (
 
 def archived_paths() -> set[str]:
     """Every path `git archive HEAD` writes, as the tarball spells them."""
-    root = pathlib.Path(__file__).resolve().parents[2]
+    root = pathlib.Path(__file__).resolve().parents[3]
     archive = subprocess.run(
         ["git", "archive", "HEAD"], cwd=root, capture_output=True, check=True
     ).stdout
@@ -67,7 +67,7 @@ class ConsumerDependencies(unittest.TestCase):
 
     def test_the_library_does_not_carry_the_mcp_servers_parser(self) -> None:
         """The MCP server needs a JSON parser; the library must not inherit it."""
-        root = pathlib.Path(__file__).resolve().parents[2]
+        root = pathlib.Path(__file__).resolve().parents[3]
         carrying = [
             str(path.relative_to(root))
             for directory in ("include", "src")
@@ -85,7 +85,7 @@ class ConsumerDependencies(unittest.TestCase):
 
     def test_the_mcp_server_is_not_built_by_default(self) -> None:
         """A library build does not become a program build without being asked."""
-        root = pathlib.Path(__file__).resolve().parents[2]
+        root = pathlib.Path(__file__).resolve().parents[3]
         declaration = (root / "CMakeLists.txt").read_text()
         # The one line, not the whole file: an assertion that dumps 200 lines
         # of CMake to say one option changed is not a readable failure.
@@ -101,7 +101,3 @@ class ConsumerDependencies(unittest.TestCase):
             "the MCP server is opt-in; defaulting it on hands every consumer a "
             f"program and its parser: {option.group()}",
         )
-
-
-if __name__ == "__main__":
-    unittest.main()

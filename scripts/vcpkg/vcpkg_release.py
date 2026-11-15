@@ -24,7 +24,7 @@ import sys
 import tempfile
 import typing as t
 
-from tools.vcpkg.check import VERSION_FIELDS
+from vcpkg_check import VERSION_FIELDS
 
 LEGACY_SUPPORTS: t.Final = "!windows & !mingw"
 WINDOWS_SUPPORTS: t.Final = "(linux | osx) | (windows & x64 & !uwp & !xbox & !mingw)"
@@ -208,7 +208,7 @@ def _remove_stale_outputs(paths: tuple[pathlib.Path, ...]) -> None:
 
 
 @contextlib.contextmanager
-def _release_lock(root: pathlib.Path) -> t.Iterator[None]:
+def _release_lock(root: pathlib.Path) -> t.Generator[None, None, None]:
     """Hold one process-wide release writer lock for this repository."""
     identity = hashlib.sha256(os.fsencode(root)).hexdigest()[:24]
     lock_path = pathlib.Path(tempfile.gettempdir()) / f"libtmux-release-{identity}.lock"

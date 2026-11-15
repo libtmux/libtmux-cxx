@@ -22,7 +22,7 @@ import pathlib
 import sys
 import typing as t
 
-from tools.vcpkg.git import git
+from vcpkg_git import git
 
 # vcpkg accepts one of these per manifest, and treats the choice as part of the
 # version's identity: a port declaring `version-semver` is not interchangeable
@@ -93,8 +93,8 @@ def check_port(root: pathlib.Path, port: pathlib.Path) -> list[str]:
         return [
             (
                 f"{versions_path.relative_to(root)}: missing. Run "
-                f"`python3 -m tools.vcpkg check --how` for the command that "
-                f"writes it."
+                "`uv run scripts/vcpkg/vcpkg_registry.py check --how` for the "
+                "command that writes it."
             ),
         ]
 

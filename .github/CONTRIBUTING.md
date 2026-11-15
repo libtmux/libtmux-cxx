@@ -221,7 +221,7 @@ This repository is also a vcpkg registry, and the versions database can drift
 from the ports beside it:
 
 ```console
-$ python3 -m tools.vcpkg check
+$ uv run scripts/vcpkg/vcpkg_registry.py check
 ```
 
 The library and each program keep a `CHANGELOG.md`, and each program installs
