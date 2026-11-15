@@ -1,3 +1,8 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = []
+# ///
 """Measure how much of the shipped surface the tests actually reach.
 
 Source-based coverage, because most of this library is in headers and a
@@ -33,7 +38,7 @@ def instrumented_binaries(build: pathlib.Path) -> list[pathlib.Path]:
     return found
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     """Merge the profiles and print a report over the shipped sources."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build", type=pathlib.Path, required=True)
@@ -44,7 +49,7 @@ def main() -> int:
         default=0.0,
         help="fail when total line coverage falls below this percentage",
     )
-    arguments = parser.parse_args()
+    arguments = parser.parse_args(argv)
 
     profiles = sorted((arguments.build / "profiles").glob("*.profraw"))
     if not profiles:

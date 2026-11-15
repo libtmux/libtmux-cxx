@@ -22,7 +22,7 @@ install_manifest.txt
 *.profraw
 *.profdata
 # Anchored: unanchored, this matches a directory of that name at any depth, and
-# it quietly swallowed `tools/coverage/` — the tool that measures coverage was
+# it quietly swallowed `scripts/coverage/` — the tool that measures coverage was
 # excluded from the repository by the rule meant for its output.
 /coverage/
 

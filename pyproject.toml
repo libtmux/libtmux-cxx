@@ -28,6 +28,8 @@ pythonpath = [
   "scripts/ci_plan",
   "scripts/docs",
   "scripts/mutate",
+  "scripts/coverage",
+  "scripts/include_cost",
 ]
 
 [tool.ruff]
@@ -70,4 +72,6 @@ extra-paths = [
   "scripts/ci_plan",
   "scripts/docs",
   "scripts/mutate",
+  "scripts/coverage",
+  "scripts/include_cost",
 ]

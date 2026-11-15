@@ -679,6 +679,11 @@ jobs:
           key: ${{ github.job }}
           max-size: 400M
 
+      - name: Install the pinned Python tool runner
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.0"
+
       - name: Install the pinned toolchain and tmux
         uses: libtmux/.github/actions/apt-get@30f81842b1e639ea4e25f93f1f2543504178e228
         with:
@@ -695,7 +700,7 @@ jobs:
           cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache --preset cxx-coverage
           cmake --build --preset cxx-coverage
           ctest --preset cxx-coverage --no-tests=error --output-on-failure
-          python3 tools/coverage/report.py \
+          uv run scripts/coverage/coverage_report.py \
             --build build/cxx-coverage --source . --floor 65
 
   lint:
@@ -757,8 +762,8 @@ jobs:
 
       - name: Check what including the library costs
         run: |
-          python3 -m tools.include_cost --check
-          python3 -m tools.include_cost --compiler g++ --check
+          uv run scripts/include_cost/include_cost.py --check
+          uv run scripts/include_cost/include_cost.py --compiler g++ --check
 
       # The headers are the only source of the published reference, and a
       # Doxygen warning means part of one did not survive the parse: a comment
@@ -788,7 +793,6 @@ jobs:
           uv run --group dev ty check scripts
           uv run --group dev pytest
           uv run --no-project python -m unittest \
-            tools.coverage.test_report \
             tools.vcpkg.test_probe tools.vcpkg.test_release \
             tools.vcpkg.test_archive
 

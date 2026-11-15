@@ -1,3 +1,8 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = []
+# ///
 """What including this library costs a translation unit.
 
 Measured as a ratio against a translation unit that includes only `<string>`,
