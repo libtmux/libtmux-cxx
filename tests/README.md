@@ -53,8 +53,8 @@ framework, so a suite on Catch2 or doctest uses the same fixture;
 GoogleTest skip macros and is a header you choose to include.
 
 `support/` is what is left: the headers that mean nothing outside this
-repository — descriptor accounting, `/proc` platform guards, the differential
-wire codec, and the fake tmux the fixture's own failure tests drive.
+repository — descriptor accounting, `/proc` platform guards, and the fake
+tmux the fixture's own failure tests drive.
 
 ## Nothing selects a server
 
@@ -92,7 +92,6 @@ so use one ctest at a time per build tree.
 | [`integration/`](integration/) | Behaviour | One case per capability, against real tmux. Each is named for the claim it makes. |
 | [`compile/`](compile/) | Refusals | Programs that **must not compile**. `pane::active.starts_with(...)` and a view outliving its snapshot are errors, and these prove it rather than asserting it in prose. |
 | [`fuzz/`](fuzz/) | Parsers | libFuzzer over everything that reads what tmux printed. |
-| [`differential/`](differential/) | Cross-implementation | The same question asked of this library and of Python libtmux, compared. |
 | [`data/`](data/) | Recordings | Captured tmux output, so a parser can be tested without a server. |
 
 ## The compile tests are the interesting ones

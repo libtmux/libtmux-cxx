@@ -7,7 +7,7 @@ set_tests_properties(build_smoke PROPERTIES LABELS "contract")
 # What is left of this suite's own scaffolding once the reusable part has been
 # extracted: `libtmux::testing` carries the fixture, and this carries the
 # handful of headers that are only meaningful inside this repository —
-# descriptor accounting, `/proc` platform guards, the differential wire codec.
+# descriptor accounting and `/proc` platform guards.
 #
 # An INTERFACE target now, not a static library. It compiles nothing; it says
 # "the exported fixture, plus this directory on the include path", which is
@@ -254,8 +254,6 @@ exec "@sandbox_real_tmux@" "$@"
     EXPECT
       "tests left tmux servers running on the sandbox that did not stop, so the sandbox is left in place: custom.sock")
 endif()
-
-add_subdirectory(differential)
 
 add_executable(libtmux_chain_test chain_test.cpp)
 target_link_libraries(
