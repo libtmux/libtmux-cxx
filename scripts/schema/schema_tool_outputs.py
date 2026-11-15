@@ -8,12 +8,8 @@
 The C++ side calls every tool against a real tmux and writes each answer beside
 the ``outputSchema`` a client reads from ``tools/list``. This validates the
 schemas themselves, then every answer against its own, then requires a table of
-malformed answers to be rejected — because a schema that accepts everything
+malformed answers to be rejected, because a schema that accepts everything
 passes the first two halves perfectly.
-
-The table is what caught ``wait_for_text`` reporting ``pane_id: ""`` when its
-deadline expired before the target resolved: the schema required a pane ID
-matching ``^%[0-9]+$``, so the empty string was never a legal answer.
 """
 
 from __future__ import annotations

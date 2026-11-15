@@ -17,14 +17,19 @@ runs the ones that need a built program.
 Run any of them from the repository root, for example:
 
 ```console
-$ uv run scripts/docs/api_index.py --include include/libtmux --output docs/api.md --check
+$ uv run scripts/docs/api_index.py \
+    --include include/libtmux \
+    --output docs/api.md \
+    --check
 ```
 
 The commands that start a program take its path. CTest passes the build's
 binaries; by hand, name them:
 
 ```console
-$ uv run scripts/docs/check_readme_commands.py --workspace build/cxx-dev/apps/workspace/tmux-workspace --mcp build/cxx-dev/apps/mcp/libtmux-mcp-server
+$ uv run scripts/docs/check_readme_commands.py \
+    --workspace build/cxx-dev/apps/workspace/tmux-workspace \
+    --mcp build/cxx-dev/apps/mcp/libtmux-mcp-server
 ```
 
 [`fixtures/`](fixtures/) holds the parser's golden input and output, and the

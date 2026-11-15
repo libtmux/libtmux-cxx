@@ -10,11 +10,17 @@ outside the sanitizer and coverage builds.
 | [`verify_process.py`](verify_process.py) | Process ownership under a real controlling terminal: editor handoff and cancellation, an unbounded writer, and with `--load` and `--logging` the attachment, client selection, retained-change and log-failure cases |
 
 ```console
-$ uv run scripts/workspace_cli/verify_cli.py --binary build/cxx-dev/apps/workspace/tmux-workspace --iterations 5 --output verify-cli.json
+$ uv run scripts/workspace_cli/verify_cli.py \
+    --binary build/cxx-dev/apps/workspace/tmux-workspace \
+    --iterations 5 \
+    --output verify-cli.json
 ```
 
 ```console
-$ uv run scripts/workspace_cli/verify_process.py --binary build/cxx-dev/apps/workspace/tmux-workspace --load --output verify-process.json
+$ uv run scripts/workspace_cli/verify_process.py \
+    --binary build/cxx-dev/apps/workspace/tmux-workspace \
+    --load \
+    --output verify-process.json
 ```
 
 A verifier nobody has watched fail is not a gate. CTest runs each again against

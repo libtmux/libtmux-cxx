@@ -6,7 +6,7 @@
 r"""Smoke-test the MCP server against a native Windows psmux fixture.
 
 It creates one psmux session in a private namespace, starts the server on it and
-walks the protocol: initialize, the capability resource, the pinned 45-tool
+walks the protocol: initialize, the capability resource, the pinned tool
 catalog, and four tools that read the fixture. It then closes the server's
 input and requires a zero exit, kills the exact session and proves the
 session's registry files and the isolated configuration are gone. A failed
@@ -254,7 +254,7 @@ def converse(server: Server, namespace: str, session: str) -> None:
     )
     actual = sorted(tool["name"] for tool in listed["result"]["tools"])
     if actual != sorted(EXPECTED_TOOLS):
-        message = "Windows MCP tool catalog is not the authoritative 45-tool inventory"
+        message = "Windows MCP tool catalog is not the authoritative inventory"
         raise SmokeError(message)
 
     sessions = server.tool(2, "list_sessions", {})["sessions"]

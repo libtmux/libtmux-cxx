@@ -21,7 +21,10 @@ $ uv run scripts/ci_plan/ci_plan.py matrix --event push
 A dispatch names its own refs:
 
 ```console
-$ uv run scripts/ci_plan/ci_plan.py matrix --event workflow_dispatch --scope custom --tmux-ref 3.6b,master
+$ uv run scripts/ci_plan/ci_plan.py matrix \
+    --event workflow_dispatch \
+    --scope custom \
+    --tmux-ref 3.6b,master
 ```
 
 The `all-checks-passed` job calls `ci_plan.py verify` to compare each job's

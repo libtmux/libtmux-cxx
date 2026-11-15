@@ -9,7 +9,9 @@ CTest runs it as `consumer.mcp.readme` with `--check`, which fails when the
 README differs. Without `--check` it rewrites the block:
 
 ```console
-$ uv run scripts/mcp_inventory/mcp_inventory.py --server build/cxx-dev/apps/mcp/libtmux-mcp-server --readme apps/mcp/README.md
+$ uv run scripts/mcp_inventory/mcp_inventory.py \
+    --server build/cxx-dev/apps/mcp/libtmux-mcp-server \
+    --readme apps/mcp/README.md
 ```
 
 The server starts without a socket selector or tool filter from the caller's

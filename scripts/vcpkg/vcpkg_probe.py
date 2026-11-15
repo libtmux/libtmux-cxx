@@ -698,11 +698,9 @@ def _catalog_problem(
 
     Every tool is checked for shape, not for identity. This probe resolves a
     *published* package, so which tools it advertises is whatever that release
-    shipped — a list restated here would describe the working tree instead, and
-    the copy that used to live in this file is what rejected a packaged server
-    for all 41 tools it had come to advertise. The current catalog is pinned by
-    `consumer.mcp.readme` and the registry's own contract test, on every pull
-    request rather than only on a tag.
+    shipped; a list restated here would describe the working tree instead. The
+    current catalog is pinned by `consumer.mcp.readme` and the registry's own
+    contract test, on every pull request rather than only on a tag.
     """
     legacy_alpha2 = version == _LEGACY_ALPHA2_VERSION
     if legacy_alpha2 and windows:

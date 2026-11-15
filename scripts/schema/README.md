@@ -12,11 +12,14 @@ Each also requires a table of malformed documents to be refused, because a
 schema that accepts everything passes the first half perfectly.
 
 ```console
-$ uv run scripts/schema/schema_filter.py --schema schema/filter-expression-v1.schema.json --corpus build/cxx-dev/apps/mcp/filter-expressions.jsonl
+$ uv run scripts/schema/schema_filter.py \
+    --schema schema/filter-expression-v1.schema.json \
+    --corpus build/cxx-dev/apps/mcp/filter-expressions.jsonl
 ```
 
 ```console
-$ uv run scripts/schema/schema_tool_outputs.py --corpus build/cxx-dev/apps/mcp/tool-answers.jsonl
+$ uv run scripts/schema/schema_tool_outputs.py \
+    --corpus build/cxx-dev/apps/mcp/tool-answers.jsonl
 ```
 
 CTest runs them with the Python interpreter CMake finds, which needs

@@ -66,10 +66,8 @@ def main(argv: t.Sequence[str] | None = None) -> int:
     if not wanted:
         print("no mutation matched", file=sys.stderr)
         return 2
-    # It edits the working tree in place and puts each file back as it goes.
-    # Anything that reads the tree meanwhile — a commit, another build — can
-    # catch a file mid-mutation, so say so rather than leave it to be found
-    # in a diff later.
+    # Anything that reads the tree meanwhile, such as a commit or another
+    # build, can catch a file mid-mutation.
     print(
         f"editing {len(wanted)} source(s) in place; do not commit or build "
         "from this tree until it finishes",
@@ -79,9 +77,8 @@ def main(argv: t.Sequence[str] | None = None) -> int:
         run(mutation, parsed.repository, parsed.preset, build_root=parsed.build_root)
         for mutation in wanted
     ]
-    # The last mutation restored its source but left its binary in the tree,
-    # so the next `ctest` would run code nobody has any more. Build once on
-    # the way out and the tree is honest again.
+    # The last mutation's binary stays in the tree after its source is
+    # restored, so rebuild once on the way out.
     restored = subprocess.run(
         ["cmake", "--build", "--preset", parsed.preset],
         cwd=parsed.build_root or parsed.repository,

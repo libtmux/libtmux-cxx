@@ -7,9 +7,8 @@
 
 The library and its two programs are released together under one version, but a
 user of `libtmux-mcp-server` or `tmux-workspace` should not have to read the
-library's history to find what changed in theirs. Each keeps a `CHANGELOG.md`,
-and nothing noticed one going missing, so this holds each claim that can be
-answered from a checkout:
+library's history to find what changed in theirs. Each keeps a `CHANGELOG.md`;
+this holds each claim that can be answered from a checkout:
 
 - the file exists;
 - it opens with the name of the package it belongs to, so another package's file

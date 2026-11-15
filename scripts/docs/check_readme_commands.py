@@ -5,8 +5,8 @@
 # ///
 """Every command a README tells a reader to run is one the program accepts.
 
-A pasted command that fails with `unknown option` is the first thing a new user
-sees, and a README is the one place nothing exercises it. This reads the
+Nothing else exercises the commands in a README, so a pasted one can fail with
+`unknown option`. This reads the
 `console` blocks and `json` client configurations in the READMEs and holds each
 command to the program it names:
 

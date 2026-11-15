@@ -5,16 +5,15 @@
 # ///
 """Every C++ example in the README is code that compiles and runs.
 
-A README is the most-read file in a repository and the least-tested. The
-snippets in this one are not written in the README at all: they live in
-`examples/05-readme.cpp`, which is built and executed against a real tmux by
-the same CTest run as everything else, and the README quotes them.
+The snippets are not written in the README: they live in
+`examples/05-readme.cpp`, which CTest builds and runs against a real tmux, and
+the README quotes them.
 
 This checks the quoting. Each ``` cpp block in a README must appear verbatim
 as a `#region` in that example, and each region must be quoted somewhere. A
-sample that drifts from the code, or code nobody shows, fails the build rather
-than greeting the next reader. The top-level README and the core package README
-under `include/libtmux/` both quote it.
+block that drifts from the code, or a region nobody shows, fails the build. The
+top-level README and the core package README under `include/libtmux/` both
+quote it.
 
 A whole program is quoted from its own file instead. A block that follows
 `<!-- cpp-file: PATH -->` must equal that file, and one that follows

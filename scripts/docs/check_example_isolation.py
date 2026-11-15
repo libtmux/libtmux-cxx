@@ -8,8 +8,7 @@
 `check_readme.py` proves the README quotes the example verbatim. That makes the
 lines real, not complete: a `#region` starts wherever its marker sits, so every
 binding created above it stays in scope for the compiler and vanishes for the
-reader. The opening region took its `server` from `ScratchServer`, a helper in
-the example's own directory, so the first thing anyone copied could not build.
+reader.
 
 So each region is compiled here as the whole of a translation unit. A region
 that reads a binding it does not create says so on its first line:

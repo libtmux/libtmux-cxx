@@ -9,10 +9,6 @@ The C++ side writes a corpus of real lowered expressions; this reads the schema
 that consumers in other languages would read and validates every one of them
 against it. It then requires a table of malformed documents to be rejected,
 because a schema that accepts everything passes the first half perfectly.
-
-That combination is what was missing. The schema required only ``kind`` on a
-node, so ``{"kind": "string_test"}`` was a valid document with nothing in it,
-and the test named ``SchemaConformance`` never loaded the schema at all.
 """
 
 from __future__ import annotations

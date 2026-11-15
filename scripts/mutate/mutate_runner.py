@@ -1,14 +1,8 @@
 """Break the code on purpose and find out whether anything notices.
 
-Every finding worth having in the recent work came from this rather than
-from reading: a test that asserted an empty key was refused stayed green
-once the guard was deleted, because tmux refuses it anyway, and a pause the
-builder never took went unnoticed because one threshold covered two sleeps.
-
-Run by hand, it has a failure mode that is worse than not running it. A
-pattern that no longer matches, or a mutation that does not compile, prints
-nothing and reads exactly like a test suite holding firm. So the two
-outcomes are named here and both fail the run:
+A pattern that no longer matches, or a mutation that does not compile, prints
+nothing and reads exactly like a test suite holding firm. So the two outcomes
+are named here and both fail the run:
 
 ``killed``
     The mutation applied, built, and a test failed. What is wanted.
@@ -16,13 +10,11 @@ outcomes are named here and both fail the run:
     It applied, built, and every test passed. Something is untested.
 ``not a result``
     It did not apply, did not build, or did not reach the binary that was
-    then tested. Nothing was learned, and saying so is the whole point:
-    a verdict nobody earned is worse than no verdict.
+    then tested. Nothing was learned.
 
 The tree is edited in place and each file put back as the run moves on, so
 nothing else may read it meanwhile. Committing during a run captures a file
-mid-mutation, which is how a `load-buffer` lost the flag naming its buffer
-and reached a commit looking like ordinary work.
+mid-mutation.
 """
 
 from __future__ import annotations
@@ -211,10 +203,8 @@ def _fingerprint(build_root: pathlib.Path, preset: str, target: str) -> str | No
     build_root : pathlib.Path
         Directory holding the build trees.
     preset : str
-        Which tree to look in. Every preset builds the same target names, so
-        searching all of them found whichever sorted first — a tree nothing
-        in this run rebuilt, whose digest therefore never moved and made
-        every mutation look like it had not reached the binary.
+        Which tree to look in. Every preset builds the same target names, so a
+        search across all of them would find a tree this run did not rebuild.
     target : str
         CMake target name, which is also the executable's file name.
 

@@ -6,10 +6,10 @@
 """What including this library costs a translation unit.
 
 Measured as a ratio against a translation unit that includes only `<string>`,
-not as an absolute: the absolute depends on the standard library, and on this
-machine the same headers preprocess to 4.5 MB under libc++ and 3.4 MB under
-libstdc++. The ratio between the two moves far less, so it is what a budget can
-be written against and still mean the same thing in every lane.
+not as an absolute: the absolute depends on the standard library, so the same
+headers preprocess to a different size under libc++ and libstdc++. The ratio
+moves far less, so a budget can be written against it and still mean the same
+thing in every lane.
 """
 
 from __future__ import annotations
@@ -21,12 +21,9 @@ import subprocess
 import sys
 import tempfile
 
-# The umbrella measures 3.67x under libc++ and 3.85x under libstdc++ today, so
-# one budget has to clear the higher of the two and libstdc++ is the lane that
-# bites first. Chosen by regression rather than by round number: adding
-# `<regex>` and `<locale>` to the umbrella reaches 3.82x under libc++ and 4.24x
-# under libstdc++, so 4.0 catches that and 4.5 catches nothing short of a
-# catastrophe. Lower it when a real reduction lands.
+# One budget has to clear the larger of the two ratios, which libstdc++ gives,
+# and still fail when a heavy standard header such as `<regex>` or `<locale>`
+# joins the umbrella. Lower it when a real reduction lands.
 DEFAULT_BUDGET = 4.0
 
 BASELINE = "#include <string>\n"

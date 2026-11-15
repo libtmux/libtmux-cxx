@@ -375,9 +375,8 @@ def terminal_load(binary, root, env, mode="detach", *, logging=False):
         )
         assert retained.returncode == (1 if mode == "unavailable" else 0)
         if mode == "closed":
-            # Human output never prints a machine record. The build
-            # succeeded before stdout closed, so retained_state exists, but
-            # only --json/--ndjson carry it -- not a "Retained state:" dump.
+            # Only --json/--ndjson carry retained_state; human output prints
+            # no "Retained state:" dump.
             assert b"Retained state:" not in output, output
             assert b"Error: load output stream closed" in output, output
         if logging:
@@ -731,10 +730,6 @@ def terminal_switch(binary, root, env, mode):
                 if refused:
                     assert not output and windows == initial_windows, observed
                 else:
-                    # Human output never prints a machine record; the build
-                    # succeeded (retained) but only --json/--ndjson carry
-                    # that as retained_state, not a "Retained state:" dump
-                    # alongside the ordinary "Error: " line.
                     assert "created loaded $" in output, observed
                     assert "Retained state:" not in error, observed
             if mode == "gained-independent" and flagged:
@@ -782,7 +777,6 @@ def terminal_switch(binary, root, env, mode):
             )
             assert clients == expected_clients, clients
             if mode in {"changed", "replaced"}:
-                # No "Retained state:" JSON dump in human output.
                 assert "Retained state:" not in error, error
                 assert "Error: " in error, error
         if mode == "foreign":
@@ -971,9 +965,8 @@ def failed_log_file(binary, root, env, mode):
         assert len(windows) == (2 if borrowed or failed else 3), windows
         if output:
             result = json.loads(output)
-            # load's envelope no longer carries a top-level exit_code; the
-            # process's own exit status (already asserted above) is the
-            # only place it travels.
+            # The envelope has no top-level exit_code; the process's own exit
+            # status is the only place it travels.
             assert process.returncode == (143 if failed else 0)
             # results[] carries one record per attempted input, the failed
             # one included -- its session existed (before_script runs after

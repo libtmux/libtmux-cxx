@@ -167,7 +167,7 @@ def test_the_server_sees_every_toolset_and_no_routing_variable(rig: Rig) -> None
 @pytest.mark.parametrize(
     ("mode", "message"),
     [
-        ("bad-tools", "authoritative 45-tool inventory"),
+        ("bad-tools", "authoritative inventory"),
         ("posix-route", "capability resource emitted a POSIX route for psmux"),
         ("exit-nonzero", "MCP server exited 3"),
     ],

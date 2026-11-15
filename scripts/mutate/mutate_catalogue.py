@@ -1,12 +1,10 @@
 """The guards this port cannot afford to lose, and how to break each one.
 
-Seeded from the mutations run by hand over the buffer, format, scripting and
-key-binding work.  Each entry names a guard that exists because tmux does
-something quiet: accepts a target it cannot resolve, takes a `-e` with no
-`=`, prints a table name it cannot read back.
+Each entry names a guard that exists because tmux does something quiet:
+accepts a target it cannot resolve, takes a `-e` with no `=`, prints a table
+name it cannot read back.
 
-An entry that stops matching is a non-result, not a pass.  That is the point
-of keeping them here rather than in a shell history.
+An entry that stops matching is a non-result, not a pass.
 """
 
 from __future__ import annotations

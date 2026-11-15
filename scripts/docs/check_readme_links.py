@@ -5,9 +5,8 @@
 # ///
 """Every link in a README resolves, and an API is linked where it is introduced.
 
-A README that sends a reader to a directory, a header or a reference page that
-is not there fails them at the moment they trust it most. This checks the part
-that can be checked from a checkout:
+A link to a directory, a header or a reference page that is not there fails the
+reader. This checks the part that can be checked from a checkout:
 
 - a relative link, or a `github.com/libtmux/libtmux-cxx/{tree,blob}/master/`
   link, names a path that exists, and its `#fragment` names a heading;

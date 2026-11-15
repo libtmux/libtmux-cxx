@@ -17,7 +17,10 @@ $ uv run scripts/vcpkg/vcpkg_registry.py check
 ```
 
 ```console
-$ uv run scripts/vcpkg/vcpkg_registry.py probe --vcpkg ~/vcpkg --triplet x64-linux --feature mcp
+$ uv run scripts/vcpkg/vcpkg_registry.py probe \
+    --vcpkg ~/vcpkg \
+    --triplet x64-linux \
+    --feature mcp
 ```
 
 [`docs/vcpkg-registry.md`](../../docs/vcpkg-registry.md) explains why the registry
