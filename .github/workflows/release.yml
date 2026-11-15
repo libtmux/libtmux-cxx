@@ -218,6 +218,12 @@ jobs:
             "${extra[@]}"
           cmake --build build/rel
 
+      - name: Install the pinned Python tool runner
+        if: runner.os == 'Linux'
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.0"
+
       # Linux only: the macOS binaries are built and published, but CI does
       # not run them.
       - name: It answers before it is published
@@ -225,24 +231,9 @@ jobs:
         run: |
           binary=build/rel/apps/mcp/libtmux-mcp-server
           test -x "$binary"
-          socket_name="libtmux-cxx-release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RUNNER_OS}"
-          printf '%s\n' \
-            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"release","version":"1"}}}' \
-            '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
-            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
-            | "$binary" --socket-name "$socket_name" > replies.jsonl
-          python3 - <<'PROBE'
-          import json, pathlib, sys
-          replies = {json.loads(line)["id"]: json.loads(line)
-                     for line in pathlib.Path("replies.jsonl").read_text().splitlines()
-                     if line.strip()}
-          if sorted(replies) != [1, 2]:
-              sys.exit(f"expected two replies, got {sorted(replies)}")
-          tools = [tool["name"] for tool in replies[2]["result"]["tools"]]
-          if not tools:
-              sys.exit("the server advertised no tools")
-          print("tools:", ", ".join(tools))
-          PROBE
+          uv run scripts/installed_probe/installed_probe.py mcp-catalog \
+            --server "$binary" \
+            --socket-name "libtmux-cxx-release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RUNNER_OS}"
 
       - name: Name it for the platform it was built on
         run: |
