@@ -33,6 +33,7 @@ pythonpath = [
   "scripts/schema",
   "scripts/vcpkg",
   "scripts/mcp_inventory",
+  "scripts/workspace_cli",
 ]
 
 [tool.ruff]
@@ -81,4 +82,5 @@ extra-paths = [
   "scripts/schema",
   "scripts/vcpkg",
   "scripts/mcp_inventory",
+  "scripts/workspace_cli",
 ]

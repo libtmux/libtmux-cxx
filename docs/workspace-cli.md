@@ -408,13 +408,11 @@ $ ctest --preset cxx-dev \
 
 The retained verifier checks an installed binary, uses a private socket and
 verifies script streaming, cancellation, output limits and closed output.
-It records raw repeated timings. Pass an installed tmuxp executable to compare
-matching startup, discovery, search and load/capture boundaries.
+It records raw repeated timings of startup, discovery, search and load/capture.
 
 ```console
-$ python3 apps/workspace/tools/verify_cli.py \
+$ uv run scripts/workspace_cli/verify_cli.py \
     --binary /tmp/cxx-workspace-install/bin/tmux-workspace \
-    --reference tmuxp \
     --iterations 5 \
     --output /tmp/cxx-workspace-verification.json
 ```
@@ -424,7 +422,7 @@ stdout, cancellation and an unbounded writer. `--load` adds private tmux servers
 for attachment, client selection, retained changes and closed-output checks.
 
 ```console
-$ python3 apps/workspace/tools/verify_process.py \
+$ uv run scripts/workspace_cli/verify_process.py \
     --binary /tmp/cxx-workspace-install/bin/tmux-workspace \
     --load \
     --output /tmp/cxx-workspace-process.json

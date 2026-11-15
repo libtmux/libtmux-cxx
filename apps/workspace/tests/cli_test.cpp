@@ -2734,7 +2734,7 @@ TEST(WorkspaceCliTmux, DeclinedAttachScopesToItsOwnInputAndStillBuildsEarlierOne
 // "Retained state: " + encoded(...) bug for a load whose build succeeds but
 // whose interactive attach then fails. That path needs a live controlling
 // terminal, which this in-process suite cannot give it (validate()
-// otherwise refuses with "usage") -- tools/verify_process.py's
+// otherwise refuses with "usage") -- scripts/workspace_cli/verify_process.py's
 // terminal_switch() covers it instead, via a real pty.
 TEST(WorkspaceCliTmux, HumanErrorNeverPrintsRetainedStateAsJson) {
   Files files;

@@ -77,8 +77,8 @@ if(LIBTMUX_BUILD_TESTS AND NOT WIN32)
      AND NOT LIBTMUX_ENABLE_SANITIZERS
      AND NOT LIBTMUX_ENABLE_THREAD_SANITIZER
      AND NOT LIBTMUX_ENABLE_COVERAGE)
-    set(_verify_cli "${CMAKE_CURRENT_SOURCE_DIR}/tools/verify_cli.py")
-    set(_verify_process "${CMAKE_CURRENT_SOURCE_DIR}/tools/verify_process.py")
+    set(_verify_cli "${PROJECT_SOURCE_DIR}/scripts/workspace_cli/verify_cli.py")
+    set(_verify_process "${PROJECT_SOURCE_DIR}/scripts/workspace_cli/verify_process.py")
     add_test(NAME consumer.workspace.verify.cli
       COMMAND Python3::Interpreter "${_verify_cli}"
         --binary "$<TARGET_FILE:tmux-workspace>"

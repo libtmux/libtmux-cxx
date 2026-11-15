@@ -1,5 +1,14 @@
-#!/usr/bin/env python3
-"""Exercise workspace process ownership, terminal handoff and log failures."""
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = []
+# ///
+"""Exercise workspace process ownership, terminal handoff and log failures.
+
+CTest runs it against the built ``tmux-workspace``. By hand::
+
+    uv run scripts/workspace_cli/verify_process.py --binary PATH --load
+"""
 
 import argparse
 import hashlib
@@ -1016,14 +1025,14 @@ def failed_log_file(binary, root, env, mode):
         )
 
 
-def main():
+def main(argv: list[str] | None = None) -> None:
     """Verify process behavior, optionally using an owned tmux server for load."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=pathlib.Path, required=True)
     parser.add_argument("--output", type=pathlib.Path)
     parser.add_argument("--load", action="store_true")
     parser.add_argument("--logging", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     binary = str(args.binary.resolve(strict=True))
     started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="cxx-ws-") as temporary:

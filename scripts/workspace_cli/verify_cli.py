@@ -1,5 +1,14 @@
-#!/usr/bin/env python3
-"""Verify an installed workspace CLI on a private tmux socket."""
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = []
+# ///
+"""Verify an installed workspace CLI on a private tmux socket.
+
+CTest runs it against the built ``tmux-workspace``. By hand::
+
+    uv run scripts/workspace_cli/verify_cli.py --binary PATH --output report.json
+"""
 
 import argparse
 import hashlib
@@ -16,6 +25,7 @@ import statistics
 import subprocess
 import tempfile
 import time
+import typing as t
 from contextlib import suppress
 
 
@@ -49,7 +59,7 @@ def completions(binary, root, env):
     directory = root / "completion"
     directory.mkdir()
     (directory / "project space.yaml").touch()
-    results = {}
+    results: dict[str, t.Any] = {}
     for name in ("bash", "zsh", "fish"):
         shell = shutil.which(name, path=env.get("PATH"))
         if shell is None:
@@ -226,12 +236,16 @@ def before_scripts(binary, root, env, prefix, append_env):
         observed = bytearray()
         owned = []
         try:
+            assert process.stdout is not None
             if case == "stream":
 
-                def streamed(process=process, observed=observed):
-                    ready, _, _ = select.select([process.stdout], [], [], 0.02)
+                def streamed(
+                    stdout=process.stdout,
+                    observed=observed,
+                ):
+                    ready, _, _ = select.select([stdout], [], [], 0.02)
                     if ready:
-                        observed.extend(os.read(process.stdout.fileno(), 65536))
+                        observed.extend(os.read(stdout.fileno(), 65536))
                     return any(
                         json.loads(line).get("event") == "script-output"
                         and "雪" in json.loads(line).get("text", "")
@@ -344,18 +358,18 @@ def before_scripts(binary, root, env, prefix, append_env):
     return results
 
 
-def main():
+def main(argv: list[str] | None = None) -> None:
     """Verify the installed program and write machine-readable evidence."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=pathlib.Path, required=True)
     parser.add_argument("--iterations", type=int, default=5)
     parser.add_argument("--output", type=pathlib.Path, required=True)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.iterations < 1:
         parser.error("--iterations must be positive")
     binary = args.binary.resolve(strict=True)
     binaries = {"cxx": str(binary)}
-    report = {
+    report: dict[str, t.Any] = {
         "schema_version": 1,
         "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
         "iterations": args.iterations,
@@ -374,7 +388,7 @@ def main():
             XDG_CONFIG_HOME=str(root / "xdg"),
             TMUXP_CONFIGDIR=str(configs),
             TERM="xterm-256color",
-            PYTHONUSERBASE=site.USER_BASE,
+            PYTHONUSERBASE=site.getuserbase(),
         )
         report["checks"]["completion"] = completions(binary, root, env)
         socket = str(root / "tmux.sock")
@@ -497,6 +511,7 @@ def main():
                 stderr=subprocess.PIPE,
                 bufsize=0,
             )
+            assert process.stdout is not None
             if not select.select([process.stdout], [], [], 5)[0]:
                 process.kill()
                 process.communicate()
