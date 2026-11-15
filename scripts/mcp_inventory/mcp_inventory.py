@@ -1,4 +1,16 @@
-"""Generate the README tool inventory from the server's effective registry."""
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = []
+# ///
+r"""Generate the README tool inventory from the server's effective registry.
+
+Run from the repository root, with a built server::
+
+    uv run scripts/mcp_inventory/mcp_inventory.py \
+        --server build/cxx-dev/apps/mcp/libtmux-mcp-server \
+        --readme apps/mcp/README.md --check
+"""
 
 from __future__ import annotations
 
@@ -7,6 +19,7 @@ import json
 import os
 import subprocess
 import sys
+import typing as t
 from pathlib import Path
 
 BEGIN = "<!-- BEGIN GENERATED TOOL INVENTORY -->"
@@ -15,7 +28,7 @@ TOOLSETS = ("inspect", "manage", "execute", "teardown")
 TOOL_PAGE = "https://libtmux.org/en/cxx/latest/mcp/tools/{name}/"
 
 
-def capability_document(server: Path) -> dict[str, object]:
+def capability_document(server: Path) -> dict[str, t.Any]:
     """Read the unfiltered capability resource from one server process."""
     requests = (
         {
@@ -65,14 +78,14 @@ def capability_document(server: Path) -> dict[str, object]:
     return json.loads(response["result"]["contents"][0]["text"])
 
 
-def inventory(document: dict[str, object]) -> str:
+def inventory(document: dict[str, t.Any]) -> str:
     """Render tool names in registry order, grouped by their declared toolset.
 
     Each name links to its page on libtmux.org through a `tool-<name>`
     reference, defined after the table so a row stays readable in the source.
     The rest of the README links the same names through those definitions.
     """
-    grouped = {toolset: [] for toolset in TOOLSETS}
+    grouped: dict[str, list[str]] = {toolset: [] for toolset in TOOLSETS}
     for tool in document["tools"]:
         grouped[tool["toolset"]].append(tool["name"])
     rows = [
@@ -97,13 +110,13 @@ def inventory(document: dict[str, object]) -> str:
     return "\n".join(rows)
 
 
-def main() -> int:
+def main(argv: t.Sequence[str] | None = None) -> int:
     """Update the generated block, or fail when check mode detects drift."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--server", required=True, type=Path)
     parser.add_argument("--readme", required=True, type=Path)
     parser.add_argument("--check", action="store_true")
-    arguments = parser.parse_args()
+    arguments = parser.parse_args(argv)
 
     text = arguments.readme.read_text(encoding="utf-8")
     start = text.index(BEGIN)

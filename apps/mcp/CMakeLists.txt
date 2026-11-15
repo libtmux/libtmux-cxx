@@ -184,7 +184,7 @@ if(LIBTMUX_BUILD_MCP_SERVER)
     add_test(
       NAME consumer.mcp.readme
       COMMAND Python3::Interpreter
-              "${CMAKE_CURRENT_SOURCE_DIR}/generate_readme_inventory.py"
+              "${PROJECT_SOURCE_DIR}/scripts/mcp_inventory/mcp_inventory.py"
               --server "$<TARGET_FILE:libtmux_mcp_server>"
               --readme "${CMAKE_CURRENT_SOURCE_DIR}/README.md" --check)
     set_tests_properties(

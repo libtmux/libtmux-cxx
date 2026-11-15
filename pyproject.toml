@@ -32,6 +32,7 @@ pythonpath = [
   "scripts/include_cost",
   "scripts/schema",
   "scripts/vcpkg",
+  "scripts/mcp_inventory",
 ]
 
 [tool.ruff]
@@ -79,4 +80,5 @@ extra-paths = [
   "scripts/include_cost",
   "scripts/schema",
   "scripts/vcpkg",
+  "scripts/mcp_inventory",
 ]
