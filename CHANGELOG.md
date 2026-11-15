@@ -29,6 +29,23 @@ was recorded as it landed.
   so it still answers `true` for control mode on an older tmux. Source- and
   ABI-compatible. (#169)
 
+### Build
+
+- The support scripts moved from `tools/` and `apps/*/tools/` to `scripts/` as
+  typed Python with a README and tests each, and CI runs `ruff format`,
+  `ruff check`, `ty check` and `pytest` over them. Run them with `uv run`, for
+  example `uv run scripts/docs/check_readme.py`. The library, its headers and
+  the installed programs are unchanged.
+
+- The Python libtmux parity ledger, the differential harness, the transport
+  bakeoff scripts and the `--reference` tmuxp timing in the workspace CLI
+  verifier are gone, and CI no longer has a `parity` job. The recorded results
+  in `docs/bakeoffs/` stay.
+
+- CI installs packages and builds tmux with the shared `apt-get` and
+  `build-tmux` actions of `libtmux/.github`, and the Windows psmux runner and
+  MCP smoke test are Python (`scripts/psmux/`) in place of PowerShell.
+
 ## 0.1.0 (2026-11-01)
 
 This is the first release without an `-alpha` tag. It ships the C++ library, the
