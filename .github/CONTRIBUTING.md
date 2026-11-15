@@ -159,8 +159,27 @@ CI, so there is nothing to argue about:
 $ git ls-files '*.cpp' '*.hpp' | xargs clang-format -i
 ```
 
-Python tooling is linted by [ruff](https://docs.astral.sh/ruff/), configured in
-[`pyproject.toml`](../pyproject.toml).
+The support scripts under [`scripts/`](../scripts/README.md) are typed Python.
+CI runs `ruff format`, `ruff check`, `ty check` and `pytest` over them, as
+configured in [`pyproject.toml`](../pyproject.toml); this runs the same four:
+
+```console
+$ uv run --group dev ruff format --check .
+```
+
+```console
+$ uv run --group dev ruff check .
+```
+
+```console
+$ uv run --group dev ty check scripts
+```
+
+```console
+$ uv run --group dev pytest
+```
+
+[`SCRIPTS.md`](SCRIPTS.md) says what may stay under `scripts/`.
 
 The API reference is generated from the public headers, and CI fails when it
 drifts from them:

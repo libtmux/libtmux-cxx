@@ -1291,7 +1291,8 @@ $ ctest --preset windows-psmux --no-tests=error
 | [`tests/`](tests/README.md) | The suite, against real tmux, plus programs that must *not* compile. |
 | [`examples/`](examples/README.md) | Programs that read top to bottom, and the tmuxp workspace builder. |
 | [`apps/`](apps/README.md) | Programs built on the library — chiefly [the MCP server](apps/mcp/README.md). |
-| [`tools/`](tools/README.md) | The mutation catalogue, the reference generator and the MCP configuration switcher. Never installed. |
+| [`scripts/`](scripts/README.md) | The checks, generators and runners CI and maintainers use: the mutation catalogue, the reference generator, the docs checks. Never installed. |
+| [`tools/`](tools/README.md) | The MCP configuration switcher. Never installed. |
 | [`docs/`](docs/README.md) | Design notes, bakeoffs, and the generated [API reference](docs/api.md). |
 | [`ports/`](ports/libtmux/) | The vcpkg port, served by [this repository's registry](docs/vcpkg-registry.md). |
 | [`versions/`](versions/) | The registry's versions database. Generated, never edited by hand. |

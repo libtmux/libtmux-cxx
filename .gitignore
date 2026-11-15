@@ -35,7 +35,7 @@ install_manifest.txt
 *.dll
 *.exe
 
-# The Python tooling beside the library: the mutation catalogue, the
+# The Python scripts beside the library: the mutation catalogue, the
 # reference generator.
 __pycache__/
 *.py[cod]
