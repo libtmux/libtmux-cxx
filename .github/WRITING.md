@@ -564,7 +564,7 @@ staying quiet.
 
 `libtmux`, `tmux` and `tmuxp` are lowercase, including at the start of a
 sentence. This project is **libtmux for C++**; the Python original is
-**libtmux**, and it is the reference the parity ledger measures against.
+**libtmux**.
 
 Headings are sentence case: "Build from source", not "Build From Source".
 

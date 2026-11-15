@@ -35,8 +35,8 @@ install_manifest.txt
 *.dll
 *.exe
 
-# The Python tooling beside the library: the parity ledger, the mutation
-# catalogue, the reference generator.
+# The Python tooling beside the library: the mutation catalogue, the
+# reference generator.
 __pycache__/
 *.py[cod]
 *.egg-info/

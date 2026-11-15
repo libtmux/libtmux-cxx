@@ -294,8 +294,7 @@ gtest_discover_tests(
   TEST_PREFIX libtmux.options.
   PROPERTIES LABELS real-tmux TIMEOUT 60)
 
-# Behavior evidence for the parity ledger lives under integration/, which is
-# where the contract's evidence rules require a behavior artifact to be.
+# Behavior tests, one case per capability, live under integration/.
 add_executable(libtmux_session_navigation_test integration/session_navigation_test.cpp)
 target_link_libraries(
   libtmux_session_navigation_test
@@ -304,9 +303,7 @@ target_link_libraries(
 target_compile_options(
   libtmux_session_navigation_test PRIVATE -fno-sanitize-recover=undefined)
 
-# Registered per case: the parity ledger binds one behavior evidence record
-# to one CTest test, so a capability that is classified needs a test of its
-# own to point at.
+# Registered per case, so each capability has a CTest test of its own.
 gtest_discover_tests(
   libtmux_session_navigation_test
   TEST_PREFIX libtmux.session.navigation.
@@ -885,8 +882,7 @@ target_link_libraries(
           libtmux_test_support)
 target_compile_options(libtmux_client_test PRIVATE -fno-sanitize-recover=undefined)
 
-# Per case: each capability the parity ledger classifies needs a test of
-# its own to cite, and one name for a whole file cannot serve several.
+# Per case, so each capability has a CTest test of its own.
 gtest_discover_tests(
   libtmux_client_test
   TEST_PREFIX libtmux.client.

@@ -1049,8 +1049,8 @@ the program installs, its socket options, and the Windows triplets.
 | [libtmux (Python)][libtmux] | The original | The same, from Python |
 | [tmuxp] | An app on libtmux | Declarative workspaces from YAML |
 
-This port aims at parity with the Python library; the
-[parity ledger](tools/README.md) records where it differs.
+This port follows the Python library's names and behaviour where C++ allows,
+and the API reference names every place it differs.
 
 ## Package guides
 
@@ -1291,7 +1291,7 @@ $ ctest --preset windows-psmux --no-tests=error
 | [`tests/`](tests/README.md) | The suite, against real tmux, plus programs that must *not* compile. |
 | [`examples/`](examples/README.md) | Programs that read top to bottom, and the tmuxp workspace builder. |
 | [`apps/`](apps/README.md) | Programs built on the library — chiefly [the MCP server](apps/mcp/README.md). |
-| [`tools/`](tools/README.md) | The parity ledger, the mutation catalogue, the reference generator. Never installed. |
+| [`tools/`](tools/README.md) | The mutation catalogue, the reference generator and the MCP configuration switcher. Never installed. |
 | [`docs/`](docs/README.md) | Design notes, bakeoffs, and the generated [API reference](docs/api.md). |
 | [`ports/`](ports/libtmux/) | The vcpkg port, served by [this repository's registry](docs/vcpkg-registry.md). |
 | [`versions/`](versions/) | The registry's versions database. Generated, never edited by hand. |

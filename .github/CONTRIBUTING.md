@@ -143,10 +143,6 @@ builds the library a consumer links, and a test there asserts the archive
 exports no seam at all. Tests that need one skip by name when it is absent.
 
 ```console
-$ python3 -m tools.parity verify --manifest tools/parity/data/manifest.json --mode structural --allow-pending
-```
-
-```console
 $ python3 -m tools.mutate --preset cxx-dev
 ```
 
@@ -244,20 +240,6 @@ there is the whole change to CI, and this names each page that has to say so:
 $ python3 -m tools.ci.check
 ```
 
-### The parity ledger is read here, not written
-
-The ledger in `tools/parity/data` records what each Python `libtmux` symbol maps
-to and the evidence for it. `verify`, `gaps`, `coverage` and `record-evidence`
-read the recorded artifacts and this tree, and the gate above runs them.
-`generate` and `drift` observe the Python library at a pinned commit and need
-that repository's files and its history, none of which exist here.
-
-So the recorded surface is frozen at the commit it was taken from. Adding a
-classification means editing `mapping.json` and `evidence.json` and re-running
-`python3 -m tools.parity sync`. Regenerating from a newer Python release means
-doing it where that release lives. An evidence record cannot cite a test nobody
-wrote — every case is resolved in the file it names.
-
 ### Running CI against any tmux
 
 A push and a pull request run the oldest and newest released tmux in
@@ -329,7 +311,7 @@ its own pull request. Commit format is in [`WRITING.md`](WRITING.md).
 
 ## Review
 
-A reviewer is asking five questions, in this order:
+A reviewer is asking four questions, in this order:
 
 1. **Would the test fail without the fix?** If the change is a bug fix and the
    test passes on the unfixed tree, the test is not testing it.
@@ -337,13 +319,10 @@ A reviewer is asking five questions, in this order:
    vocabulary is in [`WRITING.md`](WRITING.md#compatibility-vocabulary). A
    change that moves one of them says so in its commit message, and lands in the
    changelog saying so.
-3. **Does the parity ledger need a row?** A new capability usually means an
-   entry in `mapping.json`, the test that proves it in `evidence.json`, and a
-   `sync`.
-4. **Is anything here unrelated to the stated change?** Formatting, renames and
+3. **Is anything here unrelated to the stated change?** Formatting, renames and
    drive-by cleanup get their own commits so the behavioural diff stays
    reviewable.
-5. **Does every commit stand on its own?** Not just the tip. A commit that
+4. **Does every commit stand on its own?** Not just the tip. A commit that
    builds only once the next one lands turns a `git bisect` report into a
    wrong answer, which is worse than no answer.
 

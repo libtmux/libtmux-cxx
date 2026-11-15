@@ -1,3 +1,3 @@
-"""Tooling used by the C++ parity program."""
+"""Development tooling for the library."""
 
 from __future__ import annotations

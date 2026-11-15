@@ -1,7 +1,4 @@
 // Choosing which window is active.
-//
-// Behavior evidence for the window-layout shard of the parity ledger, one
-// case per classified capability.
 
 #include <string>
 #include <string_view>

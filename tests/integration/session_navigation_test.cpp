@@ -1,8 +1,4 @@
 // Moving the window selection, against a real server.
-//
-// Behavior evidence for the session-navigation shard of the parity ledger,
-// which is why it lives here rather than beside the other entity tests: the
-// contract requires a behavior artifact under this directory.
 
 #include <vector>
 

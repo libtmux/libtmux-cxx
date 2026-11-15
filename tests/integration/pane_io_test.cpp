@@ -1,6 +1,4 @@
 // Reading a pane, and dropping what it remembers.
-//
-// Behavior evidence for the pane-io shard of the parity ledger.
 
 #include <string>
 #include <string_view>

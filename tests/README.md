@@ -89,7 +89,7 @@ so use one ctest at a time per build tree.
 | Directory | Kind | What it is for |
 |---|---|---|
 | `*_test.cpp` | Unit and contract | One subsystem each: entities, options, cardinality, relations, the control parser, value semantics. |
-| [`integration/`](integration/) | Behaviour | One case per capability, against real tmux. These are what the [parity ledger](../tools/README.md) cites as evidence, so each is named for the claim it makes. |
+| [`integration/`](integration/) | Behaviour | One case per capability, against real tmux. Each is named for the claim it makes. |
 | [`compile/`](compile/) | Refusals | Programs that **must not compile**. `pane::active.starts_with(...)` and a view outliving its snapshot are errors, and these prove it rather than asserting it in prose. |
 | [`fuzz/`](fuzz/) | Parsers | libFuzzer over everything that reads what tmux printed. |
 | [`differential/`](differential/) | Cross-implementation | The same question asked of this library and of Python libtmux, compared. |
@@ -153,4 +153,4 @@ counted as a pass.
 
 - [The library](../README.md)
 - [`examples/`](../examples/README.md) — where behaviour is shown rather than pinned
-- [`tools/`](../tools/README.md) — the ledger and the mutation runner
+- [`tools/`](../tools/README.md) — the mutation runner

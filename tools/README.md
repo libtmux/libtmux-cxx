@@ -10,20 +10,15 @@ governs. The repository-internal MCP switcher is a native C++ executable built
 alongside the tests.
 
 ```console
-$ python3 -m tools.parity coverage
-```
-
-```console
 $ python3 -m tools.mutate --preset cxx-dev
 ```
 
-Both are run from the repository root.
+It is run from the repository root.
 
 ## What is here
 
 | Tool | Command | What it answers |
 |---|---|---|
-| [`parity/`](parity/) | `python3 -m tools.parity` | What of Python libtmux this port answers, and with what evidence |
 | [`mutate/`](mutate/) | `python3 -m tools.mutate` | Whether the tests can actually fail |
 | [`docs/`](docs/) | `python3 tools/docs/api_index.py` | Generates [`docs/api.md`](../docs/api.md) from the headers, so the reference cannot outrun them |
 | [`docs/`](docs/) | [README quoting check](../.github/CONTRIBUTING.md#checks-that-must-pass) | Whether the README's C++ still matches the example it is quoted from |
@@ -33,36 +28,6 @@ Both are run from the repository root.
 | [`ci/`](ci/) | `python3 -m tools.ci.check` | Whether the README, the compatibility page, CONTRIBUTING and the workflows still follow that manifest |
 | [`vcpkg/`](vcpkg/) | `python3 -m tools.vcpkg check` | Whether [the registry](../docs/vcpkg-registry.md) still publishes the ports beside it |
 | [`coverage/`](coverage/) | — | How much of the shipped surface the tests reach |
-| [`differential/`](differential/) | — | The same question asked of this library and of Python libtmux, compared |
-| [`bakeoff/`](bakeoff/) | — | The transport measurements behind [`docs/bakeoffs/`](../docs/bakeoffs/) |
-| [`evidence/`](evidence/) | — | Gate records the parity ledger accepts as proof |
-
-## The parity ledger
-
-[`parity/data/`](parity/data/) records what each Python `libtmux` symbol maps
-to in this port and the evidence for it. It sits beside the tool that reads it
-because it is input, not a deliverable.
-
-`python3 -m tools.parity coverage` reports how much of which part of the
-Python surface is answered, and how much of that is recorded with evidence.
-
-Two halves, and only one can run in this repository:
-
-```console
-$ python3 -m tools.parity verify --manifest tools/parity/data/manifest.json --mode structural --allow-pending
-```
-
-`verify`, `gaps`, `coverage` and `record-evidence` read the recorded artifacts
-and this tree. They work.
-
-`generate` and `drift` observe the Python library at a pinned commit to produce
-the ledger in the first place. They need that repository's files *and its
-history*, neither of which is here, so the recorded surface is frozen at the
-commit it was taken from. [AGENTS.md](../AGENTS.md) says so in more detail.
-
-An evidence record cannot cite a test nobody wrote: every `case_id` is resolved
-in the file it names, so a `TEST(Suite, Case)` that does not exist fails the
-gate rather than passing as a claim.
 
 ## The mutation catalogue
 

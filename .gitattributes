@@ -2,8 +2,7 @@
 #
 # `vcpkg_from_github` downloads GitHub's source tarball, which `git archive`
 # builds and which honours these. Vendoring the library meant vendoring its
-# research record with it: `tools/` alone is 61% of the tracked lines, almost
-# all of it the parity ledger's JSON, and `src/README.md` already says it is
+# research record with it: `tools/` is development tooling, and `src/README.md` already says it is
 # never installed.
 #
 # `docs/` stays. The generated API reference is what a consumer reads, and the

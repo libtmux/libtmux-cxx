@@ -62,7 +62,6 @@ Why a thing is the way it is, written when the decision was made.
 | [`design/control-transport.md`](design/control-transport.md) | Dispatching entities over one held-open connection, and what the protocol asks for in return |
 | [`design/cxx20-fallback.md`](design/cxx20-fallback.md) | Why the C++20 build exists, and what the second ABI namespace costs |
 | [`design/engine-ops-study.md`](design/engine-ops-study.md) | What the Python operations experiment taught this library, and what was declined |
-| [`design/parity-gaps.md`](design/parity-gaps.md) | What the Python surface has that this does not, yet |
 | [`design/workspace-corpus.md`](design/workspace-corpus.md) | What running real tmuxp documents through the surface found |
 | [`design/windows-psmux.md`](design/windows-psmux.md) | What the Windows preview serves, what it refuses, and why refusing beats a near-enough answer |
 | [`design/bakeoff-and-rewrite.md`](design/bakeoff-and-rewrite.md) | How the comparisons below were run |

@@ -1,8 +1,4 @@
 // Making a session, and ending the server that holds it.
-//
-// Behavior evidence for the server-sessions shard of the parity ledger. One
-// case per classified capability, because the ledger binds one evidence
-// record to one CTest test.
 
 #include <string>
 
