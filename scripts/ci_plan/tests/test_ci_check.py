@@ -134,8 +134,8 @@ class CheckTest(unittest.TestCase):
         """Inputs reach scripts through env only."""
         self.edit(
             ".github/workflows/ci.yml",
-            "          tmux -V\n          read -r",
-            "          echo ${{ inputs.tmux-ref }}\n          read -r",
+            "          # shellcheck disable=SC2086\n",
+            "          echo ${{ inputs.tmux-ref }}\n",
         )
         self.assertFlags("splices an input into a script")
 
@@ -143,8 +143,8 @@ class CheckTest(unittest.TestCase):
         """A tmux ref from the matrix is also user input."""
         self.edit(
             ".github/workflows/ci.yml",
-            "          tmux -V\n          read -r",
-            "          echo ${{ matrix.tmux }}\n          read -r",
+            "          # shellcheck disable=SC2086\n",
+            "          echo ${{ matrix.tmux }}\n",
         )
         self.assertFlags("splices an input into a script")
 

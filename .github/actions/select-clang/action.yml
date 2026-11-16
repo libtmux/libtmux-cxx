@@ -1,0 +1,25 @@
+name: Select clang
+description: >-
+  Make the versioned clang and clang++ the ones `clang` and `clang++` run, with
+  one update-alternatives call each.
+
+inputs:
+  version:
+    description: The clang version installed from apt, such as 18.
+    required: false
+    default: "18"
+
+runs:
+  using: composite
+  steps:
+    - name: Select clang ${{ inputs.version }}
+      shell: bash
+      env:
+        COMPILER_VERSION: ${{ inputs.version }}
+      run: sudo update-alternatives --install /usr/bin/clang clang "/usr/bin/clang-$COMPILER_VERSION" 100
+
+    - name: Select clang++ ${{ inputs.version }}
+      shell: bash
+      env:
+        COMPILER_VERSION: ${{ inputs.version }}
+      run: sudo update-alternatives --install /usr/bin/clang++ clang++ "/usr/bin/clang++-$COMPILER_VERSION" 100

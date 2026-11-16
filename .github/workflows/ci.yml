@@ -121,13 +121,9 @@ jobs:
 
       - name: Select clang ${{ matrix.version }}
         if: matrix.family == 'clang'
-        env:
-          COMPILER_VERSION: ${{ matrix.version }}
-        run: |
-          sudo update-alternatives --install /usr/bin/clang clang \
-            "/usr/bin/clang-$COMPILER_VERSION" 100
-          sudo update-alternatives --install /usr/bin/clang++ clang++ \
-            "/usr/bin/clang++-$COMPILER_VERSION" 100
+        uses: ./.github/actions/select-clang
+        with:
+          version: ${{ matrix.version }}
 
       - name: Install gcc ${{ matrix.version }}
         if: matrix.family != 'clang'
@@ -154,32 +150,46 @@ jobs:
         with:
           limit-access-to-actor: true
 
-      - name: Build and test against tmux ${{ matrix.tmux }}
+      - name: Print the tmux version
+        run: tmux -V
+
+      # CMAKE_ARGS is the plan's space-separated list of options; the shell
+      # splits it, and none of them holds a space or a glob character.
+      - name: Configure against tmux ${{ matrix.tmux }}
         env:
           PRESET: ${{ matrix.preset }}
           CMAKE_ARGS: ${{ matrix.cmake_args }}
         run: |
-          tmux -V
-          read -r -a extra <<< "$CMAKE_ARGS"
-          cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache "${extra[@]}" --preset "$PRESET"
-          cmake --build --preset "$PRESET"
-          ctest --preset "$PRESET" --no-tests=error --output-on-failure
+          # shellcheck disable=SC2086
+          cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache $CMAKE_ARGS --preset "$PRESET"
+
+      - name: Build against tmux ${{ matrix.tmux }}
+        env:
+          PRESET: ${{ matrix.preset }}
+        run: cmake --build --preset "$PRESET"
+
+      - name: Test against tmux ${{ matrix.tmux }}
+        env:
+          PRESET: ${{ matrix.preset }}
+        run: ctest --preset "$PRESET" --no-tests=error --output-on-failure
 
       # Runs on the newest released tmux, wherever the plan puts that leg. The
       # step exercises ctest under a long TMPDIR and needs no particular
       # release.
+      - name: Create the macOS-length temporary directory
+        if: matrix.long_path
+        run: mkdir /tmp/mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+
       - name: Test with a macOS-length temporary path
         if: matrix.long_path
         env:
           PRESET: ${{ matrix.preset }}
-        run: |
-          base="/tmp/$(printf 'm%.0s' $(seq 1 52))"
-          mkdir "$base"
-          status=0
-          TMPDIR="$base" ctest --preset "$PRESET" --no-tests=error \
-            --output-on-failure || status=$?
-          rmdir "$base" || status=1
-          exit "$status"
+          TMPDIR: /tmp/mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+        run: ctest --preset "$PRESET" --no-tests=error --output-on-failure
+
+      - name: Remove the macOS-length temporary directory
+        if: ${{ !cancelled() && matrix.long_path }}
+        run: rmdir /tmp/mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
 
       - name: Debug session after a failure
         if: failure() && github.event_name == 'workflow_dispatch' && matrix.tmate == 'on-failure'
@@ -219,9 +229,7 @@ jobs:
           args: install --yes clang-18 libc++-18-dev libc++abi-18-dev ninja-build
 
       - name: Select clang 18
-        run: |
-          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
-          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
+        uses: ./.github/actions/select-clang
 
       - name: Build the supported client
         id: client
@@ -236,17 +244,25 @@ jobs:
         with:
           ref: ${{ matrix.rejected-tmux }}
 
-      - name: Refuse tmux ${{ matrix.rejected-tmux }} without effects
+      - name: Print the client tmux version
+        run: tmux -V
+
+      - name: Print the rejected daemon version
         env:
           REJECTED_TMUX: ${{ steps.rejected.outputs.binary }}
-        run: |
-          export LIBTMUX_TEST_REJECTED_TMUX="$REJECTED_TMUX"
-          export LIBTMUX_REQUIRE_REJECTED_TMUX=1
-          tmux -V
-          "$LIBTMUX_TEST_REJECTED_TMUX" -V
-          cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache --preset cxx-dev
-          cmake --build --preset cxx-dev --target libtmux_support_versions_test workspace_cli_test mcp_tools_test mcp_protocol_test
-          ctest --preset cxx-dev --no-tests=error --output-on-failure -R 'libtmux\.support_versions\.|^consumer\..*\.rejected$'
+        run: '"$REJECTED_TMUX" -V'
+
+      - name: Configure
+        run: cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache --preset cxx-dev
+
+      - name: Build the targets that refuse
+        run: cmake --build --preset cxx-dev --target libtmux_support_versions_test workspace_cli_test mcp_tools_test mcp_protocol_test
+
+      - name: Refuse tmux ${{ matrix.rejected-tmux }} without effects
+        env:
+          LIBTMUX_TEST_REJECTED_TMUX: ${{ steps.rejected.outputs.binary }}
+          LIBTMUX_REQUIRE_REJECTED_TMUX: "1"
+        run: ctest --preset cxx-dev --no-tests=error --output-on-failure -R 'libtmux\.support_versions\.|^consumer\..*\.rejected$'
 
   windows:
     # Build and install the narrower Windows backend and package with MSVC;
@@ -275,136 +291,42 @@ jobs:
 
       # Nothing here starts psmux: this lane builds and installs, and runs the
       # steps that need no tmux. The psmux tests are run by hand.
+      - name: Configure the native Windows targets
+        run: cmake --preset windows-psmux "-DLIBTMUX_CXX_STANDARD=${{ matrix.standard }}"
+
       - name: Build the native Windows targets
-        run: |
-          cmake --preset windows-psmux "-DLIBTMUX_CXX_STANDARD=${{ matrix.standard }}"
-          cmake --build --preset windows-psmux
+        run: cmake --build --preset windows-psmux
 
       - name: Build the native Windows targets in Release
         run: cmake --build build/windows-psmux --config Release
 
-      - name: Install and consume the MSVC package
-        run: |
-          $prefix = Join-Path $PWD "build\windows-prefix"
-          cmake --install build/windows-psmux --config Debug --prefix $prefix
-          cmake -S examples/consume `
-            -B build/windows-consume `
-            -G "Visual Studio 17 2022" `
-            -A x64 `
-            "-DCMAKE_PREFIX_PATH=$prefix"
-          cmake --build build/windows-consume --config Debug
-          & ".\build\windows-consume\Debug\consume.exe"
+      - name: Install the MSVC package
+        env:
+          PREFIX: ${{ github.workspace }}\build\windows-prefix
+        run: cmake --install build/windows-psmux --config Debug --prefix $env:PREFIX
+
+      - name: Configure a consumer of the MSVC package
+        env:
+          PREFIX: ${{ github.workspace }}\build\windows-prefix
+        run: cmake -S examples/consume -B build/windows-consume -G "Visual Studio 17 2022" -A x64 "-DCMAKE_PREFIX_PATH=$env:PREFIX"
+
+      - name: Build the consumer of the MSVC package
+        run: cmake --build build/windows-consume --config Debug
+
+      - name: Run the consumer of the MSVC package
+        run: .\build\windows-consume\Debug\consume.exe
 
       - name: Reject the POSIX-only testing component
-        run: |
-          $prefix = Join-Path $PWD "build\windows-prefix"
-          $source = Join-Path $PWD "build\windows-testing-consumer-src"
-          $build = Join-Path $PWD "build\windows-testing-consumer"
-          New-Item -ItemType Directory -Force -Path $source | Out-Null
-          @'
-          cmake_minimum_required(VERSION 3.25)
-          project(libtmux_windows_testing_consumer LANGUAGES CXX)
-          find_package(libtmux REQUIRED COMPONENTS testing)
-          '@ | Set-Content -Path (Join-Path $source "CMakeLists.txt") -Encoding ascii
+        env:
+          PREFIX: ${{ github.workspace }}\build\windows-prefix
+        run: uv run scripts/installed_probe/installed_probe.py testing-component -- -G "Visual Studio 17 2022" -A x64 "-DCMAKE_PREFIX_PATH=$env:PREFIX"
 
-          $savedNativePreference = $PSNativeCommandUseErrorActionPreference
-          $PSNativeCommandUseErrorActionPreference = $false
-          try {
-            $output = @(& cmake -S $source -B $build `
-              -G "Visual Studio 17 2022" -A x64 `
-              "-DCMAKE_PREFIX_PATH=$prefix" 2>&1)
-            $status = $LASTEXITCODE
-          } finally {
-            $PSNativeCommandUseErrorActionPreference = $savedNativePreference
-          }
-          if ($status -eq 0) {
-            throw "the Windows package unexpectedly provided libtmux::testing"
-          }
-          $reported = $output -join "`n"
-          # CMake writes its own status lines to the same merged stream, and one
-          # can land between two halves of the diagnostic. Drop them before
-          # matching; the diagnostic is a FATAL_ERROR and never starts with --.
-          $normalized = (($output | Where-Object { "$_" -notmatch '^\s*--' }) -join "`n") -replace '\s+', ' '
-          $expected = "the libtmux::testing component is POSIX-only and is unavailable in Windows packages"
-          if (-not $normalized.Contains($expected)) {
-            throw "missing testing-component diagnostic:`n$reported"
-          }
-          $global:LASTEXITCODE = 0
-          $expected
-
+      # Windows advertises the same registry as POSIX and lets psmux refuse what
+      # it cannot do, rather than hiding those tools; see
+      # docs/design/windows-psmux.md. The list is
+      # scripts/installed_probe/windows_mcp_tools.txt.
       - name: Check the installed Windows MCP catalog
-        run: |
-          $server = Join-Path $PWD "build\windows-prefix\bin\libtmux-mcp-server.exe"
-          if (-not (Test-Path $server)) {
-            throw "installed MCP server is missing: $server"
-          }
-          $requests = @(
-            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}'
-            '{"jsonrpc":"2.0","method":"notifications/initialized"}'
-            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
-          )
-          $lines = @($requests | & $server --socket-name libtmux-cxx-mcp-catalog)
-          if ($LASTEXITCODE -ne 0) {
-            throw "installed MCP server exited with $LASTEXITCODE"
-          }
-          $replies = @($lines | ForEach-Object { $_ | ConvertFrom-Json })
-          $catalog = @($replies | Where-Object { $_.id -eq 2 })
-          if ($catalog.Count -ne 1) {
-            throw "expected one tools/list reply, got $($catalog.Count)"
-          }
-          $actual = @($catalog[0].result.tools.name | Sort-Object)
-          # Windows advertises the same registry as POSIX and lets psmux refuse
-          # what it cannot do, rather than hiding those tools. See
-          # docs/design/windows-psmux.md. Teardown is absent because an explicit
-          # socket selector excludes it, which leaves 41 of the 45.
-          $expected = @(
-            "call_read_tools_batch"
-            "capture_pane"
-            "capture_since"
-            "create_session"
-            "create_window"
-            "find_pane_by_position"
-            "get_pane_info"
-            "get_server_info"
-            "get_session_info"
-            "get_tmux_variables"
-            "get_window_info"
-            "list_panes"
-            "list_sessions"
-            "list_windows"
-            "move_window"
-            "paste_text"
-            "rename_session"
-            "rename_window"
-            "resize_pane"
-            "resize_window"
-            "respawn_pane"
-            "run_shell_command"
-            "search_panes"
-            "select_layout"
-            "select_pane"
-            "select_window"
-            "send_keys"
-            "send_keys_batch"
-            "set_history_limit"
-            "set_mouse_enabled"
-            "set_pane_title"
-            "set_synchronize_panes"
-            "show_environment"
-            "show_hooks"
-            "show_option"
-            "signal_channel"
-            "snapshot_pane"
-            "split_window"
-            "swap_pane"
-            "wait_for_channel"
-            "wait_for_text"
-          )
-          $difference = @(Compare-Object -ReferenceObject $expected -DifferenceObject $actual)
-          if ($difference.Count -ne 0) {
-            throw "unexpected Windows MCP tools: $($actual -join ', ')"
-          }
-          "Windows MCP tools: $($actual -join ', ')"
+        run: uv run scripts/installed_probe/installed_probe.py mcp-catalog --server build\windows-prefix\bin\libtmux-mcp-server.exe --socket-name libtmux-cxx-mcp-catalog --expect-tools scripts/installed_probe/windows_mcp_tools.txt
 
   toolchains:
     # A second compiler and standard library. Everything here built and passed
@@ -427,12 +349,17 @@ jobs:
           update: "true"
           args: install --yes g++ tmux ninja-build
 
-      - name: Build and test with GCC and libstdc++
-        run: |
-          g++ --version
-          cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache --preset cxx-gcc
-          cmake --build --preset cxx-gcc
-          ctest --preset cxx-gcc --no-tests=error --output-on-failure
+      - name: Print the GCC version
+        run: g++ --version
+
+      - name: Configure with GCC and libstdc++
+        run: cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache --preset cxx-gcc
+
+      - name: Build with GCC and libstdc++
+        run: cmake --build --preset cxx-gcc
+
+      - name: Test with GCC and libstdc++
+        run: ctest --preset cxx-gcc --no-tests=error --output-on-failure
 
   benchmarks:
     # Neither program is linked into the shipped package or gates a merge on
@@ -458,25 +385,21 @@ jobs:
           args: install --yes clang-18 libc++-18-dev libc++abi-18-dev ninja-build tmux
 
       - name: Select clang 18
-        run: |
-          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
-          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
+        uses: ./.github/actions/select-clang
+
+      # LIBTMUX_BUILD_TESTING_LIBRARY defaults on only with tests or examples,
+      # both off here, and both benchmarks link libtmux::testing.
+      - name: Configure both programs
+        run: cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache --preset cxx-dev -DLIBTMUX_BUILD_TESTS=OFF -DLIBTMUX_BUILD_EXAMPLES=OFF -DLIBTMUX_BUILD_MCP_SERVER=OFF -DLIBTMUX_BUILD_TESTING_LIBRARY=ON -DLIBTMUX_BUILD_BENCHMARKS=ON
 
       - name: Build both programs
-        run: |
-          # LIBTMUX_BUILD_TESTING_LIBRARY defaults on only with tests or
-          # examples, both off here, and both benchmarks link libtmux::testing.
-          cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache --preset cxx-dev \
-            -DLIBTMUX_BUILD_TESTS=OFF -DLIBTMUX_BUILD_EXAMPLES=OFF \
-            -DLIBTMUX_BUILD_MCP_SERVER=OFF -DLIBTMUX_BUILD_TESTING_LIBRARY=ON \
-            -DLIBTMUX_BUILD_BENCHMARKS=ON
-          cmake --build --preset cxx-dev \
-            --target libtmux_matrix libtmux_operations_bench
+        run: cmake --build --preset cxx-dev --target libtmux_matrix libtmux_operations_bench
 
-      - name: Run the transport matrix and assert its own claims
-        run: |
-          ./build/cxx-dev/apps/matrix/libtmux_matrix
-          ./build/cxx-dev/apps/matrix/libtmux_matrix --check
+      - name: Run the transport matrix
+        run: ./build/cxx-dev/apps/matrix/libtmux_matrix
+
+      - name: Assert the transport matrix's own claims
+        run: ./build/cxx-dev/apps/matrix/libtmux_matrix --check
 
       - name: Run the operations benchmark
         run: ./build/cxx-dev/benchmarks/libtmux_operations_bench
@@ -503,15 +426,16 @@ jobs:
           args: install --yes clang-18 libc++-18-dev libc++abi-18-dev ninja-build tmux
 
       - name: Select clang 18
-        run: |
-          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
-          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
+        uses: ./.github/actions/select-clang
 
-      - name: Build and test the C++20 configuration
-        run: |
-          cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache --preset cxx20
-          cmake --build --preset cxx20
-          ctest --preset cxx20 --no-tests=error --output-on-failure
+      - name: Configure the C++20 configuration
+        run: cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache --preset cxx20
+
+      - name: Build the C++20 configuration
+        run: cmake --build --preset cxx20
+
+      - name: Test the C++20 configuration
+        run: ctest --preset cxx20 --no-tests=error --output-on-failure
 
   fuzz:
     # Four parsers read input the library does not choose. A short run over the
@@ -536,22 +460,19 @@ jobs:
           args: install --yes clang-18 ninja-build
 
       - name: Select clang 18
-        run: |
-          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
-          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
+        uses: ./.github/actions/select-clang
+
+      # The fuzzer runtime this toolchain ships is built against libstdc++,
+      # which has no usable <expected> here, so the fuzzers build in the C++20
+      # configuration over the pinned compatibility type.
+      - name: Configure the fuzzers
+        run: cmake -S . -B build/fuzz -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DLIBTMUX_CXX_STANDARD=20 -DLIBTMUX_BUILD_FUZZERS=ON -DLIBTMUX_BUILD_TESTS=OFF -DLIBTMUX_BUILD_EXAMPLES=OFF -DLIBTMUX_FETCH_DEPS=ON
+
+      - name: Build the fuzzers
+        run: cmake --build build/fuzz
 
       - name: Fuzz the parsers
-        run: |
-          # The fuzzer runtime this toolchain ships is built against libstdc++,
-          # which has no usable <expected> here, so the fuzzers build in the
-          # C++20 configuration over the pinned compatibility type.
-          cmake -S . -B build/fuzz -G Ninja \
-            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
-            -DLIBTMUX_CXX_STANDARD=20 -DLIBTMUX_BUILD_FUZZERS=ON \
-            -DLIBTMUX_BUILD_TESTS=OFF -DLIBTMUX_BUILD_EXAMPLES=OFF \
-            -DLIBTMUX_FETCH_DEPS=ON
-          cmake --build build/fuzz
-          ctest --test-dir build/fuzz --no-tests=error --output-on-failure
+        run: ctest --test-dir build/fuzz --no-tests=error --output-on-failure
 
   locale:
     # tmux decides whether the terminal is UTF-8 from the environment, and the
@@ -576,19 +497,26 @@ jobs:
           args: install --yes clang-18 libc++-18-dev libc++abi-18-dev ninja-build tmux
 
       - name: Select clang 18
-        run: |
-          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
-          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
+        uses: ./.github/actions/select-clang
 
-      - name: Build and test in a C locale
+      # LC_ALL overrides LANG for every category, so LANG needs no unsetting.
+      - name: Configure in a C locale
         env:
           LC_ALL: C
           LC_CTYPE: C
-        run: |
-          unset LANG
-          cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache --preset cxx-dev
-          cmake --build --preset cxx-dev
-          ctest --preset cxx-dev --no-tests=error --output-on-failure
+        run: cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache --preset cxx-dev
+
+      - name: Build in a C locale
+        env:
+          LC_ALL: C
+          LC_CTYPE: C
+        run: cmake --build --preset cxx-dev
+
+      - name: Test in a C locale
+        env:
+          LC_ALL: C
+          LC_CTYPE: C
+        run: ctest --preset cxx-dev --no-tests=error --output-on-failure
 
   sanitizers:
 
@@ -615,15 +543,16 @@ jobs:
           args: install --yes clang-18 libc++-18-dev libc++abi-18-dev ninja-build tmux
 
       - name: Select clang 18
-        run: |
-          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
-          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
+        uses: ./.github/actions/select-clang
+
+      - name: Configure under ${{ matrix.sanitizer }}
+        run: cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache --preset ${{ matrix.sanitizer }}
+
+      - name: Build under ${{ matrix.sanitizer }}
+        run: cmake --build --preset ${{ matrix.sanitizer }}
 
       - name: Run the suite under ${{ matrix.sanitizer }}
-        run: |
-          cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache --preset ${{ matrix.sanitizer }}
-          cmake --build --preset ${{ matrix.sanitizer }}
-          ctest --preset ${{ matrix.sanitizer }} --no-tests=error --output-on-failure
+        run: ctest --preset ${{ matrix.sanitizer }} --no-tests=error --output-on-failure
 
   mutation:
     # A green suite is evidence only once it has been shown capable of
@@ -654,11 +583,7 @@ jobs:
           args: install --yes tmux ninja-build clang-18 libc++-18-dev libc++abi-18-dev
 
       - name: Select clang 18
-        run: |
-          for tool in clang clang++; do
-            sudo update-alternatives --install "/usr/bin/$tool" "$tool" \
-              "/usr/bin/$tool-18" 100
-          done
+        uses: ./.github/actions/select-clang
 
       - name: Configure
         run: cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache --preset cxx-dev
@@ -696,22 +621,28 @@ jobs:
           args: install --yes clang-18 libc++-18-dev libc++abi-18-dev llvm-18 ninja-build tmux
 
       - name: Select clang 18
-        run: |
-          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
-          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
+        uses: ./.github/actions/select-clang
+
+      - name: Configure for coverage
+        run: cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache --preset cxx-coverage
+
+      - name: Build for coverage
+        run: cmake --build --preset cxx-coverage
+
+      - name: Run the suite for coverage
+        run: ctest --preset cxx-coverage --no-tests=error --output-on-failure
 
       - name: Measure what the suite reaches
-        run: |
-          cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache --preset cxx-coverage
-          cmake --build --preset cxx-coverage
-          ctest --preset cxx-coverage --no-tests=error --output-on-failure
-          uv run scripts/coverage/coverage_report.py \
-            --build build/cxx-coverage --source . --floor 65
+        run: uv run scripts/coverage/coverage_report.py --build build/cxx-coverage --source . --floor 65
 
   lint:
 
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    env:
+      ACTIONLINT_VERSION: 1.7.7
+      ACTIONLINT_SHA256: 023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757
+      ACTIONLINT_ARCHIVE: actionlint_1.7.7_linux_amd64.tar.gz
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -732,24 +663,27 @@ jobs:
           args: install --yes clang-18 clang-format-18 clang-tidy-18 libc++-18-dev libc++abi-18-dev ninja-build g++ doxygen
 
       - name: Select clang 18
-        run: |
-          for tool in clang clang++ clang-format clang-tidy; do
-            sudo update-alternatives --install /usr/bin/$tool $tool /usr/bin/$tool-18 100
-          done
+        uses: ./.github/actions/select-clang
+
+      - name: Select clang-format 18
+        run: sudo update-alternatives --install /usr/bin/clang-format clang-format /usr/bin/clang-format-18 100
+
+      - name: Select clang-tidy 18
+        run: sudo update-alternatives --install /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-18 100
 
       # release.yml triggers on tags alone, so no other lane parses it. An
       # unsupported key there fails every release before a job can start.
+      - name: Download actionlint
+        run: curl -fsSL -o "$ACTIONLINT_ARCHIVE" "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${ACTIONLINT_ARCHIVE}"
+
+      - name: Verify the actionlint archive
+        run: echo "${ACTIONLINT_SHA256}  ${ACTIONLINT_ARCHIVE}" | sha256sum --check --strict
+
+      - name: Unpack actionlint
+        run: tar xzf "$ACTIONLINT_ARCHIVE" actionlint
+
       - name: Check the workflows parse
-        env:
-          ACTIONLINT_VERSION: 1.7.7
-          ACTIONLINT_SHA256: 023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757
-        run: |
-          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
-          curl -fsSL -o "$archive" \
-            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}"
-          echo "${ACTIONLINT_SHA256}  ${archive}" | sha256sum --check --strict
-          tar xzf "$archive" actionlint
-          ./actionlint -color
+        run: ./actionlint -color
 
       - name: Check formatting
         run: |
@@ -758,45 +692,48 @@ jobs:
             -exec clang-format --dry-run --Werror --style=file {} +
 
       - name: Check the API reference is current
-        run: |
-          uv run scripts/docs/api_index.py \
-            --include include/libtmux --output docs/api.md --check
-          uv run scripts/docs/api_index.py \
-            --include include/libtmux/testing --output docs/api-testing.md \
-            --page testing --check
+        run: uv run scripts/docs/api_index.py --include include/libtmux --output docs/api.md --check
+
+      - name: Check the testing API reference is current
+        run: uv run scripts/docs/api_index.py --include include/libtmux/testing --output docs/api-testing.md --page testing --check
 
       - name: Check what including the library costs
-        run: |
-          uv run scripts/include_cost/include_cost.py --check
-          uv run scripts/include_cost/include_cost.py --compiler g++ --check
+        run: uv run scripts/include_cost/include_cost.py --check
+
+      - name: Check what including the library costs with g++
+        run: uv run scripts/include_cost/include_cost.py --compiler g++ --check
 
       # The headers are the only source of the published reference, and a
       # Doxygen warning means part of one did not survive the parse: a comment
       # that never reached the XML, or markup that swallowed the text after it.
       # Neither is visible in a build that merely exits zero.
+      - name: Print the Doxygen version
+        run: doxygen --version
+
       - name: Check the Doxygen comments parse
-        run: |
-          doxygen --version
-          OUTPUT_DIRECTORY="${{ runner.temp }}/doxygen" doxygen Doxyfile
+        env:
+          OUTPUT_DIRECTORY: ${{ runner.temp }}/doxygen
+        run: doxygen Doxyfile
 
       # The same Sphinx build libtmux.org serves, run over the XML above. A
       # declaration Sphinx cannot parse is not a Doxygen warning: it reaches
       # the page as unparsed text with no anchor, and only this lane sees it.
       # Breathe 5.0.0 cannot find the header a `doxygenfile` directive names.
       - name: Check the reference renders
-        run: |
-          cd docs
-          uv run --no-project --with sphinx --with breathe==4.36.0 --with furo \
-            sphinx-build -q -W -b dirhtml \
-            -D breathe_projects.cxx="${{ runner.temp }}/doxygen/xml" \
-            -d "${{ runner.temp }}/doctrees" . "${{ runner.temp }}/reference"
+        working-directory: docs
+        run: uv run --no-project --with sphinx --with breathe==4.36.0 --with furo sphinx-build -q -W -b dirhtml -D breathe_projects.cxx="${{ runner.temp }}/doxygen/xml" -d "${{ runner.temp }}/doctrees" . "${{ runner.temp }}/reference"
 
-      - name: Check Python tooling
-        run: |
-          uv run --group dev ruff format --check .
-          uv run --group dev ruff check .
-          uv run --group dev ty check scripts
-          uv run --group dev pytest
+      - name: Check Python formatting
+        run: uv run --group dev ruff format --check .
+
+      - name: Lint Python
+        run: uv run --group dev ruff check .
+
+      - name: Type-check the scripts
+        run: uv run --group dev ty check scripts
+
+      - name: Test the scripts
+        run: uv run --group dev pytest
 
       # The tmux versions CI runs come from scripts/ci_plan/tmux_matrix.json.
       # This fails when the README, the compatibility page or CONTRIBUTING say
@@ -808,20 +745,17 @@ jobs:
       # This is the half that checks the quoting; the example lane checks that
       # the code still works.
       - name: Check the README quotes code that builds
-        run: |
-          uv run scripts/docs/check_readme.py \
-            --readme README.md \
-            --readme include/libtmux/README.md \
-            --readme docs/runtime.md
+        run: uv run scripts/docs/check_readme.py --readme README.md --readme include/libtmux/README.md --readme docs/runtime.md
 
       # Links resolve in the checkout, an API is linked where a README first
       # names it, and the cmake commands name options and presets that exist.
       # The tmux-workspace and libtmux-mcp-server commands need the binaries,
       # so the consumer.*.readme_commands tests run them.
-      - name: Check README links and commands
-        run: |
-          uv run scripts/docs/check_readme_links.py
-          uv run scripts/docs/check_readme_commands.py --cmake
+      - name: Check README links
+        run: uv run scripts/docs/check_readme_links.py
+
+      - name: Check README commands
+        run: uv run scripts/docs/check_readme_commands.py --cmake
 
       - name: Check every README region compiles as its own snippet
         run: uv run scripts/docs/check_example_isolation.py
@@ -832,13 +766,11 @@ jobs:
       - name: Check every package keeps and installs its changelog
         run: uv run scripts/docs/check_changelogs.py
 
+      - name: Configure clang-tidy
+        run: cmake -S . -B build/tidy -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/clang-libcxx.cmake -DLIBTMUX_ENABLE_CLANG_TIDY=ON -DLIBTMUX_BUILD_TESTS=OFF
+
       - name: Run clang-tidy over the library
-        run: |
-          cmake -S . -B build/tidy -G Ninja \
-            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
-            -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/clang-libcxx.cmake \
-            -DLIBTMUX_ENABLE_CLANG_TIDY=ON -DLIBTMUX_BUILD_TESTS=OFF
-          cmake --build build/tidy
+        run: cmake --build build/tidy
 
   package:
     # Proves the shipped package, not the build tree: install it and build an
@@ -865,49 +797,39 @@ jobs:
           args: install --yes clang-18 libc++-18-dev libc++abi-18-dev ninja-build
 
       - name: Select clang 18
-        run: |
-          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
-          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
+        uses: ./.github/actions/select-clang
 
       - name: Install the pinned Python tool runner
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: "0.12.0"
 
-      - name: Install and consume with C++${{ matrix.standard }}
-        run: |
-          cmake -S . -B build/pkg -G Ninja \
-            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
-            -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/clang-libcxx.cmake \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DLIBTMUX_CXX_STANDARD=${{ matrix.standard }} \
-            -DLIBTMUX_BUILD_TESTS=OFF \
-            -DLIBTMUX_BUILD_MCP_SERVER=ON \
-            -DLIBTMUX_BUILD_WORKSPACE_CLI=ON \
-            -DLIBTMUX_BUILD_TESTING_LIBRARY=ON \
-            -DLIBTMUX_FETCH_DEPS=ON
-          cmake --build build/pkg
-          cmake --install build/pkg --prefix "$PWD/build/prefix"
-          uv run scripts/installed_probe/installed_probe.py workspace-tree \
-            --binary build/prefix/bin/tmux-workspace
-          workspace_binary="$PWD/build/prefix/bin/tmux-workspace"
-          # shellcheck source=/dev/null
-          source <("$workspace_binary" --generate-completion bash)
-          COMP_WORDS=("$workspace_binary" import tm)
-          COMP_CWORD=2
-          _tmux_workspace_complete
-          test "${COMPREPLY[*]}" = tmuxinator
-          if [ '${{ matrix.standard }}' = 20 ]; then
-            test -f build/prefix/include/tl/expected.hpp
-          else
-            test ! -e build/prefix/include/tl/expected.hpp
-          fi
-          test ! -e build/prefix/share/cmake/tl-expected
-          cmake -S examples/consume -B build/consume \
-            -DCMAKE_PREFIX_PATH="$PWD/build/prefix" \
-            -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CXX_FLAGS=-stdlib=libc++
-          cmake --build build/consume
-          ./build/consume/consume
+      - name: Configure the package build for C++${{ matrix.standard }}
+        run: cmake -S . -B build/pkg -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/clang-libcxx.cmake -DCMAKE_BUILD_TYPE=Release -DLIBTMUX_CXX_STANDARD=${{ matrix.standard }} -DLIBTMUX_BUILD_TESTS=OFF -DLIBTMUX_BUILD_MCP_SERVER=ON -DLIBTMUX_BUILD_WORKSPACE_CLI=ON -DLIBTMUX_BUILD_TESTING_LIBRARY=ON -DLIBTMUX_FETCH_DEPS=ON
+
+      - name: Build the package
+        run: cmake --build build/pkg
+
+      - name: Install the package
+        run: cmake --install build/pkg --prefix "$GITHUB_WORKSPACE/build/prefix"
+
+      - name: The installed workspace CLI prints its command tree
+        run: uv run scripts/installed_probe/installed_probe.py workspace-tree --binary build/prefix/bin/tmux-workspace
+
+      - name: The installed workspace CLI completes in bash
+        run: uv run scripts/installed_probe/installed_probe.py workspace-completion --binary build/prefix/bin/tmux-workspace
+
+      - name: The install carries the files C++${{ matrix.standard }} needs
+        run: uv run scripts/installed_probe/installed_probe.py package-layout --prefix build/prefix --standard ${{ matrix.standard }}
+
+      - name: Configure a consumer of the installed package
+        run: cmake -S examples/consume -B build/consume -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/build/prefix" -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CXX_FLAGS=-stdlib=libc++
+
+      - name: Build the consumer of the installed package
+        run: cmake --build build/consume
+
+      - name: Run the consumer of the installed package
+        run: ./build/consume/consume
 
       # The examples, built and run the way a reader would: as their own
       # project, against the install above, knowing nothing but
@@ -923,15 +845,14 @@ jobs:
         with:
           args: install --yes tmux
 
+      - name: Configure the examples against the installed package
+        run: cmake -S examples -B build/examples -G Ninja -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/build/prefix" -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CXX_FLAGS=-stdlib=libc++ -DLIBTMUX_EXAMPLES_BUILD_TESTS=ON -DLIBTMUX_FETCH_DEPS=ON
+
+      - name: Build the examples against the installed package
+        run: cmake --build build/examples
+
       - name: The installed package is enough to test the examples
-        run: |
-          cmake -S examples -B build/examples -G Ninja \
-            -DCMAKE_PREFIX_PATH="$PWD/build/prefix" \
-            -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CXX_FLAGS=-stdlib=libc++ \
-            -DLIBTMUX_EXAMPLES_BUILD_TESTS=ON \
-            -DLIBTMUX_FETCH_DEPS=ON
-          cmake --build build/examples
-          ctest --test-dir build/examples --no-tests=error --output-on-failure
+        run: ctest --test-dir build/examples --no-tests=error --output-on-failure
 
       # The program is the half of the package a library consumer never
       # links, so building it is not enough: this runs the installed copy the
@@ -941,12 +862,7 @@ jobs:
       # which is what this job is for — whether the tools then drive tmux
       # correctly is what the test lanes run a real server to find out.
       - name: The installed MCP server answers on stdio
-        run: |
-          test -x build/prefix/bin/libtmux-mcp-server
-          uv run scripts/installed_probe/installed_probe.py mcp-catalog \
-            --server build/prefix/bin/libtmux-mcp-server \
-            --socket-name "libtmux-cxx-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-catalog" \
-            --check-arguments
+        run: uv run scripts/installed_probe/installed_probe.py mcp-catalog --server build/prefix/bin/libtmux-mcp-server --socket-name "libtmux-cxx-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-catalog" --check-arguments
 
       # Well-formed JSON that is not a well-formed request. Each of these
       # parsed cleanly and then threw out of a typed read, which escaped main
@@ -982,13 +898,14 @@ jobs:
       - name: The versions database describes the ports
         run: uv run scripts/vcpkg/vcpkg_registry.py check
 
-      - name: Install vcpkg
-        run: |
-          git clone --filter=blob:none \
-            https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP/vcpkg"
-          git -C "$RUNNER_TEMP/vcpkg" checkout --detach \
-            94a541197763a4f449a1b91478df48c0584a6256
-          "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+      - name: Clone vcpkg
+        run: git clone --filter=blob:none https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP/vcpkg"
+
+      - name: Check out the pinned vcpkg
+        run: git -C "$RUNNER_TEMP/vcpkg" checkout --detach 94a541197763a4f449a1b91478df48c0584a6256
+
+      - name: Bootstrap vcpkg
+        run: '"$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics'
 
       - name: Install Ninja
         uses: libtmux/.github/actions/apt-get@30f81842b1e639ea4e25f93f1f2543504178e228
