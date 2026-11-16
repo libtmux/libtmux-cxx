@@ -15,16 +15,24 @@ requests are answered by the protocol layer alone.
         --server build/prefix/bin/libtmux-mcp-server --socket-name probe
     uv run scripts/installed_probe/installed_probe.py mcp-hostile \
         --server build/prefix/bin/libtmux-mcp-server --socket-name probe
+    uv run scripts/installed_probe/installed_probe.py workspace-completion \
+        --binary build/prefix/bin/tmux-workspace
+    uv run scripts/installed_probe/installed_probe.py package-layout \
+        --prefix build/prefix --standard 20
+    uv run scripts/installed_probe/installed_probe.py testing-component \
+        -- -DCMAKE_PREFIX_PATH=build/windows-prefix
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import queue
 import subprocess
 import sys
+import tempfile
 import threading
 import typing as t
 
@@ -35,6 +43,35 @@ SERVER_NAME = "libtmux-cxx"
 ROOT_COMMANDS = 9
 IMPORT_COMMANDS = 2
 BAD_ARGUMENT_ERROR = {"code": -32602, "message": "argument paneId must be a string"}
+
+# The completion function for `tmux-workspace import tm`, run in the bash that
+# sources the completion script the binary prints: the script under test is bash.
+COMPLETION_PROGRAM = """\
+set -e
+source <("$WORKSPACE_BINARY" --generate-completion bash)
+COMP_WORDS=("$WORKSPACE_BINARY" import tm)
+COMP_CWORD=2
+_tmux_workspace_complete
+printf '%s' "${COMPREPLY[*]}"
+"""
+COMPLETION_REPLY = "tmuxinator"
+
+# The header the C++20 configuration installs for its `tl::expected` fallback.
+FALLBACK_STANDARD = 20
+FALLBACK_HEADER = "include/tl/expected.hpp"
+FALLBACK_CMAKE_PACKAGE = "share/cmake/tl-expected"
+
+# What a Windows package says to a consumer that asks for the POSIX-only
+# `testing` component.
+TESTING_REFUSAL = (
+    "the libtmux::testing component is POSIX-only and is unavailable in "
+    "Windows packages"
+)
+TESTING_CONSUMER = """\
+cmake_minimum_required(VERSION 3.25)
+project(libtmux_windows_testing_consumer LANGUAGES CXX)
+find_package(libtmux REQUIRED COMPONENTS testing)
+"""
 
 # Well-formed JSON that is not a well-formed request. Each of these parsed
 # cleanly and then threw out of a typed read, which once ended the process, so a
@@ -192,9 +229,14 @@ def mcp_catalog(
     socket_name: str,
     *,
     check_arguments: bool,
+    expect_tools: pathlib.Path | None = None,
     timeout: float = 10,
 ) -> str:
-    """Initialize the server, list its tools and, if asked, call one badly."""
+    """Initialize the server, list its tools and, if asked, call one badly.
+
+    With ``expect_tools``, a file of tool names, the server must advertise
+    exactly those.
+    """
     session = McpSession(server, socket_name, timeout)
     try:
         session.send(
@@ -247,7 +289,91 @@ def mcp_catalog(
     if called is not None and called.get("error") != BAD_ARGUMENT_ERROR:
         message = f"tools/call lost arguments or _meta: {called}"
         raise ProbeError(message)
+    if expect_tools is not None:
+        expected = sorted(expect_tools.read_text().split())
+        if names != expected:
+            missing = sorted(set(expected) - set(names))
+            extra = sorted(set(names) - set(expected))
+            message = f"unexpected MCP tools: missing {missing}, extra {extra}"
+            raise ProbeError(message)
     return "tools: " + ", ".join(names)
+
+
+def workspace_completion(binary: pathlib.Path) -> str:
+    """Complete ``import tm`` with the bash completion an installed CLI prints."""
+    done = subprocess.run(
+        ["bash", "--noprofile", "--norc"],
+        input=COMPLETION_PROGRAM,
+        env={**os.environ, "WORKSPACE_BINARY": str(binary)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if done.returncode != 0:
+        message = f"the completion script failed ({done.returncode}): {done.stderr}"
+        raise ProbeError(message)
+    if done.stdout != COMPLETION_REPLY:
+        message = (
+            f"completing `import tm` gave {done.stdout!r}, not {COMPLETION_REPLY!r}"
+        )
+        raise ProbeError(message)
+    return f"`import tm` completes to {COMPLETION_REPLY}"
+
+
+def package_layout(prefix: pathlib.Path, standard: int) -> str:
+    """Check which ``tl::expected`` files an install for ``standard`` carries."""
+    fallback = prefix / FALLBACK_HEADER
+    if standard == FALLBACK_STANDARD and not fallback.is_file():
+        message = f"C++20 install lacks its fallback header {fallback}"
+        raise ProbeError(message)
+    if standard != FALLBACK_STANDARD and fallback.exists():
+        message = f"C++{standard} install carries the C++20 fallback {fallback}"
+        raise ProbeError(message)
+    package = prefix / FALLBACK_CMAKE_PACKAGE
+    if package.exists():
+        message = f"the install carries a private CMake package {package}"
+        raise ProbeError(message)
+    return f"C++{standard} install layout is as designed"
+
+
+def testing_component(cmake_arguments: t.Sequence[str], *, cmake: str = "cmake") -> str:
+    """Require a consumer of the ``testing`` component to be refused, by name.
+
+    ``cmake_arguments`` select the package, as a consumer's would: the
+    generator, the prefix or toolchain file. They follow the consumer's source
+    and build directories.
+    """
+    with tempfile.TemporaryDirectory() as temporary:
+        source = pathlib.Path(temporary) / "source"
+        source.mkdir()
+        (source / "CMakeLists.txt").write_text(TESTING_CONSUMER)
+        done = subprocess.run(
+            [
+                cmake,
+                "-S",
+                str(source),
+                "-B",
+                str(pathlib.Path(temporary) / "build"),
+                *cmake_arguments,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+        )
+    if done.returncode == 0:
+        message = "the package unexpectedly provided libtmux::testing"
+        raise ProbeError(message)
+    # CMake writes its status lines to the same merged stream, and one can land
+    # between two halves of the diagnostic. The diagnostic is a FATAL_ERROR and
+    # never starts with `--`.
+    kept = [
+        line for line in done.stdout.splitlines() if not line.lstrip().startswith("--")
+    ]
+    if TESTING_REFUSAL not in " ".join(" ".join(kept).split()):
+        message = f"missing testing-component diagnostic:\n{done.stdout}"
+        raise ProbeError(message)
+    return TESTING_REFUSAL
 
 
 def mcp_hostile(server: pathlib.Path, socket_name: str, *, timeout: float = 30) -> str:
@@ -300,16 +426,50 @@ def main(argv: t.Sequence[str] | None = None) -> int:
                 action="store_true",
                 help="also call capture_pane with a bad argument and read the error",
             )
+            command.add_argument(
+                "--expect-tools",
+                type=pathlib.Path,
+                help="a file of tool names the server must advertise, exactly",
+            )
+
+    completion = commands.add_parser(
+        "workspace-completion", help="complete `import tm` with the bash completion"
+    )
+    completion.add_argument("--binary", type=pathlib.Path, required=True)
+
+    layout = commands.add_parser(
+        "package-layout", help="check the tl::expected files an install carries"
+    )
+    layout.add_argument("--prefix", type=pathlib.Path, required=True)
+    layout.add_argument("--standard", type=int, required=True)
+
+    component = commands.add_parser(
+        "testing-component",
+        help="require a consumer of the testing component to be refused",
+    )
+    component.add_argument(
+        "cmake_arguments",
+        nargs=argparse.REMAINDER,
+        help="after `--`: the cmake options that select the package",
+    )
 
     arguments = parser.parse_args(argv)
     try:
         if arguments.command == "workspace-tree":
             report = workspace_tree(arguments.binary)
+        elif arguments.command == "workspace-completion":
+            report = workspace_completion(arguments.binary)
+        elif arguments.command == "package-layout":
+            report = package_layout(arguments.prefix, arguments.standard)
+        elif arguments.command == "testing-component":
+            options = [a for a in arguments.cmake_arguments if a != "--"]
+            report = testing_component(options)
         elif arguments.command == "mcp-catalog":
             report = mcp_catalog(
                 arguments.server,
                 arguments.socket_name,
                 check_arguments=arguments.check_arguments,
+                expect_tools=arguments.expect_tools,
             )
         else:
             report = mcp_hostile(arguments.server, arguments.socket_name)

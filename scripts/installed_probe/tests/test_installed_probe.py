@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import io
 import pathlib
+import shutil
 import sys
 
 import installed_probe
@@ -94,6 +95,29 @@ imports = int(os.environ.get("FAKE_IMPORTS", "2"))
 children = [{{"name": "import", "children": import_children[:imports]}}]
 children += [{{"name": f"command-{{n}}"}} for n in range(count - 1)]
 print(json.dumps({{"children": children}}))
+"""
+
+
+FAKE_CMAKE = """#!{python}
+import os
+import sys
+
+status = int(os.environ.get("FAKE_STATUS", "1"))
+print("-- Configuring incomplete")
+print("CMake Error at CMakeLists.txt:3 (find_package):")
+print("  the libtmux::testing component is POSIX-only and")
+print("-- a status line lands between the halves")
+print("  is unavailable in Windows packages")
+if os.environ.get("FAKE_TEXT") == "other":
+    print("a different failure")
+sys.exit(status)
+"""
+
+FAKE_COMPLETION_CLI = """#!{python}
+import os
+
+reply = os.environ.get("FAKE_REPLY", "tmuxinator")
+print("_tmux_workspace_complete() {{ COMPREPLY=(" + reply + "); }}")
 """
 
 
@@ -249,3 +273,86 @@ def test_main_reports_a_failure_on_stderr_and_returns_one(
         )
     assert status == 1
     assert err.getvalue().startswith("mcp-hostile: the server stopped answering")
+
+
+@pytest.mark.parametrize(
+    ("standard", "header", "package", "message"),
+    [
+        (20, True, False, None),
+        (23, False, False, None),
+        (20, False, False, "lacks its fallback header"),
+        (23, True, False, "install carries the C.*20 fallback"),
+        (23, False, True, "private CMake package"),
+    ],
+)
+def test_the_package_layout_follows_the_standard(
+    tmp_path: pathlib.Path,
+    standard: int,
+    header: bool,
+    package: bool,
+    message: str | None,
+) -> None:
+    """Only the C++20 install carries the fallback header, and none its package."""
+    if header:
+        (tmp_path / "include/tl").mkdir(parents=True)
+        (tmp_path / "include/tl/expected.hpp").write_text("")
+    if package:
+        (tmp_path / "share/cmake/tl-expected").mkdir(parents=True)
+    if message is None:
+        assert installed_probe.package_layout(tmp_path, standard).startswith("C++")
+    else:
+        with pytest.raises(installed_probe.ProbeError, match=message):
+            installed_probe.package_layout(tmp_path, standard)
+
+
+def test_a_refused_testing_component_passes(tmp_path: pathlib.Path) -> None:
+    """The diagnostic is found even with a status line inside it."""
+    cmake = executable(tmp_path, "cmake", FAKE_CMAKE)
+    report = installed_probe.testing_component([], cmake=str(cmake))
+    assert "POSIX-only" in report
+
+
+def test_a_testing_component_that_is_provided_fails(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A package that serves the component to Windows is wrong."""
+    monkeypatch.setenv("FAKE_STATUS", "0")
+    cmake = executable(tmp_path, "cmake", FAKE_CMAKE)
+    with pytest.raises(installed_probe.ProbeError, match="unexpectedly provided"):
+        installed_probe.testing_component([], cmake=str(cmake))
+
+
+def test_a_refusal_that_says_something_else_fails(tmp_path: pathlib.Path) -> None:
+    """Failing is not enough; the failure has to name the reason."""
+    cmake = executable(tmp_path, "cmake", FAKE_CMAKE.replace("POSIX-only", "broken"))
+    with pytest.raises(installed_probe.ProbeError, match="missing testing-component"):
+        installed_probe.testing_component([], cmake=str(cmake))
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+def test_the_completion_probe_runs_the_installed_completion(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`import tm` completes to the one source that starts with it."""
+    cli = executable(tmp_path, "tmux-workspace", FAKE_COMPLETION_CLI)
+    assert "tmuxinator" in installed_probe.workspace_completion(cli)
+    monkeypatch.setenv("FAKE_REPLY", "teamocil tmuxinator")
+    with pytest.raises(installed_probe.ProbeError, match="completing `import tm`"):
+        installed_probe.workspace_completion(cli)
+
+
+def test_the_catalog_must_match_the_expected_tools(
+    server: pathlib.Path, tmp_path: pathlib.Path
+) -> None:
+    """A server that advertises more or fewer tools than listed fails."""
+    expected = tmp_path / "tools.txt"
+    expected.write_text("capture_pane\nlist_panes\n")
+    report = installed_probe.mcp_catalog(
+        server, "probe", check_arguments=False, expect_tools=expected
+    )
+    assert report == "tools: capture_pane, list_panes"
+    expected.write_text("capture_pane\nlist_windows\n")
+    with pytest.raises(installed_probe.ProbeError, match="unexpected MCP tools"):
+        installed_probe.mcp_catalog(
+            server, "probe", check_arguments=False, expect_tools=expected
+        )
