@@ -22,6 +22,9 @@ if mode == "exit-nonzero":
 if mode == "silent":
     sys.stdin.read()
     sys.exit(0)
+if mode == "noisy-stderr":
+    sys.stderr.write("x" * 1_000_000)
+    sys.stderr.flush()
 name = "other" if mode == "wrong-name" else "libtmux-cxx"
 tools = [{{"name": "list_panes"}}, {{"name": "capture_pane"}}]
 if mode == "no-tools":
@@ -63,8 +66,16 @@ for line in sys.stdin:
     method, identifier = request["method"], request.get("id")
     if identifier is None:
         continue
-    if method == "initialize":
+    if method == "initialize" and mode == "batched":
+        info = {{"serverInfo": {{"name": name}}}}
+        first = {{"jsonrpc": "2.0", "id": identifier, "result": info}}
+        second = {{"jsonrpc": "2.0", "id": 2, "result": {{"tools": tools}}}}
+        sys.stdout.write(json.dumps(first) + "\\n" + json.dumps(second) + "\\n")
+        sys.stdout.flush()
+    elif method == "initialize":
         reply(identifier, result={{"serverInfo": {{"name": name}}}})
+    elif method == "tools/list" and mode == "batched":
+        pass
     elif method == "tools/list":
         reply(identifier, result={{"tools": tools}})
     elif method == "tools/call":
@@ -130,6 +141,28 @@ def test_the_catalog_probe_fails_on_each_way_a_server_can_be_wrong(
     monkeypatch.setenv("FAKE_MODE", mode)
     with pytest.raises((installed_probe.ProbeError, TimeoutError), match=message):
         installed_probe.mcp_catalog(server, "probe", check_arguments=True, timeout=2)
+
+
+def test_a_reply_already_buffered_is_not_a_timeout(
+    server: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two replies written together are both read, the second without waiting."""
+    monkeypatch.setenv("FAKE_MODE", "batched")
+    report = installed_probe.mcp_catalog(
+        server, "probe", check_arguments=False, timeout=1
+    )
+    assert report == "tools: capture_pane, list_panes"
+
+
+def test_a_server_that_fills_stderr_still_answers(
+    server: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The probe drains stderr while it waits, so a noisy server is not blocked."""
+    monkeypatch.setenv("FAKE_MODE", "noisy-stderr")
+    report = installed_probe.mcp_catalog(
+        server, "probe", check_arguments=False, timeout=5
+    )
+    assert report == "tools: capture_pane, list_panes"
 
 
 def test_a_server_that_never_answers_times_out(

@@ -29,8 +29,9 @@ $ uv run scripts/installed_probe/installed_probe.py mcp-hostile \
     --socket-name probe
 ```
 
-Each prints what it saw and exits nonzero on a failure. The MCP probes use
-`select` on the server's pipes, so they run on Linux and macOS.
+Each prints what it saw and exits nonzero on a failure. The MCP probes read
+the server's stdout and stderr on their own threads, so they run on Linux,
+macOS and Windows and never wait on a reply that is already in a buffer.
 
 ## Tests
 

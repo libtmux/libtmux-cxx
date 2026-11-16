@@ -22,9 +22,10 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
-import select
+import queue
 import subprocess
 import sys
+import threading
 import typing as t
 
 Message = dict[str, t.Any]
@@ -60,7 +61,14 @@ class ProbeError(Exception):
 
 
 class McpSession:
-    """One server process spoken to over line-delimited JSON-RPC on stdio."""
+    """One server process spoken to over line-delimited JSON-RPC on stdio.
+
+    A thread per pipe reads the server's stdout and stderr as they arrive. A
+    reply is therefore available the moment its line is complete, however the
+    server grouped its writes, and a server that writes a lot to stderr is never
+    blocked on a full pipe. The threads make it work the same on Windows, where
+    ``select`` does not accept pipes.
+    """
 
     def __init__(self, server: pathlib.Path, socket_name: str, timeout: float) -> None:
         """Start ``server`` on the socket namespace ``socket_name``."""
@@ -75,8 +83,36 @@ class McpSession:
         )
         assert self.process.stdin is not None
         assert self.process.stdout is not None
+        assert self.process.stderr is not None
         self.stdin = self.process.stdin
-        self.stdout = self.process.stdout
+        self._lines: queue.Queue[str | None] = queue.Queue()
+        self._stderr: list[str] = []
+        self._readers = [
+            threading.Thread(
+                target=self._read_lines, args=(self.process.stdout,), daemon=True
+            ),
+            threading.Thread(
+                target=self._read_stderr, args=(self.process.stderr,), daemon=True
+            ),
+        ]
+        for reader in self._readers:
+            reader.start()
+
+    def _read_lines(self, stream: t.TextIO) -> None:
+        """Queue each line of stdout, then ``None`` at end of file."""
+        for line in stream:
+            self._lines.put(line)
+        self._lines.put(None)
+
+    def _read_stderr(self, stream: t.TextIO) -> None:
+        """Keep everything the server writes to stderr."""
+        for chunk in iter(lambda: stream.read(4096), ""):
+            self._stderr.append(chunk)
+
+    def _stderr_text(self) -> str:
+        """Return stderr once the server has closed it."""
+        self._readers[1].join(timeout=self.timeout)
+        return "".join(self._stderr)
 
     def send(self, message: Message) -> None:
         """Write one request or notification."""
@@ -85,16 +121,17 @@ class McpSession:
 
     def receive(self, expected_id: int) -> Message:
         """Read the next reply, which must answer ``expected_id``."""
-        ready, _, _ = select.select([self.stdout], [], [], self.timeout)
-        if not ready:
+        try:
+            line = self._lines.get(timeout=self.timeout)
+        except queue.Empty:
             message = f"timed out waiting for response {expected_id}"
-            raise TimeoutError(message)
-        line = self.stdout.readline()
-        if not line:
+            raise TimeoutError(message) from None
+        if line is None:
+            self._lines.put(None)
             code = self.process.wait(timeout=self.timeout)
-            stderr = self.process.stderr.read() if self.process.stderr else ""
             message = (
-                f"the server exited {code} before response {expected_id}: {stderr}"
+                f"the server exited {code} before response {expected_id}: "
+                f"{self._stderr_text()}"
             )
             raise ProbeError(message)
         reply: Message = json.loads(line)
@@ -119,7 +156,7 @@ class McpSession:
             self.process.wait(timeout=self.timeout)
             message = "the server did not exit when its input ended"
             raise ProbeError(message) from None
-        stderr = self.process.stderr.read() if self.process.stderr else ""
+        stderr = self._stderr_text()
         if code != 0:
             raise ProbeError(stderr or f"the server exited {code}")
         return stderr
