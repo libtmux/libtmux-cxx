@@ -49,4 +49,4 @@ using StandInSetting = std::pair<std::string_view, std::string_view>;
   return static_cast<bool>(file);
 }
 
-}  // namespace libtmux::test
+} // namespace libtmux::test

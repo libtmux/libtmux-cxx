@@ -300,7 +300,7 @@ std::string presence(const char* name) {
   run(need(config, "real"), arguments);
 }
 
-}  // namespace
+} // namespace
 
 int main(int argc, char** argv) {
   const Arguments arguments{argv + 1, argv + argc};
