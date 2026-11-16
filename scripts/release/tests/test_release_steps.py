@@ -33,6 +33,14 @@ def run(*args: str, cwd: pathlib.Path) -> str:
     ).stdout.strip()
 
 
+@pytest.fixture(autouse=True)
+def commit_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give every git call an author, as the workflow's earlier steps do."""
+    for role in ("AUTHOR", "COMMITTER"):
+        monkeypatch.setenv(f"GIT_{role}_NAME", "Release Test")
+        monkeypatch.setenv(f"GIT_{role}_EMAIL", "test@example.invalid")
+
+
 @pytest.fixture
 def repository(tmp_path: pathlib.Path) -> pathlib.Path:
     """Return a clone of a bare origin holding one commit tagged ``v1.2.3``."""
