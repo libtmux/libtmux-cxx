@@ -34,6 +34,7 @@
 #include "libtmux/testing/capabilities.hpp"
 #include "libtmux/testing/scoped_server.hpp"
 #include "libtmux/wait.hpp"
+#include "support/standin.hpp"
 
 namespace {
 
@@ -479,10 +480,9 @@ struct CountedTmux {
 CountedTmux counted_tmux(const std::filesystem::path& directory) {
   CountedTmux counted{.proxy = directory / "counted-tmux",
                       .records = directory / "counted-tmux.launches"};
-  std::ofstream{counted.proxy} << "#!/bin/sh\nprintf '1\\n' >> '"
-                               << counted.records.string()
-                               << "' || exit 125\nexec tmux \"$@\"\n";
-  std::filesystem::permissions(counted.proxy, std::filesystem::perms::owner_all);
+  EXPECT_TRUE(libtmux::test::make_standin(
+      counted.proxy,
+      {{"mode", "count"}, {"records", counted.records.string()}, {"real", "tmux"}}));
   counted.reset();
   return counted;
 }

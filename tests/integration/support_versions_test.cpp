@@ -40,6 +40,7 @@
 #include "libtmux/testing/scoped_server.hpp"
 #include "libtmux/version.hpp"
 #include "support/rejected_daemon.hpp"
+#include "support/standin.hpp"
 
 namespace {
 
@@ -360,16 +361,10 @@ TEST_F(RejectedDaemon, ARefusalReturnsLongBeforeTheCommandTimeout) {
 std::filesystem::path stand_in_client(const PrivateDirectory& directory,
                                       const std::string& stderr_text, int status) {
   const auto script = directory.path() / "tmux-stand-in";
-  std::ofstream file{script};
-  file << "#!/bin/sh\n"
-          "printf '%s\\n' "
-       << shell_quote(stderr_text)
-       << " >&2\n"
-          "sleep 60 2>/dev/null &\n"
-          "exit "
-       << status << "\n";
-  file.close();
-  ::chmod(script.c_str(), 0700);
+  EXPECT_TRUE(
+      libtmux::test::make_standin(script, {{"mode", "client"},
+                                           {"stderr", stderr_text},
+                                           {"status", std::to_string(status)}}));
   return script;
 }
 
@@ -475,22 +470,8 @@ TEST(PreThreeTwoAnswers, AnExecutorsFailureWithTheSameWordsIsTheVersionRefusal) 
 std::filesystem::path daemon_reporting(const PrivateDirectory& directory,
                                        const std::string& release) {
   const auto script = directory.path() / "tmux-reporting";
-  std::ofstream file{script};
-  file << "#!/bin/sh\n"
-          "for argument in \"$@\"; do\n"
-          "  [ \"$argument\" = run-shell ] && probing=1\n"
-          "  last=$argument\n"
-          "done\n"
-          "if [ -n \"$probing\" ]; then\n"
-          "  printf 'unknown command: %s%s\\n' \"${last%'#{version}'}\" "
-       << shell_quote(release)
-       << " >&2\n"
-          "  exit 1\n"
-          "fi\n"
-          "echo 'no server running' >&2\n"
-          "exit 1\n";
-  file.close();
-  ::chmod(script.c_str(), 0700);
+  EXPECT_TRUE(libtmux::test::make_standin(
+      script, {{"mode", "reporting"}, {"release", release}}));
   return script;
 }
 
@@ -699,24 +680,8 @@ protected:
     // Every invocation is logged one argument per line, a blank line apart. A
     // rewrite of the fence's condition stands for a daemon that has been
     // replaced by another release.
-    std::ofstream script{wrapper_};
-    script << "#!/bin/sh\n"
-              "{ for a in \"$@\"; do printf '%s\\n' \"$a\"; done; echo --; } >> \""
-           << log_.string()
-           << "\"\n"
-              "if [ -n \"$LIBTMUX_TEST_REWRITE_FENCE\" ]; then\n"
-              "  n=$#; i=0\n"
-              "  while [ $i -lt $n ]; do\n"
-              "    a=$1; shift\n"
-              "    case $a in '#{==:#{version},'*) a='#{==:#{version},9.9z}' ;; esac\n"
-              "    set -- \"$@\" \"$a\"\n"
-              "    i=$((i+1))\n"
-              "  done\n"
-              "fi\n"
-              "exec \""
-           << real_.string() << "\" \"$@\"\n";
-    script.close();
-    ::chmod(wrapper_.c_str(), 0700);
+    ASSERT_TRUE(libtmux::test::make_standin(
+        wrapper_, {{"mode", "log"}, {"log", log_.string()}, {"real", real_.string()}}));
   }
 
   [[nodiscard]] ExecutionPolicy wrapped_policy() const {

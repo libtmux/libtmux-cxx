@@ -32,6 +32,7 @@
 #include "libtmux/server.hpp"
 #include "libtmux/testing/environment_guard.hpp"
 #include "support/sandbox.hpp"
+#include "support/standin.hpp"
 
 namespace {
 
@@ -205,29 +206,12 @@ TEST(SandboxCanary, ADefaultServerCommandCarriesTheSandboxToTmux) {
   const fs::path trace = scratch.path() / "trace";
   // Records whether each variable arrived and, for TMUX_TMPDIR, whether it was
   // the sandbox: words, never the values.
-  std::ofstream{recorder} << R"sh(#!/bin/sh
-{
-  printf 'ARGV'
-  for argument in "$@"; do printf ' [%s]' "$argument"; done
-  printf '\n'
-  if [ -n "${TMUX+x}" ]; then echo 'TMUX=set'; else echo 'TMUX=unset'; fi
-  if [ -n "${TMUX_PANE+x}" ]; then echo 'TMUX_PANE=set'; else echo 'TMUX_PANE=unset'; fi
-  if [ -z "${TMUX_TMPDIR+x}" ]; then
-    echo 'TMUX_TMPDIR=unset'
-  elif [ "$TMUX_TMPDIR" = "$CANARY_SANDBOX" ]; then
-    echo 'TMUX_TMPDIR=sandbox'
-  else
-    echo 'TMUX_TMPDIR=other'
-  fi
-} >> "$CANARY_TRACE"
-exit 0
-)sh";
-  ASSERT_EQ(::chmod(recorder.c_str(), 0700), 0) << std::strerror(errno);
+  ASSERT_TRUE(
+      libtmux::test::make_standin(recorder, {{"mode", "canary"},
+                                             {"trace", trace.string()},
+                                             {"sandbox", sandbox_root().string()}}));
 
   const libtmux::test::EnvironmentGuard path{"PATH", scratch.path().string()};
-  const libtmux::test::EnvironmentGuard recorded{"CANARY_TRACE", trace.string()};
-  const libtmux::test::EnvironmentGuard sandbox{"CANARY_SANDBOX",
-                                                sandbox_root().string()};
   // A startable handle sends its first command with no selector, which is the
   // one tmux resolves for itself: from TMUX when it is set.
   const auto server = libtmux::Server::startable_at_default(std::nullopt);

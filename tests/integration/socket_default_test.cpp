@@ -35,6 +35,7 @@
 #include "libtmux/testing/environment_guard.hpp"
 #include "libtmux/testing/scoped_server.hpp"
 #include "support/sandbox.hpp"
+#include "support/standin.hpp"
 
 namespace {
 
@@ -105,18 +106,9 @@ struct Invocation {
 class RecordingTmux final {
 public:
   RecordingTmux()
-      : trace_{scratch_.path() / "trace"}, path_{"PATH", scratch_.path().string()},
-        recorded_{"RECORDER_TRACE", trace_.string()} {
-    const fs::path script = scratch_.path() / "tmux";
-    std::ofstream{script} << R"sh(#!/bin/sh
-{
-  for argument in "$@"; do printf '%s\0' "$argument"; done
-  printf 'END\0'
-  if [ -n "${TMUX+x}" ]; then printf 'TMUX=set\0'; else printf 'TMUX=unset\0'; fi
-} >> "$RECORDER_TRACE"
-exit 0
-)sh";
-    ::chmod(script.c_str(), 0700);
+      : trace_{scratch_.path() / "trace"}, path_{"PATH", scratch_.path().string()} {
+    EXPECT_TRUE(libtmux::test::make_standin(
+        scratch_.path() / "tmux", {{"mode", "record"}, {"trace", trace_.string()}}));
   }
 
   [[nodiscard]] bool ready() const { return !scratch_.path().empty(); }
@@ -159,7 +151,6 @@ private:
   Scratch scratch_;
   fs::path trace_;
   EnvironmentGuard path_;
-  EnvironmentGuard recorded_;
 };
 
 // Sends one command through a handle that may start a server, so tmux is run,

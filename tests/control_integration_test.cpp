@@ -9,6 +9,7 @@
 #include "libtmux/testing/scoped_server.hpp"
 #include "support/descriptors.hpp"
 #include "support/platform.hpp"
+#include "support/standin.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -615,16 +616,10 @@ TEST(ControlModeConnection, ConnectAsksForJsonLayoutsOnEveryVersion) {
   ASSERT_FALSE(directory_error) << directory_error.message();
   const auto record = directory / "written";
   const auto wrapper = directory / "tmux";
-  {
-    std::ofstream script{wrapper};
-    ASSERT_TRUE(script.is_open());
-    script << "#!/bin/sh\n"
-           << "exec tee -a " << record << " | exec " << LIBTMUX_CONTROL_TMUX_PATH
-           << " \"$@\"\n";
-  }
-  std::filesystem::permissions(wrapper, std::filesystem::perms::owner_all,
-                               directory_error);
-  ASSERT_FALSE(directory_error) << directory_error.message();
+  ASSERT_TRUE(
+      libtmux::test::make_standin(wrapper, {{"mode", "tee"},
+                                            {"record", record.string()},
+                                            {"real", LIBTMUX_CONTROL_TMUX_PATH}}));
 
   auto connected =
       Connection::connect({.tmux_binary = wrapper,

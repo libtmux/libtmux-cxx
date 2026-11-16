@@ -21,6 +21,15 @@ target_link_libraries(
 add_executable(fake_tmux support/fake_tmux.cpp)
 target_link_libraries(fake_tmux PRIVATE libtmux_build_options)
 
+# The program the tests copy ahead of the real tmux, or pass as the tmux to run,
+# to record a call, answer a probe or make a command fail. Each copy reads its
+# settings from a file beside it; see support/tmux_standin.cpp. No shell script
+# stands in for tmux.
+find_package(Threads REQUIRED)
+add_executable(libtmux_tmux_standin support/tmux_standin.cpp)
+target_link_libraries(
+  libtmux_tmux_standin PRIVATE libtmux_build_options Threads::Threads)
+
 add_executable(
   scoped_tmux_server_test
   scoped_tmux_server_test.cpp
@@ -170,25 +179,18 @@ if(sandbox_real_tmux)
   execute_process(COMMAND id -u OUTPUT_VARIABLE sandbox_uid
                   OUTPUT_STRIP_TRAILING_WHITESPACE)
   set(sandbox_wrapper "${PROJECT_BINARY_DIR}/sandbox-wrapper")
-  file(
-    CONFIGURE
+  # A copy of the stand-in ahead of the real tmux, to make stopping a server
+  # fail or lag. LIBTMUX_WRAPPER_MODE, set by each case, chooses which.
+  file(MAKE_DIRECTORY "${sandbox_wrapper}")
+  file(WRITE "${sandbox_wrapper}/tmux.standin"
+       "mode\tkillserver\nreal\t${sandbox_real_tmux}\n")
+  add_custom_command(
     OUTPUT "${sandbox_wrapper}/tmux"
-    CONTENT [=[
-#!/bin/sh
-# Stands in for tmux ahead of the real one, to make stopping a server fail or lag.
-for argument in "$@"; do
-  if [ "$argument" = kill-server ]; then
-    case "${LIBTMUX_WRAPPER_MODE-}" in
-      noop) exit 0 ;;
-      slow) (sleep 1; exec "@sandbox_real_tmux@" "$@") >/dev/null 2>&1 & exit 0 ;;
-    esac
-  fi
-done
-exec "@sandbox_real_tmux@" "$@"
-]=]
-    @ONLY)
-  file(CHMOD "${sandbox_wrapper}/tmux" PERMISSIONS OWNER_READ OWNER_WRITE
-                                                   OWNER_EXECUTE)
+    COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:libtmux_tmux_standin>"
+            "${sandbox_wrapper}/tmux"
+    DEPENDS libtmux_tmux_standin)
+  add_custom_target(libtmux_sandbox_wrapper ALL
+                    DEPENDS "${sandbox_wrapper}/tmux")
 
   function(libtmux_sandbox_leak_control name root_name)
     cmake_parse_arguments(PARSE_ARGV 2 control "SURVIVES" "SOCKET;WRAPPER;EXPECT" "")
@@ -216,11 +218,17 @@ exec "@sandbox_real_tmux@" "$@"
     string(REPLACE " " "[ \n]+" expect "${control_EXPECT}")
     set(first libtmux.sandbox.leaks.${name})
     # The nested run must also fail, with ctest's status for a failed custom
-    # command, though every test in it passed: the shell prints what it was.
+    # command, though every test in it passed: this script prints what it was.
+    set(nested_quoted "")
+    foreach(argument IN ITEMS ${runner} "${CMAKE_CTEST_COMMAND}" --test-dir
+                              "${dir}" --no-tests=error)
+      string(APPEND nested_quoted " [==[${argument}]==]")
+    endforeach()
+    file(WRITE "${dir}/run-nested.cmake"
+         "execute_process(COMMAND${nested_quoted} RESULT_VARIABLE nested_status)\n"
+         "message(\"nested ctest exit status \${nested_status}\")\n")
     add_test(NAME ${first}
-             COMMAND sh -c "\"$@\"; echo \"nested ctest exit status $?\"" sh
-                     ${runner} "${CMAKE_CTEST_COMMAND}" --test-dir "${dir}"
-                     --no-tests=error)
+             COMMAND "${CMAKE_COMMAND}" -P "${dir}/run-nested.cmake")
     set_tests_properties(
       ${first} PROPERTIES PASS_REGULAR_EXPRESSION
                           "${expect}.*nested ctest exit status 8" LABELS real-tmux
@@ -1099,3 +1107,20 @@ gtest_discover_tests(
   libtmux_executor_seam_test
   TEST_PREFIX libtmux.executor.
   PROPERTIES LABELS real-tmux TIMEOUT 60)
+
+# Every test that writes a stand-in for tmux copies the helper, so each is built
+# after it and told where it is.
+foreach(
+  standin_test IN
+  ITEMS libtmux_sandbox_canary_test
+        libtmux_support_versions_test
+        libtmux_socket_default_test
+        libtmux_control_integration_test
+        libtmux_executor_seam_test)
+  if(TARGET ${standin_test})
+    target_compile_definitions(
+      ${standin_test}
+      PRIVATE LIBTMUX_TMUX_STANDIN_PATH="$<TARGET_FILE:libtmux_tmux_standin>")
+    add_dependencies(${standin_test} libtmux_tmux_standin)
+  endif()
+endforeach()
