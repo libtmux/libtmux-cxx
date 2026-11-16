@@ -42,3 +42,38 @@ inline (PEP 723) and run scripts with `uv run`.
 
 - GitHub Actions `run:` lines that call one command.
 - Test data that is not a comparison, such as workspace files a loader reads.
+
+## Tmux stand-ins
+
+A test that needs a program in place of tmux copies
+[`tests/support/tmux_standin.cpp`](../tests/support/tmux_standin.cpp), a C++
+helper with a mode for each behaviour the tests use, and writes its settings
+beside the copy with `tests/support/standin.hpp`. No `#!/bin/sh` program stands
+in for tmux.
+
+Start cost decides the language. On the maintainer's x86-64 WSL2 host with tmux
+3.8, `hyperfine -N --warmup 3 --runs 30` measured one `-V` call, with each
+stand-in running the real tmux in its place, at:
+
+| Program | Mean per call |
+| --- | --- |
+| tmux alone | 1.7 ms |
+| the C++ helper, logging the call | 1.7 ms |
+| `sh` exec shim | 2.3 ms |
+| Python stand-in (`#!/usr/bin/env python3`) | 18.4 ms |
+
+## Exceptions
+
+- `installed_probe.py workspace-completion` runs six lines of bash, because the
+  thing under test is the bash completion script `tmux-workspace` prints.
+- Integration tests start panes with `sh -c 'sleep 60'` and similar commands.
+  They run inside the pane under test; they do not stand in for tmux.
+- `release.yml` runs only for a pushed tag. Its logic lives in
+  [`scripts/release/`](../scripts/release/README.md) and
+  [`scripts/vcpkg/windows_port_gate.py`](../scripts/vcpkg/windows_port_gate.py),
+  which their tests exercise on Linux with temporary Git repositories and a
+  scripted vcpkg. The workflow itself first runs against a real tag.
+- The psmux scripts under [`scripts/psmux/`](../scripts/psmux/README.md) run
+  in CTest on a Windows build with psmux installed. No CI lane starts psmux. A
+  maintainer runs them with the commands in that README against a psmux build.
+

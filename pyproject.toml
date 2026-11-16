@@ -36,6 +36,7 @@ pythonpath = [
   "scripts/workspace_cli",
   "scripts/installed_probe",
   "scripts/psmux",
+  "scripts/release",
 ]
 
 [tool.ruff]
@@ -87,4 +88,5 @@ extra-paths = [
   "scripts/workspace_cli",
   "scripts/installed_probe",
   "scripts/psmux",
+  "scripts/release",
 ]

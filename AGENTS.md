@@ -33,7 +33,10 @@ being made:
   notes, commit messages, CLI and help text, API documentation, and source
   comments: [`.github/WRITING.md`](.github/WRITING.md)
 - Support scripts: what may stay, their language, layout and checks:
-  [`.github/SCRIPTS.md`](.github/SCRIPTS.md)
+  [`.github/SCRIPTS.md`](.github/SCRIPTS.md). [`scripts/README.md`](scripts/README.md)
+  maps the directories. After changing a script, run `uv run --group dev ruff
+  format --check .`, `uv run --group dev ruff check .`, `uv run --group dev ty
+  check scripts` and `uv run --group dev pytest`.
 - Contribution workflow, building, testing, and pull requests:
   [`.github/CONTRIBUTING.md`](.github/CONTRIBUTING.md)
 

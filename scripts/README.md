@@ -31,6 +31,7 @@ $ uv run --group dev pytest
 | [`ci_plan/`](ci_plan/) | Which tmux releases CI runs, and whether the docs and workflows agree with that list | `ci.yml` |
 | [`docs/`](docs/) | Whether the API reference, README code, links, commands and changelogs match the source | `ci.yml`, `release.yml`, CTest |
 | [`vcpkg/`](vcpkg/) | Whether the registry's versions database matches the ports, and whether a consumer resolves it | `ci.yml`, `release.yml` |
+| [`release/`](release/) | Whether the tag, the source archive, the port transition and the registry baseline of a release are the ones that were validated | `release.yml` |
 | [`mutate/`](mutate/) | Whether the tests can fail | `ci.yml` |
 | [`coverage/`](coverage/) | How much of the shipped surface the tests reach | `ci.yml` |
 | [`include_cost/`](include_cost/) | What including the umbrella header costs | `ci.yml` |

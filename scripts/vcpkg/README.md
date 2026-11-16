@@ -12,6 +12,16 @@ Windows. `release.yml` runs all three subcommands.
 | `probe` | Writes the two files a consumer writes, points them at this checkout or a public URL, and builds [`examples/consume/`](../../examples/consume/) through the vcpkg toolchain. With `--feature mcp` it also runs the installed server over stdio |
 | `release` | Points the port at a release whose tag now exists, from its version and the SHA512 of the archive GitHub generates; `--enable-windows` attests the audited x64 MSVC target |
 
+`windows_port_gate.py` is the Windows half of a release, run once by the
+Windows release job after `release` has enabled Windows. The transitioned port
+must refuse each triplet it does not support. For each x64 Windows triplet it
+supports, the port must install, serve the MCP server, refuse the POSIX-only
+`testing` component, and build and run an installed consumer:
+
+```console
+$ uv run scripts/vcpkg/windows_port_gate.py --vcpkg C:\vcpkg
+```
+
 ```console
 $ uv run scripts/vcpkg/vcpkg_registry.py check
 ```
