@@ -19,9 +19,9 @@
 </div>
 
 > [!WARNING]
-> **Alpha.** Releases carry an `-alpha` prerelease tag. The API is not
-> settled, and any release may change or remove exported identifiers without a
-> deprecation period. Pin an exact version. Not recommended for production.
+> **Pre-1.0.** The API is not settled, and any release may change or remove
+> exported identifiers without a deprecation period. Pin an exact version. Not
+> recommended for production.
 
 ## What is libtmux?
 
@@ -1272,7 +1272,7 @@ $ ctest --preset windows-psmux --no-tests=error
 
 ## Support and status
 
-- Alpha: any release may change or remove exported identifiers without a
+- Pre-1.0: any release may change or remove exported identifiers without a
   deprecation period. Pin an exact version.
 - **tmux.** 3.3a or newer. [Compatibility](#compatibility).
 - **Platforms.** Linux (WSL included) and macOS. The Windows preview through

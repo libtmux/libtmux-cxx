@@ -20,7 +20,7 @@ ships as one native executable.
 
 </div>
 
-- An alpha interface. The same startup-frozen tool manifest is advertised on
+- A pre-1.0 interface. The same startup-frozen tool manifest is advertised on
   POSIX and native Windows.
 - On Windows, psmux support is command-dependent: unsupported operations fail
   at dispatch, and every tool stays in the manifest.

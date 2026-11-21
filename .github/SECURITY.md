@@ -12,9 +12,9 @@ the advisory is published once it is out.
 
 ## What is supported
 
-The most recent release. This package is alpha: releases carry an `-alpha`
-prerelease tag, the API may change without a deprecation period, and there are
-no patch branches for older tags. A fix means a new release, not a backport.
+The most recent release. This package is pre-1.0: the API may change without a
+deprecation period, and there are no patch branches for older tags. A fix means
+a new release, not a backport.
 
 ## What is in scope
 
