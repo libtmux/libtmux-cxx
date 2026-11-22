@@ -10,6 +10,7 @@ reader. This checks the part that can be checked from a checkout:
 
 - a relative link, or a `github.com/libtmux/libtmux-cxx/{tree,blob}/master/`
   link, names a path that exists, and its `#fragment` names a heading;
+- every `[text][label]` reference link names a `[label]:` definition;
 - the first prose mention of a public type in each section is a link, and the
   reference page for each one the prose names is linked at least once;
 - no paragraph or list item renders past 240 characters, so a page stays
@@ -81,11 +82,12 @@ API_PAGES = (("docs/api.md", ""), ("docs/api-testing.md", "test"))
 
 SYMBOL = re.compile(r"^- \[`(?P<name>[A-Za-z_]\w*)`\]\(#", re.MULTILINE)
 CODE_SPAN = re.compile(r"`(?P<code>[^`\n]+)`")
+INLINE_CODE = re.compile(r"(`+)(?:(?!\1)[^\n])+\1")
 INLINE_LINK = re.compile(
     r"\[(?P<text>(?:[^\[\]]|\[[^\]]*\])*?)\]\((?P<target>[^)\s]+)(?:\s+\"[^\"]*\")?\)"
 )
 REFERENCE_LINK = re.compile(
-    r"\[(?P<text>(?:[^\[\]]|\[[^\]]*\])*?)\]\[(?P<label>[^\]]*)\]"
+    r"(?<![\w`\]])\[(?P<text>(?:[^\[\]\n]|\[[^\[\]\n]*\])+?)\]\[(?P<label>[^\[\]\n]*)\]"
 )
 DEFINITION = re.compile(r"^\[(?P<label>[^\]]+)\]:\s*(?P<target>\S+)", re.MULTILINE)
 HEADING = re.compile(r"^(?P<marks>#{1,6})\s+(?P<text>.+?)\s*#*\s*$")
@@ -168,8 +170,36 @@ def split_fences(text: str) -> tuple[str, str]:
     return "\n".join(unfenced), "\n".join(prose)
 
 
+def _code_spans(text: str) -> list[tuple[int, int]]:
+    """Return the character intervals covered by inline backtick spans."""
+    return [(match.start(), match.end()) for match in INLINE_CODE.finditer(text)]
+
+
+def _in_code_span(spans: list[tuple[int, int]], start: int, end: int) -> bool:
+    """Report whether a link's outer brackets sit inside an inline code span."""
+    return any(
+        span_start <= pos < span_end
+        for span_start, span_end in spans
+        for pos in (start, end - 1)
+    )
+
+
+def _resolve_reference(
+    match: re.Match[str], definitions: dict[str, str]
+) -> tuple[str, str | None]:
+    """Return the reference label written and the target it resolves to, if any."""
+    raw_label = match.group("label").strip()
+    if raw_label:
+        key = raw_label.lower()
+        return raw_label, definitions.get(key) or definitions.get(key.strip("`"))
+    raw_text = match.group("text").strip()
+    key = raw_text.lower()
+    return raw_text, definitions.get(key) or definitions.get(key.strip("`"))
+
+
 def links_in(text: str) -> list[Link]:
-    """Every inline and reference-style link in already-unfenced text."""
+    """Every inline and resolved reference-style link in already-unfenced text."""
+    spans = _code_spans(text)
     definitions = {
         match.group("label").lower(): match.group("target")
         for match in DEFINITION.finditer(text)
@@ -177,14 +207,31 @@ def links_in(text: str) -> list[Link]:
     found = [
         Link(match.start(), match.end(), match.group("text"), match.group("target"))
         for match in INLINE_LINK.finditer(text)
+        if not _in_code_span(spans, match.start(), match.end())
     ]
     for match in REFERENCE_LINK.finditer(text):
-        label = (match.group("label") or match.group("text")).strip("` ").lower()
-        text_label = match.group("text").strip("` ").lower()
-        target = definitions.get(label) or definitions.get(text_label)
+        if _in_code_span(spans, match.start(), match.end()):
+            continue
+        _, target = _resolve_reference(match, definitions)
         if target is not None:
             found.append(Link(match.start(), match.end(), match.group("text"), target))
     return found
+
+
+def check_references(readme: pathlib.Path, unfenced: str) -> Iterable[Problem]:
+    """Report a reference-style link with no matching `[label]:` definition."""
+    spans = _code_spans(unfenced)
+    definitions = {
+        match.group("label").lower(): match.group("target")
+        for match in DEFINITION.finditer(unfenced)
+    }
+    for match in REFERENCE_LINK.finditer(unfenced):
+        if _in_code_span(spans, match.start(), match.end()):
+            continue
+        label, target = _resolve_reference(match, definitions)
+        if target is None:
+            line = unfenced.count("\n", 0, match.start()) + 1
+            yield Problem(readme, f"line {line}: unresolved reference link [{label}]")
 
 
 def external_targets(text: str) -> list[str]:
@@ -419,7 +466,7 @@ def check_readme(
     """Every problem one README has."""
     text = readme.read_text(encoding="utf-8")
     unfenced, _ = split_fences(text)
-    problems: list[Problem] = []
+    problems: list[Problem] = list(check_references(readme, unfenced))
     targets = [link.target for link in links_in(unfenced)]
     targets.extend(m.group("target") for m in DEFINITION.finditer(unfenced))
     for target in dict.fromkeys(targets):

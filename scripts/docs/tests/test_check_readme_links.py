@@ -112,6 +112,20 @@ class ResolutionTest(unittest.TestCase):
         found = self.check("[x][gone]\n\n[gone]: docs/missing.md\n")
         self.assertEqual(len(found), 1)
 
+    def test_refuses_an_undefined_reference_link(self) -> None:
+        """A `[text][label]` link with no `[label]:` definition is reported."""
+        found = self.check("Call [`foo`][ref-missing].\n\n[foo]: docs/guide.md\n")
+        self.assertEqual(len(found), 1)
+        self.assertIn("ref-missing", found[0])
+
+    def test_ignores_attributes_arrays_and_inline_code_brackets(self) -> None:
+        """C++ attributes, array subscripts and inline code spans are not links."""
+        found = self.check(
+            "Use [[nodiscard]] or [[nodiscard]][[maybe_unused]], "
+            "read matrix[0][1][2], and quote ``[`foo`][ref-missing]``.\n"
+        )
+        self.assertEqual(found, [])
+
     def test_ignores_links_inside_code_fences(self) -> None:
         """A path shown in a code block is an example, not a link."""
         found = self.check("```md\n[x](docs/missing.md)\n```\n")

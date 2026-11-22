@@ -1400,10 +1400,12 @@ MIT. See [LICENSE](LICENSE).
 [ref-connection]: https://libtmux.org/en/cxx/latest/reference/libtmux-connection/
 [ref-deliverystatus]: https://libtmux.org/en/cxx/latest/reference/libtmux-deliverystatus/
 [ref-exactly_one]: https://libtmux.org/en/cxx/latest/reference/libtmux-exactly_one/
+[ref-exactly_one_owned]: https://libtmux.org/en/cxx/latest/reference/libtmux-exactly_one_owned/
 [ref-expected]: https://libtmux.org/en/cxx/latest/reference/libtmux-expected/
 [ref-failurekind]: https://libtmux.org/en/cxx/latest/reference/libtmux-failurekind/
 [ref-filterexpr]: https://libtmux.org/en/cxx/latest/reference/libtmux-filterexpr/
 [ref-first]: https://libtmux.org/en/cxx/latest/reference/libtmux-first/
+[ref-first_owned]: https://libtmux.org/en/cxx/latest/reference/libtmux-first_owned/
 [ref-index]: https://libtmux.org/en/cxx/latest/reference/
 [ref-matching]: https://libtmux.org/en/cxx/latest/reference/libtmux-matching/
 [ref-notificationwatch]: https://libtmux.org/en/cxx/latest/reference/libtmux-notificationwatch/
