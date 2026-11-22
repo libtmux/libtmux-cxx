@@ -97,12 +97,6 @@ dated kind, written once and not revised.
 
 - [`0001-what-a-gate-run-proves.md`](decisions/0001-what-a-gate-run-proves.md)
 
-## Plans
-
-[`plans/`](plans/) is the working history: what was intended, in order, before
-it was built. Kept because it explains the shape of what exists, not because it
-describes the present.
-
 ## Related
 
 - [The library](../README.md)
