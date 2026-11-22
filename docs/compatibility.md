@@ -75,13 +75,13 @@ provides it:
 | tmux 3.6 | The created-window report when breaking a window's only pane |
 | tmux 3.8 | JSON saved layouts, `{"V":2,...` |
 
-Two are tmux defects that a later release fixed, so the affected window is
-closed at both ends:
+These tmux defects depend on the release or how tmux was built.
 
 | Broken on | What tmux does |
 |---|---|
 | tmux 3.4 – 3.5 | Echoes a non-UTF-8 byte back as its octal escape rather than the byte |
 | tmux 3.4 | Adds a backslash before `$` when an option value it printed is set again |
+| Unpatched tmux builds before 3.6 linked with `libutempter` | A pane can exit while `pane_dead_status` stays empty until another child exits. [Fixed upstream in tmux 3.6](https://github.com/tmux/tmux/commit/fa5f3cef3d651b0eb9abfa77fc37ccade81679b5). |
 
 A split carrying a percentage is spelled `-l 25%` rather than the `-p 25` that
 tmux 3.4 removed, so it works on every supported release. Python libtmux still
