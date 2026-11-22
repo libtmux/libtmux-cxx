@@ -1,8 +1,8 @@
 # Compatibility
 
 The tmux releases the library accepts, how it refuses the rest, and what it
-cannot promise. The [README](../README.md#compatibility) keeps the floor; this
-page holds the rest.
+cannot promise. The [README](../README.md#support-and-status) keeps the floor;
+this page holds the rest.
 
 ## The floor
 

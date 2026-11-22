@@ -189,7 +189,8 @@ int main() {
 
     const auto windows = server.windows();
     if (windows.has_value()) {
-      const auto found = std::ranges::distance(*windows | libtmux::matching(by_name));
+      auto matching_windows = *windows | libtmux::matching(by_name);
+      const auto found = std::ranges::distance(matching_windows);
       std::cout << std::format("{} window(s) called editor\n", found);
     }
   }
@@ -208,8 +209,10 @@ int main() {
     const auto active = std::ranges::count_if(ordered, libtmux::window::active);
     const libtmux::Window widest =
         std::ranges::max(ordered, {}, libtmux::window::width);
-    std::cout << std::format("{} of {} active, widest {}\n", active, ordered.size(),
-                             widest);
+    const auto count = ordered.size();
+    const auto summary =
+        std::format("{} of {} active, widest {}\n", active, count, widest);
+    std::cout << summary;
   }
   // #endregion project
 
@@ -229,7 +232,8 @@ int main() {
   }
 
   // And when it is not one, the answer says which way it went wrong.
-  auto absent = *panes | libtmux::matching(libtmux::pane::command == "no-such-command");
+  const auto missing = libtmux::pane::command == "no-such-command";
+  auto absent = *panes | libtmux::matching(missing);
 
   if (const auto none = libtmux::exactly_one(absent); !none.has_value()) {
     std::cout << std::format("not one: {}\n", libtmux::to_string(none.error()));
@@ -321,8 +325,8 @@ int main() {
   // what comes out.
   const auto columns =
       server.session(session.name())
-          .and_then([](const libtmux::Session& found) { return found.active_pane(); })
-          .transform([](const libtmux::Pane& active) { return active.width(); });
+          .and_then([](const libtmux::Session& s) { return s.active_pane(); })
+          .transform([](const libtmux::Pane& p) { return p.width(); });
   std::cout << std::format("the active pane is {} columns wide\n",
                            columns.value_or(-1));
   // #endregion compose
@@ -373,7 +377,8 @@ int main() {
     (void)server.run({"new-window", "-d", "-n", "watched"});
 
     std::string added;
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{10};
+    const auto wait = std::chrono::seconds{10};
+    const auto deadline = std::chrono::steady_clock::now() + wait;
     for (const auto& event : connection.events(deadline)) {
       if (event.kind == libtmux::NotificationKind::window_add) {
         added = std::string{event.window};
@@ -398,7 +403,8 @@ int main() {
     }
     const auto listed = controlled->sessions();
     if (listed.has_value()) {
-      std::cout << std::format("{} session(s) listed over control\n", listed->size());
+      const auto count = listed->size();
+      std::cout << std::format("{} session(s) listed over control\n", count);
     }
     // #endregion over_control
   } else {
@@ -408,8 +414,8 @@ int main() {
   // #region submit
   // Given: const libtmux::Server& server
   // Submit one command to a bounded runtime, then wait for its result.
-  auto started =
-      libtmux::CommandRuntime::start(libtmux::CommandRuntimeConfig{.capacity = 1U});
+  const libtmux::CommandRuntimeConfig config{.capacity = 1U};
+  auto started = libtmux::CommandRuntime::start(config);
   if (!started.has_value()) {
     std::cerr << std::format("{}\n", started.error());
     return 1;
@@ -510,10 +516,10 @@ int main() {
     std::cout << std::format("running {}\n", *running);
   }
 
-  // Or run a command and read its output.
+  // Or run a command and read its output; tmux's answer ends in a newline.
   const auto answer = server.run({"display-message", "-p", "#{version}"});
   if (answer.has_value()) {
-    std::cout << std::format("tmux {}", *answer); // tmux's answer ends in a newline
+    std::cout << std::format("tmux {}", *answer);
   }
   // #endregion escape
 
@@ -541,15 +547,17 @@ int main() {
   // A chain that passes validation is one tmux process, its commands run in
   // order. tmux stops at the first one that fails, so a failed chain is
   // partly applied, not rolled back.
+  const auto target = session.name();
   libtmux::Chain setup;
-  setup.new_window(session.name(), "chained").split_window(session.name(), "chained");
+  setup.new_window(target, "chained").split_window(target, "chained");
 
   const auto applied = server.run_chain(setup);
   if (!applied.has_value()) {
     std::cerr << std::format("{}\n", applied.error());
     return 1;
   }
-  std::cout << std::format("{} commands, one tmux process\n", setup.batch().size());
+  const auto commands = setup.batch().size();
+  std::cout << std::format("{} commands, one tmux process\n", commands);
   // #endregion chain_run
 
   // #region fixture
@@ -562,7 +570,8 @@ int main() {
   }
   const auto under_test =
       libtmux::Server::at_socket_path(fixture->socket_path().string());
-  std::cout << std::format("sessions on it: {}\n", under_test->sessions()->size());
+  const auto session_count = under_test->sessions()->size();
+  std::cout << std::format("sessions on it: {}\n", session_count);
   // #endregion fixture
 
   // #region capabilities

@@ -21,7 +21,6 @@ an existing failure or a broken restoration cannot be mistaken for a kill.
 Platform-specific entries run only with their declared preset; explicitly
 requesting one from an incompatible build is an error rather than a skip.
 
-> [!WARNING]
 > The runner edits sources in place and puts each back as it goes. Do not
 > commit or build from the tree while it runs: a commit taken mid-run captures
 > a mutated file.
