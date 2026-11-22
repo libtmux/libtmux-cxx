@@ -14,7 +14,7 @@
     <a href="https://github.com/libtmux/libtmux-cxx/actions/workflows/ci.yml"><img src="https://github.com/libtmux/libtmux-cxx/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
     <a href="https://libtmux.org/en/cxx/"><img src="https://img.shields.io/badge/docs-libtmux.org-0b7285" alt="libtmux.org"></a>
     <a href="https://github.com/libtmux/libtmux-cxx/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT licence"></a>
-    <a href="#requirements--support"><img src="https://img.shields.io/badge/C%2B%2B-23%20%7C%2020-blue.svg" alt="C++23 or C++20"></a>
+    <a href="#support-and-status"><img src="https://img.shields.io/badge/C%2B%2B-23%20%7C%2020-blue.svg" alt="C++23 or C++20"></a>
   </p>
 </div>
 
@@ -22,67 +22,20 @@
 > settled, and any release may change or remove exported identifiers without a
 > deprecation period. Pin an exact version. Not recommended for production.
 
-## What is libtmux?
-
 A C++ port of [libtmux], the Python library behind [tmuxp]. Work with
-[`Server`][ref-server], [`Session`][ref-session], [`Window`][ref-window] and
-[`Pane`][ref-pane] as ordinary C++ values, instead of running `tmux ls` and
-parsing its output.
+[`Server`][ref-server], [`Session`][ref-session], [`Window`][ref-window], and
+[`Pane`][ref-pane] as ordinary C++ values, filter listings with
+[`FilterExpr`][ref-filterexpr], and handle errors as
+[`CommandFailure`][ref-commandfailure] values rather than exceptions.
 
-- **Failure is a value.** No tmux or transport error is thrown; a call returns
-  the answer or a [`CommandFailure`][ref-commandfailure] saying why not.
-- **Queries are typed.** A [`FilterExpr`][ref-filterexpr] is built from typed
-  fields, so a filter that asks a number whether it starts with a string does
-  not compile.
-- **Nothing to link.** The core has no dependencies: C++23 uses
-  `std::expected`, C++20 uses `tl::expected`.
-- **Value semantics.** An entity copies, compares, hashes, prints and formats:
-  `std::format("{}", window)` writes [`Window(@1 2:editor)`][ref-window].
-
-[Find what a server holds](#find-sessions-windows-and-panes),
-[filter it](#query-with-typed-filters),
-[type into a pane and wait](#type-into-a-pane-and-wait), and
-[hear about changes](#batches-chains-and-control-mode) as tmux makes them.
-
-It is for tools that drive a terminal program, test suites that need a real
-tmux, and agents.
-
-## Requirements & support
-
-| | |
-|---|---|
-| **tmux** | 3.3a or newer ([exceptions](#compatibility)) |
-| **C++** | C++23 (clang 17+, GCC 13+, Visual Studio 2022 17.3+), or C++20 with `LIBTMUX_CXX_STANDARD=20` |
-| **CMake** | 3.25 or newer |
-| **Platforms** | Linux (WSL included) and macOS; a [Windows preview](#windows-through-psmux) through [psmux] |
-| **Dependencies** | None for the library |
-
-- **Older tmux** is refused with [`FailureKind::unsupported`][ref-failurekind]
-  before a command has any effect.
-- **Release candidates** are not supported
-  ([tmux support](https://libtmux.org/en/tmux/guides/tmux-support/#release-candidates)).
-- **Child processes** do not inherit unrelated descriptors:
-  [details](docs/runtime.md#child-process-descriptors).
-
-## Packages
-
-- [`libtmux`](#libtmux): the library. Typed, value-semantic servers, sessions,
-  windows and panes; the core links nothing.
-- [`libtmux::testing`](#libtmuxtesting): a private tmux server for your own
-  tests, installed as a CMake component.
-- [`tmux-workspace`](#tmux-workspace): a command that loads, captures and
-  converts tmuxp-style workspace files.
-- [`libtmux-mcp-server`](#libtmux-mcp-server): a Model Context Protocol server,
-  so an agent can drive tmux.
-
-**Contents** — [Quick start](#quick-start) ·
+**Contents** — [Quick start](#quick-start) · [Install](#installation) ·
 [Find things](#find-sessions-windows-and-panes) ·
 [Query](#query-with-typed-filters) ·
 [Type and wait](#type-into-a-pane-and-wait) ·
 [Failure](#when-things-fail) · [Options](#options) ·
 [Control and async](#batches-chains-and-control-mode) ·
-[Testing](#testing-your-own-tmux-tools) · [Install](#installation) ·
-[Compatibility](#compatibility) · [Leaves out](#what-it-leaves-out)
+[Testing](#testing-your-own-tmux-tools) · [Packages](#packages) ·
+[Leaves out](#what-it-leaves-out) · [Support](#support-and-status)
 
 ## Quick start
 
@@ -185,8 +138,151 @@ $ cmake -S . -B build && cmake --build build && ./build/quickstart
   `tmux` command does, or the one `LIBTMUX_SOCKET_PATH` or `LIBTMUX_SOCKET`
   names.
 
-The blocks below continue from this program. Each names what it is given in
-its first line, and they use these includes
+## Installation
+
+Requires tmux 3.3a or newer, CMake 3.25 or newer, and C++23 (or C++20 with
+`LIBTMUX_CXX_STANDARD=20`). The core library has no dependencies; see
+[Support and status](#support-and-status) for platforms and version gates.
+
+### CMake FetchContent
+
+No install step, and nothing to vendor:
+
+```cmake
+include(FetchContent)
+FetchContent_Declare(
+  libtmux
+  GIT_REPOSITORY https://github.com/libtmux/libtmux-cxx.git
+  GIT_TAG        v0.1.0  # or a commit; never a moving branch
+)
+FetchContent_MakeAvailable(libtmux)
+target_link_libraries(your_target PRIVATE libtmux::libtmux)
+```
+
+Embedded this way, its tests, examples and MCP server default off.
+
+### Build and install from source
+
+```console
+$ cmake -S . -B build -DLIBTMUX_BUILD_TESTS=OFF -DLIBTMUX_BUILD_EXAMPLES=OFF
+```
+
+```console
+$ cmake --build build
+```
+
+```console
+$ cmake --install build --prefix ~/.local
+```
+
+Then, from any project:
+
+```cmake
+find_package(libtmux REQUIRED)
+target_link_libraries(your_target PRIVATE libtmux::libtmux)
+```
+
+[`examples/consume/`](examples/consume/) is that project, three files long.
+Outside CMake, the installed `libtmux.pc` carries the same flags.
+
+### Git submodule
+
+```console
+$ git submodule add \
+    https://github.com/libtmux/libtmux-cxx.git \
+    third_party/libtmux
+```
+
+```cmake
+add_subdirectory(third_party/libtmux)
+target_link_libraries(your_target PRIVATE libtmux::libtmux)
+```
+
+### vcpkg
+
+This repository is a [vcpkg git registry](docs/vcpkg-registry.md): vcpkg
+resolves `libtmux` by version from it. It is not in vcpkg's curated registry.
+
+Declare the dependency in `vcpkg.json` first, with no registry file yet:
+
+```json
+{
+  "name": "your-project",
+  "version": "0.1.0",
+  "dependencies": ["libtmux"]
+}
+```
+
+Pin vcpkg's own baseline before naming a registry. **Order matters:** vcpkg
+refuses a registry until the default registry has a baseline, even for the
+command that adds one.
+
+```console
+$ vcpkg x-update-baseline --add-initial-baseline
+```
+
+Now add `vcpkg-configuration.json` beside the manifest, leaving `baseline`
+empty for the next command to fill:
+
+```json
+{
+  "registries": [
+    {
+      "kind": "git",
+      "repository": "https://github.com/libtmux/libtmux-cxx",
+      "baseline": "",
+      "packages": ["libtmux"]
+    }
+  ]
+}
+```
+
+```console
+$ vcpkg x-update-baseline
+```
+
+That writes a commit of this repository into `baseline`. Re-run it to move to
+a newer release.
+
+```cmake
+find_package(libtmux CONFIG REQUIRED)
+target_link_libraries(your_target PRIVATE libtmux::libtmux)
+```
+
+The [MCP server](#libtmux-mcp-server) is a vcpkg feature of `libtmux`. Ask for
+it by name:
+
+```json
+{
+  "dependencies": [{ "name": "libtmux", "features": ["mcp"] }]
+}
+```
+
+[`docs/vcpkg-registry.md`](docs/vcpkg-registry.md#the-mcp-feature) covers where
+the program installs, its socket options, and the Windows triplets.
+
+### Build options
+
+| Option | Default | What it does |
+|---|---|---|
+| `LIBTMUX_CXX_STANDARD` | `23` | `20` uses `tl::expected`: a system one, or the pinned fallback |
+| `LIBTMUX_BUILD_TESTS` | on if top-level | POSIX suite with tmux and GoogleTest; native psmux smoke on Windows |
+| `LIBTMUX_BUILD_EXAMPLES` | on if top-level | POSIX programs or the native Windows psmux preview in [`examples/`](examples/README.md) |
+| `LIBTMUX_BUILD_TESTING_LIBRARY` | on with tests or examples on POSIX; off on Windows | Install the POSIX private-server fixture |
+| `LIBTMUX_BUILD_MCP_SERVER` | off | Build the [MCP server](#libtmux-mcp-server), which needs a JSON parser; Windows exposes its psmux-safe subset |
+| `LIBTMUX_BUILD_FUZZERS` | off | Build the POSIX parser fuzzers |
+| `LIBTMUX_FETCH_DEPS` | off | Download what is missing instead of failing |
+
+- `LIBTMUX_FETCH_DEPS` is off by default: a build that needs the network says so
+  and stops.
+- It covers every dependency, the C++20 lane's `tl::expected` included: the
+  build looks for an installed one first, and says what to install when there is
+  none.
+
+## Find sessions, windows and panes
+
+The blocks below continue from [Quick start](#quick-start). Each names what it
+is given on its first line and uses these includes
 ([`examples/05-readme.cpp`](examples/05-readme.cpp) runs them all):
 
 ```cpp
@@ -201,8 +297,6 @@ its first line, and they use these includes
 
 #include <libtmux/libtmux.hpp>
 ```
-
-## Find sessions, windows and panes
 
 ### [`Server::sessions`][ref-server-sessions]: what tmux has now
 
@@ -350,7 +444,8 @@ built from a local string still works after that string has gone:
 
   const auto windows = server.windows();
   if (windows.has_value()) {
-    const auto found = std::ranges::distance(*windows | libtmux::matching(by_name));
+    auto matching_windows = *windows | libtmux::matching(by_name);
+    const auto found = std::ranges::distance(matching_windows);
     std::cout << std::format("{} window(s) called editor\n", found);
   }
 }
@@ -378,8 +473,10 @@ if (windows.has_value() && !windows->empty()) {
   const auto active = std::ranges::count_if(ordered, libtmux::window::active);
   const libtmux::Window widest =
       std::ranges::max(ordered, {}, libtmux::window::width);
-  std::cout << std::format("{} of {} active, widest {}\n", active, ordered.size(),
-                           widest);
+  const auto count = ordered.size();
+  const auto summary =
+      std::format("{} of {} active, widest {}\n", active, count, widest);
+  std::cout << summary;
 }
 ```
 
@@ -408,7 +505,8 @@ if (const auto one = libtmux::exactly_one(addressed); one.has_value()) {
 }
 
 // And when it is not one, the answer says which way it went wrong.
-auto absent = *panes | libtmux::matching(libtmux::pane::command == "no-such-command");
+const auto missing = libtmux::pane::command == "no-such-command";
+auto absent = *panes | libtmux::matching(missing);
 
 if (const auto none = libtmux::exactly_one(absent); !none.has_value()) {
   std::cout << std::format("not one: {}\n", libtmux::to_string(none.error()));
@@ -521,8 +619,8 @@ if (history.has_value()) {
 ```
 
 A capture larger than [`CaptureOptions::output_limit`][ref-captureoptions]
-fails with [`FailureKind::truncated`][ref-failurekind]; it never returns shortened
-text.
+fails with [`FailureKind::truncated`][ref-failurekind]; it never returns
+shortened text.
 
 ## When things fail
 
@@ -596,8 +694,8 @@ when the last one answered, and the first failure is what comes out:
 // what comes out.
 const auto columns =
     server.session(session.name())
-        .and_then([](const libtmux::Session& found) { return found.active_pane(); })
-        .transform([](const libtmux::Pane& active) { return active.width(); });
+        .and_then([](const libtmux::Session& s) { return s.active_pane(); })
+        .transform([](const libtmux::Pane& p) { return p.width(); });
 std::cout << std::format("the active pane is {} columns wide\n",
                          columns.value_or(-1));
 ```
@@ -622,10 +720,10 @@ if (running.has_value()) {
   std::cout << std::format("running {}\n", *running);
 }
 
-// Or run a command and read its output.
+// Or run a command and read its output; tmux's answer ends in a newline.
 const auto answer = server.run({"display-message", "-p", "#{version}"});
 if (answer.has_value()) {
-  std::cout << std::format("tmux {}", *answer); // tmux's answer ends in a newline
+  std::cout << std::format("tmux {}", *answer);
 }
 ```
 
@@ -658,7 +756,8 @@ This prints `@project is libtmux`.
 A hook runs a tmux command when an event fires.
 [`Session::set_hook`][ref-session-set_hook] sets one on a session and
 [`Session::hooks`][ref-session-hooks] lists them;
-[`Server::set_global_hook`][ref-server-set_global_hook] sets one for every session.
+[`Server::set_global_hook`][ref-server-set_global_hook] sets one for every
+session.
 
 More: [options and hooks][topic-options].
 
@@ -703,15 +802,17 @@ invocation, and [`Server::run_batch`][ref-server-run_batch] does the same for a
 // A chain that passes validation is one tmux process, its commands run in
 // order. tmux stops at the first one that fails, so a failed chain is
 // partly applied, not rolled back.
+const auto target = session.name();
 libtmux::Chain setup;
-setup.new_window(session.name(), "chained").split_window(session.name(), "chained");
+setup.new_window(target, "chained").split_window(target, "chained");
 
 const auto applied = server.run_chain(setup);
 if (!applied.has_value()) {
   std::cerr << std::format("{}\n", applied.error());
   return 1;
 }
-std::cout << std::format("{} commands, one tmux process\n", setup.batch().size());
+const auto commands = setup.batch().size();
+std::cout << std::format("{} commands, one tmux process\n", commands);
 ```
 
 This prints `2 commands, one tmux process`.
@@ -735,7 +836,8 @@ auto connection = *std::move(connected);
 (void)server.run({"new-window", "-d", "-n", "watched"});
 
 std::string added;
-const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{10};
+const auto wait = std::chrono::seconds{10};
+const auto deadline = std::chrono::steady_clock::now() + wait;
 for (const auto& event : connection.events(deadline)) {
   if (event.kind == libtmux::NotificationKind::window_add) {
     added = std::string{event.window};
@@ -778,7 +880,8 @@ if (!controlled.has_value()) {
 }
 const auto listed = controlled->sessions();
 if (listed.has_value()) {
-  std::cout << std::format("{} session(s) listed over control\n", listed->size());
+  const auto count = listed->size();
+  std::cout << std::format("{} session(s) listed over control\n", count);
 }
 ```
 
@@ -796,8 +899,8 @@ admission capacity. [`Server::try_submit`][ref-server-try_submit] returns a
 ```cpp
 // Given: const libtmux::Server& server
 // Submit one command to a bounded runtime, then wait for its result.
-auto started =
-    libtmux::CommandRuntime::start(libtmux::CommandRuntimeConfig{.capacity = 1U});
+const libtmux::CommandRuntimeConfig config{.capacity = 1U};
+auto started = libtmux::CommandRuntime::start(config);
 if (!started.has_value()) {
   std::cerr << std::format("{}\n", started.error());
   return 1;
@@ -873,7 +976,8 @@ if (!fixture.has_value()) {
 }
 const auto under_test =
     libtmux::Server::at_socket_path(fixture->socket_path().string());
-std::cout << std::format("sessions on it: {}\n", under_test->sessions()->size());
+const auto session_count = under_test->sessions()->size();
+std::cout << std::format("sessions on it: {}\n", session_count);
 ```
 
 This prints the number of sessions on the private server.
@@ -888,170 +992,16 @@ This prints the number of sessions on the private server.
 **[How this project tests →](tests/README.md)** ·
 **[A worked consumer →](examples/tests/README.md)**
 
-## Installation
+## Packages
 
-The library has no dependencies. Pick what your project already uses.
-
-### CMake FetchContent
-
-No install step, and nothing to vendor:
-
-```cmake
-include(FetchContent)
-FetchContent_Declare(
-  libtmux
-  GIT_REPOSITORY https://github.com/libtmux/libtmux-cxx.git
-  GIT_TAG        v0.1.0  # or a commit; never a moving branch
-)
-FetchContent_MakeAvailable(libtmux)
-target_link_libraries(your_target PRIVATE libtmux::libtmux)
-```
-
-Embedded this way, its tests, examples and MCP server default off.
-
-### Build and install from source
-
-```console
-$ cmake -S . -B build -DLIBTMUX_BUILD_TESTS=OFF -DLIBTMUX_BUILD_EXAMPLES=OFF
-```
-
-```console
-$ cmake --build build
-```
-
-```console
-$ cmake --install build --prefix ~/.local
-```
-
-Then, from any project:
-
-```cmake
-find_package(libtmux REQUIRED)
-target_link_libraries(your_target PRIVATE libtmux::libtmux)
-```
-
-[`examples/consume/`](examples/consume/) is that project, three files long.
-
-### Git submodule
-
-```console
-$ git submodule add https://github.com/libtmux/libtmux-cxx.git third_party/libtmux
-```
-
-```cmake
-add_subdirectory(third_party/libtmux)
-target_link_libraries(your_target PRIVATE libtmux::libtmux)
-```
-
-### vcpkg
-
-This repository is a [vcpkg git registry](docs/vcpkg-registry.md): vcpkg
-resolves `libtmux` by version from it. It is not in vcpkg's curated registry.
-
-Declare the dependency in `vcpkg.json` first, with no registry file yet:
-
-```json
-{
-  "name": "your-project",
-  "version": "0.1.0",
-  "dependencies": ["libtmux"]
-}
-```
-
-Pin vcpkg's own baseline before naming a registry. **Order matters:** vcpkg
-refuses a registry until the default registry has a baseline, even for the
-command that adds one.
-
-```console
-$ vcpkg x-update-baseline --add-initial-baseline
-```
-
-Now add `vcpkg-configuration.json` beside the manifest, leaving `baseline`
-empty for the next command to fill:
-
-```json
-{
-  "registries": [
-    {
-      "kind": "git",
-      "repository": "https://github.com/libtmux/libtmux-cxx",
-      "baseline": "",
-      "packages": ["libtmux"]
-    }
-  ]
-}
-```
-
-```console
-$ vcpkg x-update-baseline
-```
-
-That writes a commit of this repository into `baseline`. Re-run it to move to
-a newer release.
-
-```cmake
-find_package(libtmux CONFIG REQUIRED)
-target_link_libraries(your_target PRIVATE libtmux::libtmux)
-```
-
-The [MCP server](#libtmux-mcp-server) is a vcpkg feature of `libtmux`. Ask for
-it by name:
-
-```json
-{
-  "dependencies": [{ "name": "libtmux", "features": ["mcp"] }]
-}
-```
-
-[`docs/vcpkg-registry.md`](docs/vcpkg-registry.md#the-mcp-feature) covers where
-the program installs, its socket options, and the Windows triplets.
-
-### Build options
-
-| Option | Default | What it does |
-|---|---|---|
-| `LIBTMUX_CXX_STANDARD` | `23` | `20` uses `tl::expected`: a system one, or the pinned fallback |
-| `LIBTMUX_BUILD_TESTS` | on if top-level | POSIX suite with tmux and GoogleTest; native psmux smoke on Windows |
-| `LIBTMUX_BUILD_EXAMPLES` | on if top-level | POSIX programs or the native Windows psmux preview in [`examples/`](examples/README.md) |
-| `LIBTMUX_BUILD_TESTING_LIBRARY` | on with tests or examples on POSIX; off on Windows | Install the POSIX private-server fixture |
-| `LIBTMUX_BUILD_MCP_SERVER` | off | Build the [MCP server](#libtmux-mcp-server), which needs a JSON parser; Windows exposes its psmux-safe subset |
-| `LIBTMUX_BUILD_FUZZERS` | off | Build the POSIX parser fuzzers |
-| `LIBTMUX_FETCH_DEPS` | off | Download what is missing instead of failing |
-
-- `LIBTMUX_FETCH_DEPS` is off by default: a build that needs the network says so
-  and stops.
-- It covers every dependency, the C++20 lane's `tl::expected` included: the
-  build looks for an installed one first, and says what to install when there is
-  none.
-
-## Core concepts
-
-| C++ type | tmux concept | Notes |
-|---|---|---|
-| [`Server`](include/libtmux/server.hpp) | tmux server / socket | Entry point; owns sessions |
-| [`Session`](include/libtmux/entities.hpp) | session (`$0`, `$1`, …) | Owns windows |
-| [`Window`](include/libtmux/entities.hpp) | window (`@1`, `@2`, …) | Owns panes |
-| [`Pane`](include/libtmux/entities.hpp) | pane (`%1`, `%2`, …) | Where commands run |
-| [`Client`](include/libtmux/entities.hpp) | an attached terminal | Read-only |
-| [`Buffer`](include/libtmux/entities.hpp) | the server's clipboard | Named text outliving its pane |
-| [`CommandRuntime`](include/libtmux/async.hpp) | bounded asynchronous execution | Owns threads, admission, and observer disposition |
-| [`CommandOperation`](include/libtmux/async.hpp) | one accepted command result | Waited or detached independently of observation |
-| [`Connection`](include/libtmux/control.hpp) | a control-mode session | Guarded blocks, outside-block events |
-| [`NotificationWatch`](include/libtmux/notification.hpp) | one outside-block event consumer | Independent cursor, wait, and readiness descriptor |
-
-## tmux, libtmux, and tmuxp
-
-| Tool | Layer | Use it for |
-|---|---|---|
-| [tmux] | The terminal multiplexer | Everyday manual use |
-| **libtmux (C++)** | This library | Programmatic control from C++ |
-| [libtmux (Python)][libtmux] | The original | The same, from Python |
-| [tmuxp] | An app on libtmux | Declarative workspaces from YAML |
-
-This port follows the Python library's names and behaviour where C++ allows,
-and the API reference names every place it differs.
-
-## Package guides
+- [`libtmux`](#libtmux): the library. Typed, value-semantic servers, sessions,
+  windows and panes; the core links nothing.
+- [`libtmux::testing`](#libtmuxtesting): a private tmux server for your own
+  tests, installed as a CMake component.
+- [`tmux-workspace`](#tmux-workspace): a command that loads, captures and
+  converts tmuxp-style workspace files.
+- [`libtmux-mcp-server`](#libtmux-mcp-server): a Model Context Protocol server,
+  so an agent can drive tmux.
 
 ### [`libtmux`](https://github.com/libtmux/libtmux-cxx/tree/master/include/libtmux)
 
@@ -1095,8 +1045,8 @@ Reference: [Testing with libtmux][guide-testing],
 [changelog](CHANGELOG.md).
 
 A [`TeardownReport`][ref-test-teardownreport] passed to
-[`ScopedTmuxServer::start`][ref-test-scopedtmuxserver-start] collects what teardown
-did, including anything it could not clean up:
+[`ScopedTmuxServer::start`][ref-test-scopedtmuxserver-start] collects what
+teardown did, including anything it could not clean up:
 
 ```cpp
 // A private server, and the messages its teardown recorded.
@@ -1179,40 +1129,53 @@ $ claude mcp add tmux \
     -- ~/.local/bin/libtmux-mcp-server --socket-name libtmux-agent
 ```
 
-## Compatibility
+## What it leaves out
 
-tmux 3.3a and newer; tmux 3.3 is below the floor. [`Version`][ref-version]
-orders releases: `3.7 < 3.7a < 3.7b`, and `next-X.Y` and `X.Y-rcN` precede
-`X.Y`.
+- **Workspaces from a config file.** [tmuxp] already does that;
+  [`examples/workspace/`](examples/workspace/README.md) reads the same documents
+  if you need it inside a C++ program, and [`tmux-workspace`](#tmux-workspace)
+  loads them from the command line.
+- **Scripting.** A shell script calling `tmux` is a fine answer to a one-off.
+  This earns its keep when the thing you are writing has to *read* tmux's state
+  and decide something.
+- **Python.** Use [libtmux] — it is the original, has a wider surface, and this
+  port is measured against it.
+- **Live objects.** An entity is a snapshot taken when it was listed; ask again
+  with [`Window::refresh`][ref-window-refresh] for the present.
+- **Exceptions for tmux failures.** Failure is a
+  [`CommandFailure`][ref-commandfailure] value; nothing throws on a refusal.
+- **Persistent control mode on Windows.** The psmux integration uses one
+  `tmux.exe` subprocess per call.
 
-- **The daemon decides.** A release below the floor, an unreadable version and
-  an undated `master` are refused with
-  [`FailureKind::unsupported`][ref-failurekind] before the command has any
-  effect.
-- **Literal commands** are read the way tmux reads them, under an alias or any
-  unique prefix. A command inside a string tmux parses itself, such as an
-  `if-shell` body, is sent as written
-  ([details](docs/compatibility.md#commands-the-checks-do-not-read)).
-- **Known tmux defects** are refused before dispatch, or avoided by typed calls
-  such as [`Pane::break_out`][ref-pane-break_out].
-- [`docs/compatibility.md`](docs/compatibility.md) covers the probe, older
-  daemons, [`Server::check_release()`][ref-server-check_release], the defects
-  and the `command-alias` caveat.
+## Support and status
 
-### Optional features by release
+- **Alpha.** Releases carry an `-alpha` prerelease tag; any release may change
+  or remove exported identifiers without a deprecation period. Pin an exact
+  version.
+- **tmux 3.3a or newer.** `tmux 3.3` and
+  [release candidates](https://libtmux.org/en/tmux/guides/tmux-support/#release-candidates)
+  are below the floor ([`Version`][ref-version] orders `3.7 < 3.7a < 3.7b`).
+  Older daemons fail with [`FailureKind::unsupported`][ref-failurekind] before
+  dispatch ([`Server::check_release()`][ref-server-check_release]).
+- **C++ and build.** C++23 (clang 17+, GCC 13+, Visual Studio 2022 17.3+), or
+  C++20 with `LIBTMUX_CXX_STANDARD=20`; CMake 3.25 or newer; zero library
+  dependencies.
+- **Platforms.** Linux (WSL included) is tested in CI; macOS and the
+  [Windows preview](#windows-through-psmux) are best effort. Child processes do
+  not inherit unrelated descriptors
+  ([`docs/runtime.md`](docs/runtime.md#child-process-descriptors)).
+- **Compatibility gates.** Known tmux defects are refused before dispatch or
+  avoided by typed calls such as [`Pane::break_out`][ref-pane-break_out]; see
+  [`docs/compatibility.md`](docs/compatibility.md),
+  [`capabilities.json`](capabilities.json), and
+  [design commitments](docs/design/commitments.md).
 
-A feature that needs a newer daemon is refused before it has an effect, and
-does not raise the floor for anything else.
-
-| Feature | Needs |
+| Optional feature | Needs |
 |---|---|
 | Control mode, and `wait_for_text` streaming | tmux 3.7 |
 | Named buffer operations, such as `Buffer::remove` | tmux 3.4 |
 | Mirrored `main-*` layout presets | tmux 3.5 |
 | JSON saved layouts | tmux 3.8 |
-
-[Every gate and why](docs/compatibility.md#optional-features-by-release);
-[`capabilities.json`](capabilities.json) is the machine-readable list.
 
 ### Windows through psmux
 
@@ -1251,114 +1214,12 @@ $ cmake --build --preset windows-psmux
 $ ctest --preset windows-psmux --no-tests=error
 ```
 
-## What it leaves out
-
-- **Workspaces from a config file.** [tmuxp] already does that;
-  [`examples/workspace/`](examples/workspace/README.md) reads the same documents
-  if you need it inside a C++ program, and [`tmux-workspace`](#tmux-workspace)
-  loads them from the command line.
-- **Scripting.** A shell script calling `tmux` is a fine answer to a one-off.
-  This earns its keep when the thing you are writing has to *read* tmux's state
-  and decide something.
-- **Python.** Use [libtmux] — it is the original, has a wider surface, and this
-  port is measured against it.
-- **Live objects.** An entity is a snapshot taken when it was listed; ask again
-  with [`Window::refresh`][ref-window-refresh] for the present.
-- **Exceptions for tmux failures.** Failure is a [`CommandFailure`][ref-commandfailure]
-  value; nothing throws on a refusal.
-- **Persistent control mode on Windows.** The psmux integration uses one
-  `tmux.exe` subprocess per call.
-
-## Support and status
-
-- Alpha: any release may change or remove exported identifiers without a
-  deprecation period. Pin an exact version.
-- **tmux.** 3.3a or newer. [Compatibility](#compatibility).
-- **Platforms.** Linux (WSL included) and macOS. The Windows preview through
-  psmux, and macOS, are best effort.
-- **C++.** C++23, or C++20 with `LIBTMUX_CXX_STANDARD=20`. The core links
-  nothing.
-- **Design.** [The design commitments](docs/design/commitments.md) and
-  [what was measured](docs/README.md).
-
-## Repository layout
-
-| Where | What |
-|---|---|
-| [`include/libtmux/`](include/libtmux/README.md) | The public headers. If it is not here, it is not the contract. |
-| [`src/`](src/README.md) | Implementation, and the private headers the transport seam hides behind. |
-| [`tests/`](tests/README.md) | The suite, against real tmux, plus programs that must *not* compile. |
-| [`examples/`](examples/README.md) | Programs that read top to bottom, and the tmuxp workspace builder. |
-| [`apps/`](apps/README.md) | Programs built on the library — chiefly [the MCP server](apps/mcp/README.md). |
-| [`scripts/`](scripts/README.md) | The checks, generators and runners CI and maintainers use: the mutation catalogue, the reference generator, the docs checks. Never installed. |
-| [`tools/`](tools/README.md) | The MCP configuration switcher. Never installed. |
-| [`docs/`](docs/README.md) | Design notes, bakeoffs, and the generated [API reference](docs/api.md). |
-| [`ports/`](ports/libtmux/) | The vcpkg port, served by [this repository's registry](docs/vcpkg-registry.md). |
-| [`versions/`](versions/) | The registry's versions database. Generated, never edited by hand. |
-| [`cmake/`](cmake/README.md) | Helper modules and the package config template. |
-
-### What it is called
-
-One artifact, four spellings:
-
-| Spelling | Where it is the name |
-|---|---|
-| `libtmux-cxx` | the repository and its directory |
-| `libtmux_cxx` | the CMake project |
-| `libtmux::libtmux` | the CMake target to link, and `libtmux` the vcpkg port |
-| `libtmuxpp` | the built library — `libtmuxpp.a`, `-ltmuxpp` |
-
-Link the target, not the file: `find_package(libtmux)` then
-`target_link_libraries(you PRIVATE libtmux::libtmux)`.
-
-Outside CMake, the installed `libtmux.pc` carries the same flags.
-
-## Project links
-
-**Reference:**
-[API](docs/api.md) ·
-[Changelog](CHANGELOG.md) ·
-[MCP server changelog](apps/mcp/CHANGELOG.md) ·
-[tmux-workspace changelog](apps/workspace/CHANGELOG.md) ·
-[Examples](examples/README.md) ·
-[MCP server](apps/mcp/README.md) ·
-[Tests](tests/README.md) ·
-[Tooling](tools/README.md) ·
-[vcpkg registry](docs/vcpkg-registry.md)
-
-**Design notes:**
-[Entity behaviour](docs/bakeoffs/entity-behavior/scorecard.md) ·
-[Control transport](docs/design/control-transport.md) ·
-[C++20 fallback](docs/design/cxx20-fallback.md) ·
-[Engine-ops study](docs/design/engine-ops-study.md) ·
-[Reviews](docs/evidence/library-review.md) ·
-[Prerelease audit](docs/evidence/prerelease-audit.md)
-
-**Related:**
-[libtmux (Python)][libtmux] ·
-[tmuxp] ·
-[libtmux-mcp](https://github.com/tmux-python/libtmux-mcp) ·
-[The Tao of tmux](https://leanpub.com/the-tao-of-tmux)
-
 ## AI policy
 
 Use these packages with AI tools as you like. When contributing, check what you
 submit and wait for a maintainer's invitation before preparing a pull request.
 See the [AI policy](https://libtmux.org/en/meta/ai-policy/), also kept as
 [AI_POLICY.md](https://github.com/libtmux/.github/blob/HEAD/AI_POLICY.md).
-
-## Attribution
-
-Please use the following BibTeX template to cite libtmux-cxx in scientific discourse:
-
-```bibtex
-@misc{libtmux-cxx,
-   author = {Tony Narlock},
-   year = {2026},
-   note = {https://libtmux.org/en/cxx/},
-   title = {libtmux-cxx: C++ wrapper for tmux}
-}
-```
 
 ## Contributing
 
@@ -1372,6 +1233,9 @@ Please use the following BibTeX template to cite libtmux-cxx in scientific disco
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+All 19 language ports and companion APIs are indexed at
+[libtmux.org](https://libtmux.org/).
 
 [guide-concepts]: https://libtmux.org/en/cxx/latest/concepts/
 [guide-start]: https://libtmux.org/en/cxx/latest/guides/getting-started/
@@ -1395,7 +1259,6 @@ MIT. See [LICENSE](LICENSE).
 [ref-commandruntime-dispatch_ready]: https://libtmux.org/en/cxx/latest/reference/libtmux-commandruntime-dispatch_ready/
 [ref-commandruntime]: https://libtmux.org/en/cxx/latest/reference/libtmux-commandruntime/
 [ref-connection-events]: https://libtmux.org/en/cxx/latest/reference/libtmux-connection-events/
-[ref-connection-execute]: https://libtmux.org/en/cxx/latest/reference/libtmux-connection-execute/
 [ref-connection]: https://libtmux.org/en/cxx/latest/reference/libtmux-connection/
 [ref-deliverystatus]: https://libtmux.org/en/cxx/latest/reference/libtmux-deliverystatus/
 [ref-exactly_one]: https://libtmux.org/en/cxx/latest/reference/libtmux-exactly_one/
@@ -1466,7 +1329,6 @@ MIT. See [LICENSE](LICENSE).
 [ref-window-resize]: https://libtmux.org/en/cxx/latest/reference/libtmux-window-resize/
 [ref-window-split]: https://libtmux.org/en/cxx/latest/reference/libtmux-window-split/
 [ref-window]: https://libtmux.org/en/cxx/latest/reference/libtmux-window/
-[tmux]: https://github.com/tmux/tmux
 [tmuxp]: https://tmuxp.git-pull.com
 [topic-errors]: https://libtmux.org/en/cxx/latest/topics/errors-and-exceptions/
 [topic-options]: https://libtmux.org/en/cxx/latest/topics/options-and-hooks/
