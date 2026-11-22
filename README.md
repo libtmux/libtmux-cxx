@@ -18,7 +18,6 @@
   </p>
 </div>
 
-> [!WARNING]
 > **Alpha.** Releases carry an `-alpha` prerelease tag. The API is not
 > settled, and any release may change or remove exported identifiers without a
 > deprecation period. Pin an exact version. Not recommended for production.
