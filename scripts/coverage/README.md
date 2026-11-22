@@ -28,7 +28,7 @@ that would describe a build that has since changed.
 ## Tests
 
 ```console
-$ uv run --group dev pytest scripts/coverage
+$ uv run --project scripts --locked pytest scripts/coverage
 ```
 
 The floor cases use stand-ins for the two LLVM tools, and fail when the

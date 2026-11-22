@@ -28,7 +28,7 @@ CTest runs them with the Python interpreter CMake finds, which needs
 ## Tests
 
 ```console
-$ uv run --group dev pytest scripts/schema
+$ uv run --project scripts --locked pytest scripts/schema
 ```
 
 The tests run each validator over a small corpus, and over a schema that

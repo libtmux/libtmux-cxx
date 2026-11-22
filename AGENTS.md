@@ -34,9 +34,10 @@ being made:
   comments: [`.github/WRITING.md`](.github/WRITING.md)
 - Support scripts: what may stay, their language, layout and checks:
   [`.github/SCRIPTS.md`](.github/SCRIPTS.md). [`scripts/README.md`](scripts/README.md)
-  maps the directories. After changing a script, run `uv run --group dev ruff
-  format --check .`, `uv run --group dev ruff check .`, `uv run --group dev ty
-  check scripts` and `uv run --group dev pytest`.
+  maps the directories. After changing a script, run `uv run --project scripts
+  --locked ruff format --check scripts`, `uv run --project scripts --locked
+  ruff check scripts`, `uv run --project scripts --locked ty check --project
+  scripts scripts` and `uv run --project scripts --locked pytest scripts`.
 - Contribution workflow, building, testing, and pull requests:
   [`.github/CONTRIBUTING.md`](.github/CONTRIBUTING.md)
 

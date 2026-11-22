@@ -287,7 +287,7 @@ jobs:
           version: "0.12.0"
 
       - name: Check Windows registry tooling
-        run: uv run --group dev pytest scripts/vcpkg/tests/test_vcpkg_probe.py scripts/vcpkg/tests/test_vcpkg_release.py
+        run: uv run --project scripts --locked pytest scripts/vcpkg/tests/test_vcpkg_probe.py scripts/vcpkg/tests/test_vcpkg_release.py
 
       # Nothing here starts psmux: this lane builds and installs, and runs the
       # steps that need no tmux. The psmux tests are run by hand.
@@ -589,7 +589,7 @@ jobs:
         run: cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache --preset cxx-dev
 
       - name: Break each guard and check something notices
-        run: uv run --group dev python scripts/mutate/mutate.py --preset cxx-dev
+        run: uv run --project scripts --locked python scripts/mutate/mutate.py --preset cxx-dev
 
   coverage:
     # Not here to police a percentage. Coverage tooling is used by nobody on
@@ -723,17 +723,20 @@ jobs:
         working-directory: docs
         run: uv run --no-project --with sphinx --with breathe==4.36.0 --with furo sphinx-build -q -W -b dirhtml -D breathe_projects.cxx="${{ runner.temp }}/doxygen/xml" -d "${{ runner.temp }}/doctrees" . "${{ runner.temp }}/reference"
 
+      - name: Sync the script environment
+        run: uv sync --project scripts --locked
+
       - name: Check Python formatting
-        run: uv run --group dev ruff format --check .
+        run: uv run --project scripts --locked ruff format --check scripts
 
       - name: Lint Python
-        run: uv run --group dev ruff check .
+        run: uv run --project scripts --locked ruff check scripts
 
       - name: Type-check the scripts
-        run: uv run --group dev ty check scripts
+        run: uv run --project scripts --locked ty check --project scripts scripts
 
       - name: Test the scripts
-        run: uv run --group dev pytest
+        run: uv run --project scripts --locked pytest scripts
 
       # The tmux versions CI runs come from scripts/ci_plan/tmux_matrix.json.
       # This fails when the README, the compatibility page or CONTRIBUTING say

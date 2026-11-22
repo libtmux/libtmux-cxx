@@ -66,5 +66,5 @@ The runner and the MCP smoke test have pytest suites that use stand-in programs,
 so they run without psmux:
 
 ```console
-$ uv run --group dev pytest scripts/psmux
+$ uv run --project scripts --locked pytest scripts/psmux
 ```

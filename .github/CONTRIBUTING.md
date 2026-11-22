@@ -143,7 +143,8 @@ builds the library a consumer links, and a test there asserts the archive
 exports no seam at all. Tests that need one skip by name when it is absent.
 
 ```console
-$ uv run --group dev python scripts/mutate/mutate.py --preset cxx-dev
+$ uv run --project scripts --locked python scripts/mutate/mutate.py \
+    --preset cxx-dev
 ```
 
 > [!WARNING]
@@ -161,22 +162,23 @@ $ git ls-files '*.cpp' '*.hpp' | xargs clang-format -i
 
 The support scripts under [`scripts/`](../scripts/README.md) are typed Python.
 CI runs `ruff format`, `ruff check`, `ty check` and `pytest` over them, as
-configured in [`pyproject.toml`](../pyproject.toml); this runs the same four:
+configured in [`scripts/pyproject.toml`](../scripts/pyproject.toml); this runs
+the same four:
 
 ```console
-$ uv run --group dev ruff format --check .
+$ uv run --project scripts --locked ruff format --check scripts
 ```
 
 ```console
-$ uv run --group dev ruff check .
+$ uv run --project scripts --locked ruff check scripts
 ```
 
 ```console
-$ uv run --group dev ty check scripts
+$ uv run --project scripts --locked ty check --project scripts scripts
 ```
 
 ```console
-$ uv run --group dev pytest
+$ uv run --project scripts --locked pytest scripts
 ```
 
 [`SCRIPTS.md`](SCRIPTS.md) says what may stay under `scripts/`.

@@ -44,7 +44,7 @@ $ uv run scripts/docs/api_index.py --write-fixture
 ## Tests
 
 ```console
-$ uv run --group dev pytest scripts/docs
+$ uv run --project scripts --locked pytest scripts/docs
 ```
 
 Each check has cases that break a copy of the input and expect a failure.

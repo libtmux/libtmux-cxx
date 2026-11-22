@@ -6,24 +6,24 @@ here, and each directory holds a script with its README and tests.
 
 The scripts are typed Python. Each declares its dependencies inline
 ([PEP 723](https://peps.python.org/pep-0723/)) and runs from the repository root
-with `uv run`. [`pyproject.toml`](../pyproject.toml) holds the dev dependency
+with `uv run`. [`pyproject.toml`](pyproject.toml) holds the dev dependency
 group and the settings that `ruff`, `ty` and `pytest` apply to every script in
 CI:
 
 ```console
-$ uv run --group dev ruff format --check .
+$ uv run --project scripts --locked ruff format --check scripts
 ```
 
 ```console
-$ uv run --group dev ruff check .
+$ uv run --project scripts --locked ruff check scripts
 ```
 
 ```console
-$ uv run --group dev ty check scripts
+$ uv run --project scripts --locked ty check --project scripts scripts
 ```
 
 ```console
-$ uv run --group dev pytest
+$ uv run --project scripts --locked pytest scripts
 ```
 
 | Directory | What it answers | Run by |

@@ -141,7 +141,8 @@ A green suite is evidence only once it has been shown capable of failing. The
 reports any that nothing notices:
 
 ```console
-$ uv run --group dev python scripts/mutate/mutate.py --preset cxx-dev
+$ uv run --project scripts --locked python scripts/mutate/mutate.py \
+    --preset cxx-dev
 ```
 
 A survivor means something is untested. So does a mutation that would not

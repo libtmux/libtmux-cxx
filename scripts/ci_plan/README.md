@@ -46,7 +46,7 @@ $ uv run scripts/ci_plan/ci_check.py
 ## Tests
 
 ```console
-$ uv run --group dev pytest scripts/ci_plan
+$ uv run --project scripts --locked pytest scripts/ci_plan
 ```
 
 Each rule has a case that breaks a copy of the tree and expects the guard to

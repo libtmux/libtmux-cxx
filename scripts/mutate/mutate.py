@@ -8,7 +8,7 @@
 Run from the repository root, in the project environment so a guard that lives in
 Python can run its pytest test::
 
-    uv run --group dev python scripts/mutate/mutate.py --preset cxx-dev
+    uv run --project scripts --locked python scripts/mutate/mutate.py --preset cxx-dev
 """
 
 from __future__ import annotations

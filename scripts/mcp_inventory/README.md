@@ -20,7 +20,7 @@ environment, and no command reaches tmux.
 ## Tests
 
 ```console
-$ uv run --group dev pytest scripts/mcp_inventory
+$ uv run --project scripts --locked pytest scripts/mcp_inventory
 ```
 
 The tests use a stand-in server that echoes the environment it saw.

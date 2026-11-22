@@ -30,7 +30,7 @@ request except its tests, which build temporary Git repositories with a bare
 origin:
 
 ```console
-$ uv run --group dev pytest scripts/release
+$ uv run --project scripts --locked pytest scripts/release
 ```
 
 `push-baseline` talks to GitHub and has no test. The Windows half of the port
