@@ -69,7 +69,7 @@ macOS and Windows and never wait on a reply that is already in a buffer.
 ## Tests
 
 ```console
-$ uv run --group dev pytest scripts/installed_probe
+$ uv run --project scripts --locked pytest scripts/installed_probe
 ```
 
 The tests run each probe against a stand-in program that can fail in each way

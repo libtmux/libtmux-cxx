@@ -39,7 +39,7 @@ needs both checks and the order a release keeps.
 ## Tests
 
 ```console
-$ uv run --group dev pytest scripts/vcpkg
+$ uv run --project scripts --locked pytest scripts/vcpkg
 ```
 
 The release archive test also fails when `tools/`, `scripts/` or `.github/`

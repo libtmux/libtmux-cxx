@@ -35,7 +35,8 @@ From the repository root, configure the preset first. Run it in the project
 environment, so a guard that lives in a script can run its pytest test:
 
 ```console
-$ uv run --group dev python scripts/mutate/mutate.py --preset cxx-dev
+$ uv run --project scripts --locked python scripts/mutate/mutate.py \
+    --preset cxx-dev
 ```
 
 `--id` runs one entry and `--build-root` builds somewhere other than the
@@ -48,5 +49,5 @@ build.
 ## Tests
 
 ```console
-$ uv run --group dev pytest scripts/mutate
+$ uv run --project scripts --locked pytest scripts/mutate
 ```

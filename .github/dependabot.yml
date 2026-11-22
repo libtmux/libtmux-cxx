@@ -4,7 +4,7 @@ updates:
   # vcpkg.json gets no entry: no version constraints and no builtin-baseline,
   # so the updater has nothing to move.
   - package-ecosystem: uv
-    directory: /
+    directory: /scripts
     schedule:
       interval: monthly
     commit-message:

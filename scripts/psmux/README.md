@@ -27,7 +27,7 @@ $ uv run scripts/psmux/psmux_mcp_smoke.py \
 ## Tests
 
 ```console
-$ uv run --group dev pytest scripts/psmux
+$ uv run --project scripts --locked pytest scripts/psmux
 ```
 
 The tests use stand-ins for `tmux.exe` and the server, so they run on Linux. They

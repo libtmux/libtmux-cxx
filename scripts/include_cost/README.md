@@ -24,7 +24,7 @@ printed.
 ## Tests
 
 ```console
-$ uv run --group dev pytest scripts/include_cost
+$ uv run --project scripts --locked pytest scripts/include_cost
 ```
 
 The tests compile nothing. A stand-in compiler preprocesses each unit to a size

@@ -208,7 +208,7 @@ jobs:
           version: "0.12.0"
 
       - name: Check Windows registry tooling
-        run: uv run --group dev pytest scripts/vcpkg/tests/test_vcpkg_probe.py scripts/vcpkg/tests/test_vcpkg_release.py
+        run: uv run --project scripts --locked pytest scripts/vcpkg/tests/test_vcpkg_probe.py scripts/vcpkg/tests/test_vcpkg_release.py
 
       - name: Configure the tagged Windows release
         run: cmake -S . -B build/rel -G "Visual Studio 17 2022" -A x64 -DLIBTMUX_BUILD_MCP_SERVER=ON -DLIBTMUX_FETCH_DEPS=ON -DLIBTMUX_BUILD_TESTS=ON -DLIBTMUX_BUILD_EXAMPLES=ON -DLIBTMUX_BUILD_TESTING_LIBRARY=OFF -DLIBTMUX_BUILD_FUZZERS=OFF -DLIBTMUX_WARNINGS_AS_ERRORS=ON -DLIBTMUX_CXX_STANDARD=23 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded

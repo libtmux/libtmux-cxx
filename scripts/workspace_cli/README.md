@@ -29,7 +29,7 @@ a program that answers nothing, and passes only on the diagnostic it raises.
 ## Tests
 
 ```console
-$ uv run --group dev pytest scripts/workspace_cli
+$ uv run --project scripts --locked pytest scripts/workspace_cli
 ```
 
 The tests cover the helpers, and run each verifier against a program that
